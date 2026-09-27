@@ -8,8 +8,6 @@ fn the_shipped_viewmodel_rig_loads_at_rest() {
     assert_eq!(hand.bones.len(), hand.rig.row.model.bones().len());
 }
 
-/// The hand pass draws exactly the bones it is handed, and a pose that is
-/// not this rig's leaves the last one standing rather than a torn rig.
 #[test]
 fn the_hand_takes_the_clients_pose_and_refuses_a_foreign_one() {
     let mut hand = FirstPersonHand::shipped().expect("the viewmodel rig");

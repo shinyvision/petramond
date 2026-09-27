@@ -1,12 +1,3 @@
-//! What reachability searches learned about the cells of a box, kept in the
-//! world between searches. A caller that probes or floods the same ground
-//! again and again pays for reading the world once: the per-cell facts, every
-//! foothold's moves, and what moves into each cell stay true until a cell
-//! they read changes. The world's change log says which did — a changed cell
-//! forgets exactly the cells that read it — and a box any of whose sections
-//! streamed in or out (which the log does not record), or that the log has
-//! slid past, is thrown away whole.
-
 use std::cell::RefCell;
 use std::hash::Hasher;
 
@@ -16,9 +7,6 @@ use crate::mob::path::{self, BoxFacts, BoxLeads, Fact, PathParams, Reads};
 use crate::mob::Mob;
 use crate::world::ServerWorld;
 
-/// The lanes of a kept box's [`BoxFacts`]. Every one is a fact of the world
-/// alone, never of one search's planned cells, so the table outlives the
-/// search.
 #[derive(Clone, Copy)]
 pub(super) enum FactLane {
     Solid,
@@ -32,18 +20,14 @@ pub(super) enum FactLane {
     Plain,
 }
 
-/// One box's kept facts, for one species (its body decides every fact).
 pub struct KeptBox {
     kind: Mob,
-    /// The box searches are answered over, and the one their probes read.
     inner: (IVec3, IVec3),
     outer: (IVec3, IVec3),
     facts: BoxFacts,
-    /// Where each foothold leads, and what leads into each cell.
     pub(super) leads: BoxLeads,
     pub(super) comes: BoxLeads,
     pub(super) reads: Reads,
-    /// Where in the change log all of it is true as of.
     seq: u64,
     streamed: u64,
 }
@@ -72,7 +56,6 @@ impl KeptBox {
         min.cmpge(self.inner.0).all() && max.cmple(self.inner.1).all()
     }
 
-    /// Bring the box up to date with the world, or report that it cannot be.
     fn refresh(&mut self, world: &ServerWorld) -> bool {
         if self.streamed != stream_witness(world, self.outer) {
             return false;
@@ -94,18 +77,12 @@ impl KeptBox {
     }
 }
 
-/// The boxes a world keeps, most recently searched last.
 #[derive(Default)]
 pub struct KeptBoxes(RefCell<Vec<KeptBox>>);
 
-/// Table cells all kept boxes may hold between them: a handful of building
-/// sites, or a few dozen probe neighbourhoods. The least recently searched
-/// go first.
 const KEPT_CELLS: usize = 2 << 20;
 
 impl KeptBoxes {
-    /// Run `search` over the kept box of this species that holds `span`,
-    /// brought up to date — or over a fresh one for `fresh_span`, kept after.
     pub(super) fn over<R>(
         &self,
         world: &ServerWorld,
@@ -115,7 +92,6 @@ impl KeptBoxes {
         fresh_span: (IVec3, IVec3),
         search: impl FnOnce(&KeptBox) -> R,
     ) -> R {
-        // Taken out for the search's life: a search never finds itself here.
         let taken = {
             let mut boxes = self.0.borrow_mut();
             boxes
@@ -136,7 +112,6 @@ impl KeptBoxes {
         found
     }
 
-    /// Forget everything (a test comparing kept answers with fresh ones).
     #[cfg(test)]
     pub(super) fn take(&self) -> Vec<KeptBox> {
         std::mem::take(&mut *self.0.borrow_mut())
@@ -148,8 +123,6 @@ impl KeptBoxes {
     }
 }
 
-/// Which of the box's sections are loaded and final, folded to one number:
-/// streaming replaces what a cell reads without any change being announced.
 fn stream_witness(world: &ServerWorld, (min, max): (IVec3, IVec3)) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     let step = petramond_world::chunk::SECTION_SIZE as i32;
@@ -171,15 +144,12 @@ fn stream_witness(world: &ServerWorld, (min, max): (IVec3, IVec3)) -> u64 {
     hasher.finish()
 }
 
-/// The box a lone probe between two cells is answered over: their bounds with
-/// room for a detour, on a coarse grid so probes nearby find it again.
 pub(super) fn probe_span(a: IVec3, b: IVec3) -> (IVec3, IVec3) {
     const ROOM: IVec3 = IVec3::new(24, 12, 24);
     const GRID: i32 = 16;
     let snap_down = |c: IVec3| c.div_euclid(IVec3::splat(GRID)) * GRID;
     let (min, max) = (a.min(b) - ROOM, a.max(b) + ROOM);
     let span = (snap_down(min), snap_down(max) + IVec3::splat(GRID - 1));
-    // Too far apart for a table: a box of nothing, every cell worked out.
     if path::fits_a_table(span.0, span.1) {
         span
     } else {

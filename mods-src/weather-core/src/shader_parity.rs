@@ -1,7 +1,3 @@
-//! Shader-shaped CPU interpreter for the cloud field. The source assertions
-//! pin the WGSL expressions this interpreter evaluates; sample parity then
-//! compares them to the weather simulation's independent implementation.
-
 use super::*;
 
 const SHADER: &str = include_str!("../../weather/pack/shaders/clouds.wgsl");

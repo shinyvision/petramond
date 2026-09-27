@@ -27,7 +27,6 @@ pub(super) fn build(
     snapshot.craft_output = menu.craft_output;
     snapshot.container = menu.container.cloned();
     snapshot.gui_state = menu.gui_state.cloned();
-    // The HUD is whoever's view presents; nobody's draws empty.
     if let Some(view) = game.hud_view() {
         let inv = &view.inventory;
         snapshot.active = inv.active_slot();
@@ -44,9 +43,6 @@ pub(super) fn build(
     snapshot
 }
 
-/// Overlay the active pointer gesture onto the immutable render snapshot so
-/// every newly hit slot responds in the frame it is hit. Release replaces
-/// this ephemeral overlay with the identical rollback-backed menu prediction.
 pub(super) fn apply_menu_drag_preview(
     snapshot: &mut UiSnapshot,
     slots: &[MenuSlot],
@@ -82,9 +78,6 @@ fn preview_capacity(
             .map(|cell| slot_capacity(cell, held))
             .unwrap_or(0),
         MenuSlot::OffHand => slot_capacity(&snapshot.off_hand, held),
-        // The same question the committed prediction and the server both ask
-        // (`container::slot_admits`). Asking a THIRD one here means the drag
-        // preview shows a split the click that follows it will not perform.
         MenuSlot::Container(i)
             if petramond_world::container::slot_admits(
                 specs,

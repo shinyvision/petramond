@@ -1,18 +1,3 @@
-//! Item model: the inventory-space counterpart of `Block`.
-//!
-//! An item that places a block declares it in its `items.json` row (`"block":
-//! "<registry name>"`, engine and pack rows alike): `as_block` reads that row
-//! field and `from_block` reads the dense reverse LUT inverted from it at load
-//! (see `data`). Item-only items (tools, raw drops) carry no link — `as_block`
-//! returns `None` and they render as flat sprites (or their row's `"model"`
-//! bbmodel). Engine ids stay append-only; pack items register past them (see
-//! [`crate::registry`]).
-//!
-//! Per-item static data (`key`, `name`, `max_stack_size`) lives in an id-ordered
-//! table loaded from `assets/items.json`, mirroring `block/data.rs`. The `key` is
-//! the stable recipe identity; `name` is display-only. Behaviour derivable from the
-//! underlying `Block` (`render_kind` for block-items) is computed via `Block`.
-
 mod accessors;
 pub(crate) mod creative;
 mod data;
@@ -50,19 +35,9 @@ pub use tool::{
 pub use uses::{ItemUse, UseRay};
 pub use variant::VariantId;
 
-/// A registered item, identified by its opaque runtime id. Engine items own
-/// the low ids in a compiled, frozen order (the named consts below — save
-/// palettes depend on those ids/names never moving); mod packs register
-/// additional ids at load through namespaced `items.json` rows (see
-/// [`crate::registry`]). Serde carries an item as its registered NAME string.
-///
-/// An item links to the block it places through its row's `block` field;
-/// `from_block` / `as_block` are table lookups over those links.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ItemType(pub u16);
 
-/// Engine item consts, named like the enum variants they replaced so every
-/// existing `ItemType::Stick` expression and match pattern keeps compiling.
 #[allow(non_upper_case_globals)]
 impl ItemType {
     pub const Air: ItemType = ItemType(0);
@@ -213,8 +188,6 @@ impl ItemType {
     pub const AcaciaFence: ItemType = ItemType(145);
     pub const RedwoodFence: ItemType = ItemType(146);
     pub const ClayBlock: ItemType = ItemType(147);
-    /// The chiseling station's block item: its name is the station screen's
-    /// title, and its key doubles as the crafting station key.
     pub const ChiselingStation: ItemType = ItemType(154);
 }
 

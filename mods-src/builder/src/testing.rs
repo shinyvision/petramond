@@ -1,6 +1,3 @@
-//! What the builder's tests share: a fake world with a floor to build on, a
-//! session over it, and projects anchored, compiled and staffed in it.
-
 use std::rc::Rc;
 
 use crate::content::{Content, BLUEPRINT, PROJECT_DATA};
@@ -14,14 +11,10 @@ use crate::supplies::Shortfall;
 use crate::survey::Survey;
 use crate::worker::{Body, Job, PROJECT_TAG};
 
-/// The player every test project belongs to.
 pub const OWNER: &str = "ada";
-/// The schematic every test project builds.
 pub const ASSET: SchematicId = [7; 32];
-/// The floor's top layer: a body on it stands in y = 0.
 pub const FLOOR: i32 = -1;
 
-/// The note of a job short of `count` stone and nothing else.
 pub fn short_of_stone(count: u32) -> Note {
     Note::Missing(Shortfall {
         count,
@@ -30,9 +23,6 @@ pub fn short_of_stone(count: u32) -> Note {
     })
 }
 
-/// The row site ([`Session::row`]): three stones to lay along x from the
-/// origin, the table three cells south of them with a chest beside it, and
-/// the open ground a golem rises out of beside the table.
 pub const ROW: [([i32; 3], &str); 3] = [
     ([0, 0, 0], "petramond:stone"),
     ([1, 0, 0], "petramond:stone"),
@@ -42,7 +32,6 @@ pub const TABLE_AT: [i32; 3] = [0, 0, -3];
 pub const CHEST_AT: [i32; 3] = [1, 0, -3];
 pub const HOME: [i32; 3] = [-1, 0, -4];
 
-/// A session of the mod over a fake world, installed on the test's thread.
 pub struct Session {
     pub world: Rc<Fake>,
     pub builder: Builder,
@@ -50,14 +39,12 @@ pub struct Session {
 }
 
 impl Session {
-    /// A stone floor reaching `half` cells from the origin each way.
     pub fn flat(half: i32) -> Self {
         let world = Rc::new(Fake::new());
         world.fill([-half, FLOOR, -half], [half, FLOOR, half], rows::STONE);
         Self::over(world)
     }
 
-    /// The mod starting up in `world`.
     pub fn over(world: Rc<Fake>) -> Self {
         let installed = world.install();
         let content = Content::resolve().expect("the fake world holds the pack's rows");
@@ -68,14 +55,10 @@ impl Session {
         }
     }
 
-    /// The row site on a floor reaching ten cells out: the design stored a
-    /// section a cell, its blueprint in the table, the chest empty.
     pub fn row() -> (Self, ProjectId) {
         Self::site("Row", [3, 1, 1], &ROW)
     }
 
-    /// The row site's table, chest and floor with another design anchored at
-    /// the origin: `cells` in a box of `size`.
     pub fn site(title: &str, size: [i32; 3], cells: &[([i32; 3], &str)]) -> (Self, ProjectId) {
         let mut session = Self::flat(10);
         session.world.schematic(ASSET, title, size, cells, 1);
@@ -92,8 +75,6 @@ impl Session {
         self.world.state().now
     }
 
-    /// A draft at a table standing at `table`, anchored on [`ASSET`] at
-    /// `origin`, its blueprint slot empty.
     pub fn draft(&mut self, table: [i32; 3], origin: [i32; 3]) -> ProjectId {
         self.world.set(table, rows::TABLE);
         self.world
@@ -108,7 +89,6 @@ impl Session {
         id
     }
 
-    /// The blueprint bound to project `id` in this world.
     pub fn blueprint(&self, id: ProjectId) -> ItemStackData {
         ItemStackData {
             item: BLUEPRINT.into(),
@@ -117,8 +97,6 @@ impl Session {
         }
     }
 
-    /// The job for project `id`: its design compiled and every unit measured
-    /// against the world.
     pub fn job(&mut self, id: ProjectId) -> &mut Job {
         let now = self.now();
         let brief = self.builder.projects.get(id).expect("a project").brief();
@@ -137,8 +115,6 @@ impl Session {
         job
     }
 
-    /// A golem out working project `id` (its job attended) from `home`,
-    /// standing in `at` with the blueprint in its first slot.
     pub fn golem(&mut self, id: ProjectId, home: [i32; 3], at: [i32; 3]) -> u64 {
         self.builder.projects.update(id, |p| {
             p.summon(home);
@@ -166,7 +142,6 @@ impl Session {
         golem
     }
 
-    /// The golem's body as a tick reads it.
     pub fn body(&self, golem: u64) -> Body {
         let state = self.world.state();
         let mob = &state.mobs[&golem];

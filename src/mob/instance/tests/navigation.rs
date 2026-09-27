@@ -206,8 +206,6 @@ fn tick(
 
 #[test]
 fn a_body_walking_down_a_flight_of_ledges_lands_on_every_one() {
-    // One-cell landings, each a block lower: a fall that keeps the speed the
-    // ledge was left with lands a cell late, on the NEXT drop.
     let mut world = world();
     for (x, top) in [(2, 68), (3, 68), (4, 67), (5, 66), (6, 65), (7, 64)] {
         for y in 64..top {

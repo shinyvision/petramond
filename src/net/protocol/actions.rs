@@ -4,11 +4,8 @@ use petramond_math::math::{IVec3, Vec3};
 
 use super::Transform;
 
-/// Per-connection monotonic id for discrete mutating intents that need an
-/// [`ActionOutcome`]. Client allocates; server echoes.
 pub type ClientRequestId = u32;
 
-/// Coarse deny reasons for [`ActionOutcome`] — enough for rollback/UI.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionDenyReason {
     OutOfReach,
@@ -20,8 +17,6 @@ pub enum ActionDenyReason {
 }
 
 impl ActionOutcome {
-    /// The one deny-outcome constructor, shared by the server's message-time
-    /// denials and the client ledger tests.
     pub fn deny(id: ClientRequestId, reason: ActionDenyReason) -> ActionOutcome {
         ActionOutcome {
             id,
@@ -30,7 +25,6 @@ impl ActionOutcome {
         }
     }
 
-    /// The accept twin of [`deny`](Self::deny).
     #[allow(dead_code)]
     pub fn accept(id: ClientRequestId) -> ActionOutcome {
         ActionOutcome {
@@ -41,7 +35,6 @@ impl ActionOutcome {
     }
 }
 
-/// Server answer to one client request id (accept or deny).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionOutcome {
     pub id: ClientRequestId,
@@ -49,32 +42,17 @@ pub struct ActionOutcome {
     pub reason: Option<ActionDenyReason>,
 }
 
-/// Per-frame (local) / throttled (TCP) client transform + held intents.
-///
-/// Movement F2: `wishdir` / `jump` / `sprint` / `sneak` are the authoritative
-/// input; the server integrates physics on the fixed tick. `pos`/`vel`/
-/// `on_ground` remain the client's prediction (used for soft comparison / fall
-/// bookkeeping until a hard correct ships via `SelfTransform`).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerUpdate {
-    /// The client's predicted transform (see the struct doc).
     pub transform: Transform,
     pub on_ground: bool,
-    /// Sneak held — movement intent (half speed + edge guard, integrated
-    /// server-side like `wishdir`) AND the interact-vs-place gate; gameplay-
-    /// gated client-side like the rest of the predicted input.
     pub sneak: bool,
-    /// Gameplay input live (false while a screen owns focus — server forces
-    /// held intents off, mirroring `capture_intent`).
     pub gameplay: bool,
     pub break_held: bool,
     pub use_held: bool,
-    /// The client's raycast target (block + face normal), reach-validated
-    /// server-side.
     pub target: Option<TargetRef>,
     pub hotbar_slot: u8,
     pub held_rotation: u8,
-    /// Horizontal/3D wish direction (unit or zero) for server-side movement.
     pub wishdir: Vec3,
     pub jump: bool,
     pub sprint: bool,
@@ -84,17 +62,10 @@ pub struct PlayerUpdate {
 pub struct TargetRef {
     pub block: IVec3,
     pub normal: IVec3,
-    /// WHERE on the block the click landed, cell-local to `block` and
-    /// quantized to 1/255 per axis. Placement rules that care which PART of a
-    /// face was clicked read it; it rides the click so the client's ghost and
-    /// the server's write resolve from the identical spot. Quantized rather
-    /// than float so the ref stays `Eq` (clicks are compared) — a texel is
-    /// 1/16, sixteen times coarser than this.
     pub spot: [u8; 3],
 }
 
 impl TargetRef {
-    /// The click this raycast hit describes.
     pub fn of_hit(hit: &crate::player::RaycastHit) -> Self {
         Self {
             block: hit.block,
@@ -103,8 +74,6 @@ impl TargetRef {
         }
     }
 
-    /// A click on the MIDDLE of `block`'s `normal` face — the spot-free form,
-    /// for callers that have only a cell and a face (tests, tooling).
     pub fn face(block: IVec3, normal: IVec3) -> Self {
         Self {
             block,
@@ -113,21 +82,18 @@ impl TargetRef {
         }
     }
 
-    /// The click spot as cell-local fractions of `block`.
     pub fn spot_fraction(&self) -> [f32; 3] {
         std::array::from_fn(|a| f32::from(self.spot[a]) / 255.0)
     }
 }
 
-/// How much a cursor throw takes off the held stack: the whole stack
-/// (primary click outside the panel) or a single item (secondary click).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ThrowAmount {
     All,
     One,
 }
 
-/// One-shot player actions, applied in arrival order on the next server tick.
+/// One-shot actions, applied in arrival order on the next server tick.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PlayerAction {
     /// Secondary press: the interact/eat/use/place ladder. `mob` is the mob
@@ -153,19 +119,8 @@ pub enum PlayerAction {
         target: Option<TargetRef>,
         request_id: Option<ClientRequestId>,
         predicted: bool,
-        /// Whether the client foresaw this click being consumed and presented
-        /// it itself (its P0 hand jab, or the eat the click starts). When the
-        /// server consumes a
-        /// click the client could NOT foresee — a mod-cancelled item use or
-        /// block interact — it echoes `SelfEvents::used_unpredicted` so the
-        /// jab still plays exactly once.
         jabbed: bool,
     },
-    /// Primary press: attack the mob under the crosshair (stable mob id), the
-    /// remote PLAYER under the crosshair (`PlayerId` byte — PvP), or punch the
-    /// air. The client sends AT MOST ONE of `mob`/`player` (targeting picks
-    /// the nearest); the server validates the player target (alive,
-    /// non-spectator, within reach) before any damage.
     AttackClick {
         mob: Option<u64>,
         player: Option<u8>,
@@ -174,48 +129,27 @@ pub enum PlayerAction {
         all: bool,
         request_id: ClientRequestId,
     },
-    /// Throw from the cursor-held GUI stack out into the world (click outside
-    /// the panel while dragging).
     ThrowCursor {
         amount: ThrowAmount,
         request_id: ClientRequestId,
     },
-    /// Client finished mining locally; server validates tool/reach and the
-    /// duration against ITS OWN observed mining window (never client-reported
-    /// time).
     BreakFinished {
         request_id: ClientRequestId,
         pos: IVec3,
-        /// Wire item id of the tool used (`None` = bare hand).
         tool_item_id: Option<u16>,
-        /// Whether the client applied the break optimistically (replica
-        /// clear + local sound/burst). Gates the initiator's echo strip: a
-        /// track-only finish (frozen ledger, replica disagreement) never
-        /// presented, so its `BlockBroken` world event must still be
-        /// delivered. Presentation-only — the validation path ignores it.
         predicted: bool,
     },
     Wake,
     Respawn,
-    /// Request a survival/spectator toggle (Ctrl+Y). Applied at message time
-    /// only when the sending session is an operator; the session's fall
-    /// tracker re-anchors so the switch is never measured as a fall. The
-    /// authoritative mode flows back via `SelfState::mode`.
     ToggleMode,
-    /// Operator-only creative mode and flight controls.
     ToggleCreative,
     ToggleFlight,
     Creative(crate::schematic::CreativeAction),
-    /// Schematic choices, positionings and archive streams (any mode).
     Schematic(crate::schematic::share::SchematicRequest),
-    /// The inventory key (E): the server opens the inventory crafting session
-    /// on the next tick and answers with an `OpenScreen::Gui` ack carrying
-    /// the inventory kind (the client's screen is already up).
     OpenInventory,
     CloseMenu,
 }
 
-/// [`petramond_world::gui_state::PointerButton`] on the wire.
 pub fn button_to_wire(button: petramond_world::gui_state::PointerButton) -> u8 {
     match button {
         petramond_world::gui_state::PointerButton::Primary => 0,

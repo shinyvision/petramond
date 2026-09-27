@@ -3,10 +3,7 @@ use crate::schematic::{SchematicSection, SectionCell};
 use std::io::{BufReader, Read, Write};
 
 pub(super) const PREFIX_SIZE: usize = 36;
-/// Largest decompressed section body. A section is at most 4096 cells; only
-/// thousands of distinct data-heavy palette entries approach this.
 const MAX_RAW_BYTES: u64 = 64 * 1024 * 1024;
-/// Deflate can grow incompressible input slightly.
 const MAX_COMPRESSED_BYTES: u64 = MAX_RAW_BYTES + (MAX_RAW_BYTES >> 10) + 64;
 
 pub(crate) fn encode(section: &SchematicSection) -> Result<Vec<u8>, String> {
@@ -65,8 +62,6 @@ pub(crate) fn decode(input: &mut impl Read, size: [i32; 3]) -> Result<SchematicS
         hash: checksum,
     };
     let mut decoder = flate2::bufread::ZlibDecoder::new(BufReader::new(hash));
-    // The declared length bounds the inflation itself, so a small stream
-    // that inflates without end is cut off rather than followed.
     let mut reader = Reader::new((&mut decoder).take(raw_len));
     let palette = palette::decode(&mut reader, count)?;
     let cells = voxels::decode(&mut reader, count, palette.len(), 4096)?;

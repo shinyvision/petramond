@@ -1,40 +1,38 @@
 //! Render-to-texture inventory ICON ATLAS.
 //!
-//! Every item's slot icon used to be rendered as live 3D geometry every frame (an
-//! isometric cube, a flat billboard, or a baked bbmodel). Instead, each item's icon
-//! is rendered ONCE at renderer init into a 64×64 cell of this atlas texture, and a
-//! slot then draws a single 2D textured quad sampling its cell (see the UI pass in
-//! `renderer::mod`). The icons never change, so baking once and sampling a quad per
-//! slot is far cheaper than re-projecting cubes/models per frame.
+//! Each item icon bakes once at renderer init into a 64x64
+//! cell of this atlas, and a slot just draws a textured quad sampling its cell
+//! (see UI pass in `renderer::mod`). Icons never change, so baking once beats
+//! reprojecting per frame.
 //!
 //! ## Layout
-//! Cells are 64×64 (the max icon size), laid out [`IconLayout::cols`] per row —
-//! as square as the item count asks, so the atlas grows in both dimensions and
-//! reaches the device's texture-size limit only at `(max/64)²` cells (16 384 on
-//! the common 8192 px limit) instead of at a fixed-width column's height. Cell
-//! index `i` (an item's stable `ItemType::id()`) sits at `(i % cols, i / cols)`,
-//! pixel origin `(col*64, row*64)`. A catalogue past even that capacity is
-//! reported once at bake and its surplus icons render blank.
+//! Cells are 64x64, laid out [`IconLayout::cols`] per row, as square as possible
+//! so the atlas grows in both dimensions instead of hitting the texture-size
+//! limit via one tall column. That caps us at `(max/64)^2` cells (16384 at the
+//! common 8192px limit). Cell `i` (an item's `ItemType::id()`) sits at
+//! `(i % cols, i / cols)`, pixel origin `(col*64, row*64)`. A catalogue past
+//! capacity is reported once at bake, surplus icons render blank.
 //!
 //! ## Format
-//! The color texture uses the SURFACE format (an `*Srgb` format). Sampling decodes
-//! sRGB→linear and the UI pass's blend/store re-encodes, exactly cancelling like the
-//! existing gui atlas — so colors do NOT double-encode. A plain `Unorm` format would
-//! darken every icon. A [`wgpu::FilterMode::Nearest`] sampler keeps the pixel art
-//! crisp and, with exact integer cell UVs, prevents bleed between neighbouring cells.
+//! Color texture uses the SURFACE format (sRGB). Sampling decodes sRGB->linear
+//! and the UI pass's blend/store re-encodes, canceling out like the gui atlas,
+//! so colors don't double-encode. A plain `Unorm` format would darken every
+//! icon. Nearest filtering keeps pixel art crisp, and exact integer cell UVs
+//! avoid bleed between cells.
 //!
 //! ## Baking (two passes, one submit)
-//! `model3d_pipe` (cube + sprite icons) has NO depth attachment and CANNOT run in a
-//! pass that has one; the bbmodel `model_icon_pipe` REQUIRES a depth buffer (its MVP
-//! maps z into [0.1, 0.9] and the double-sided model self-sorts by depth). So the
-//! bake uses two passes over the same atlas:
-//! - **Pass A** (cube + sprite): color = atlas, NO depth. Each icon sets its cell
-//!   viewport+scissor and draws with its own MVP slot in a dedicated, item-count-
-//!   sized MVP buffer (the per-frame `model3d_mvp_buf` has too few slots to hold one
-//!   per icon simultaneously, and all queue writes land before the single submit).
-//! - **Pass B** (model): color = atlas (LOAD, preserving Pass A), depth = a full-
-//!   atlas `Depth32Float` cleared to 1.0. The icon MVP is baked into the vertex
-//!   positions by `build_block_model_icon`, so there is no per-icon uniform.
+//! `model3d_pipe` (cube + sprite) has no depth attachment and can't run in a
+//! pass that has one. `model_icon_pipe` (bbmodel) needs depth (its MVP maps z
+//! into [0.1, 0.9] and the double-sided model self-sorts by depth). So baking
+//! uses two passes over the same atlas:
+//! - Pass A (cube + sprite): color = atlas, no depth. Each icon sets its own
+//!   cell viewport+scissor and draws with its own MVP slot in a dedicated,
+//!   item-count-sized MVP buffer (the per-frame `model3d_mvp_buf` has too few
+//!   slots to hold one per icon at once, and all queue writes land before the
+//!   single submit).
+//! - Pass B (model): color = atlas (LOAD, keeps Pass A), depth = full-atlas
+//!   `Depth32Float` cleared to 1.0. Icon MVP is baked into vertex positions by
+//!   `build_block_model_icon`, so no per-icon uniform is needed.
 
 use wgpu::util::DeviceExt;
 
@@ -47,12 +45,9 @@ use super::super::item_model::{build_block_model_icon, ItemVertex};
 use glam::Vec3;
 use petramond_mesh::Vertex;
 
-/// Fewest cells per atlas row (a small catalogue keeps the historical strip).
 const MIN_COLS: u32 = 16;
-/// Side length (px) of one square icon cell — also the max icon size.
 const CELL: u32 = 64;
 
-/// Where the atlas's cells sit: `cols` per row, `rows` rows.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct IconLayout {
     cols: u32,
@@ -60,8 +55,6 @@ struct IconLayout {
 }
 
 impl IconLayout {
-    /// The squarest layout of `cells` cells whose texture stays within
-    /// `max_dim` px on each side (so possibly short of `cells`).
     fn new(cells: u32, max_dim: u32) -> Self {
         let max_cells = (max_dim / CELL).max(1);
         let square = (cells as f64).sqrt().ceil() as u32;
@@ -74,7 +67,6 @@ impl IconLayout {
         self.cols * self.rows
     }
 
-    /// Cell `i`'s `(col, row)`, or `None` past the capacity.
     fn cell(self, i: u32) -> Option<(u32, u32)> {
         (i < self.capacity()).then_some((i % self.cols, i / self.cols))
     }
@@ -83,41 +75,23 @@ impl IconLayout {
         (self.cols * CELL, self.rows * CELL)
     }
 }
-/// Bytes of one model3d MVP slot (a `mat4` padded to the 256-byte dynamic-offset
-/// alignment), matching the per-frame model3d MVP buffer.
 const MVP_SLOT_SIZE: u64 = 256;
 
-/// The baked icon atlas: a color texture (one 64×64 cell per item) sampled by the UI
-/// pass via [`Self::bind`], plus the cell-UV lookup. Built once in the renderer
-/// constructor; immutable thereafter.
 pub(super) struct IconAtlas {
-    /// group(0) bind for the UI pass, built against the gui-atlas layout (`ui_bgl` /
-    /// `atlas_bgl`: `{texture: Float filterable D2, sampler: Filtering}`) so it binds
-    /// to `ui_pipe` exactly where the gui atlas does.
     pub bind: wgpu::BindGroup,
-    /// Atlas dimensions (px), for the UV math.
     layout: IconLayout,
-    /// Item count at bake — a stack's DYED twin cell sits at `item_cells + id`.
     item_cells: u32,
 }
 
 impl IconAtlas {
-    /// The atlas-cell UV rect `[u0, v0, u1, v1]` for `item` (top-left, bottom-right;
-    /// v increases downward, matching the gui atlas). Exact integer cell edges so a
-    /// Nearest-sampled quad never bleeds into a neighbour cell.
     pub fn cell_uv(&self, item: ItemType) -> [f32; 4] {
         self.cell_uv_at(item.id() as u32)
     }
 
-    /// The DYED twin cell for `item`: the same icon baked off the dye-base
-    /// tiles, for stacks carrying a `petramond:tint` (the UI multiplies the
-    /// tint on top).
     pub fn cell_uv_dyed(&self, item: ItemType) -> [f32; 4] {
         self.cell_uv_at(self.item_cells + item.id() as u32)
     }
 
-    /// A cell past the atlas capacity (reported at bake) maps to cell 0 —
-    /// air's, left transparent — so its slot draws blank.
     fn cell_uv_at(&self, i: u32) -> [f32; 4] {
         let (col, row) = self.layout.cell(i).unwrap_or((0, 0));
         let (width, height) = self.layout.size();
@@ -133,8 +107,6 @@ impl IconAtlas {
     }
 }
 
-/// One cube/sprite icon to draw in Pass A: its cell + index sub-range in the shared
-/// model3d buffers + the 256-aligned dynamic offset of its MVP slot.
 struct CubeIcon {
     col: u32,
     row: u32,
@@ -143,8 +115,6 @@ struct CubeIcon {
     mvp_offset: u32,
 }
 
-/// One bbmodel-model icon to draw in Pass B: its cell + index sub-range in the shared
-/// model-icon buffers (the MVP is baked into the vertex positions).
 struct ModelIcon {
     col: u32,
     row: u32,
@@ -152,13 +122,13 @@ struct ModelIcon {
     index_count: u32,
 }
 
-/// Bake every non-`Air` item's icon into a fresh icon atlas and return it. `format`
-/// MUST be the surface format (sRGB). `atlas_bgl` is the shared texture+sampler
-/// layout (`{Float filterable D2, Filtering}`). `block_atlas_bind`/`model_atlas_bind`
-/// are the existing group(1) binds the cube/sprite (block atlas) and model icons
-/// (model atlas) sample. `model3d_pipe` is depthless; `model_icon_pipe` is depth-
-/// tested. `model3d_mvp_bgl` + `uv_rects_buf` build the dedicated, item-count-sized
-/// MVP buffer Pass A needs.
+/// Bakes every non-`Air` item icon into a fresh atlas.
+/// `format` has to be the surface format (sRGB). `atlas_bgl` is the shared texture+sampler
+/// layout (`{Float filterable D2, Filtering}`).
+/// `block_atlas_bind`/`model_atlas_bind` are the group(1) binds we already have for cube/sprite
+/// icons (block atlas) and model icons (model atlas).
+/// `model3d_pipe` has no depth test, `model_icon_pipe` does.
+/// `model3d_mvp_bgl` + `uv_rects_buf` build the item-count-sized MVP buffer Pass A needs.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bake(
     device: &wgpu::Device,
@@ -193,8 +163,6 @@ pub(super) fn bake(
     let texture = create_atlas_texture(device, format, size);
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind = create_atlas_bind(device, atlas_bgl, &view);
-    // Full-atlas depth buffer for Pass B (the model icons' z resolves their draw
-    // order). Pass A is depthless and never touches it.
     let depth_view = create_atlas_depth(device, size);
 
     let geometry = IconGeometry::build(count, layout);
@@ -202,8 +170,6 @@ pub(super) fn bake(
     let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("icon atlas bake"),
     });
-    // Pass A: cube + sprite icons. Color CLEAR (transparent — color's first use),
-    // NO depth. Each icon: cell viewport+scissor, its MVP slot, its index range.
     {
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("icon bake pass A (cube/sprite)"),
@@ -236,8 +202,6 @@ pub(super) fn bake(
             }
         }
     }
-    // Pass B: bbmodel-model icons. Color LOAD (keep Pass A), depth CLEAR(1.0) —
-    // depth's first use; the model_icon MVP expects a 1.0-cleared buffer.
     {
         let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("icon bake pass B (model)"),
@@ -278,8 +242,6 @@ pub(super) fn bake(
     }
     queue.submit(std::iter::once(enc.finish()));
 
-    // Debug aid: PETRAMOND_DUMP_ICON_ATLAS=<path.png> writes the atlas exactly
-    // as baked, for checking icon fidelity without clicking through the game.
     if let Ok(path) = std::env::var("PETRAMOND_DUMP_ICON_ATLAS") {
         dump_atlas(device, queue, &texture, size.0, size.1, format, &path);
     }
@@ -291,9 +253,6 @@ pub(super) fn bake(
     }
 }
 
-/// The atlas colour texture, in the surface format so sampling and store
-/// cancel like the gui atlas (no double gamma). Readable back only when the
-/// debug dump asks for it.
 fn create_atlas_texture(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -322,8 +281,6 @@ fn create_atlas_texture(
     )
 }
 
-/// The UI node's bind over the atlas: a Nearest sampler, so a quad never
-/// blends a neighbour cell in.
 fn create_atlas_bind(
     device: &wgpu::Device,
     atlas_bgl: &wgpu::BindGroupLayout,
@@ -376,28 +333,22 @@ fn create_atlas_depth(device: &wgpu::Device, (width, height): (u32, u32)) -> wgp
     .create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// Every icon's geometry, built CPU-side and grouped by render kind.
 #[derive(Default)]
 struct IconGeometry {
-    /// Cube/sprite icons (block atlas, model3d pipe): one shared vbuf/ibuf with
+    /// Cube/sprite icons (block atlas, model3d pipe) share one vbuf/ibuf with
     /// GLOBAL indices (`push_block_item_cube`/`push_billboard_quad` base each quad
     /// at `verts.len()`), so every icon draws with base_vertex 0 and its own index
-    /// sub-range. Each also gets its own MVP slot (Pass A holds them all live at
-    /// once).
+    /// sub-range. Each also gets its own MVP slot, since Pass A needs them all live
+    /// at once.
     cube_verts: Vec<Vertex>,
     cube_indices: Vec<u32>,
     cube_icons: Vec<CubeIcon>,
-    /// Packed 256-aligned mat4 slots.
     cube_mvps: Vec<u8>,
-    /// Model icons (model atlas, model_icon pipe): one shared vbuf/ibuf, MVP
-    /// baked into the vertices.
     model_verts: Vec<ItemVertex>,
     model_indices: Vec<u32>,
     model_icons: Vec<ModelIcon>,
 }
 
-/// The bake's GPU copies of an [`IconGeometry`], plus the dedicated Pass-A
-/// MVP bind.
 struct IconBuffers {
     cube_vbuf: wgpu::Buffer,
     cube_ibuf: wgpu::Buffer,
@@ -407,10 +358,7 @@ struct IconBuffers {
 }
 
 impl IconGeometry {
-    /// Every non-`Air` item's icon and its dyed twin (at `count + id`), as
-    /// far as `layout` has cells for them.
     fn build(count: u32, layout: IconLayout) -> Self {
-        // The square 64×64 cell every icon's MVP is auto-framed to (undistorted).
         let screen = (CELL, CELL);
         let cell_rect = SlotRect {
             x: 0.0,
@@ -420,7 +368,6 @@ impl IconGeometry {
         };
         let mut geometry = Self::default();
         for &item in ItemType::all() {
-            // Air never appears in a slot; skip its cell entirely (left transparent).
             if item == ItemType::Air {
                 continue;
             }
@@ -452,10 +399,6 @@ impl IconGeometry {
         geometry
     }
 
-    /// A cube or sprite icon in `cell` and its dyed twin in `twin` (when it
-    /// fits the atlas): the same
-    /// geometry pushed twice, the second copy flagged dyed so model3d samples
-    /// the dye-base tiles. Both draw through one MVP slot.
     fn push_cube_icon(
         &mut self,
         cell: (u32, u32),
@@ -485,9 +428,6 @@ impl IconGeometry {
         }
     }
 
-    /// A bbmodel icon in `cell` and its twin in `twin`: a plain copy of the
-    /// same index range (no dye-base half in the model atlas; the UI's tint
-    /// multiply still applies).
     fn push_model_icon(
         &mut self,
         cell: (u32, u32),
@@ -507,7 +447,6 @@ impl IconGeometry {
         }
     }
 
-    /// Upload the geometry and build the dedicated Pass-A MVP buffer + bind.
     fn upload(
         &self,
         device: &wgpu::Device,
@@ -522,10 +461,6 @@ impl IconGeometry {
                 usage,
             })
         };
-        // One 256-aligned MVP slot per cube/sprite icon, all live simultaneously
-        // through the single submit (so Pass A can't reuse one slot across draws).
-        // Always at least one slot so the 64-byte mvp binding is valid even with
-        // no cube/sprite icons at all (the bind is then simply never drawn).
         let empty_slot = [0u8; MVP_SLOT_SIZE as usize];
         let mvps = if self.cube_mvps.is_empty() {
             &empty_slot[..]
@@ -533,16 +468,12 @@ impl IconGeometry {
             &self.cube_mvps[..]
         };
         let mvp_buf = buffer("icon bake mvp", mvps, wgpu::BufferUsages::UNIFORM);
-        // Built against `model3d_mvp_bgl` (binding 0 = dynamic MVP, binding 1 =
-        // the shared uv_rects, binding 2 = the frame uniforms).
         let mvp_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("icon bake mvp bg"),
             layout: model3d_mvp_bgl,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    // A 64-byte mat4 window; the per-draw 256-aligned offset
-                    // selects the slot.
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &mvp_buf,
                         offset: 0,
@@ -553,9 +484,6 @@ impl IconGeometry {
                     binding: 1,
                     resource: uv_rects_buf.as_entire_binding(),
                 },
-                // The frame Uniforms (model3d reads only the sky-scale lane,
-                // fog_color.w). At init its value is the identity 1.0, so baked
-                // icons are full-bright regardless of any later in-game scale.
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: uniform_buf.as_entire_binding(),
@@ -588,8 +516,6 @@ impl IconGeometry {
     }
 }
 
-/// Read the baked atlas back and write it as a PNG (BGRA surfaces swapped to
-/// RGBA). Debug-only path behind `PETRAMOND_DUMP_ICON_ATLAS`.
 fn dump_atlas(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -599,7 +525,7 @@ fn dump_atlas(
     format: wgpu::TextureFormat,
     path: &str,
 ) {
-    let row = w * 4; // whole 64 px cells: always a multiple of 256 bytes
+    let row = w * 4;
     let buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("icon atlas dump"),
         size: (row * h) as u64,
@@ -644,26 +570,18 @@ fn dump_atlas(
     eprintln!("icon atlas dumped to {path}");
 }
 
-/// Restrict a render pass to cell `(col, row)`'s 64×64 pixel rect (viewport maps the
-/// icon's NDC into the cell; scissor clips any fragment outside it, so an icon can
-/// never bleed into a neighbour cell).
 fn set_cell(pass: &mut wgpu::RenderPass, col: u32, row: u32) {
     let (x, y) = ((col * CELL) as f32, (row * CELL) as f32);
     pass.set_viewport(x, y, CELL as f32, CELL as f32, 0.0, 1.0);
     pass.set_scissor_rect(col * CELL, row * CELL, CELL, CELL);
 }
 
-/// One 256-byte dynamic-offset MVP slot: the 64-byte column-major `mat4` followed by
-/// zero padding to the alignment, so successive slots sit at 256-byte offsets.
 fn mvp_slot_bytes(mvp: &glam::Mat4) -> [u8; MVP_SLOT_SIZE as usize] {
     let mut slot = [0u8; MVP_SLOT_SIZE as usize];
     slot[..64].copy_from_slice(bytemuck::cast_slice(&mvp.to_cols_array()));
     slot
 }
 
-/// `bytemuck::cast_slice` of a possibly-empty `Pod` slice. `create_buffer_init`
-/// rejects zero-length contents, so an empty slice yields a 4-byte zero pad (the
-/// buffer is then never bound/drawn — its icon list is empty).
 fn cast_or_empty<T: bytemuck::Pod>(v: &[T]) -> &[u8] {
     if v.is_empty() {
         &[0u8; 4]
@@ -676,9 +594,6 @@ fn cast_or_empty<T: bytemuck::Pod>(v: &[T]) -> &[u8] {
 mod tests {
     use super::*;
 
-    /// Every slot-visible item bakes into its own cell and a dyed twin at
-    /// `count + id`, no two icons share a cell, and a cube twin reuses its
-    /// original's MVP slot and geometry size.
     #[test]
     fn every_item_gets_its_cell_and_a_dyed_twin() {
         let count = ItemType::all().len() as u32;
@@ -717,7 +632,6 @@ mod tests {
         );
     }
 
-    /// A small catalogue keeps the historical 16-wide strip.
     #[test]
     fn a_small_catalogue_keeps_the_strip() {
         let layout = IconLayout::new(2 * 100, 8192);
@@ -726,8 +640,6 @@ mod tests {
         assert_eq!(layout.cell(17), Some((1, 1)));
     }
 
-    /// A large catalogue grows square and stays inside the texture limit —
-    /// the old fixed-width strip passed 8192 px tall at 1024 items.
     #[test]
     fn a_large_catalogue_grows_square_within_the_limit() {
         for items in [1024u32, 3000, 8192] {
@@ -739,8 +651,6 @@ mod tests {
         }
     }
 
-    /// Past the device's capacity, the surplus cells are refused (and draw
-    /// blank) rather than growing an invalid texture.
     #[test]
     fn a_catalogue_past_the_limit_is_capped() {
         let layout = IconLayout::new(100_000, 2048);

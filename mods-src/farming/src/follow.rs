@@ -1,53 +1,26 @@
-//! The wheat lure: sheep follow a player holding wheat.
+//! Wheat lure. Sheep follow whoever's nearest holding wheat.
 //!
-//! A scripted AI node (`farming:follow_wheat`), composed onto the ENGINE
-//! sheep through this pack's `mobs.json` `brain_extensions` row — the engine
-//! knows nothing about wheat. The row DECLARES the facts this node reads
-//! (`"inputs": ["player_held", "player_foothold"]`); undeclared facts never
-//! reach `ctx`. Dispatch is detached and decision-only, so per-sheep state
-//! rides the sheep's own TAG MAP: reads come in as `ctx.tags`, writes ride
-//! `AiNodeDecision::tags` and are applied by the engine after the dispatch.
-//! The state therefore persists, travels, and dies with the sheep — no
-//! guest-side map, no `mob_died` release, no prune backstop.
+//! Scripted AI node, added to engine sheep by this pack's `brain_extensions` row.
+//! The engine has no idea wheat exists. The node only gets the facts the row declares,
+//! and it keeps per-sheep state in the sheep's tags, so that dies with the sheep.
 //!
-//! RULES: a sheep follows while the nearest player holds wheat within
-//! [`FOLLOW_RADIUS`], but STOPS once inside [`STOP_RADIUS`] — it stands at
-//! arm's length instead of crowding the player, resuming only once the
-//! wheat is past [`RESUME_RADIUS`] (a band, never a line — see the
-//! constant). A followed player straying beyond the follow
-//! radius breaks the follow AND makes the sheep refuse to re-follow for
-//! 200–300 ticks; merely lowering the wheat ends the follow quietly with no
-//! refusal. The goal emitted is the engine-computed foothold near the
-//! player (the same cell `chase_player` targets), so the path is reachable
-//! by construction.
+//! Sheep follow inside [`FOLLOW_RADIUS`], stop at [`STOP_RADIUS`] and resume past
+//! [`RESUME_RADIUS`]. Walk off past follow range and a sheep won't follow you again
+//! for 200-300 ticks. Just lowering the wheat ends it with no refusal. The goal is the
+//! foothold `chase_player` uses, so the path's always reachable.
 
 use mod_sdk::*;
 
 use crate::content::Content;
 
-/// Follow engages — and holds — only within this distance (blocks, 3-D).
 const FOLLOW_RADIUS: f32 = 8.0;
-/// Close enough: inside this the sheep stands (goal = its own cell — which
-/// also keeps wander from strolling it away mid-lure) instead of pressing
-/// into the player.
 const STOP_RADIUS: f32 = 3.0;
-/// A standing sheep resumes only once the lure is this far again. Without
-/// the band a player walking away at about sheep pace keeps the sheep ON
-/// the stop line, where it walks a tick and stands a tick forever — the
-/// stuttering, shaking follow.
 const RESUME_RADIUS: f32 = 4.0;
-/// Re-follow refusal after a broken follow: 200 + (0..=100) ticks.
 const SULK_MIN: u64 = 200;
 const SULK_SPAN: u64 = 101;
 
-/// `Bool(true)` while the sheep is actively following the lure.
 const FOLLOWING: &str = "farming:following";
-/// `Bool(true)` while a following sheep stands at the lure (inside
-/// [`STOP_RADIUS`], until the lure is past [`RESUME_RADIUS`] again).
 const NEAR: &str = "farming:follow_near";
-/// `Int` absolute game tick the re-follow refusal holds until (`ctx.tick`
-/// based, so a sulk keeps its real duration even across skipped dispatches —
-/// and now across save/reload too, since tags persist).
 const SULK_UNTIL: &str = "farming:sulk_until";
 
 fn tag_bool(ctx: &AiNodeCtx, key: &str) -> bool {
@@ -77,8 +50,6 @@ fn delete(key: &str) -> MobTagWrite {
     }
 }
 
-/// A decision that only carries tag writes (no goal or other opinion) — or
-/// `None` when there is nothing to write either.
 fn tags_only(tags: Vec<MobTagWrite>) -> Option<AiNodeDecision> {
     if tags.is_empty() {
         return None;
@@ -96,12 +67,8 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         return None;
     }
     let following = tag_bool(ctx, FOLLOWING);
-    // Whatever happens next, an expired sulk tag is stale — retire it with
-    // the transition it accompanies.
     let expired_sulk = sulk.map(|_| delete(SULK_UNTIL));
     if ctx.player_held != Some(content.wheat_item) {
-        // Wheat lowered (or an expired sulk with no lure): the follow ends
-        // quietly and the state retires.
         let mut tags: Vec<MobTagWrite> = expired_sulk.into_iter().collect();
         if following {
             tags.push(delete(FOLLOWING));
@@ -119,8 +86,6 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     let dist2 = dx * dx + dy * dy + dz * dz;
     if dist2 > FOLLOW_RADIUS * FOLLOW_RADIUS {
         if following {
-            // The lure walked off: the follow breaks and the sheep refuses
-            // to re-engage for a deterministic per-break roll.
             let until = now + SULK_MIN + rng_u64("follow_sulk") % SULK_SPAN;
             let mut tags = vec![
                 delete(FOLLOWING),
@@ -131,17 +96,12 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
             }
             return tags_only(tags);
         }
-        // Expired sulk, lure out of range: nothing left to remember.
         return tags_only(expired_sulk.into_iter().collect());
     }
-    // Engagement is the only insert on the held-wheat path.
     let mut tags: Vec<MobTagWrite> = expired_sulk.into_iter().collect();
     if !following {
         tags.push(set(FOLLOWING, MobTagValue::Bool(true)));
     }
-    // Standing at the lure is a BAND, not a line: stop inside STOP_RADIUS,
-    // resume only past RESUME_RADIUS, so a lure drifting along the stop line
-    // never toggles walk/stand every tick.
     let was_near = tag_bool(ctx, NEAR);
     let near = if was_near {
         dist2 <= RESUME_RADIUS * RESUME_RADIUS
@@ -156,16 +116,12 @@ pub fn decide(content: &Content, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         });
     }
     if near {
-        // Close enough — stand attentively at the lure until it moves off.
         return Some(AiNodeDecision {
             goal: Some(ctx.cell),
             tags,
             ..Default::default()
         });
     }
-    // No reachable foothold (airborne player) = no goal this tick; the
-    // follow itself holds, like chase_player's airborne fall-through.
-    // The engagement tag still lands even goalless.
     let goal = ctx.player_foothold;
     if goal.is_none() && tags.is_empty() {
         return None;

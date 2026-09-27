@@ -1,5 +1,3 @@
-//! Directional stairs at the world level: position-aware facing lookup and placement.
-
 #[cfg(test)]
 use crate::world::ServerWorld;
 use crate::world::{World, WorldSide};
@@ -10,8 +8,6 @@ use petramond_world::block_state::StairState;
 use super::cell_change::{CellChange, ChangeKind};
 
 impl<S: WorldSide> World<S> {
-    /// Place a single-cell stair and record its facing before relighting/remeshing.
-    /// Assumes the caller already gated replaceability and entity overlap.
     pub fn place_stair(&mut self, pos: IVec3, block: Block, state: StairState) -> bool {
         if !petramond_world::stair::is_stair(block) || !self.materialize_section_at(pos) {
             return false;

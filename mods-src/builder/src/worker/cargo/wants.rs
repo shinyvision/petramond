@@ -1,6 +1,3 @@
-//! What the work ahead wants carried: the next batch of blocks, a tool per
-//! kind of digging, and what is kept in hand.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::host::prelude::*;
@@ -14,9 +11,6 @@ use crate::worker::tuning::window::LOOKAHEAD;
 use crate::worker::Job;
 use crate::worker::{scaffold, Body, Ctx};
 
-/// Slots kept free for what digging collects: a cellar dug out of a bank
-/// fills the hands many times over, and with room for two kinds of spoil the
-/// golem was back at the chests every hundred blocks.
 pub(super) fn dig_room(job: &Job) -> usize {
     let digs = job.survey.as_ref().map_or(0, |survey| {
         survey
@@ -44,7 +38,6 @@ pub(super) fn tool_kind(ctx: &mut Ctx, item: &str) -> Option<(String, f32)> {
         .map(|t| (t.kind.clone(), t.speed))
 }
 
-/// The carried slot holding the fastest tool for `block`; `None` = hands.
 pub fn tool_slot(ctx: &mut Ctx, slots: &[Option<ItemStackData>], block: BlockId) -> Option<u32> {
     let kind = ctx.caches.block(block)?.preferred_tool.clone()?;
     let mut best: Option<(u32, f32)> = None;
@@ -59,9 +52,6 @@ pub fn tool_slot(ctx: &mut Ctx, slots: &[Option<ItemStackData>], block: BlockId)
     best.map(|(i, _)| i)
 }
 
-/// The tool kinds the golem's own digging wants besides the site's clearance:
-/// built blocks taken back down to open a way in, and overgrowth cut back. A
-/// block any hand breaks at once wants none.
 fn dig_kinds(ctx: &mut Ctx, job: &Job) -> BTreeSet<String> {
     let mut cells: Vec<[i32; 3]> = job.crew.access.trims.iter().copied().collect();
     if let Some(survey) = job.survey.as_ref() {
@@ -89,9 +79,6 @@ fn dig_kinds(ctx: &mut Ctx, job: &Job) -> BTreeSet<String> {
     kinds
 }
 
-/// A tool kind per kind of digging ahead that the golem does not carry, and
-/// the tools it does. Asked by every plan, so it stays a walk over the survey
-/// with nothing built per unit.
 fn wanted_tools(
     ctx: &mut Ctx,
     job: &Job,
@@ -113,7 +100,6 @@ fn wanted_tools(
                 ..
             } = known
             {
-                // A bank is one kind of earth a thousand times over.
                 if asked.replace(*block) == Some(*block) {
                     continue;
                 }
@@ -129,7 +115,6 @@ fn wanted_tools(
             }
         }
     }
-    // Scaffolding rides along with the tool that takes it back down.
     kinds.extend(scaffold::tools(ctx, slots, scaffold));
     let mut tools = 0;
     for stack in slots.iter().flatten() {
@@ -141,8 +126,6 @@ fn wanted_tools(
     (kinds, tools)
 }
 
-/// What the work ahead wants carried beyond what is carried: items for the
-/// next batch of placements, and a tool kind per kind of digging.
 pub(super) fn wanted(
     ctx: &mut Ctx,
     job: &Job,
@@ -150,22 +133,18 @@ pub(super) fn wanted(
     have: Option<&BTreeMap<ItemKey, u32>>,
 ) -> (BTreeMap<ItemKey, u32>, BTreeSet<String>) {
     let mut need: BTreeMap<ItemKey, u32> = BTreeMap::new();
-    // Scaffolding rides along: a slot of whatever the chests can best spare.
     let scaffold = have.and_then(|have| scaffold::to_fetch(ctx, job, slots, have));
     let (kinds, tools) = wanted_tools(ctx, job, slots, scaffold.as_ref().map(|(k, _)| k));
     let Some(survey) = job.survey.as_ref() else {
         return (need, kinds);
     };
     let carried = totals(slots);
-    // What the batch has to spend: the hands and the chests together, spent
-    // down as work is taken into it.
     let mut left = carried.clone();
     if let Some(have) = have {
         for (key, n) in have {
             *left.entry(key.clone()).or_default() += n;
         }
     }
-    // The batch fills what the tools, carried and to fetch, and digging leave.
     let room = slots
         .len()
         .saturating_sub(tools + kinds.len() + dig_room(job) + 1)
@@ -175,8 +154,6 @@ pub(super) fn wanted(
         if seen == LOOKAHEAD {
             break;
         }
-        // Buried work is built the moment it is dug out, so its blocks ride
-        // along now.
         let buried = match known {
             Known::Clear {
                 holds_items: false, ..
@@ -191,10 +168,6 @@ pub(super) fn wanted(
         match (missing, known) {
             (Some(missing), _) => {
                 seen += 1;
-                // What neither the hands nor the chests hold cannot be built
-                // now: the batch passes over it. Counted DOWN as the batch
-                // takes it, never per block against the whole pile, or five
-                // planks in hand answer for eighty-six blocks.
                 if have.is_some() {
                     let short = missing.iter().any(|stack| {
                         left.get(&key_of(stack)).copied().unwrap_or(0) < u32::from(stack.count)
@@ -232,9 +205,6 @@ pub(super) fn wanted(
             _ => {}
         }
     }
-    // Top the load up from the bill the job still owes, while slots are left:
-    // the survey only knows what it sees, so a golem cutting into a bank would
-    // otherwise go back for each newly uncovered block.
     if let (Some(summary), Some(have)) = (job.summary(), have) {
         let slots_used = |need: &BTreeMap<ItemKey, u32>, ctx: &mut Ctx| -> usize {
             need.iter()
@@ -271,8 +241,6 @@ pub(super) fn wanted(
     (need, kinds)
 }
 
-/// The tool kinds the digging ahead wants, the golem lacks, and the chests
-/// hold, fetched before the digging starts rather than on the next block run.
 pub fn tools_waiting(ctx: &mut Ctx, job: &Job, body: &Body, project: &Project) -> BTreeSet<String> {
     let stock = ctx.supplies.stock(project.table);
     let scaffold = stock
@@ -294,8 +262,6 @@ pub fn tools_waiting(ctx: &mut Ctx, job: &Job, body: &Body, project: &Project) -
     waiting
 }
 
-/// Whether a carried stack is still wanted: needed by the work ahead, or a
-/// tool, kept until the job is done.
 pub(super) fn keeps(
     ctx: &mut Ctx,
     job: &Job,
@@ -305,7 +271,6 @@ pub(super) fn keeps(
     let Some(survey) = job.survey.as_ref() else {
         return true;
     };
-    // Its plans: never spoil, never handed in.
     if stack.item == BLUEPRINT {
         return true;
     }
@@ -325,8 +290,6 @@ pub(super) fn keeps(
         .any(|(i, k)| wants(job, i, k).iter().any(|m| key_of(m) == key))
 }
 
-/// What unit `i` still wants laid: what is missing of it, or, while its cell
-/// is still to be dug out, what it costs.
 fn wants<'a>(job: &'a Job, i: usize, known: &'a Known) -> &'a [ItemStackData] {
     match known {
         Known::Place(missing) => missing,
@@ -337,7 +300,6 @@ fn wants<'a>(job: &'a Job, i: usize, known: &'a Known) -> &'a [ItemStackData] {
     }
 }
 
-/// Whether digging that collects what it breaks is still to come.
 pub(super) fn digs_ahead(job: &Job) -> bool {
     !job.crew.access.reopen.is_empty()
         || job.survey.as_ref().is_some_and(|survey| {
@@ -358,8 +320,6 @@ pub(super) fn digs_ahead(job: &Job) -> bool {
         })
 }
 
-/// How far ahead the work first needs `stack`: the first open unit wanting
-/// it, or never.
 pub(super) fn needed_at(job: &Job, stack: &ItemStackData) -> usize {
     let key = key_of(stack);
     job.survey

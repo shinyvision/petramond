@@ -1,7 +1,3 @@
-//! Entity-specific exposure sinks; the component owns every duration and clock.
-//! Exposure damage lands on row-authored clocks, so it is exempt from the
-//! victim's immunity window and never knocks back.
-
 use super::game::ServerGame;
 use crate::events::{tick::TickEvents, DamageSource};
 use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobExposureDamage};
@@ -59,8 +55,6 @@ fn source(hit: ExposureDamage) -> DamageSource {
     }
 }
 
-/// A species' damage feedback without the components clocked damage rules out.
-/// The match is exhaustive so a new component has to declare whether it applies.
 fn clocked_feedback(species: &MobDamageFeedback) -> MobDamageFeedback {
     let mut feedback = species.clone();
     feedback.components.retain(|c| match c {

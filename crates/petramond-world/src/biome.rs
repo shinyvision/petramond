@@ -1,19 +1,8 @@
-//! Biome identity (a pack-extensible registry id) and per-biome metadata
-//! (names, fog/grass/foliage/water colours, ambience, worldgen rows).
-
 mod data;
 mod definition;
 
 pub(crate) use data::CATALOG;
 
-/// A surface biome: an opaque one-byte registry id into the layered
-/// `biomes.json` catalog, like blocks and underground biomes.
-///
-/// The engine biomes own ids `1..=ENGINE_BIOME_COUNT` in a frozen order (the
-/// associated consts below; append-only, never reorder — ids are serialized
-/// into chunk bytes, one per column). A mod pack ADDS a biome by stating a
-/// row under its own namespaced key (`mod_id:name`); it registers the next id
-/// after the engine range, in pack load order. Id 0 is unassigned.
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Biome(u8);
@@ -48,25 +37,15 @@ impl Biome {
     pub const SNOWY_PLAINS: Biome = Biome(27);
 }
 
-/// How many biomes the engine itself defines (ids `1..=ENGINE_BIOME_COUNT`).
 pub const ENGINE_BIOME_COUNT: usize = data::ENGINE_BIOME_COUNT;
 
-/// How many biomes are registered: the engine range plus every pack biome.
-/// Registered ids are exactly `1..=count()`.
 #[inline]
 pub fn count() -> usize {
     data::count()
 }
 
-/// Radius, in blocks, used when blending the above-water sky/fog colour across
-/// neighbouring biome columns.
 pub const SKY_FOG_BLEND_SPAN_BLOCKS: i32 = 10;
 
-/// Blend above-water sky/fog colour from nearby biome columns.
-///
-/// The sample kernel fades smoothly to zero at `SKY_FOG_BLEND_SPAN_BLOCKS`, so a
-/// single border crossfades gradually and multi-biome intersections naturally
-/// become a weighted mix of every biome near the camera.
 pub fn blended_fog_color(
     x: f64,
     z: f64,
@@ -112,24 +91,16 @@ pub fn blended_fog_color(
 }
 
 impl Biome {
-    /// The ambient particle bundles this biome drives, as `(bundle key,
-    /// density 0..=1)` — the row's `ambient` map. The per-id table over it is
-    /// [`crate::particle_emitters::biome_intensity`].
     #[inline]
     pub fn ambient(self) -> &'static [(&'static str, f32)] {
         self.def().ambient
     }
 
-    /// The row's `trees` placement profile as JSON text, `None` when the row
-    /// states none. Worldgen owns and parses the vocabulary.
     #[inline]
     pub fn trees(self) -> Option<&'static str> {
         self.def().trees
     }
 
-    /// The row's `generation` rules as JSON text (surface stack, ground
-    /// cover, snow, behaviour flags), `None` when the row states none.
-    /// Worldgen owns and parses the vocabulary.
     #[inline]
     pub fn generation(self) -> Option<&'static str> {
         self.def().generation
@@ -140,22 +111,16 @@ impl Biome {
         self.def().fog_color
     }
 
-    /// The stable name: the bare snake_case half for an engine biome
-    /// (`"forest"`), the full namespaced key for a pack biome
-    /// (`"mymod:crystal_fields"`).
     #[inline]
     pub fn name(self) -> &'static str {
         self.def().name
     }
 
-    /// The registry key (`"petramond:forest"`, `"mymod:crystal_fields"`).
     #[inline]
     pub fn key(self) -> &'static str {
         self.def().key
     }
 
-    /// The biome registered under `id`; an unregistered id (0, or past the
-    /// loaded catalog) reads as [`Biome::OCEAN`].
     #[inline]
     pub fn from_id(id: u8) -> Biome {
         if (1..=count()).contains(&usize::from(id)) {
@@ -165,14 +130,10 @@ impl Biome {
         }
     }
 
-    /// Resolve a biome for data-driven catalogs (mob spawn rules, tree
-    /// profiles, the climate table): a registry key (`"petramond:forest"`,
-    /// `"mymod:crystal_fields"`) or an engine biome's bare name (`"forest"`).
     pub fn from_name(name: &str) -> Option<Biome> {
         data::id_of(name).map(Biome)
     }
 
-    /// Every registered biome, in id order.
     pub fn all() -> impl Iterator<Item = Biome> {
         (1..=count()).map(|id| Biome(id as u8))
     }
@@ -182,22 +143,16 @@ impl Biome {
         self.0
     }
 
-    /// Grass-block top tint colour (linear sRGB 0..1) for biome. Every engine
-    /// biome except Desert and Savanna uses a green-dominant, saturated tint,
-    /// with brightness varied by biome.
     #[inline]
     pub fn grass_color(self) -> [f32; 3] {
         self.def().grass_color
     }
 
-    /// Foliage tint (leaves) for biome.
     #[inline]
     pub fn foliage_color(self) -> [f32; 3] {
         self.def().foliage_color
     }
 
-    /// Water tint for biome. Ocean is a normal blue, DeepOcean a much darker blue,
-    /// Swamp/Wetland a murky green-blue.
     #[inline]
     pub fn water_color(self) -> [f32; 3] {
         self.def().water_color

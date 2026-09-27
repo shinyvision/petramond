@@ -1,11 +1,5 @@
-//! The seam's guard: no production code outside this module branches on a
-//! [`ShapeFamily`](super::ShapeFamily) variant. A consumer that needs to know
-//! something about a shape asks a facet (or a field the interner precomputed
-//! from one), so adding a family is one file under `families/` plus data.
-
 use std::path::{Path, PathBuf};
 
-/// This module's own directory and file, the only places a variant is named.
 const ALLOWED: [&str; 2] = [
     "crates/petramond-world/src/block/shape_kind/",
     "crates/petramond-world/src/block/shape_kind.rs",
@@ -20,7 +14,6 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            // Test directories are test code; `target` is build output.
             if name != "target" && name != "tests" {
                 rust_files(&path, out);
             }
@@ -30,7 +23,6 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The production part of a source file: everything before its test module.
 fn production(text: &str) -> &str {
     ["#[cfg(test)]\nmod ", "#[cfg(test)]\r\nmod "]
         .into_iter()

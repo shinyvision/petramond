@@ -1,9 +1,3 @@
-//! A blob crossing the wire: bytes named by their BLAKE3 digest, streamed in
-//! bounded packets under a credit window, so a blob's size never becomes a
-//! frame-size limit or an unbounded queue. The receiver checks the digest
-//! before anything uses the bytes. What a blob IS belongs to whoever asked
-//! for it; the stream knows only its digest and its length.
-
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -38,7 +32,6 @@ impl BlobPacket {
     }
 }
 
-/// One outgoing stream.
 pub struct BlobSender {
     digest: Digest,
     bytes: Arc<[u8]>,
@@ -62,13 +55,10 @@ impl BlobSender {
         self.digest
     }
 
-    /// Whether every byte has been sent.
     pub fn finished(&self) -> bool {
         self.begun && self.offset >= self.bytes.len()
     }
 
-    /// Return credit the receiver granted; `false` for a grant the stream
-    /// never spent.
     pub fn credit(&mut self, count: usize) -> bool {
         if count > WINDOW || self.credit + count > WINDOW {
             return false;
@@ -77,7 +67,6 @@ impl BlobSender {
         true
     }
 
-    /// The packets the window allows now.
     pub fn packets(&mut self) -> Vec<BlobPacket> {
         let mut out = Vec::new();
         if !self.begun {
@@ -100,8 +89,6 @@ impl BlobSender {
     }
 }
 
-/// One incoming stream: bytes accumulate up to the length its Begin
-/// declared, each packet is credited back, and completion checks the digest.
 pub struct BlobReceiver {
     digest: Digest,
     len: usize,
@@ -110,9 +97,6 @@ pub struct BlobReceiver {
 }
 
 impl BlobReceiver {
-    /// Accept a Begin for `expected` of at most `max_len` bytes; anything
-    /// else is refused. The peer chooses the length and the stream is
-    /// buffered up to it, so the bound is the receiver's to set.
     pub fn begin(packet: &BlobPacket, expected: Digest, max_len: u64) -> Result<Self, String> {
         match *packet {
             BlobPacket::Begin { digest, len } if digest == expected && len > 0 => {
@@ -134,7 +118,6 @@ impl BlobReceiver {
         self.digest
     }
 
-    /// Take one Data packet.
     pub fn receive(&mut self, packet: BlobPacket) -> Result<(), String> {
         let BlobPacket::Data { digest, bytes } = packet else {
             return Err("Unexpected packet".into());
@@ -152,7 +135,6 @@ impl BlobReceiver {
         Ok(())
     }
 
-    /// The credit to send back for packets taken since the last call.
     pub fn take_credit(&mut self) -> Option<BlobPacket> {
         (self.owed_credit > 0).then(|| BlobPacket::Credit {
             digest: self.digest,
@@ -160,7 +142,6 @@ impl BlobReceiver {
         })
     }
 
-    /// The complete, digest-checked bytes once every byte arrived.
     pub fn finish(&mut self) -> Option<Result<Vec<u8>, String>> {
         if self.bytes.len() < self.len {
             return None;

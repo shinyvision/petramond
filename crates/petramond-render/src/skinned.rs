@@ -28,64 +28,39 @@ use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::{euler_quat, face_corners, Model};
 
-/// The part group a shearable coat's cubes belong to: a shorn body hides it.
 pub(crate) const PART_COAT: u32 = 1;
 
-/// One bind-space vertex of a [`SkinMesh`]. `#[repr(C)]` + `bytemuck` so it
-/// uploads as is; the layout (pos f32x3 @0, uv f32x2 @12, shade f32 @20,
-/// bone u32 @24, parts u32 @28 = 32 bytes) is declared by
-/// `pipeline::skinned` and mirrored by `skinned.wgsl`'s `SkinIn`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SkinVertex {
-    /// Model-space position under the cube's static tilt.
     pub pos: [f32; 3],
     pub uv: [f32; 2],
-    /// Directional face shade × the rest-pose self-AO at this corner.
     pub shade: f32,
-    /// The bone palette slot this vertex rides, relative to the instance's
-    /// `bone_base`.
     pub bone: u32,
-    /// The part groups this vertex belongs to (a bitmask; see [`PART_COAT`]).
     pub parts: u32,
 }
 
-/// One body drawn this frame. `#[repr(C)]` + `bytemuck`; stepped per instance
-/// (tint f32x3 @0, self_lit f32 @12, light f32x4 @16, bone_base u32 @32,
-/// hidden u32 @36, 8 bytes padding = 48 bytes), mirrored by `skinned.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct SkinInstance {
-    /// The hurt flash × emitter tint, before lighting.
     pub tint: [f32; 3],
-    /// How much of its brightness the body provides itself (`0..=1`).
     pub self_lit: f32,
-    /// The sampled light as fractions of full: `(sky, block r, g, b)`.
     pub light: [f32; 4],
-    /// This instance's first entry in the frame's bone palette.
     pub bone_base: u32,
-    /// Part groups this body hides (a vertex in any of them collapses).
     pub hidden: u32,
     pub _pad: [u32; 2],
 }
 
-/// What a body looks like this frame, apart from its pose.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SkinLook {
-    /// Hurt flash intensity, `0..=1`.
     pub hurt: f32,
     pub emitter_tint: [f32; 3],
     pub emitter_self_lit: f32,
     pub light: DynLight,
-    /// Part groups to hide.
     pub hidden: u32,
 }
 
 impl SkinLook {
-    /// The instance row for this look, its palette starting at `bone_base`.
-    /// The light rides as the same fractions the CPU mirror reads
-    /// ([`light_rgb`](super::lighting::light_rgb)), so the shader's curve sees
-    /// the values the old per-vertex bake saw.
     fn instance(self, bone_base: u32) -> SkinInstance {
         let block = self.light.block.fractions();
         SkinInstance {
@@ -105,14 +80,10 @@ impl SkinLook {
     }
 }
 
-/// Palette entries one instance of `model` needs: one per bone plus a final
-/// slot for cubes that name no bone (they ride the placement alone, as the
-/// CPU bake's `IDENTITY` fallback did).
 pub(crate) fn bone_slots(model: &Model) -> u32 {
     model.bones.len() as u32 + 1
 }
 
-/// A model's static bind-space geometry, built once and uploaded once.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct SkinMesh {
     pub verts: Vec<SkinVertex>,
@@ -173,18 +144,13 @@ impl SkinMesh {
         mesh
     }
 
-    /// Index count one instance draws.
     pub(crate) fn index_count(&self) -> u32 {
         self.indices.len() as u32
     }
 }
 
-/// One frame's skinned bodies across every model: the bone palette and the
-/// instance rows, each model's instances contiguous so it draws as one
-/// instanced range.
 #[derive(Default)]
 pub(crate) struct SkinBatch {
-    /// Column-major `G · pose[bone]` per palette slot, back to back.
     pub palette: Vec<[[f32; 4]; 4]>,
     pub instances: Vec<SkinInstance>,
 }
@@ -195,16 +161,10 @@ impl SkinBatch {
         self.instances.clear();
     }
 
-    /// The index the next pushed instance gets — a model's draw range starts
-    /// here.
     pub(crate) fn next_instance(&self) -> u32 {
         self.instances.len() as u32
     }
 
-    /// Append one posed body: `slots` palette entries (its model's
-    /// [`bone_slots`]) of `global · pose[slot]`, a slot the pose
-    /// does not reach riding `global` alone, plus its instance row. Returns
-    /// the instance's index.
     pub(crate) fn push(&mut self, pose: &[Mat4], global: Mat4, slots: u32, look: SkinLook) -> u32 {
         let bone_base = self.palette.len() as u32;
         self.palette.extend((0..slots as usize).map(|slot| {
@@ -217,9 +177,6 @@ impl SkinBatch {
     }
 }
 
-/// The render-local positions `skinned.wgsl` gives `mesh`'s vertices for
-/// instance `at` of `batch`, vertices of hidden parts dropped: the CPU
-/// spelling of the skinning, which tests read poses through.
 #[cfg(test)]
 pub(crate) fn skin_positions(mesh: &SkinMesh, batch: &SkinBatch, at: u32) -> Vec<Vec3> {
     let inst = batch.instances[at as usize];

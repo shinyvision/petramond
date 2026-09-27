@@ -118,10 +118,6 @@ fn supersampling_integrates_subpixel_stripes_without_blurring_aligned_edges() {
     );
 }
 
-/// Largest per-channel difference between two RGBA8 images. The reductions
-/// are compared to within one 8-bit step: bilinear taps landing on texel
-/// boundaries round differently across drivers, and a one-step wobble is not
-/// the aliasing or blur this test guards against.
 fn max_channel_diff(a: &[u8], b: &[u8]) -> u8 {
     assert_eq!(a.len(), b.len());
     a.iter()

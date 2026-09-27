@@ -1,12 +1,3 @@
-//! The `trees` field of a biome row (`assets/biomes.json`), parsed into a
-//! [`TreeProfile`].
-//!
-//! The biome layer carries the object verbatim (`Biome::trees`); this module
-//! owns its vocabulary. A pack retunes a biome's woodland — density, spacing,
-//! species mix, grove territories — by overriding that biome's row; species
-//! are named `features.json` rows, so a pack-added tree species is placed by
-//! naming it here. A row without `trees` roots nothing.
-
 use petramond_world::biome::Biome;
 use serde::Deserialize;
 
@@ -16,7 +7,6 @@ use crate::biome::trees::{
 };
 use crate::data::features;
 
-/// The `trees` object as written on a biome row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawProfile {
@@ -67,8 +57,6 @@ struct RawRule {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum RawTerritory {
     Grove {
-        /// Name of the shared lattice field; rows naming the same field
-        /// continue one pattern across their biomes' border.
         field: String,
         period: i32,
         #[serde(default = "default_detail_weight")]
@@ -94,8 +82,6 @@ fn species_table(rows: &[RawSpecies]) -> Result<SpeciesTable, String> {
     SpeciesTable::new(&weighted)
 }
 
-/// A biome named by its registry key (`petramond:forest`, or a pack's
-/// `mod_id:name`); catalogs never use bare names.
 fn biome_named(key: &str) -> Result<Biome, String> {
     Some(key)
         .filter(|key| petramond_world::registry::is_namespaced(key))
@@ -160,7 +146,6 @@ impl RawProfile {
     }
 }
 
-/// Parse one biome row's `trees` text; `None` is the treeless default.
 fn parse(trees: Option<&str>) -> Result<TreeProfile, String> {
     match trees {
         None => Ok(TreeProfile::default()),
@@ -171,9 +156,6 @@ fn parse(trees: Option<&str>) -> Result<TreeProfile, String> {
     }
 }
 
-/// Every biome's tree profile, in id order — a registry stage after the
-/// biome and feature catalogs (see [`super::content_stages`]); every bad
-/// biome row is reported.
 pub(crate) static TABLE: petramond_world::content::Slot<Box<[TreeProfile]>> =
     petramond_world::content::Slot::new(
         "biome trees",
@@ -191,7 +173,6 @@ fn table() -> &'static [TreeProfile] {
     TABLE.current()
 }
 
-/// The loaded tree profile of `biome`.
 #[inline]
 pub fn profile(biome: Biome) -> &'static TreeProfile {
     &table()[usize::from(biome.id()) - 1]

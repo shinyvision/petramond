@@ -1,7 +1,3 @@
-//! Instance animation: the engine expression clock (walk/idle/rest selection
-//! and head-look easing) plus the mod-controlled named animation layers
-//! (`MobAnimSet` / `MobAnimRate` / `MobAnimSeek`).
-
 use mod_api::{MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE};
 use petramond_world::bbmodel::clips;
 
@@ -10,17 +6,10 @@ use super::instance::Instance;
 use super::kinematics::turn_toward;
 use super::MobDef;
 
-/// The fastest the head swings toward its look target (rad/s), and the time
-/// its motion is smoothed over: it gathers speed, pans, and settles onto the
-/// target instead of starting and stopping dead.
 const HEAD_TURN_RATE: f32 = 9.0;
 const HEAD_SMOOTH_TIME: f32 = 0.16;
-/// Close and slow enough to rest exactly on the target.
 const HEAD_SETTLED: f32 = 1.0e-3;
 
-/// One critically damped step of `cur` (moving at `vel`) toward `cur + to`,
-/// never faster than `max_speed`: the eased value. `to` is the signed way
-/// left, so an angle passes its wrapped difference.
 fn smooth_step(to: f32, vel: &mut f32, smooth_time: f32, max_speed: f32, dt: f32) -> f32 {
     let omega = 2.0 / smooth_time;
     let x = omega * dt;
@@ -30,7 +19,6 @@ fn smooth_step(to: f32, vel: &mut f32, smooth_time: f32, max_speed: f32, dt: f32
     let temp = (*vel + omega * change) * dt;
     *vel = (*vel - omega * temp) * decay;
     let moved = (change + temp) * decay - change;
-    // Never past the target: a spring that overshoots reads as a wobble.
     if moved.abs() >= to.abs() || (to.abs() < HEAD_SETTLED && vel.abs() < HEAD_SETTLED * 10.0) {
         *vel = 0.0;
         return to;
@@ -38,9 +26,6 @@ fn smooth_step(to: f32, vel: &mut f32, smooth_time: f32, max_speed: f32, dt: f32
     moved
 }
 
-/// The expressive channels of a settled decision — what
-/// [`apply_expression`](Instance::apply_expression) plays: an `idle_*` clip,
-/// a named clip to start, and where the head looks.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Expression {
     pub idle_anim: Option<u8>,
@@ -58,7 +43,6 @@ impl From<BehaviorOutput> for Expression {
     }
 }
 
-/// Which animation a mob is playing — drives `anim_time` advance rate + reset.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AnimKind {
     Walk,
@@ -66,12 +50,6 @@ pub(super) enum AnimKind {
     Rest,
 }
 
-/// One active named model animation: its self-clocked playback state. The
-/// phase is SECONDS into the authored clip (the renderer wraps looping clips
-/// by their length) and is what replicates; the rate and seek target are
-/// server-side control state only. While `seek` is set, the phase approaches
-/// it directly at `|rate|`/s and lands EXACTLY on it (then holds at rate 0)
-/// — how an oar settles back onto its authored pose.
 #[derive(Clone, Debug)]
 pub struct AnimLayer {
     pub name: String,
@@ -80,10 +58,6 @@ pub struct AnimLayer {
     pub seek: Option<f32>,
 }
 
-/// Advance one named animation without ever publishing non-finite or
-/// unbounded control state. Host guards make this defensive in normal play;
-/// keeping the invariant here also contains corrupted/internally-produced
-/// state before it reaches replication.
 fn step_anim_layer(layer: &mut AnimLayer, dt: f32) {
     if !layer.phase.is_finite() {
         layer.phase = 0.0;
@@ -139,19 +113,11 @@ fn step_anim_layer(layer: &mut AnimLayer, dt: f32) {
 }
 
 impl Instance {
-    /// The active named model animations, sorted by name.
     #[inline]
     pub fn active_anims(&self) -> &[AnimLayer] {
         &self.presentation.active_anims
     }
 
-    /// Toggle one named model animation — the animation sibling of
-    /// [`set_emitter_active`](Self::set_emitter_active). Activation starts
-    /// the layer at phase 0, rate 1 (see [`set_anim_rate`](Self::set_anim_rate)).
-    /// Returns `false` only when an activation would exceed
-    /// [`super::MAX_ACTIVE_MOB_ANIMS`]. The name is NOT validated against the
-    /// model (the sim does not load models); the renderer skips names the
-    /// model lacks, like a disabled pack's content.
     pub(super) fn set_anim_active(&mut self, name: &str, active: bool) -> bool {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return false;
@@ -180,9 +146,6 @@ impl Instance {
         }
     }
 
-    /// Set an active layer's playback rate (phase advance per second): `0`
-    /// freezes it mid-stroke, negative reverses. Cancels an in-flight seek.
-    /// `false` when the anim isn't active.
     pub(super) fn set_anim_rate(&mut self, name: &str, rate: f32) -> bool {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES
             || !rate.is_finite()
@@ -198,8 +161,6 @@ impl Instance {
         true
     }
 
-    /// Seek an active layer's phase to the absolute `target` at `|rate|`/s
-    /// (see [`AnimLayer`]). `false` when the anim isn't active.
     pub(super) fn set_anim_seek(&mut self, name: &str, target: f32, rate: f32) -> bool {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES
             || !target.is_finite()
@@ -217,7 +178,6 @@ impl Instance {
         true
     }
 
-    /// Authoritative state of one active named animation.
     pub(super) fn anim_state(&self, name: &str) -> Option<&AnimLayer> {
         if name.len() > MAX_MOB_ANIM_NAME_BYTES {
             return None;
@@ -227,24 +187,17 @@ impl Instance {
             .map(|at| &self.presentation.active_anims[at])
     }
 
-    /// Position of one named layer in the sorted `active_anims` (`Ok` =
-    /// active at that index, `Err` = the insertion point).
     fn anim_search(&self, name: &str) -> Result<usize, usize> {
         self.presentation
             .active_anims
             .binary_search_by(|a| a.name.as_str().cmp(name))
     }
 
-    /// The active layer named `name`, if any.
     fn active_anim_mut(&mut self, name: &str) -> Option<&mut AnimLayer> {
         let at = self.anim_search(name).ok()?;
         Some(&mut self.presentation.active_anims[at])
     }
 
-    /// Apply the tick's expressive decision: choose + advance the active animation
-    /// (walk while moving, an `idle_*` if one was requested, else the neutral rest
-    /// pose), and ease the head toward the head-look target (recentring when there's
-    /// none — e.g. while walking).
     pub(super) fn apply_expression(
         &mut self,
         dt: f32,
@@ -252,7 +205,6 @@ impl Instance {
         named_anims: &[super::model_meta::NamedAnimMeta],
         decision: &Expression,
     ) {
-        // Model-owned ambient details keep their own clock through gait changes.
         if let Ok(at) = named_anims.binary_search_by(|m| m.name.as_str().cmp(clips::AMBIENT)) {
             let meta = &named_anims[at];
             if meta.looping
@@ -260,22 +212,19 @@ impl Instance {
                 && self.anim_state(clips::AMBIENT).is_none()
                 && self.set_anim_active(clips::AMBIENT, true)
             {
-                // Stagger the loop across a herd by the stable id, so
-                // blinks and ear flicks never fire in lockstep.
                 let phase = phase_stagger(self.id) * meta.length;
                 if let Some(layer) = self.active_anim_mut(clips::AMBIENT) {
                     layer.phase = phase;
                 }
             }
         }
-        // An idle animation only plays while the mob isn't walking.
         self.idle_anim = if self.moving {
             None
         } else {
             decision.idle_anim
         };
 
-        // Pick the active animation; reset its phase whenever it changes.
+        // Pick the active animation and reset its phase whenever it changes.
         let kind = if self.moving {
             AnimKind::Walk
         } else if let Some(i) = self.idle_anim {
@@ -288,16 +237,12 @@ impl Instance {
             self.anim_time = 0.0;
             self.interp.anim_time = 0.0;
         }
-        // An upward launch from a walking gait re-phases the walk clip
-        // FORWARD to the next cycle boundary. A repeating launch's period
-        // (a mod-authored hop) can sit near the clip's own length, and a
-        // free-running clock then drifts into anti-phase and stays there for
-        // whole walk legs (legs tucking at takeoff, kicking at landing).
-        // Forward only, never a reset to 0: the replica interpolates raw
-        // prev→curr snapshots, so a backward phase jump sweeps the clip in
-        // reverse on clients for a frame at every launch. A walk leg's first
-        // launch starts at phase 0 already (the kind change above just
-        // reset the clock).
+        // An upward launch from walking re-phases the walk clip FORWARD to the next cycle
+        // boundary. A repeating launch period near the clip length drifts a free-running clock
+        // into anti-phase, tucking legs at takeoff and kicking at landing.
+        // Never reset to 0: the replica interpolates raw prev→curr snapshots, so a backward jump
+        // would sweep the clip in reverse for a frame on clients.
+        // A walk's first launch already starts at phase 0 from the kind-change reset above.
         if std::mem::take(&mut self.motion.walk_launch) && kind == AnimKind::Walk {
             let walk_len = named_anims
                 .binary_search_by(|m| m.name.as_str().cmp(clips::WALK))
@@ -311,11 +256,6 @@ impl Instance {
                 }
             }
         }
-        // Advance the active animation: walk at the species' rate, idle at its
-        // natural rate, rest frozen (the renderer shows the static rest pose).
-        // Named mod layers do NOT ride this clock — each advances its own
-        // phase at its own mod-set rate below, so one layer can pause
-        // mid-stroke while another plays.
         match kind {
             AnimKind::Walk => {
                 self.anim_time +=
@@ -327,13 +267,6 @@ impl Instance {
         for layer in &mut self.presentation.active_anims {
             step_anim_layer(layer, dt);
         }
-        // A ONE-SHOT layer that has played through retires itself: activation
-        // is fire-and-forget for the mod (the sheep's `eat` bite finishes on
-        // its own, freeing the layer slot and releasing head-look). Only
-        // plain forward playback completes — a mod-driven seek or rate hold
-        // (the boat oar freeze) is a deliberate pose and never expires, and a
-        // looping clip plays until deactivated. A name the model doesn't
-        // carry has no meta and stays (it draws nothing; the mod's business).
         self.presentation.active_anims.retain(|layer| {
             let finished = layer.seek.is_none()
                 && layer.rate > 0.0
@@ -348,7 +281,6 @@ impl Instance {
             self.set_anim_active(name, true);
         }
 
-        // Head-look: ease toward the requested orientation, or recentre when none.
         let (target_yaw, target_pitch) = match decision.head_look {
             Some(h) => (h.yaw, h.pitch),
             None => (0.0, 0.0),
@@ -371,18 +303,12 @@ impl Instance {
     }
 }
 
-/// A per-mob fraction in `[0, 1)` from the stable id: the Fibonacci-hash
-/// multiplier spreads consecutive ids evenly, and the top 24 bits of the
-/// product make a clean float mantissa.
 fn phase_stagger(id: u64) -> f32 {
     const FIBONACCI_HASH: u64 = 0x9e37_79b9_7f4a_7c15;
     let hashed = id.wrapping_mul(FIBONACCI_HASH);
     (hashed >> 40) as f32 / (1u32 << 24) as f32
 }
 
-/// Whether `name` may name a clip across the AI/ABI seams: nonempty and within
-/// the replicated name bound. The model is not consulted — the sim does not
-/// load models; the renderer skips names the model lacks.
 pub fn valid_clip_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= MAX_MOB_ANIM_NAME_BYTES
 }

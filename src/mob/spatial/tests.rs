@@ -11,8 +11,6 @@ fn mob(id: u64, x: f64, z: f64, active: bool) -> AiMob {
     }
 }
 
-/// A deterministic scatter straddling the origin (negative columns included)
-/// and several column boundaries.
 fn scatter(n: u64) -> Vec<AiMob> {
     let mut rng = MobRng::new(7);
     (0..n)

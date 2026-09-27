@@ -6,17 +6,11 @@ use crate::item::{ItemStack, ItemType};
 use super::{BlockEntities, CellMap, Section};
 
 impl Section {
-    // --- Block-entity maps ------------------------------------------------------
-
-    /// Section-local block-index key for a block-entity map (`section_idx` fits a
-    /// `u16`).
     #[inline]
     fn block_entity_key(x: usize, y: usize, z: usize) -> u16 {
         section_idx(x, y, z) as u16
     }
 
-    /// Invert [`block_entity_key`](Self::block_entity_key): `x = key & 15`,
-    /// `y = key >> 8`, `z = (key >> 4) & 15`.
     #[inline]
     fn block_entity_coords(key: u16) -> (usize, usize, usize) {
         (
@@ -63,8 +57,6 @@ impl Section {
         removed
     }
 
-    /// The furnace state and its container slots at one cell, split-borrowed
-    /// (they live in sibling maps under the same key).
     pub fn furnace_parts_mut(
         &mut self,
         x: usize,
@@ -126,13 +118,6 @@ impl Section {
         }
     }
 
-    /// Advance every furnace one game tick. Returns the local coordinates —
-    /// and the row the cell should hold — of every furnace whose lit state
-    /// disagrees with its block-id SKIN (`furnace` ⇄ `furnace_lit`), for the
-    /// world to swap through the ordinary block-write lanes. Compared against
-    /// the CURRENT block, not tracked as a transition, so a stale skin (an
-    /// older save, an interrupted swap) self-heals on the next tick. No-op for
-    /// the common furnace-free section.
     pub fn tick_furnaces(
         &mut self,
         smelt: impl Fn(ItemType) -> Option<ItemStack>,
@@ -146,12 +131,7 @@ impl Section {
         }
         let mut changed = false;
         let mut reskin = Vec::new();
-        // `reskin` feeds block writes and update scheduling, so deterministic
-        // ticks (the multiplayer contract) rely on the `CellMap` walking
-        // furnaces in ascending cell order.
         for (&key, f) in entities.furnaces.iter_mut() {
-            // The furnace's slots live in the shared container map under the
-            // same key (sibling field — disjoint borrow).
             let Some(container) = entities.containers.get_mut(&key) else {
                 continue;
             };

@@ -1,7 +1,12 @@
-//! The terrain density recipe — a layered catalog
-//! (`assets/density/terrain.json`): the scalar graph of named channels the
-//! surface fill, the biome classifier and the cave field sample (see
-//! [`crate::density::terrain`]), written as data and interpreted here.
+//! Terrain density recipe from `assets/density/terrain.json`. Surface fill, biome pick and cave
+//! sampling all read its channels. The interpreter is [`crate::density::terrain`].
+//!
+//! A field's `salt` forks it off the world seed. Spline knots are `[location, value, slope]`;
+//! slope is optional and a value can be another spline. Operands and channels take a node name, a
+//! number or an inline node. File order doesn't matter - cycles are an error though.
+//!
+//! Layers merge by name, so a pack can retune one constant or swap the whole recipe. Whatever
+//! loads still has to expose the climate channels, `base_height` and `master_density`.
 //!
 //! ```json
 //! "fields":   {"crag": {"salt": [1271071581156483110, 506583420214636557],
@@ -13,25 +18,6 @@
 //!                "min": 0.0, "max": 1.0}}},
 //! "channels": {"base_height": "base_height", "surface_detection": 0.0}
 //! ```
-//!
-//! A `field` is a seeded double-Perlin climate noise (forked from the world
-//! seed by its `salt`, sampled with the shared climate domain warp). A spline
-//! is an `axis` plus `[location, value, slope]` knots (slope optional; a
-//! value is a number or a nested spline, by name or inline). Every operand
-//! of a node — and every channel — is a node NAME, a number (a constant) or
-//! an inline node. Node vocabulary: `constant`, `field`, `axis` (`x`/`y`/`z`),
-//! `add` / `multiply` / `min` / `max` (`[a, b]`), `abs`, `ridge_fold`,
-//! `vertical_bias` (one operand), `terrace` `{input, step}`, `clamp`
-//! `{input, min, max}`, `lerp` `{a, b, t}`, `vertical_ramp` `{y_min, y_max}`,
-//! `floor_clamp` `{input, floor_y, fade_height, solid_density}`,
-//! `range_select` `{selector, min, max, inside, outside}` and `spline`
-//! `{spline, inputs: {axis: operand}}`. Nodes resolve from the channels
-//! down, so authoring order is free; a cycle is an error.
-//!
-//! Layering: every section merges by name — a later layer replaces a field,
-//! spline, node or channel it restates, so a pack retunes one constant or
-//! swaps a whole recipe. The loaded recipe must expose the climate channels,
-//! `base_height` (all horizontal) and `master_density`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -43,8 +29,6 @@ use crate::density::terrain::channels;
 use crate::graph::spline::{CubicSpline, SplineAxis, SplinePoint, SplineValue};
 use crate::graph::{Axis, Channel, NodeId, ScalarGraph};
 
-/// Channels the rest of worldgen samples. All but `master_density` must be
-/// horizontal (Y-invariant): they are sampled once per column.
 const REQUIRED_CHANNELS: [(&str, bool); 7] = [
     (channels::TEMPERATURE, true),
     (channels::HUMIDITY, true),
@@ -55,11 +39,9 @@ const REQUIRED_CHANNELS: [(&str, bool); 7] = [
     (channels::MASTER_DENSITY, false),
 ];
 
-/// Octave-table limits of the reference double-Perlin a field builds.
 const MAX_FIELD_OCTAVES: usize = 9;
 const MIN_FIRST_OCTAVE: i32 = -12;
 
-/// One layer of the recipe (and the merged recipe).
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RawRecipe {
@@ -88,7 +70,6 @@ struct RawSpline {
     points: Vec<RawKnot>,
 }
 
-/// `[location, value]` or `[location, value, slope]`.
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 enum RawKnot {
@@ -110,7 +91,6 @@ enum RawSplineRef {
     Inline(Box<RawSpline>),
 }
 
-/// A node input: a node name, a constant, or an inline node.
 #[derive(Deserialize, Serialize)]
 #[serde(untagged)]
 enum RawOperand {
@@ -177,14 +157,9 @@ enum RawOp {
     },
 }
 
-/// A loaded, validated terrain recipe: builds the density graph for a seed.
 pub struct TerrainRecipe {
     recipe: RawRecipe,
-    /// Octave amplitudes per field, stored for the process (the noise
-    /// parameters borrow them for `'static`).
     amplitudes: BTreeMap<String, &'static [f64]>,
-    /// Hash of the merged recipe, stamped into the column-gen cache: a pack
-    /// that reshapes terrain must not be served stale cached columns.
     pub fingerprint: u64,
 }
 
@@ -214,8 +189,6 @@ fn validate_field(name: &str, field: &RawField) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolves one recipe into one graph: nodes and splines by name, each node
-/// built once and shared by every reference.
 struct GraphBuilder<'a> {
     recipe: &'a TerrainRecipe,
     seed: u64,
@@ -452,7 +425,6 @@ impl TerrainRecipe {
             amplitudes,
             fingerprint,
         };
-        // Structure does not depend on the seed: one build proves them all.
         loaded.try_build(0)?;
         Ok(loaded)
     }
@@ -489,14 +461,12 @@ impl TerrainRecipe {
         Ok(graph)
     }
 
-    /// The density graph for `seed`.
     pub fn build(&self, seed: u32) -> ScalarGraph {
         self.try_build(seed)
             .expect("the terrain recipe was validated at load")
     }
 }
 
-/// Merge the layers (base first) by name and validate the result.
 fn parse_layers(texts: &[&str]) -> Result<TerrainRecipe, String> {
     let mut merged = RawRecipe::default();
     for (i, text) in texts.iter().enumerate() {
@@ -510,8 +480,6 @@ fn parse_layers(texts: &[&str]) -> Result<TerrainRecipe, String> {
     TerrainRecipe::new(merged)
 }
 
-/// The terrain recipe stage (see [`super::content_stages`]); a missing or
-/// malformed layer fails the registry build.
 pub(crate) static RECIPE: petramond_world::content::Slot<TerrainRecipe> =
     petramond_world::content::Slot::new("density/terrain.json", &[], load_recipe);
 
@@ -524,7 +492,6 @@ fn load_recipe(reg: &petramond_world::content::ContentRegistry) -> Result<Terrai
     )
 }
 
-/// The current registry's terrain recipe.
 pub fn recipe() -> &'static TerrainRecipe {
     RECIPE.current()
 }

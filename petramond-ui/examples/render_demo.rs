@@ -1,10 +1,3 @@
-//! Render a demo document to a PNG with the software rasterizer:
-//! `cargo run -p petramond-ui --features raster --example render_demo [out.png]`
-//!
-//! The demo exercises the whole widget catalog against the placeholder (or a
-//! real) theme — the same DrawList the game uploads, so this PNG is what the
-//! game shows.
-
 use petramond_ui::raster::TextureSet;
 use petramond_ui::{
     Document, FrameArgs, FrameOutput, FrameState, InputEvent, NoImages, Theme, UiMap, UiRuntime,
@@ -62,17 +55,11 @@ fn main() {
     let out_path = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "render_demo.png".to_owned());
-    // PETRAMOND_UI_DEMO_DOC previews any document file on the same rig — the
-    // only headless way to see a widget in the ROW it actually ships in.
-    // PETRAMOND_UI_DEMO_TRUE lists bind keys to seed (prefix `!` for false) —
-    // an UNSET key is not the same as a false one, so a disabled state needs
-    // the false.
     let json = match std::env::var("PETRAMOND_UI_DEMO_DOC") {
         Ok(path) => std::fs::read_to_string(&path).expect("read document"),
         Err(_) => DEMO.to_owned(),
     };
     let doc = Arc::new(Document::from_json(&json).expect("demo doc parses"));
-    // PETRAMOND_UI_THEME_DIR previews a real theme kit; unset = placeholder.
     let theme = Arc::new(match std::env::var("PETRAMOND_UI_THEME_DIR") {
         Ok(dir) => {
             let dir = std::path::PathBuf::from(dir);
@@ -120,8 +107,6 @@ fn main() {
     let mut fs = FrameState::new();
     let mut out = FrameOutput::default();
     let screen = (720, 560);
-    // Park the cursor over the CONFIRM button so a hover state renders;
-    // PETRAMOND_UI_DEMO_HOVER="x,y" aims it at any other widget (logical px).
     let (hx, hy) = std::env::var("PETRAMOND_UI_DEMO_HOVER")
         .ok()
         .and_then(|s| {

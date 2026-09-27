@@ -1,10 +1,3 @@
-//! Every rig clip this pack plays is on its rig. The pack names engine clips
-//! and resolves them only when it plays them, so a clip renamed or removed
-//! in a rig would break the sword, the shield or the bow at runtime and
-//! nowhere else. The rigs are read the way the engine reads them: the rigs
-//! catalog's rows, each model's own clips under the engine's namespace, plus
-//! the clips of every library its animator document names.
-
 use std::path::{Path, PathBuf};
 
 use crate::families::FamilySpec;
@@ -21,7 +14,6 @@ fn document(path: &Path) -> json::Value {
     json::Value::parse(&text).unwrap_or_else(|| panic!("{}: not JSON", path.display()))
 }
 
-/// Every clip `rig` carries, by full name.
 fn rig_clips(rig: &str) -> Vec<String> {
     let catalog = document(&assets().join("animations/rigs.json"));
     let row = catalog

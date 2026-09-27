@@ -74,7 +74,6 @@ pub(crate) struct Highlight {
 
 impl Highlight {
     pub fn new(device: &wgpu::Device, layout: wgpu::BindGroupLayout, world: wgpu::Buffer) -> Self {
-        // Terrain and world-model shaders share this layout but never read the UV table.
         let uv = crate::uniforms::uv_rects_placeholder(device, "selection highlight uv table");
         let cells = buffer(device, 16, wgpu::BufferUsages::STORAGE);
         let bounds = buffer(device, 32, wgpu::BufferUsages::UNIFORM);
@@ -132,7 +131,6 @@ impl Mask {
         mask
     }
 
-    // Preorder bounds with escape indices let fragments skip a whole missed subtree.
     fn branch(&mut self, regions: &mut [petramond::schematic::SelectionBox]) {
         let index = self.cells.len();
         let lo: [i32; 3] = std::array::from_fn(|i| regions.iter().map(|r| r.lo[i]).min().unwrap());

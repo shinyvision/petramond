@@ -2,7 +2,6 @@ use super::*;
 
 #[test]
 fn readback_strips_row_padding_and_orders_channels() {
-    // 2×2 pixels: 8 real bytes per row, padded out to 256.
     let (width, height) = (2u32, 2u32);
     let padded_row = (width * TEXEL_BYTES).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     assert_eq!(padded_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);

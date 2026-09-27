@@ -1,7 +1,3 @@
-//! Getting to work the world stands in the way of: a door shut across the
-//! route, ground the design says nothing about, a threshold the golem is
-//! standing on. Everything here is about REACHING work, never about escaping.
-
 use crate::fx::{HashMap, HashSet};
 
 use crate::host::prelude::*;
@@ -22,16 +18,11 @@ use crate::geometry::{feet_of, manhattan, offset, SIDES};
 use crate::project::Project;
 use crate::worker::Job;
 
-/// Whether this tick can afford a scan at all.
 fn worth_asking(ctx: &Ctx) -> bool {
     *ctx.probe_nodes > SCAN_RESERVE
 }
 
-/// A shut door between the golem and work it cannot otherwise reach: walked
-/// to and opened, as a builder would. `None` when no door is in the way.
 pub fn door_toward(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]) -> Option<Step> {
-    // Reading every cell beside where the golem walks is dear: it looks for a
-    // door in the way now and then, not at every piece of work it cannot reach.
     if ctx.now < job.crew.access.door_scan_at + DOOR_SCAN_EVERY || !worth_asking(ctx) {
         return None;
     }
@@ -50,7 +41,6 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
         }
         return None;
     };
-    // Only work the golem cannot walk to is behind a door.
     if cells.iter().any(|c| here.contains_key(c)) {
         return None;
     }
@@ -78,8 +68,6 @@ fn door_in_the_way(ctx: &mut Ctx, job: &mut Job, body: &Body, cells: &[[i32; 3]]
     Some(walk_to(ctx, stance, Then::Open(door)))
 }
 
-/// The cells the golem walks to from where it stands, and the moves to each.
-/// `None` while the ground around has not loaded.
 fn walked(ctx: &mut Ctx, body: &Body) -> Option<HashMap<[i32; 3], u32>> {
     let region = route::region(ctx, body.cell, false, &[])??;
     Some(
@@ -90,9 +78,6 @@ fn walked(ctx: &mut Ctx, body: &Body) -> Option<HashMap<[i32; 3], u32>> {
     )
 }
 
-/// The cells of `cells` and of the other work shut out. One scan answers for
-/// all the work shut out, not just the piece weighed first: the nearest door
-/// may be next to another piece.
 fn wanted(job: &Job, cells: &[[i32; 3]]) -> Vec<[i32; 3]> {
     let mut shut_out: Vec<usize> = job.crew.access.unreachable.iter().copied().collect();
     shut_out.sort_unstable();
@@ -106,9 +91,6 @@ fn wanted(job: &Job, cells: &[[i32; 3]]) -> Vec<[i32; 3]> {
     wanted
 }
 
-/// Shut doors beside walked ground near the `wanted` work, by their lower
-/// half, nearest the work first: those not opened lately that could stand
-/// in the way.
 fn doors_near(
     ctx: &mut Ctx,
     job: &Job,
@@ -149,8 +131,6 @@ fn doors_near(
             doors.push(lower);
         }
     }
-    // A door with walking room on both sides is already open or no longer the
-    // way through: toggling it would only shut it.
     doors.retain(|door| {
         let beside = SIDES.map(|s| offset(*door, s));
         let walked = beside.iter().filter(|n| here.contains_key(*n)).count();
@@ -161,7 +141,6 @@ fn doors_near(
                     .filter(|n| !job.design.filled.contains(*n))
                     .count()
     });
-    // The door nearest the work, opened from where the golem can stand.
     doors.sort_by_key(|d| {
         (
             wanted.iter().map(|w| manhattan(*d, *w)).min().unwrap_or(0),
@@ -171,11 +150,10 @@ fn doors_near(
     doors
 }
 
-/// The first of `doors` that stands in the way, if any does and this tick
-/// can tell. A door is only worth touching while it stands in the way;
-/// toggling an open one shuts it. Asked as a step ACROSS the door, from the
-/// walking side: a probe from wherever the golem stands is a long search,
-/// asked every scan.
+/// First door in `doors` that's actually in the way, if we can tell this tick.
+/// Only bother with a door while it blocks; toggling an open one just shuts it.
+/// Probe steps across the door from the walking side; probing from the golem's
+/// own spot instead is a long search, and we do this every scan.
 fn blocking(
     ctx: &mut Ctx,
     here: &HashMap<[i32; 3], u32>,
@@ -202,13 +180,10 @@ fn blocking(
     None
 }
 
-/// The nearest walked cell `door` is swung from, seen and in reach.
 fn door_stance(body: &Body, here: &HashMap<[i32; 3], u32>, door: [i32; 3]) -> Option<[i32; 3]> {
     let halves = [door, offset(door, [0, 1, 0])];
     let mut stances: Vec<([i32; 3], u32)> = here
         .iter()
-        // Never from inside the doorway itself: a panel swung through the
-        // golem is no way through, and the reach at its own cell is edge on.
         .filter(|(s, _)| !halves.contains(s) && !halves.contains(&offset(**s, [0, 1, 0])))
         .filter(|(s, _)| crate::geometry::reaches(feet_of(**s), &halves))
         .map(|(s, m)| (*s, *m))
@@ -227,8 +202,6 @@ fn door_stance(body: &Body, here: &HashMap<[i32; 3], u32>, door: [i32; 3]) -> Op
         .map(|((s, _), _)| s)
 }
 
-/// Turn to the door in reach and swing it once the eyes are on it. One
-/// opened is shut again on the way home.
 pub fn use_door(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -239,8 +212,6 @@ pub fn use_door(
 ) -> Step {
     job.crew.presence.set_goal(body.id, None);
     job.crew.presence.set_hold(body.id, true);
-    // Either half: the lower one is often hidden behind the door's own upper
-    // half.
     let mut swung = false;
     let mut turning = false;
     for half in [door, offset(door, [0, 1, 0])] {
@@ -257,7 +228,6 @@ pub fn use_door(
         }
     }
     if swung {
-        // Every way remembered through here was judged as it stood.
         ctx.routes.clear();
         ctx.regions.clear();
     }
@@ -275,7 +245,6 @@ pub fn use_door(
     Step::Plan
 }
 
-/// Getting cells open: moves, the cells dug, and the door opened.
 pub fn off_threshold(ctx: &mut Ctx, hubs: Hubs, body: &Body) -> Option<Step> {
     let halves = [body.cell, offset(body.cell, [0, 1, 0])];
     let doors = paged(halves.to_vec(), get_blocks);
@@ -292,9 +261,6 @@ pub fn off_threshold(ctx: &mut Ctx, hubs: Hubs, body: &Body) -> Option<Step> {
         if !standing {
             continue;
         }
-        // The panel stands across one way out of its own cell: the step off
-        // must be one the golem can take, not merely one that walks home from
-        // there.
         match route::probe(ctx, body.cell, cell, Vec::new()) {
             Some(Route::Open) => {}
             Some(_) => continue,
@@ -312,10 +278,6 @@ pub(super) fn open(ctx: &mut Ctx, cell: [i32; 3]) -> bool {
     get_block(cell).is_some_and(|b| super::open_block(ctx, b))
 }
 
-/// Dig to work that ground shuts off (a wall against a bank, a room never dug
-/// out), weighed like a way out, from reachable standing room to beside the
-/// work. Design blocks are priced dear, so it cuts through the hill, not the
-/// house.
 pub fn dig_toward(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -327,14 +289,9 @@ pub fn dig_toward(
         return None;
     }
     job.crew.access.dig_scan_at = ctx.now;
-    // A golem already digging its way in keeps the quick cadence: the rest is
-    // for the speculative question, asked of work that may not be dug to at all.
     let digging = job.crew.access.way_in.is_some();
     let way = dig_way(ctx, job, body, project, cells);
     if way.is_none() && !digging {
-        // Nothing to dig toward: rest before asking again. The question floods
-        // the site from the budget the planner finds stances with, and asked
-        // too often it starves them.
         job.crew.access.dig_scan_at = ctx.now + DIG_REST;
     }
     way
@@ -347,8 +304,6 @@ fn dig_way(
     project: &Project,
     cells: &[[i32; 3]],
 ) -> Option<Step> {
-    // A way in half dug is worth more than a fresh one somewhere else: the
-    // work it was begun for is dug to until it is reached or given up on.
     if let Some((_, since)) = job.crew.access.way_in {
         if ctx.now > since + WAY_IN_PATIENCE {
             job.crew.access.way_in = None;
@@ -370,7 +325,6 @@ fn dig_way(
         cells.iter().map(|c| c[2]).max()? + DIG_AROUND,
     ];
     let inside = |c: [i32; 3]| (0..3).all(|i| (lo[i]..=hi[i]).contains(&c[i]));
-    // Where the golem walks now, of the box: what the way in starts from.
     let here: HashMap<[i32; 3], u32> = match route::region(ctx, body.cell, false, &[]) {
         Some(Some(region)) => region
             .cells()
@@ -386,14 +340,9 @@ fn dig_way(
         job.crew.access.way_in = None;
         return None;
     }
-    // Standing room right beside the work, not merely within reach: a block
-    // walled into a bank is seen only from the cell next to it.
     let mut goals: HashSet<[i32; 3]> = HashSet::default();
     for work in cells {
         for side in SIDES {
-            // Level with it, a step below it, or standing on what is beside
-            // it and reaching down — the last is often the only room left
-            // once the walls around the work are up.
             for dy in [0, -1, 1] {
                 let g = offset(offset(*work, side), [0, dy, 0]);
                 if !cells.contains(&g)
@@ -406,8 +355,6 @@ fn dig_way(
             }
         }
     }
-    // Standing room beside the work the golem can already walk to: the way
-    // in is dug, and what kept it from the work was something else.
     if goals.iter().any(|g| here.contains_key(g)) {
         trace!(
             "TRACE way in to {:?}: already beside it, nothing to dig",
@@ -424,8 +371,6 @@ fn dig_way(
     let size = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
     let grid = ground(ctx, job, project, body, lo, size, true)?;
     let health = mob_info(body.id).map_or(1.0, |m| m.health);
-    // Never a fall or a scaffold to get there: this is a way dug, and the
-    // golem must be able to walk back out of it the way it came.
     let Some(way) = search(
         &grid,
         &here,
@@ -464,17 +409,12 @@ fn dig_way(
             since: ctx.now,
         });
     }
-    // Nothing to dig on the way: the cell is walked to, and the work is
-    // judged again from beside it.
     match way.step {
         Move::Walk(to) | Move::Drop(to) => step_to(ctx, job, body, to),
         Move::Rise | Move::Sink => None,
     }
 }
 
-/// Walk one step of a way in once the navigator agrees it can be walked. A
-/// refused step is remembered and weighed out of the next way, or the search
-/// keeps choosing it.
 fn step_to(ctx: &mut Ctx, job: &mut Job, body: &Body, to: [i32; 3]) -> Option<Step> {
     match route::probe(ctx, body.cell, to, Vec::new()) {
         Some(Route::Open) => Some(walk_to(ctx, to, Then::Escape)),

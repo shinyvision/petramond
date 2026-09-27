@@ -1,14 +1,3 @@
-//! The session registry: every connected player's simulation session, in
-//! roster order, plus whether index 0 is this process's local player.
-//!
-//! The registry is the one owner of the session list. Joins and leaves go
-//! through [`SessionRegistry::join`] / [`SessionRegistry::leave`] so the
-//! listen-server invariant (the local session stays at index 0 for the whole
-//! run) is kept in one place; everything else reads and mutates sessions in
-//! place through the slice it derefs to. It is also the [`PlayerRoster`]
-//! every mod dispatch receives: a handler reaches a player only by id
-//! through it.
-
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
@@ -18,29 +7,16 @@ use crate::events::{OpenGui, PlayerRoster};
 use crate::player::{Player, PlayerId};
 use crate::server::player::ConnectedPlayer;
 
-/// The connected sessions. On a LISTEN server (the in-game host) the LOCAL
-/// session is index 0 and always exists; on a HEADLESS server every session
-/// is remote and the list may be EMPTY — fixed ticks are skipped while it is
-/// (the world freezes between players).
 pub struct SessionRegistry {
     sessions: Vec<ConnectedPlayer>,
-    /// Whether index 0 is THIS process's local player (listen server).
     has_local: bool,
-    /// Most sessions admitted at once, the local one included (see
-    /// [`set_capacity`](Self::set_capacity)).
     capacity: usize,
-    /// Sessions whose work panicked this pump, awaiting eviction (see
-    /// `server::game::isolation`).
     faulted: Vec<PlayerId>,
 }
 
-/// How many sessions distinct `PlayerId`s can name: the ceiling any
-/// configured player cap is clamped to.
 pub const MAX_SESSIONS: usize = u8::MAX as usize + 1;
 
 impl SessionRegistry {
-    /// A listen server's registry around its local session, or a headless
-    /// server's empty one.
     pub fn new(local: Option<ConnectedPlayer>) -> Self {
         Self {
             has_local: local.is_some(),
@@ -50,70 +26,50 @@ impl SessionRegistry {
         }
     }
 
-    /// Mark session `id` faulted: skipped by every isolated stage until the
-    /// pump evicts it.
     pub fn mark_faulted(&mut self, id: PlayerId) {
         if !self.faulted.contains(&id) {
             self.faulted.push(id);
         }
     }
 
-    /// Whether the session at `index` is awaiting eviction.
     pub fn is_faulted(&self, index: usize) -> bool {
         self.faulted.contains(&self.sessions[index].id)
     }
 
-    /// Every faulted session id, clearing the set.
     pub fn take_faulted(&mut self) -> Vec<PlayerId> {
         std::mem::take(&mut self.faulted)
     }
 
-    /// Cap how many sessions may be connected at once (a headless server's
-    /// `max_players`), clamped to `1..=`[`MAX_SESSIONS`]. Lowering it below
-    /// the current count never kicks anyone; it only refuses further joins.
     pub fn set_capacity(&mut self, max_players: usize) {
         self.capacity = max_players.clamp(1, MAX_SESSIONS);
     }
 
-    /// Most sessions admitted at once, the local one included.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// Whether index 0 is this process's local player. False on a headless
-    /// server: no local pipe recipient, every session windowed by the
-    /// streaming ack loop, and the leave path may empty the list.
     #[inline]
     pub fn has_local_session(&self) -> bool {
         self.has_local
     }
 
-    /// The local session's id (always index 0 on a listen server); `None` on
-    /// a headless server, whose sessions are all remote.
     pub fn local_id(&self) -> Option<PlayerId> {
         self.has_local.then(|| self.sessions[0].id)
     }
 
-    /// The roster index of session `id`.
     pub fn index_of(&self, id: PlayerId) -> Option<usize> {
         self.sessions.iter().position(|sess| sess.id == id)
     }
 
-    /// Session `id`, if connected.
     pub fn by_id(&self, id: PlayerId) -> Option<&ConnectedPlayer> {
         self.sessions.iter().find(|sess| sess.id == id)
     }
 
-    /// Append a joining session; returns its roster index.
     pub fn join(&mut self, session: ConnectedPlayer) -> usize {
         self.sessions.push(session);
         self.sessions.len() - 1
     }
 
-    /// Remove the session at `index` and hand it back. `swap_remove` keeps a
-    /// listen server's local session at index 0 (it never leaves — only
-    /// `index >= 1` is ever removed there) and every survivor's `PlayerId`
-    /// rides with its element; nothing stores session INDICES across a leave.
     pub fn leave(&mut self, index: usize) -> ConnectedPlayer {
         debug_assert!(
             !(index == 0 && self.has_local),
@@ -122,8 +78,6 @@ impl SessionRegistry {
         self.sessions.swap_remove(index)
     }
 
-    /// Drop every session (a test fixture emptying a server to the headless
-    /// shape).
     #[cfg(test)]
     pub fn clear_for_test(&mut self) {
         self.sessions.clear();
@@ -206,9 +160,6 @@ mod tests {
         )
     }
 
-    /// Joins append, leaves swap-remove without ever moving the local
-    /// session, freed ids recycle, and the roster a mod dispatch receives
-    /// resolves the same ids to the same slots.
     #[test]
     fn joins_and_leaves_keep_the_local_session_first_and_ids_resolvable() {
         let mut registry = SessionRegistry::new(Some(session(0)));
@@ -236,7 +187,6 @@ mod tests {
         assert!(SessionRegistry::new(None).local_id().is_none());
     }
 
-    /// The configured cap is clamped to what `PlayerId`s can name.
     #[test]
     fn the_player_cap_is_clamped_to_the_id_space() {
         let mut registry = SessionRegistry::new(None);

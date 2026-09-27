@@ -1,8 +1,3 @@
-//! The fake world's registry: a handful of rows standing for the kinds of
-//! block the golem meets (ground, scaffolding, panes, doors, chests, leaves,
-//! fluid, bedrock, fences, fixtures, plants) and the items and tools that go
-//! with them. Ids follow the order rows are listed in.
-
 use crate::host::prelude::*;
 
 pub const AIR: BlockId = BlockId(0);
@@ -21,9 +16,7 @@ pub const TORCH: BlockId = BlockId(12);
 pub const GRASS: BlockId = BlockId(13);
 
 pub const GOLEM_KIND: MobId = MobId(0);
-/// Slots a golem carries (the pack's `container_slots`).
 pub const GOLEM_SLOTS: usize = 27;
-/// A golem's health when it spawns (the pack's `petramond:health`).
 pub const GOLEM_HEALTH: f32 = 60.0;
 
 pub struct BlockRow {
@@ -31,7 +24,6 @@ pub struct BlockRow {
     pub info: BlockInfoData,
     pub tags: Vec<String>,
     pub data: Vec<(String, String)>,
-    /// The cells an object of this row fills, relative to its anchor.
     pub footprint: Vec<[i32; 3]>,
 }
 

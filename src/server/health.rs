@@ -1,42 +1,18 @@
-//! Player health: fall damage on the tick and the damage funnel. (The HUD
-//! read model moved client-side: `Game::player_health` reads the replicated
-//! `SelfView`.)
-//!
-//! Physics only *measures* a fall (per-frame, for local feel — see
-//! `crate::player::Player::track_fall`); the health *mutation* happens here, on the
-//! deterministic game tick, so it stays multiplayer-safe (no wall-clock, no RNG).
-//! Every damage source must route through the single
-//! `damage_player` funnel so the `player_damage_pre` /
-//! `player_damaged` / `player_died` events fire consistently.
-
 use crate::events::{DamageSource, Outcome, PlayerDamagePre, PostEvent};
 use petramond_world::damage::Immunity;
 
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 
-/// Blocks you can fall with no damage. Beyond this, each further whole block costs one
-/// half-heart, so a 4-block fall (one past the safe 3) is the first to hurt — half a
-/// heart (1 health point) — matching "a fall from 4 blocks hurts for 0.5 hearts".
 const SAFE_FALL_BLOCKS: f32 = 3.0;
 
-/// Float slack (blocks) absorbing the ~1-ULP rounding the collision sweep leaves in a
-/// landing's `y`: without it a clean N-block fall can measure N − ε and fall short of
-/// the whole-block floor boundary, dealing no damage. Far smaller than any real
-/// fractional fall (slab/jump geometry), so it never lifts an honestly sub-threshold
-/// fall over the line.
 const FALL_EPS: f32 = 1e-3;
 
-/// Half-hearts of fall damage for a landing that fell `distance` blocks: the whole
-/// blocks past the safe distance, never negative. `3 → 0`, `4 → 1`, `5 → 2`, ….
 pub fn fall_damage_health(distance: f32) -> i32 {
     (distance - SAFE_FALL_BLOCKS + FALL_EPS).floor().max(0.0) as i32
 }
 
 impl ServerGame {
-    /// Advance every victim-owned damage-immunity timer exactly once at the
-    /// start of the fixed tick. Running before queued mod actions makes all
-    /// damage stages share each victim type's exact boundary.
     pub fn tick_damage_immunity(&mut self) {
         for session in &mut self.sessions {
             session.player.tick_damage_immunity();
@@ -44,12 +20,6 @@ impl ServerGame {
         self.world.mobs_mut().tick_damage_immunity();
     }
 
-    /// Consume the landing the SERVER-side fall tracker latched from the
-    /// session's reported transforms (`SessionSim::fall`, fed in
-    /// `tick_movement`) and apply its fall damage on the tick. The client
-    /// physics still measures its own falls per frame, but nothing reads that
-    /// latch anymore — the server trusts only what it measured itself.
-    /// Spectators float, so their (absent) fall is drained without harm.
     pub fn tick_fall_damage(&mut self, s: usize, events: &mut TickEvents) {
         let distance = std::mem::replace(&mut self.sessions[s].sim.pending_fall, 0.0);
         if self.sessions[s].player.is_spectator() {
@@ -64,10 +34,6 @@ impl ServerGame {
         );
     }
 
-    /// Consume the fluid entry the fall tracker latched (a fall INTO a
-    /// splashing fluid — `FallOutcome::Splashed`) and throw that fluid's
-    /// splash at the surface. Presentation only, no damage: the fluid broke
-    /// the fall.
     pub fn tick_fluid_splash(&mut self, s: usize, events: &mut TickEvents) {
         let fall = std::mem::replace(&mut self.sessions[s].sim.pending_splash, 0.0);
         if self.sessions[s].player.is_spectator() {
@@ -77,12 +43,6 @@ impl ServerGame {
         self.push_fluid_splash(feet, fall, events);
     }
 
-    /// An ORDINARY player hit through [`damage_player_through_funnel`]: it
-    /// takes part in the engine-fixed immunity window (rejected while one is
-    /// active, opens a fresh one on a real health loss). Every attack, fall
-    /// and mod hit is this.
-    ///
-    /// [`damage_player_through_funnel`]: ServerGame::damage_player_through_funnel
     pub fn damage_player(
         &mut self,
         s: usize,
@@ -94,22 +54,6 @@ impl ServerGame {
         self.damage_player_through_funnel(s, amount, source, origin, Immunity::PLAYER, events)
     }
 
-    /// The single player-damage funnel: reject a hit its `immunity`
-    /// composition blocks, dispatch `player_damage_pre` (mutable amount,
-    /// cancellable), apply what survives, open the immunity window the
-    /// composition grants, queue `player_damaged`, and fire `player_died`
-    /// exactly once per >0 → 0 health transition. There is NO default death
-    /// consequence — the event just fires; a mod (or future core content)
-    /// decides what death means.
-    ///
-    /// `immunity` is the one composable piece of a player hit (the mob
-    /// pipeline spells the same choice as its `petramond:immunity`
-    /// component): [`Immunity::PLAYER`] is an ordinary hit, [`Immunity::Exempt`]
-    /// is damage on its own clock (fluid contact, condition pulses) — it lands
-    /// under an active window and never shields the victim from a real hit.
-    ///
-    /// Returns whether damage was actually applied, so a caller can gate the
-    /// side effects that must die with a cancelled hit (a mob strike's knockback).
     pub fn damage_player_through_funnel(
         &mut self,
         s: usize,
@@ -119,20 +63,12 @@ impl ServerGame {
         immunity: Immunity,
         events: &mut TickEvents,
     ) -> bool {
-        // Non-positive damage is a non-event (matching Player::apply_damage's
-        // no-op); the fall drain calls this every tick, so dispatching zeros
-        // would spam handlers 20×/s.
         if amount <= 0 || self.sessions[s].player.is_invulnerable() {
             return false;
         }
-        // A dead player takes no further hits: without this, mobs pounding the
-        // corpse behind the death screen would re-fire `player_damaged` (hurt
-        // sound + shake) every strike and knock the body around.
         if self.sessions[s].player.health() == 0 {
             return false;
         }
-        // Engine immunity is a sink rule, not a mod hook. Rejected attempts
-        // produce no pre-event, feedback, or source-specific side effects.
         if immunity.blocks(self.sessions[s].player.damage_immunity()) {
             return false;
         }
@@ -148,10 +84,6 @@ impl ServerGame {
                 mods,
                 ..
             } = self;
-            // The VICTIM acts: a handler names whose damage this is
-            // (`PlayerSnapshot::id`) and reads the session-side actor context
-            // that decides whether to cancel — a raised guard is `use_held`,
-            // which lives on the roster row, not on the body.
             let actor = Some(sessions[s].id);
             let bus = mods.bus_mut();
             bus.player_damage_pre(world, sessions, actor, events, &mut pre) == Outcome::Cancel
@@ -169,22 +101,15 @@ impl ServerGame {
         }
         let new_health = self.sessions[s].player.health();
         events.player(s).player_damaged = true;
-        // Being hurt in bed ends the sleep immediately — it never continues
-        // through a fight (and a lethal hit hands straight over to death).
         self.interrupt_sleep(s, events);
         self.mods.emit(PostEvent::PlayerDamaged {
             player: self.sessions[s].id,
             amount: pre.amount,
             new_health,
         });
-        // The transition check keeps this a one-shot: further damage at 0 health
-        // (or the zero-damage fall drain) can never re-fire it.
         if was_alive && new_health == 0 {
             events.player(s).player_died = true;
             if self.world.keep_inventory() {
-                // The per-world keep-inventory rule skips the corpse pile —
-                // but an open menu session still returns its transient
-                // contents (craft grid, cursor stack) to the kept inventory.
                 self.close_open_menu_for(s, events);
             } else {
                 self.spill_inventory_on_death(s, events);
@@ -196,12 +121,7 @@ impl ServerGame {
         true
     }
 
-    /// Death spills everything the player carried as item entities at the
-    /// body — the classic corpse pile, waiting where they died.
     fn spill_inventory_on_death(&mut self, s: usize, events: &mut TickEvents) {
-        // An open container session first returns its transient contents
-        // (crafting output, cursor stack) to the inventory, so they spill too
-        // instead of quietly surviving in a menu the app closes a frame later.
         self.close_open_menu_for(s, events);
         let centre = self.sessions[s].player.body_center();
         let mut stacks: Vec<petramond_world::item::ItemStack> = Vec::new();
@@ -242,7 +162,6 @@ mod tests {
 
     #[test]
     fn safe_fall_is_free_and_four_blocks_is_half_a_heart() {
-        // Nothing up to and including the safe distance; the first damage is at 4 blocks.
         assert_eq!(fall_damage_health(0.0), 0);
         assert_eq!(fall_damage_health(3.0), 0, "3-block fall is safe");
         assert_eq!(fall_damage_health(3.9), 0, "under 4 blocks: no damage");
@@ -253,27 +172,14 @@ mod tests {
     fn damage_scales_one_half_heart_per_block_past_the_safe_distance() {
         assert_eq!(fall_damage_health(5.0), 2);
         assert_eq!(fall_damage_health(12.0), 9);
-        // A huge fall just returns a large amount; the clamp to 0 lives in apply_damage.
         assert_eq!(fall_damage_health(103.0), 100);
     }
 
     #[test]
     fn a_clean_four_block_fall_still_hurts_despite_landing_rounding() {
-        // The collision sweep can leave the landing a hair high, so a nominal 4.0 fall
-        // arrives as 4 − ~1 ULP. FALL_EPS must keep it a half-heart, not silently zero.
         assert_eq!(fall_damage_health(4.0 - 8e-6), 1);
     }
 
-    /// `player_damage_pre` must dispatch with the VICTIM as its actor.
-    ///
-    /// Without it every session-side field of the actor snapshot — `sneak`,
-    /// `use_held`, and the victim's own id — silently answers its default. A
-    /// handler that cancels on one of those (a raised guard is exactly
-    /// `use_held`) then never fires, and nothing anywhere reports a problem:
-    /// the feature is simply dead. The second session is here because an
-    /// implicit acting player would hand the handler whichever body the tick
-    /// happened to run as, which reads fine right up until somebody else is
-    /// hit.
     #[test]
     fn the_pre_damage_dispatch_names_its_victim_and_carries_their_intents() {
         use std::sync::{Arc, Mutex};
@@ -284,14 +190,10 @@ mod tests {
         let victim_id = server.sessions[victim_s].id;
         assert_ne!(victim_s, 0, "the victim must not be the host session");
 
-        // The victim is holding the use button; the host is not. A handler
-        // reading the WRONG session sees the host's `false`.
         server.sessions[victim_s].input.intent_use_held = true;
         server.sessions[victim_s].input.intent_gameplay = true;
         server.publish_player_inputs();
 
-        /// What the handler saw: whose damage it is, and whether that
-        /// session's own use-held intent reached it.
         type Seen = Vec<(Option<crate::player::PlayerId>, bool)>;
         let seen: Arc<Mutex<Seen>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);

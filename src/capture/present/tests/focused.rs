@@ -1,12 +1,5 @@
-//! One mechanism per test: a drag back lands from memory, applies land in
-//! issue order, the window keeps resident only what it covers, and a
-//! positioned write invalidates only what it overlaps.
-
 use super::*;
 
-/// A drag back over pieces presented moments ago needs no read: it is
-/// prepared and landed in the frame it was issued in, and reinstalls only
-/// the sections that differ.
 #[test]
 fn an_apply_reinstalls_only_what_differs_and_lands_from_memory_in_the_same_frame() {
     let h = harness("present-drag", 4, 30, 0x5DEE_CE66_D1CE_4E5B, 1000);
@@ -49,7 +42,6 @@ fn an_apply_reinstalls_only_what_differs_and_lands_from_memory_in_the_same_frame
     assert!(p.requested.is_empty(), "no read was asked for");
 
     let after = resident_arcs(&replica);
-    // Tick 24's writes are what the seek back undoes.
     let written: BTreeSet<(i32, i32, i32)> = h.session.restated[23..24]
         .iter()
         .flat_map(|r| r.pieces.iter())
@@ -82,8 +74,6 @@ fn an_apply_reinstalls_only_what_differs_and_lands_from_memory_in_the_same_frame
     );
 }
 
-/// Applies land in issue order, each onto the world the one before it left;
-/// a cancelled one never lands and the next lands onto the world before it.
 #[test]
 fn applies_land_in_issue_order_and_a_cancelled_one_never_lands() {
     let h = harness("present-order", 3, 30, 0xA076_1D64_78BD_642F, 1000);
@@ -98,14 +88,12 @@ fn applies_land_in_issue_order_and_a_cancelled_one_never_lands() {
         events: vec![events],
         at: 10.25,
     });
-    // Relative: events only, continuing from what apply 1 leaves.
     p.push(Op::Apply {
         id: 2,
         state: Vec::new(),
         events: vec![h.frames_from(12, 3)],
         at: 13.25,
     });
-    // An absolute jump elsewhere, cancelled before it lands.
     let (state, events) = seek(&h, None, 25.25);
     p.push(Op::Apply {
         id: 3,
@@ -128,8 +116,6 @@ fn applies_land_in_issue_order_and_a_cancelled_one_never_lands() {
     assert_eq!(p.position(), 13.25);
 }
 
-/// Only the window is resident: a stated column outside it holds no
-/// section in the replica, and moving the window reads it in.
 #[test]
 fn the_window_keeps_resident_only_the_stated_columns_it_covers() {
     let h = harness("present-window", 4, 12, 0x2545_F491_4F6C_DD1D, 1000);
@@ -177,8 +163,6 @@ fn the_window_keeps_resident_only_the_stated_columns_it_covers() {
     );
 }
 
-/// A positioned write drops exactly the origins and cached pieces it
-/// overlaps: the key it hit is read again, every other one is still known.
 #[test]
 fn a_positioned_write_invalidates_only_the_pieces_it_overlaps() {
     let h = harness("present-invalidate", 2, 6, 0x9FB2_1C65_1E98_DF25, 1000);
@@ -215,7 +199,6 @@ fn a_positioned_write_invalidates_only_the_pieces_it_overlaps() {
         replica.origin_of(crate::world::Resident::Section(hit_sp)) == Some(h.range(hit)),
         "the section holds the piece it was stated by"
     );
-    // The same bytes, written back in place: a positioned write all the same.
     let (tx, rx) = std::sync::mpsc::channel();
     let bytes = h.session.state.bytes[hit[0] as usize..(hit[0] + hit[1]) as usize].to_vec();
     crate::modding::client::files::write(
@@ -240,9 +223,6 @@ fn a_positioned_write_invalidates_only_the_pieces_it_overlaps() {
     }
 }
 
-/// A frame applying two batches is due at its newest: before then, with it
-/// read and waiting, nothing the position needs is missing and the
-/// presentation is ready. Not ready is only a frame not read yet.
 #[test]
 fn a_frame_of_two_batches_waiting_for_its_due_leaves_the_presentation_ready() {
     let h = harness("present-ready", 2, 4, 0x9E37_79B9_7F4A_7C15, 1000);
@@ -275,9 +255,6 @@ fn a_frame_of_two_batches_waiting_for_its_due_leaves_the_presentation_ready() {
     assert!(p.ready(), "batch 11 comes with the frame due at 12");
 }
 
-/// The view samples of frames not yet due are handed out ahead of them, up
-/// to the first past the next tick: a frame that applies a batch waits for
-/// that tick, and the captured view would otherwise hold still, then jump.
 #[test]
 fn view_samples_ahead_of_the_position_come_from_frames_already_read() {
     let h = harness("present-views-ahead", 2, 6, 0x2545_F491_4F6C_DD1D, 1000);
@@ -300,7 +277,6 @@ fn view_samples_ahead_of_the_position_come_from_frames_already_read() {
             events: Vec::new(),
         }))
     };
-    // Three queued frames, each holding one sample; due at 12, 12 and 13.
     let mut spans = Vec::new();
     for (i, (due, at)) in [(12, 10.4), (12, 11.1), (13, 11.4)].into_iter().enumerate() {
         let [offset, len] = h.session.frames[i];

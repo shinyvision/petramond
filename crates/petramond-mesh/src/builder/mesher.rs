@@ -1,14 +1,3 @@
-//! The section mesher: one pass over a section's cells that hands each cell
-//! to the emitter its render family names, then merges the deferred flat cube
-//! faces and splits the far LOD off the opaque stream.
-//!
-//! The stages live in their own modules — face culling (`exposed_masks` and
-//! `neighbourhood`), AO/light (`lighting`), cube faces and their greedy
-//! deferral (`cube`), fluids (`fluid_faces`) and the plant / pole / box-set /
-//! model families (`families`) — and share this struct's state: the
-//! neighbourhood view, the section's tints, the scratch buffers and the
-//! output streams.
-
 use glam::IVec3;
 use petramond_world::block::{Block, MeshEmitter};
 use petramond_world::chunk::{section_idx, SectionPos, SECTION_SIZE};
@@ -28,20 +17,15 @@ use super::scratch::{BoxBuffers, MeshScratch, ScratchLease, Streams};
 use super::transition;
 use super::MeshContext;
 
-/// One cell the scan hands to an emitter.
 #[derive(Copy, Clone)]
 pub(super) struct Cell {
-    /// The block being drawn: the resident block, or the fluid it contains.
     pub(super) block: Block,
-    /// Whether `block` is the cell's resident (not a contained fluid).
     pub(super) resident: bool,
     pub(super) lx: usize,
     pub(super) ly: usize,
     pub(super) lz: usize,
     pub(super) world: IVec3,
-    /// Section cell index.
     pub(super) idx: usize,
-    /// Column index within the section's 16×16 footprint.
     pub(super) column: usize,
 }
 
@@ -50,28 +34,13 @@ pub(super) struct SectionMesher<'a> {
     pub(super) nb: Neighbourhood<'a>,
     pub(super) rules: &'a Rules,
     pub(super) tints: CellTinting,
-    /// Every vertex is emitted in MESH space: column-local X/Z, world Y. An
-    /// absolute coordinate never becomes a float, so a section meshes
-    /// identically however far out it lies; the draw adds the column's integer
-    /// origin back relative to the camera.
     pub(super) anchor: IVec3,
     pub(super) out: &'a mut Streams,
     pub(super) boxes: &'a mut BoxBuffers,
-    /// Flat opaque cube faces deferred during the scan, merged into tiled
-    /// quads after it.
     pub(super) greedy: &'a mut GreedyScratch,
     pub(super) greedy_gen: u32,
 }
 
-/// Mesh one section from its pad. `exposure_masks` selects the cube cull:
-/// the production build takes the exposure-mask fast path (whole buried rows
-/// skipped, faces culled from bitsets); `false` culls every cube face through
-/// [`Neighbourhood::covers_face`] instead, which must give byte-identical
-/// output — the parity the mesher tests hold the fast path to. `None` when
-/// `cancelled` fires between section rows.
-///
-/// Every buffer comes from this thread's leased [`MeshScratch`], which goes
-/// back to the thread on every exit path.
 pub(super) fn mesh_section(
     section: &Section,
     pos: SectionPos,
@@ -117,11 +86,6 @@ pub(super) fn mesh_section(
 }
 
 impl SectionMesher<'_> {
-    /// Visit every cell with work, row by row. Which cells in each `(ly, lz)`
-    /// row have any work at all comes from the exposure masks when present:
-    /// they exclude buried cubes outright, so a solid underground row costs
-    /// one word test instead of sixteen classified cells. `false` when
-    /// cancelled.
     fn scan(&mut self, masks: Option<&ExposedMasks>, cancelled: &dyn Fn() -> bool) -> bool {
         let visit = masks.map_or(&VISIT_ALL, ExposedMasks::visit_rows);
         let registry = self.nb.registry();
@@ -137,10 +101,6 @@ impl SectionMesher<'_> {
                     row &= row - 1;
                     let resident = Block::from_id(self.section.block_raw(lx, ly, lz));
                     for block in std::iter::once(resident).chain(resident.contained_fluid()) {
-                        // Dense per-id tables answer every dispatch question
-                        // (see `cell_class`): the class byte skips air and rows
-                        // drawn outside the chunk mesh, the emitter table names
-                        // the family.
                         let class = registry.cell_class(block.id());
                         if class & SKIP != 0 {
                             continue;
@@ -163,9 +123,6 @@ impl SectionMesher<'_> {
         true
     }
 
-    /// Hand one cell to the emitter its row declares. A fluid (resident or
-    /// contained) always meshes as a fluid; a box family whose resolved form
-    /// is the full cube, or that resolved no boxes, falls to the cube path.
     fn emit_cell(
         &mut self,
         cell: &Cell,
@@ -195,9 +152,6 @@ impl SectionMesher<'_> {
     }
 }
 
-/// Close a finished build into exact-size copies of the scratch streams: the
-/// far LOD is everything emitted so far and the leaf internals follow it. A
-/// section with none of them has no far LOD to offer (0 = "no far mesh").
 fn finish(out: &Streams) -> ChunkMesh {
     let far_opaque_len = if out.leaf_interior.is_empty() {
         0

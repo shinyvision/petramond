@@ -14,21 +14,16 @@ use crate::world::store::{LoadAnchor, LoadTarget};
 
 mod priorities;
 
-/// A block entity arriving through the saved-section overlay path (not a live
-/// placement) must land in the block-entity index, or it renders/ticks as if
-/// it didn't exist after a reload.
 #[test]
 fn overlaid_saved_section_keeps_its_block_entities_live() {
     let mut world = ServerWorld::new(0, 4);
     let sp = SectionPos::new(0, 4, 0);
     world.data.ensure_column(sp.chunk_pos());
-    // The generated base the overlay replaces.
     world
         .data
         .sections
         .insert(sp, Arc::new(Section::new(0, 4, 0)));
     world.note_section_loaded(sp);
-    // A saved section carrying a chest lands from disk.
     let mut saved = Section::new(0, 4, 0);
     saved.set_block(0, 0, 0, petramond_world::block::Block::Chest);
     saved.insert_container(
@@ -50,8 +45,6 @@ fn overlaid_saved_section_keeps_its_block_entities_live() {
     assert_eq!(out.len(), 1, "the overlaid chest must be collected");
 }
 
-/// The spawn census waits only for the nearby streamable neighborhood: a saved
-/// mob record there must block caps, while unrelated far streaming must not.
 #[test]
 fn mob_census_waits_for_nearby_columns_and_overlays_only() {
     let mut world = ServerWorld::new(0, 2);
@@ -98,10 +91,8 @@ fn split_keeps_surface_blocks_and_adds_stone_below() {
     chunk.set_block(3, 70, 4, Block::Grass);
     let (_column, sections) = split_generated_column(&chunk);
 
-    // Surface block lands in section cy 4 (y 64) at local y 0.
     let s4 = sections.iter().find(|(cy, _)| *cy == 4).expect("cy 4");
     assert_eq!(s4.1.block_raw(1, 0, 2), Block::Stone.id());
-    // Below-zero range is solid stone (room for caves).
     let below = sections.iter().find(|(cy, _)| *cy == -1).expect("cy -1");
     assert_eq!(below.1.block_raw(0, 0, 0), Block::Stone.id());
     assert_eq!(below.1.block_raw(8, 8, 8), Block::Stone.id());
@@ -120,28 +111,22 @@ fn generated_water_metadata_survives_the_split() {
 
 #[test]
 fn water_kick_queues_source_water_over_a_drop() {
-    // A source-water cell with air directly below (and that section loaded) must be
-    // kicked into flowing on load. Build the section directly (no set_block_world, so
-    // nothing else queues an update) — local y 1 water over local y 0 air.
     let mut world = ServerWorld::new(0, 0);
     let mut section = Section::new(0, 4, 0);
     for z in 0..SECTION_SIZE {
         for x in 0..SECTION_SIZE {
-            section.set_block(x, 0, z, Block::Stone); // world y 64 floor
+            section.set_block(x, 0, z, Block::Stone);
         }
     }
-    section.set_block(4, 0, 4, Block::Air); // carve a hole at world (4,64,4)
-    section.set_fluid(4, 1, 4, Block::Water, 0); // source water at world (4,65,4)
+    section.set_block(4, 0, 4, Block::Air);
+    section.set_fluid(4, 1, 4, Block::Water, 0);
     world.insert_section_for_test(SectionPos::new(0, 4, 0), section);
 
     world.queue_loaded_section_fluid_updates(&[SectionPos::new(0, 4, 0)]);
-    // The water over the carved hole has a loaded air neighbour below, so the kick
-    // queued it: re-queuing the same cell now returns false (already pending).
     assert!(
         !world.queue_block_update(IVec3::new(4, 65, 4)),
         "water over a loaded air drop is kicked into flowing"
     );
-    // A different, un-queued cell still returns true — the kick wasn't indiscriminate.
     assert!(world.queue_block_update(IVec3::new(0, 65, 0)));
 }
 
@@ -166,9 +151,6 @@ fn high_flight_still_wants_the_surface_band() {
     );
 }
 
-/// Two distant anchors: `update_load_multi` must request BOTH
-/// neighbourhoods (nothing outside the union) and keep loaded content near
-/// each anchor while evicting what no anchor wants.
 #[test]
 fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
     let mut world = ServerWorld::new(0, 4);
@@ -186,7 +168,7 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
     };
     world.insert_empty_column_for_test(ChunkPos::new(0, 0));
     world.insert_empty_column_for_test(ChunkPos::new(40, 0));
-    world.insert_empty_column_for_test(ChunkPos::new(20, 0)); // far from both
+    world.insert_empty_column_for_test(ChunkPos::new(20, 0));
 
     world.update_load_multi(&[a, b]);
 
@@ -217,15 +199,9 @@ fn multi_anchor_requests_and_keeps_both_neighbourhoods() {
     );
 }
 
-/// The settled short-circuit skips the per-pump missing-column rescan but
-/// must never hide a column that became missing WITHOUT an anchor change
-/// (eviction, failed gen job) — a stale flag here means terrain that never
-/// loads again while the player stands still.
 #[test]
 fn settled_missing_scan_resumes_after_eviction() {
     let mut world = ServerWorld::new(0, 4);
-    // Repeated same-target updates submit the whole wanted disc (64 per
-    // call) and then settle.
     for _ in 0..100 {
         world.update_load(0, 4, 0);
         if world.data.missing_columns_settled {
@@ -243,8 +219,6 @@ fn settled_missing_scan_resumes_after_eviction() {
         "the player's own column is requested or loaded"
     );
 
-    // A column dropped without any anchor change must be re-found by the
-    // next same-target scan.
     world.remove_column(victim);
     assert!(
         !world.data.missing_columns_settled,
@@ -257,8 +231,6 @@ fn settled_missing_scan_resumes_after_eviction() {
     );
 }
 
-/// One anchor through `update_load_multi` IS `update_load`: same
-/// target, same requested set, no multi-anchor residue.
 #[test]
 fn single_anchor_multi_load_matches_update_load() {
     let mut single = ServerWorld::new(0x51EED, 3);
@@ -336,9 +308,9 @@ fn streaming_priority_is_distance_only() {
 fn surface_bias_orders_the_surface_shell_before_below_band_sections() {
     let target = LoadTarget::new(0, 4, 0, 32);
     let band_lo = 3;
-    let deep_near = SectionPos::new(0, 1, 0); // adjacent, below the band
+    let deep_near = SectionPos::new(0, 1, 0);
     let deep_far = SectionPos::new(6, 1, 0);
-    let surface_far = SectionPos::new(12, 4, 0); // half a render distance out
+    let surface_far = SectionPos::new(12, 4, 0);
 
     assert!(
         target.surface_biased_section_key(surface_far, band_lo, false)
@@ -383,7 +355,6 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
         }
     }
 
-    // A fresh, never-lit section whose neighbour above is still generating.
     let sp = SectionPos::new(0, 4, 0);
     let mut section = Section::new(0, 4, 0);
     section.set_block(0, 0, 0, Block::Stone);
@@ -403,8 +374,6 @@ fn first_bake_defers_until_generation_neighborhood_settles() {
         "no bake may be requested from a half-landed neighbourhood"
     );
 
-    // The neighbour lands (or is discarded): the neighbourhood is now settled —
-    // every other absent neighbour belongs to a landed column that skipped it.
     world.remove_pending_section(generating);
     world.flush_settled_deferred(target);
     assert!(
@@ -517,10 +486,6 @@ fn horizontal_move_requests_sections_for_newly_wanted_loaded_columns() {
     );
 }
 
-/// The whole cubic pipeline in one go, on the real gen + save threads: a column
-/// streams in and meshes, a block edited into the open air above the surface
-/// materializes its section, and after a flush + evict + reload the edit comes
-/// back via the disk overlay. Generate → mesh → edit → save → reload.
 #[test]
 fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     use std::time::Instant;
@@ -532,22 +497,16 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     ));
     let mut world = ServerWorld::with_pool(0x51EED, 2, pool.clone());
     world.attach_save(opened.save, opened.saved);
-    // The replica the meshes are built on, fed through the connection's seams.
     let mut replica = crate::world::ReplicaWorld::with_pool(0x51EED, 2, pool);
     let mut mirror = crate::world::ReplicaMirror::new(&mut world);
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
 
-    // Stream the origin column: generate (worker) + ingest. The later edit lands well
-    // above the active vertical window; reload coverage comes from the save manifest.
     world.update_load(0, 8, 0);
     while !world.data.chunk_loaded(0, 0) {
         assert!(Instant::now() < deadline, "the origin column streamed in");
         world.poll();
     }
 
-    // Mesh the loaded sections on the replica. Poll until a mesh lands
-    // (inline-friendly; under a threaded pool the bake still completes inside
-    // the hard deadline).
     while replica.iter_meshes().next().is_none() {
         assert!(Instant::now() < deadline, "at least one section meshed");
         world.poll();
@@ -556,8 +515,6 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         replica.tick_mesh_budget(64);
     }
 
-    // Edit a block into the open air well above any terrain (max surface ~171): this
-    // materializes section (0,15,0) on write.
     let edit = IVec3::new(4, 250, 4);
     assert!(world.set_block_world(edit.x, edit.y, edit.z, Block::Stone));
     assert_eq!(
@@ -565,8 +522,6 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         Block::Stone.id()
     );
 
-    // Flush to disk, then wait for the save thread to drain by reading the section back
-    // through a blocking load (the channel is ordered, so this trails the write).
     world.flush_modified_chunks();
     let sp = SectionPos::from_world(edit.x, edit.y, edit.z).unwrap();
     {
@@ -594,8 +549,6 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
         );
     }
 
-    // Evict everything, then re-stream: gen rebuilds the column and the saved section
-    // overlays the edit back on.
     world.clear_world();
     world.data.last_load_target = None;
     world.update_load(0, 8, 0);
@@ -613,17 +566,10 @@ fn cubic_world_generates_meshes_saves_and_reloads_an_edit() {
     );
 }
 
-/// Explored-terrain persistence end to end: a first visit persists every
-/// explored section AND the column-gen cache on flush; a reload of the same
-/// area installs everything from disk — every stream event is `Loaded`,
-/// none `Generated` — with content identical to the first visit.
 #[test]
 fn explored_terrain_reloads_from_disk_without_generating() {
     let dir = petramond_util::test_dirs::TestScratchDir::new("explored-terrain");
 
-    // Settled = OBSERVABLE state (nothing pending), never a quiet window: a
-    // tight no-sleep loop passes any fixed iteration count in microseconds
-    // while disk/gen round-trips are still in flight.
     let stream_settled = |world: &mut ServerWorld| {
         use std::time::Instant;
         world.update_load(0, 8, 0);
@@ -644,8 +590,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         }
     };
 
-    // Every section's light settled: baked-and-clean, or fully opaque
-    // (never bakes). The first-persist gate waits for exactly this.
     let light_settled = |world: &mut ServerWorld| {
         use std::time::Instant;
         let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
@@ -664,8 +608,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         false
     };
 
-    // First visit: generate, then flush (autosave path) — the flag persists
-    // every explored section and the column-gen cache.
     let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
@@ -696,9 +638,8 @@ fn explored_terrain_reloads_from_disk_without_generating() {
             "explored columns must enter the column-gen cache"
         );
     }
-    drop(world); // joins the save thread: everything is on disk.
+    drop(world);
 
-    // Reload: same area must come back entirely from disk.
     let opened = crate::save::open_at(dir.to_path_buf()).expect("reopen save");
     let mut world = ServerWorld::new(0x51EED, 2);
     world.attach_save(opened.save, opened.saved);
@@ -732,10 +673,6 @@ fn explored_terrain_reloads_from_disk_without_generating() {
         );
     }
 
-    // Light persistence: every reloaded section came back with its saved
-    // cubes ALREADY CLEAN — nothing above ever drained a bake for the
-    // reloaded world, so a single dirty section here would mean the load
-    // path re-queued a bake (the exact work persistence exists to skip).
     let relit = world
         .data
         .sections
@@ -748,22 +685,14 @@ fn explored_terrain_reloads_from_disk_without_generating() {
     );
 }
 
-/// The defining S3 behaviour: worldgen runs per section, CLOSEST TO THE PLAYER. A
-/// player at the surface streams the surface band but NOT the deep sections below
-/// y=0 (the cave space); descending streams those deep sections in. Proves the
-/// vertical window genuinely bounds generation in 3D rather than batching whole
-/// 256-tall columns.
 #[test]
 fn vertical_window_generates_near_the_player_not_the_whole_column() {
     use std::time::Instant;
 
     let mut world = ServerWorld::new(0xC0FFEE, 1);
-    // y=-60 is deep section cy=-4 (the would-be cave space); y=96 is the surface band.
     let deep = (0, -60, 0);
     let surface = (0, 96, 0);
 
-    // Player near the surface (section cy 6): stream until nothing is pending —
-    // the whole wanted window has landed (observable state, not a quiet window).
     world.update_load(0, 6, 0);
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
@@ -787,7 +716,6 @@ fn vertical_window_generates_near_the_player_not_the_whole_column() {
         "the deep cave-space section is NOT generated while the player is at the surface"
     );
 
-    // Descend to that deep section (cy -4): now it must stream in.
     world.update_load(0, -4, 0);
     let deadline = Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while !world.data.section_loaded_at(deep.0, deep.1, deep.2) && Instant::now() < deadline {
@@ -803,12 +731,6 @@ mod sea_ice_streaming {
     use super::*;
     use petramond_world::block::Block;
 
-    /// The frozen sea exists in the LIVE streamed world, not just the one-shot
-    /// generator: a waterline ice cell must survive the per-section pipeline
-    /// AND the analytic section summaries (a section wrongly classified
-    /// `FullWater` would never materialize and serve virtual water instead of
-    /// its ice — the failure mode this pins). Seed 34 chunk (6,-1) local
-    /// (15,15) holds sea ice at y = SEA_LEVEL.
     #[test]
     fn sea_ice_streams_into_the_live_world() {
         let mut world = ServerWorld::new(34, 2);

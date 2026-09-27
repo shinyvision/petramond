@@ -13,7 +13,6 @@ impl KvRecord for Counter {
     }
 }
 
-/// Stored as one byte at v1, two at v2, four at v3: each step widens.
 #[derive(Debug, PartialEq)]
 struct Widened(u32);
 
@@ -97,8 +96,6 @@ fn older_values_migrate_through_every_step() {
     );
 }
 
-/// A migrated record is held beside its OLD bytes, so its first update
-/// writes it back in the current version even when the value is unchanged.
 #[test]
 fn a_migrated_record_is_rewritten_by_its_next_update() {
     let stored = vec![1, 7];
@@ -111,8 +108,6 @@ fn a_migrated_record_is_rewritten_by_its_next_update() {
     assert_eq!(held.edit(|w| w.0), (7, false));
 }
 
-/// A standalone blob is framed exactly like a stored record, so the same
-/// upgrade chain lifts it.
 #[test]
 fn a_standalone_blob_carries_the_record_framing() {
     let bytes = encode_versioned(&Widened(300));
@@ -122,7 +117,6 @@ fn a_standalone_blob_carries_the_record_framing() {
     assert_eq!(decode_versioned::<Widened>(&[]), Err(RecordError::Empty));
 }
 
-/// Two little-endian bytes, stored bare (no version byte) by earlier builds.
 #[derive(Debug, PartialEq)]
 struct Legacy(u16);
 

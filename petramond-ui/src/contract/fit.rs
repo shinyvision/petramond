@@ -20,14 +20,8 @@ use crate::theme::{Theme, ThemeEnv};
 use crate::tree::{InstTree, ROOT};
 use crate::validate::DocIssue;
 
-/// The tightest logical viewport any GUI scale solves into: the scale steps
-/// up only once the window holds another whole 320×240, so every scale
-/// bottoms out at this box.
 pub const SMALLEST_VIEWPORT: (i32, i32) = (320, 240);
 
-/// Every instance of `doc`, expanded against `state` and solved at `scale`
-/// into [`SMALLEST_VIEWPORT`], that leaves its parent's content box. Issue
-/// paths use the validator's `root/2/0(type#id)` form.
 pub fn viewport_overflow(
     doc: &Document,
     theme: &Theme,
@@ -36,8 +30,6 @@ pub fn viewport_overflow(
     image_size: &dyn Fn(&str) -> Option<(i32, i32)>,
 ) -> Vec<DocIssue> {
     let viewport = SMALLEST_VIEWPORT;
-    // The responsive breakpoint resolves exactly as the runtime does: a
-    // document that stacks below its threshold is judged in that form.
     let tree = InstTree::expand_form(doc, state, doc.compact_active(viewport.0));
     let env = ThemeEnv {
         theme,
@@ -61,22 +53,14 @@ pub fn viewport_overflow(
         .collect()
 }
 
-/// One instance laid out outside its parent's content box.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Overflow {
-    /// The instance's index in its tree.
     pub inst: u32,
     pub rect: RectI,
-    /// Its parent's content box (the parent's rect less padding and border).
     pub content: RectI,
 }
 
-/// The fit rule itself, over a tree already expanded (in whatever form and
-/// hover state) and solved (in whatever viewport and scale): every instance
-/// outside its parent's content box, less the exemptions in the module docs.
 pub fn overflows(tree: &InstTree<'_>, solved: &Solved, env: &dyn LayoutEnv) -> Vec<Overflow> {
-    // Parents precede children in the arena, so one forward pass inherits
-    // the scroll exemption.
     let mut scrolled = vec![false; tree.len()];
     let mut out = Vec::new();
     for (i, inst) in tree.insts.iter().enumerate() {
@@ -106,9 +90,6 @@ pub fn overflows(tree: &InstTree<'_>, solved: &Solved, env: &dyn LayoutEnv) -> V
     out
 }
 
-/// The document path of instance `i` (`root/2/0(button#go)`), found by
-/// walking parents: each step is the node's index among its parent node's
-/// children, so list-stamped copies share their template's path.
 fn inst_path(tree: &InstTree<'_>, i: u32) -> String {
     let mut steps = Vec::new();
     let mut at = i;

@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use super::http::Stream;
 
-/// A body that hands out its bytes, then stalls without ending.
 struct Stalls(Vec<u8>);
 
 impl Read for Stalls {
@@ -19,8 +18,6 @@ impl Read for Stalls {
     }
 }
 
-/// A stalled connection fails the read once nothing has arrived for the idle
-/// budget, after everything that did arrive was read.
 #[test]
 fn a_stalled_body_fails_the_read_after_the_idle_budget() {
     let mut stream = Stream::for_test(

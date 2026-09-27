@@ -1,6 +1,3 @@
-//! Shared server-command parsing and execution for the dedicated console and
-//! operator-authored chat commands.
-
 use crate::net::identity::PlayerKey;
 use crate::net::protocol::ChatColor;
 use crate::player::PlayerId;
@@ -14,16 +11,10 @@ enum CommandSource {
 }
 
 impl ServerGame {
-    /// Execute one unprefixed dedicated-server console line. `stop` and `save`
-    /// stay in the host loop because they control the server thread itself;
-    /// every gameplay-visible command lands here.
     pub fn execute_console_command(&mut self, line: &str) {
         self.execute_command(CommandSource::Console, line.trim());
     }
 
-    /// Execute a player chat command after the chat ingress has proved `/` was
-    /// the message's very first character. The slash itself is not part of the
-    /// shared console grammar.
     pub fn execute_player_command(&mut self, player: PlayerId, command: &str) {
         if !self.is_operator_id(player) {
             self.command_reply(
@@ -79,11 +70,6 @@ impl ServerGame {
         }
     }
 
-    /// Resolve an `op`/`deop` target to an identity and a display name: a
-    /// connected session by name, else any identity that ever joined this
-    /// world by its registered name, else a literal 64-hex-digit key (so a
-    /// dedicated-server admin can grant rights before the player's first
-    /// join).
     fn resolve_player(&self, requested: &str) -> Option<(PlayerKey, String)> {
         if let Some(session) = self
             .sessions
@@ -160,8 +146,6 @@ impl ServerGame {
                 );
                 return;
             }
-            // Revoking a spectator without returning them to survival would
-            // strand them in a mode they no longer have permission to toggle.
             if let Some(session) = self.sessions.iter_mut().find(|session| session.key == key) {
                 session.player.set_mode(crate::player::PlayerMode::Survival);
                 session.sim.fall.reset(session.player.pos.y);
@@ -334,9 +318,6 @@ mod tests {
         }));
     }
 
-    /// Operator rights follow the identity, not the name: another identity
-    /// that later goes by an operator's old name inherits nothing, and a
-    /// name nobody has used cannot be pre-granted.
     #[test]
     fn operator_rights_key_on_identity_not_name() {
         let (mut server, guest) = server_with_guest();
@@ -345,7 +326,6 @@ mod tests {
         server.execute_console_command(&format!("op {name}"));
         assert!(server.operators.contains(&guest_key));
 
-        // The operator goes by a new name; an impostor takes the old one.
         server.sessions[guest].name = "Renamed".into();
         let impostor = crate::server::session_build::spawn_player(server.world.data().seed);
         let s = server.add_session_for_test(impostor);

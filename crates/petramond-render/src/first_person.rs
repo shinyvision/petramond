@@ -19,26 +19,18 @@ use petramond_world::item::ItemType;
 use super::item_model::ItemVertex;
 use super::mob_model::bake_model_cubes;
 
-/// One rig pixel in view-space blocks.
 pub(crate) const RIG_PX: f32 = 1.0 / 16.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Hand {
-    /// The row's main grip.
     Main,
-    /// The row's off grip.
     Off,
 }
 
 pub(crate) struct FirstPersonRig {
     pub row: &'static Rig,
-    /// Per hand: the inverse of the grip frame at the rig's rest.
     rest: [Mat4; 2],
-    /// Per hand: the inverse of the grip frame in each hold clip the row
-    /// names — the off hand's the main hold mirrored, as the animator plays it.
     holds: [Vec<(ClipId, Mat4)>; 2],
-    /// Per hand: where the fist resting in the sprite hold grips a sprite, in
-    /// view-space blocks.
     sprite_grips: [Vec3; 2],
 }
 
@@ -83,14 +75,11 @@ impl FirstPersonRig {
         rig
     }
 
-    /// The inverse grip frame `hand` rests in holding what `clip` poses (the
-    /// rig's rest for `None`).
     fn hold_inverse(&self, hand: Hand, clip: Option<ClipId>) -> Mat4 {
         clip.and_then(|clip| self.holds[hand as usize].iter().find(|(c, _)| *c == clip))
             .map_or(self.rest[hand as usize], |(_, m)| *m)
     }
 
-    /// Where the rendered view sits in view space: identity at rest.
     pub fn camera(&self, bones: &[Mat4]) -> Mat4 {
         match self.row.camera.and_then(|b| bones.get(b)) {
             Some(bone) => to_view() * *bone * to_view().inverse(),
@@ -98,22 +87,17 @@ impl FirstPersonRig {
         }
     }
 
-    /// A sprite's rest `seat` moved so its `grip` point (unit model space)
-    /// sits in `hand`'s resting fist.
     pub fn sprite_in_fist(&self, hand: Hand, seat: Mat4, grip: Vec3) -> Mat4 {
         Mat4::from_translation(self.sprite_grips[hand as usize] - seat.transform_point3(grip))
             * seat
     }
 
-    /// What carries `item` from its first-person rest seat to where `hand`'s
-    /// fist has taken it — identity while the fist rests in the item's hold.
     pub fn carry(&self, bones: &[Mat4], hand: Hand, item: ItemType) -> Option<Mat4> {
         let grip = *bones.get(self.row.grips[hand as usize])?;
         let hold: Option<ClipId> = self.row.hold(item.render_kind());
         Some(to_view() * grip * self.hold_inverse(hand, hold))
     }
 
-    /// Append the rig's cubes — the arms — in view-space blocks.
     pub fn bake(
         &self,
         bones: &[Mat4],
@@ -138,17 +122,12 @@ fn to_view() -> Mat4 {
     Mat4::from_scale(Vec3::splat(RIG_PX))
 }
 
-/// The hand pass's first-person state: the rig and this frame's posed bones,
-/// as the client's animation last handed them over.
 pub(crate) struct FirstPersonHand {
     pub rig: FirstPersonRig,
     pub bones: Vec<Mat4>,
 }
 
 impl FirstPersonHand {
-    /// The catalog's viewmodel rig at rest; `None` when the rig or its graph
-    /// failed to load — the client then has no viewmodel animator either,
-    /// and no hand draws.
     pub fn shipped() -> Option<Self> {
         let (_, row) = rigs::presented(Presenter::Viewmodel)?;
         row.graph.as_ref()?;
@@ -161,7 +140,6 @@ impl FirstPersonHand {
         })
     }
 
-    /// Back to the rest pose.
     pub fn reset(&mut self) {
         self.rig
             .row
@@ -169,16 +147,12 @@ impl FirstPersonHand {
             .resolve_local_into(&[], &[], &mut self.bones);
     }
 
-    /// Take this frame's posed bones. A pose for some other rig (a length
-    /// that does not match, or none at all) leaves the last one standing.
     pub fn set_bones(&mut self, bones: &[Mat4]) {
         if bones.len() == self.bones.len() {
             self.bones.copy_from_slice(bones);
         }
     }
 
-    /// The view-space correction the camera bone asks for; the world and
-    /// the hand pass both draw through it.
     pub fn view_offset(&self) -> Mat4 {
         self.rig.camera(&self.bones).inverse()
     }

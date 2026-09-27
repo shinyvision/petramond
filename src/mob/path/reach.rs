@@ -1,7 +1,3 @@
-//! Reachability over the pathfinder's moves: whether a goal is walked to, and
-//! every foothold of a box that is. The same moves as [`super::find_path_nav`]
-//! minus everything only a ROUTE needs.
-
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
@@ -13,21 +9,6 @@ use super::{
     CellMemo, Fact, PathParams, CLIMB_CELLS, COST_DIAG, COST_DROP_PER_BLOCK, COST_FLAT, COST_JUMP,
 };
 
-/// Whether `goal` is reachable from `start` within `params.max_nodes`
-/// expansions (`None`: they ran out before the search decided), and how many
-/// expansions that verdict cost.
-///
-/// The same search as [`super::find_path_nav`] — same order, same admissible
-/// octile heuristic, same neighbour rules — minus everything only a ROUTE
-/// needs: no predecessor map, no closest-cell fallback, no reconstruction. A
-/// probe that FAILS pays the whole budget, and the predecessor map alone is
-/// four hash inserts per expansion, so a reachability question answers for a
-/// fraction of what asking for the path costs. The verdict is identical by
-/// construction: dropping `came_from` cannot change which cells the open set
-/// pops.
-///
-/// The expansion count is what a caller throttling probes across one tick
-/// charges against its budget (see `mob::nav::ReachBudget`).
 pub fn reachable_nav(
     start: IVec3,
     goal: IVec3,
@@ -63,8 +44,6 @@ pub fn reachable_nav(
     )
 }
 
-/// The search of [`reachable_nav`], the moves out of a foothold left to
-/// `moves` (it fills its buffer with `(cell, cost)`).
 fn reachable_by(
     start: IVec3,
     goal: IVec3,
@@ -117,8 +96,6 @@ fn reachable_by(
     (Some(false), expanded)
 }
 
-/// What a search asks of the world it walks: the pathfinder's four
-/// predicates, as one value instead of four closures borrowing one another.
 pub trait NavWorld {
     fn solid(&self, c: IVec3) -> bool;
     fn support(&self, c: IVec3) -> bool;
@@ -126,11 +103,6 @@ pub trait NavWorld {
     fn step_allowed(&self, from: IVec3, to: IVec3) -> bool;
 }
 
-/// How far from a cell the pathfinder reads to answer for it, as (toward
-/// −x/−y/−z, toward +x/+y/+z): its standing room, its moves, and the moves
-/// into it. Whatever is kept about a cell is stale once a cell inside that
-/// reach changes — and a changed cell `x` is read by the cells from
-/// `x − reach.1` to `x + reach.0`, the other way round.
 #[derive(Clone, Copy)]
 pub struct Reads {
     pub standing: (IVec3, IVec3),
@@ -140,20 +112,13 @@ pub struct Reads {
 
 impl Reads {
     pub fn of(params: PathParams) -> Self {
-        // The footprint, and one more for a body wider than its cell.
         let side = 1 + params.half_width.max(0.0).ceil() as i32;
         let head = params.head_cells();
-        // A foothold reads its floor and its head room; a plain column one
-        // more each way.
         let standing = (IVec3::new(side, 2, side), IVec3::new(side, head + 1, side));
-        // Its moves read a neighbour's standing room: down a drop's column to
-        // the floor under its landing, up past a climb's head room.
         let leads = (
             IVec3::new(side + 1, params.max_drop + 2, side + 1),
             IVec3::new(side + 1, head + 2, side + 1),
         );
-        // The moves into it are those of every foothold a step, a climb or a
-        // drop away.
         let comes = (
             leads.0 + IVec3::ONE,
             leads.1 + IVec3::new(1, params.max_drop, 1),
@@ -165,20 +130,15 @@ impl Reads {
         }
     }
 
-    /// Every cell read by whatever a search over `min..=max` asks.
     pub fn around(&self, min: IVec3, max: IVec3) -> (IVec3, IVec3) {
         (min - self.leads.0, max + self.leads.1)
     }
 
-    /// The cells that read `changed` for one of the three, as a box.
     pub fn readers(changed: IVec3, reach: (IVec3, IVec3)) -> (IVec3, IVec3) {
         (changed - reach.1, changed + reach.0)
     }
 }
 
-/// Cells a search treats as built though the world does not hold them yet.
-/// What is kept about the cells that read one is this search's alone: never
-/// read from nor written to what outlives it.
 #[derive(Clone, Copy)]
 pub struct Planned<'a> {
     pub cells: &'a [IVec3],
@@ -194,8 +154,6 @@ impl Planned<'_> {
     }
 }
 
-/// The moves of one search's world, with its standing-room memos and the
-/// kept move lists of the box it searches.
 pub struct BoxGraph<'a, W> {
     pub params: PathParams,
     pub world: &'a W,
@@ -230,8 +188,6 @@ impl<W: NavWorld> BoxGraph<'_, W> {
         self.foothold_memo.get(c, stands)
     }
 
-    /// Where `a` leads in one move, in the pathfinder's own order (nowhere,
-    /// for a cell that is no foothold).
     pub fn leads_of(&self, a: IVec3, out: &mut Vec<IVec3>) {
         let volatile = self.planned.touches(a, self.planned.reads.leads);
         self.leads.of(a, volatile, out, |out| {
@@ -253,7 +209,6 @@ impl<W: NavWorld> BoxGraph<'_, W> {
     }
 }
 
-/// What [`neighbors`] prices the move `a → to` at, from its shape alone.
 fn move_cost(a: IVec3, to: IVec3) -> u32 {
     match to.y - a.y {
         rise if rise > 0 => COST_JUMP,
@@ -263,9 +218,6 @@ fn move_cost(a: IVec3, to: IVec3) -> u32 {
     }
 }
 
-/// [`reachable_nav`] over a [`BoxGraph`]: the same search in the same order,
-/// so the same verdict and the same expansion count, with every foothold's
-/// moves read from what the box keeps.
 pub fn reachable_on<W: NavWorld>(
     start: IVec3,
     goal: IVec3,
@@ -285,13 +237,6 @@ pub fn reachable_on<W: NavWorld>(
     )
 }
 
-/// Every foothold inside the inclusive box `min..=max` that a body walks to
-/// from foothold `start` without stepping out of the box, or with `toward`
-/// every foothold in it that walks to `start` so; `start` included, each with
-/// its moves from (to) `start`, breadth first. `comes` keeps what leads into
-/// each cell, like the graph's own lists. `None` once more than
-/// `params.max_nodes` footholds are found (the box holds more ground than
-/// asked for). The count is the expansions spent, for the caller's budget.
 pub fn walk_region<W: NavWorld>(
     start: IVec3,
     (min, max): (IVec3, IVec3),
@@ -305,7 +250,6 @@ pub fn walk_region<W: NavWorld>(
         return (Some(Vec::new()), 0);
     }
     let mut found = vec![start];
-    // Moves from the start, parallel to `found`.
     let mut depth = vec![0u32];
     let mut seen = Seen::over(min, max);
     seen.first(start);
@@ -319,8 +263,6 @@ pub fn walk_region<W: NavWorld>(
         next += 1;
         expanded += 1;
         if toward {
-            // Whatever moves INTO `current`: a climb from a layer below, a
-            // flat or diagonal step, or a drop from up to `max_drop` above.
             const AROUND: [(i32, i32); 8] = [
                 (1, 0),
                 (-1, 0),
@@ -348,7 +290,6 @@ pub fn walk_region<W: NavWorld>(
                     }
                 }
             });
-            // Kept lists are the world's, not this flood's box's.
             for &from in &came {
                 if inside(from) && seen.first(from) {
                     found.push(from);
@@ -371,8 +312,6 @@ pub fn walk_region<W: NavWorld>(
     (Some(found.into_iter().zip(depth).collect()), expanded)
 }
 
-/// The cells of a box a flood has taken: a flat table where the box is small
-/// enough for one.
 enum Seen {
     Table {
         min: IVec3,
@@ -395,7 +334,6 @@ impl Seen {
         }
     }
 
-    /// Whether `c` (a cell of the box) is taken now for the first time.
     fn first(&mut self, c: IVec3) -> bool {
         match self {
             Seen::Table { min, dims, taken } => {

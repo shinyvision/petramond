@@ -1,8 +1,3 @@
-//! The schematic library as a player uses it outside the creative menu: a
-//! client-local screen a mod's choice opens, listing the personal library by
-//! thumbnail, choosing one design, and saving the wand's selection. Its cards
-//! and save page share their population with the creative menu's library.
-
 use super::session::Session;
 use super::{App, AppScreen};
 use crate::game::Game;
@@ -18,22 +13,15 @@ pub(super) enum LibraryPage {
     Save,
 }
 
-/// The form state every library screen shares: which page is up, the save
-/// draft, and the card awaiting a delete confirmation.
 #[derive(Default)]
 pub(super) struct LibraryForm {
     pub page: LibraryPage,
     pub name: String,
     pub include_air: bool,
-    /// Captured when the confirmation opens, so a refresh or sort cannot
-    /// change what Delete removes.
     pub pending_delete: Option<Entry>,
 }
 
 impl App {
-    /// Open the library for a choice the server just opened, over gameplay
-    /// or over the menu whose button asked for it.
-    /// The screen opens on the card list (the screen funnel resets the page).
     pub(super) fn open_requested_schematic_library(&mut self) {
         let Some(session) = self.session.as_mut() else {
             return;
@@ -107,8 +95,6 @@ impl App {
         }
     }
 
-    /// The per-frame upkeep every library screen shares: a finished save
-    /// returns from the Save page, and the cards in view ask for thumbnails.
     pub(super) fn drive_library_form(&mut self, scroll: &str, library_shown: bool) {
         let visible = self.visible_schematic_cards(scroll);
         let Some(Session {
@@ -119,7 +105,6 @@ impl App {
         else {
             return;
         };
-        // Only from the Save page: a player who already left it stays put.
         if game.tools.library.take_saved() && form.page == LibraryPage::Save {
             form.page = LibraryPage::Library;
         }
@@ -127,13 +112,11 @@ impl App {
             library_shown && form.page == LibraryPage::Library && form.pending_delete.is_none();
         game.tools.library.request_thumbnails(match () {
             _ if !cards_shown => &[],
-            // Nothing is laid out before the first frame.
             _ if visible.is_empty() => &[0, 1, 2],
             _ => &visible,
         });
     }
 
-    /// Indices of the library cards the scroll view named `scroll` shows.
     pub(super) fn visible_schematic_cards(&self, scroll: &str) -> Vec<usize> {
         self.ui
             .out()
@@ -150,8 +133,6 @@ impl App {
     }
 }
 
-/// Publish the library cards, delete confirmation and save page shared by
-/// every schematic library screen; returns the thumbnail images to bind.
 pub(super) fn populate_library(
     game: &Game,
     form: &LibraryForm,
@@ -231,8 +212,6 @@ pub(super) fn populate_library(
 }
 
 impl LibraryForm {
-    /// The library events every library screen answers alike: the delete
-    /// confirmation, the save page and deleting a card. `true` = handled.
     pub(super) fn handle(&mut self, game: &mut Game, event: &UiEvent) -> bool {
         let primary_click = match event {
             UiEvent::Click {

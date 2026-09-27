@@ -1,24 +1,10 @@
-//! Shelf packing of per-glyph bitmaps into one atlas, one glyph at a time.
-//!
-//! Every glyph keeps its own tight rect, so a tall glyph from a fallback face
-//! costs only its own space — it never enlarges every other glyph's cell.
-//! The atlas SIZE is fixed when the font loads (sized for every glyph the
-//! chain covers), so a glyph rasterized on first use never moves the UVs of
-//! quads already emitted against the atlas.
-
 use super::FontError;
 
-/// Blank pixels between neighbouring glyphs, so filtering at a quad's edge
-/// can never pick up a neighbour's ink.
 pub(super) const PAD: u32 = 1;
-/// Narrowest atlas: small fonts stay one compact strip.
 const MIN_W: u32 = 64;
-/// Widest atlas row, and the tallest atlas accepted — the portable GPU
-/// texture limit. A font needing more must restrict its ranges.
 const MAX_W: u32 = 4096;
 const MAX_H: u32 = 8192;
 
-/// Headroom over the tight area estimate for shelf waste.
 const SLACK_NUM: u64 = 5;
 const SLACK_DEN: u64 = 4;
 const SPARE_ROWS: u64 = 4;
@@ -30,18 +16,14 @@ struct Shelf {
     x: u32,
 }
 
-/// A fixed-size atlas handing out glyph rects on demand.
 #[derive(Debug)]
 pub(super) struct Shelves {
     size: (u32, u32),
     shelves: Vec<Shelf>,
-    /// First row below the last shelf.
     bottom: u32,
 }
 
 impl Shelves {
-    /// An atlas with room for `glyphs` glyphs no larger than `cell` (w, h)
-    /// each.
     pub fn for_glyphs(glyphs: usize, cell: (u32, u32)) -> Result<Shelves, FontError> {
         let (cw, ch) = (cell.0 + PAD, cell.1 + PAD);
         let area = glyphs as u64 * u64::from(cw) * u64::from(ch) * SLACK_NUM / SLACK_DEN;
@@ -53,8 +35,6 @@ impl Shelves {
             )));
         }
         let per_row = u64::from((width / cw).max(1));
-        // Extra rows absorb the shelves that glyphs of differing heights
-        // leave part-filled.
         let rows = (glyphs as u64 * SLACK_NUM / SLACK_DEN).div_ceil(per_row) + SPARE_ROWS;
         let height = (rows * u64::from(ch)).max(1);
         if height > u64::from(MAX_H) {
@@ -73,8 +53,6 @@ impl Shelves {
         self.size
     }
 
-    /// Room for a `w`×`h` bitmap: its top-left, or `None` when the atlas is
-    /// full. Zero-sized glyphs (spaces) take no room and sit at the origin.
     pub fn place(&mut self, w: u32, h: u32) -> Option<[u32; 2]> {
         if w == 0 || h == 0 {
             return Some([0, 0]);
@@ -83,7 +61,6 @@ impl Shelves {
         if w + PAD > width {
             return None;
         }
-        // The first shelf tall enough whose waste stays under half the glyph.
         let fits = |s: &Shelf| s.h >= h + PAD && s.h <= h + PAD + h / 2 && s.x + w + PAD <= width;
         if let Some(shelf) = self.shelves.iter_mut().find(|s| fits(s)) {
             let at = [shelf.x, shelf.y];

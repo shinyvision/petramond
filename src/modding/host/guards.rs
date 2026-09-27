@@ -1,6 +1,3 @@
-//! Guards and lookups shared by every call handler: namespace/size write
-//! guards, the sim-scope gate, and registry validation helpers.
-
 use mod_api::{ErrorCode, HostCall, HostRet};
 
 use crate::events::SimCtx;
@@ -9,32 +6,12 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_world::block::Block;
 use petramond_world::item::ItemType;
 
-/// Every bound this module enforces is declared in the ABI crate, because a
-/// mod has to obey them and can only do that by reading them — the SDK
-/// re-exports these same items. Violations are refused with
-/// [`ErrorCode::LimitExceeded`] — recoverable: the SDK's `try_` wrappers hand
-/// it back so a mod can split or shard instead of being disabled.
-///
-/// Why these particular numbers. Host-side work is metered only by the fuel a
-/// call's request and reply bytes cost on the deterministic sides
-/// ([`super::budget::host_call_fuel`]),
-/// which says nothing about how long ONE call holds the sim: without
-/// [`SIM_BATCH_MAX`] one maximal batch (a guest's memory holds millions of
-/// positions) stalls the tick inside a single call, and 4096 is orders
-/// of magnitude above legitimate per-tick batches (bundled mods peak in the
-/// low hundreds) while a maximal capped batch stays microseconds of host work.
-/// It mirrors the client surface's per-call caps (`CLIENT_BLOCKS_QUERY_MAX`
-/// etc.). [`CELL_KV_MAX_KEYS`] is an order of magnitude above real per-cell
-/// state (the dye pot peaks at 2) while keeping a maximal cell's `BlockDelta` a
-/// bounded wire payload.
 pub(in crate::modding) use mod_api::KV_MAX_KEY_BYTES;
 pub(super) use mod_api::{
     CELL_KV_MAX_KEYS, EVENT_MAX_DATA_BYTES, FIND_BLOCKS_VOLUME_MAX, KV_MAX_VALUE_BYTES,
     SIM_BATCH_MAX,
 };
 
-/// `Some(err)` when a batched call's element count exceeds
-/// [`SIM_BATCH_MAX`]; `what` names the call and lane for the error line.
 pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
     (len > SIM_BATCH_MAX).then(|| {
         HostRet::error(
@@ -44,10 +21,6 @@ pub(super) fn batch_guard(what: &str, len: usize) -> Option<HostRet> {
     })
 }
 
-/// The mod-KV write guard: WRITES (set/delete) must use either the calling
-/// mod's own `mod_id:` prefix or an exposed engine `petramond:` key. Reads may cross
-/// namespaces (the interop surface), and keys/values are size-capped.
-/// `Some(err)` rejects the call.
 pub(super) fn kv_write_guard(mod_id: &str, key: &str, value_len: usize) -> Option<HostRet> {
     if key.len() > KV_MAX_KEY_BYTES {
         return Some(HostRet::error(
@@ -89,9 +62,6 @@ pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet>
     None
 }
 
-/// The actor a single-player-era call addresses implicitly, or the refusal
-/// an actor-less dispatch answers it with: there is no privileged player to
-/// fall back on. `twin` names the explicit call that does the same thing.
 pub(super) fn actor_for(
     ctx: &SimCtx<'_>,
     call: &str,
@@ -108,8 +78,6 @@ pub(super) fn actor_for(
     })
 }
 
-/// The reply every exclusive-access wrapper gives inside a read-only
-/// dispatch.
 fn read_only_refusal() -> HostRet {
     HostRet::error(
         ErrorCode::ReadOnly,
@@ -119,7 +87,6 @@ fn read_only_refusal() -> HostRet {
     )
 }
 
-/// The reply when no guest dispatch published a simulation context.
 fn no_context() -> HostRet {
     HostRet::error(
         ErrorCode::NoContext,
@@ -127,23 +94,10 @@ fn no_context() -> HostRet {
     )
 }
 
-/// Whether `call` is legal inside a READ-ONLY dispatch (the shape
-/// placement-plan dispatch, whose ABI promises the guest cannot edit the
-/// world it validates against): exactly the calls whose declared
-/// [`Legality`](mod_api::Legality) does not mutate. The switchboard refuses
-/// everything else before routing.
-///
-/// Behind it, a read-only scope lends the [`SimCtx`] SHARED only
-/// ([`scope::with_active_ref`]): every read goes through [`sim_read`], and the
-/// exclusive wrappers below refuse, so a call declared `Read` by mistake
-/// still cannot mutate.
 pub(in crate::modding) fn read_only_permits(call: &HostCall) -> bool {
     !call.legality().mutates()
 }
 
-/// Run a call that mutates the live simulation, or reject it when no guest
-/// dispatch scope is active (the same gate `CurrentTick` uses), or when the
-/// active dispatch is READ-ONLY (which lends no exclusive access at all).
 pub(super) fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
     sim_query(|ctx| {
         f(ctx);
@@ -151,18 +105,10 @@ pub(super) fn sim_call(f: impl FnOnce(&mut SimCtx<'_>)) -> HostRet {
     })
 }
 
-/// [`sim_call`] for a mutation that first RESOLVES something off the live
-/// context and may refuse (an attacker to validate, an owner to check): the
-/// closure's `Err` is the reply, `Ok` is [`HostRet::Unit`].
 pub(super) fn sim_mutate(f: impl FnOnce(&mut SimCtx<'_>) -> Result<(), HostRet>) -> HostRet {
     sim_query(|ctx| f(ctx).err().unwrap_or(HostRet::Unit))
 }
 
-/// [`sim_call`] for calls that compute their own reply (a spawn answering an
-/// id, a spend answering the taken stack, a read that has to borrow a player
-/// through the roster's lending API): EXCLUSIVE access to the live context,
-/// so it is refused in a read-only dispatch like every other writer. A call
-/// that only reads the world uses [`sim_read`] instead.
 pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
     if scope::read_only_active() {
         return read_only_refusal();
@@ -170,40 +116,25 @@ pub(super) fn sim_query(f: impl FnOnce(&mut SimCtx<'_>) -> HostRet) -> HostRet {
     scope::with_active(f).unwrap_or_else(no_context)
 }
 
-/// A world READ: SHARED access to the live context, so the closure cannot
-/// mutate it (that fails to compile). The only wrapper a read-only dispatch
-/// answers.
 pub(super) fn sim_read(f: impl FnOnce(&SimCtx<'_>) -> HostRet) -> HostRet {
     scope::with_active_ref(f).unwrap_or_else(no_context)
 }
 
-/// The live mob `mob_id` — the ONE dead-mob policy for every id-addressed
-/// mob call arm: a dead (ragdolling) mob is GONE to the ABI, exactly as
-/// `MobsInRadius` never lists it, so `None` covers missing and dead alike.
-/// Readers then answer `None`/`false`, writers refuse — a corpse is neither
-/// readable nor writable. (`MobMount` reaches the same rule through
-/// `World::try_mount_player`, its engine seam; `DamageMob` re-resolves at its
-/// action drain, where the pipeline rejects the dead.) Writers pass the same
-/// stable id on to the manager.
 pub(super) fn live_mob<'a>(ctx: &'a SimCtx<'_>, mob_id: u64) -> Option<&'a crate::mob::Instance> {
     ctx.world.mobs().live(mob_id)
 }
 
-/// Stream-final gate for WRITE-through-a-cell arms (`SwapBlock`,
-/// `ContainerSet`): the cell's block, or `Err(Bool(false))` while its section
-/// is unloaded or its streamed content is not yet final. During that window a
-/// plain read LIES — the generated base shows where the player's saved
-/// overlay is about to land — so an ownership check would see a FOREIGN block
-/// and misfire as a mod-disabling namespace `Error`. The gated miss is benign
-/// (`false` = "not stored, retry later"), exactly like every gated read.
+/// Stream-final gate for WRITE-through-a-cell arms (`SwapBlock`, `ContainerSet`): cell's block, or
+/// `Err(Bool(false))` while section is unloaded or streamed content isn't final yet.
+/// During that window a plain read lies (shows the base the saved overlay will land on),
+/// so an ownership check would see a foreign block and wrongly raise a namespace `Error`.
+/// The gated miss is benign, same as any gated read.
 pub(super) fn stream_final_cell(ctx: &SimCtx<'_>, pos: IVec3) -> Result<Block, HostRet> {
     ctx.world
         .block_if_stream_final(pos.x, pos.y, pos.z)
         .ok_or(HostRet::Bool(false))
 }
 
-/// Validate an ABI block id against the loaded registry — an unregistered id
-/// must never reach world storage.
 pub(super) fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
     if (block.0 as usize) < Block::all().len() {
         Ok(Block(block.0))
@@ -216,8 +147,6 @@ pub(super) fn checked_block(block: mod_api::BlockId) -> Result<Block, HostRet> {
     }
 }
 
-/// Reject non-finite guest floats before they reach engine state (NaNs are
-/// canonicalized by wasmtime but still NaN; infinities pass through).
 pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     if v.iter().all(|c| c.is_finite()) {
         Ok(v.into())
@@ -226,13 +155,11 @@ pub(super) fn finite3(v: [f32; 3], what: &str) -> Result<Vec3, HostRet> {
     }
 }
 
-/// A mod-supplied world position, rejected unless every component is finite.
 pub(in crate::modding) fn finite_pos(
     v: [f64; 3],
     what: &str,
 ) -> Result<petramond_math::world_pos::WorldPos, HostRet> {
     if v.iter().all(|c| c.is_finite()) {
-        // Every mod world point lands inside the world border.
         Ok(petramond_world::border::clamp(
             petramond_math::world_pos::WorldPos::from_array(v),
         ))
@@ -241,14 +168,10 @@ pub(in crate::modding) fn finite_pos(
     }
 }
 
-/// The runtime item registered under registry NAME `name` — the one
-/// mod-facing item identity. O(1) through the shared name index.
 pub(super) fn item_by_name(name: &str) -> Option<ItemType> {
     ItemType::by_name(name)
 }
 
-/// An item's registry NAME (every registered item has one; `"?"` guards the
-/// unreachable unregistered case).
 pub(super) fn item_name(item: ItemType) -> &'static str {
     petramond_world::registry::names()
         .items
@@ -256,7 +179,6 @@ pub(super) fn item_name(item: ItemType) -> &'static str {
         .unwrap_or("?")
 }
 
-/// An engine stack as its ABI crossing (registry name + count + data).
 pub(in crate::modding) fn item_stack_data(
     stack: petramond_world::item::ItemStack,
 ) -> mod_api::ItemStackData {
@@ -270,13 +192,6 @@ pub(in crate::modding) fn item_stack_data(
     }
 }
 
-/// An ABI instance-data list as an interned [`petramond_world::item::VariantId`].
-/// Empty = `NONE`. A duplicate key, bare key, or over-cap map is a HARD error
-/// (`Err(HostRet::Err)` — loud mod bug, same shape as the KV size caps):
-/// silently degrading a write the mod asked for would fork its view of the
-/// stack from the engine's. A FULL variant table is NOT a mod bug — the map
-/// is well-formed, the process just ran out of ids — so it degrades to a
-/// plain stack with a warning instead of disabling the mod.
 pub(super) fn intern_abi_data(
     what: &str,
     data: &[(String, Vec<u8>)],
@@ -292,11 +207,6 @@ pub(super) fn intern_abi_data(
     }))
 }
 
-/// An ABI instance-data list as a validated [`VariantMap`] — the COMPARE
-/// half of the data surface: a map a call matches against what is carried
-/// must never be interned (the table never evicts), so it stops here.
-///
-/// [`VariantMap`]: petramond_world::item::variant::VariantMap
 pub(super) fn abi_data_map(
     what: &str,
     data: &[(String, Vec<u8>)],

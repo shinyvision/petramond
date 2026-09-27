@@ -1,5 +1,3 @@
-//! The fake world's answer to each host call.
-
 use crate::geometry::offset;
 use crate::host::prelude::{
     ActionRefusal, BlockChanges, BlockId, BlockInfoData, BlockRecord, ContainerAddress,
@@ -50,7 +48,6 @@ impl State {
             .is_some_and(|slots| slots.iter().any(Option::is_some))
     }
 
-    /// What building `record` costs from nothing, and the cells it fills.
     fn plan(&self, record: &BlockRecord) -> RecordPlan {
         let Some(block) = self.resolve_block(&record.block) else {
             return RecordPlan::Unsupported {
@@ -126,7 +123,6 @@ impl State {
         }
     }
 
-    /// Whether `actor` may place `record` at `pos` from `feet`.
     fn place_check(
         &self,
         actor: EntityRef,
@@ -788,8 +784,6 @@ impl Host for Fake {
     }
 }
 
-/// The cells the change log holds after `since`, as the bridge answers the
-/// SDK's cursor.
 pub(super) fn changes_since(state: &State, since: Option<u64>) -> BlockChanges {
     let next = state.changes.len() as u64;
     let from = since.map_or(next, |s| s.min(next)) as usize;

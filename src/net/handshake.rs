@@ -34,27 +34,17 @@ use super::PROTOCOL_VERSION;
 #[derive(Debug)]
 pub enum HandshakeError {
     Io(io::Error),
-    /// A reply did not arrive within the stream's read deadline.
     Timeout,
-    /// The server speaks a different protocol version.
     ProtocolMismatch {
         server: u16,
     },
-    /// The server runs mods this client does not have installed.
     MissingMods(Vec<ModEntry>),
-    /// The server refused the join (bad identity proof, invalid name, its
-    /// account check failed, …).
     Rejected(JoinRejectReason),
-    /// The client could not produce the credential this server asked for. Set
-    /// `sign_in_required` when the player must sign in again before retrying —
-    /// the caller shows the account screen rather than the same error twice.
     Credential {
         message: String,
         sign_in_required: bool,
     },
-    /// The server closed the connection mid-handshake.
     Closed,
-    /// The server answered with something unparseable / out of sequence.
     BadFrame,
 }
 
@@ -144,32 +134,17 @@ fn reply<S: Read>(stream: &mut S) -> Result<ServerToClient, HandshakeError> {
     }
 }
 
-/// A successful join: the server's `JoinData` plus the mod ids its `ModList`
-/// reported. That set is the session's CLIENT-MOD ENABLEMENT authority
-/// (`modding/client`): client wasm loads only for packs the server runs, so
-/// a locally installed extra never activates against a server without it.
 #[derive(Debug)]
 pub struct HandshakeJoin {
     pub join: Box<JoinData>,
     pub server_mods: BTreeSet<String>,
 }
 
-/// What the server said about itself in `HelloAck` — everything the credential
-/// callback needs to decide what to offer.
 pub struct ServerOffer<'a> {
-    /// This server checks players against their Petramond account.
     pub requires_account: bool,
-    /// The id a join ticket for this server must be minted for.
     pub server_id: &'a str,
 }
 
-/// Run the full client-side join handshake over `stream`, proving `identity`
-/// to the server and offering what `credential` resolves (see the module
-/// docs). On `Ok` the stream
-/// is positioned exactly after `JoinAccept` — hand it to
-/// [`super::connection::TcpClientConn::spawn`] with
-/// `IdRemap::build(&join.tables)`. On ANY `Err` the caller drops the stream
-/// (in particular for [`HandshakeError::MissingMods`]: no farewell frame).
 pub fn client_handshake<S: Read + Write>(
     stream: &mut S,
     identity: &PlayerIdentity,
@@ -214,9 +189,6 @@ pub fn client_handshake<S: Read + Write>(
     }
     let server_mods: BTreeSet<String> = mods.into_iter().map(|m| m.id).collect();
 
-    // Minting a ticket costs a round trip to the account service; it happens
-    // only after the mod check, so a join that was going to be refused anyway
-    // never spends one.
     let credential = credential(&ServerOffer {
         requires_account,
         server_id: &server_id,
@@ -238,8 +210,6 @@ pub fn client_handshake<S: Read + Write>(
     }
 }
 
-/// The ids of every INSTALLED id-bearing pack — what this client can satisfy,
-/// regardless of any per-world disables (those are the server's concern).
 pub fn installed_mod_ids() -> BTreeSet<String> {
     crate::modding::modset::active(&BTreeSet::new())
         .into_iter()
@@ -254,9 +224,6 @@ mod tests {
     use crate::player::PlayerId;
     use petramond_math::world_pos::WorldPos;
 
-    /// A scripted in-memory duplex: the pre-baked server replies are read in
-    /// order; everything the client writes is captured for exact-sequence
-    /// asserts. EOF past the script = the server closed the connection.
     struct Scripted {
         replies: io::Cursor<Vec<u8>>,
         sent: Vec<u8>,
@@ -348,8 +315,6 @@ mod tests {
         PlayerIdentity::generate().expect("os randomness")
     }
 
-    /// A `HelloAck` from an OFFLINE server: the tests exercise the frame
-    /// sequence, not the account service.
     fn ack() -> ServerToClient {
         ServerToClient::HelloAck {
             protocol: PROTOCOL_VERSION,
@@ -503,7 +468,6 @@ mod tests {
 
     #[test]
     fn an_out_of_sequence_reply_is_a_bad_frame() {
-        // A server answering Hello with a gameplay message is broken.
         let mut s = Scripted::new(&[ServerToClient::ServerClosing]);
         match client_handshake(
             &mut s,
@@ -518,10 +482,6 @@ mod tests {
         }
     }
 
-    /// The connection writer keepalives after 2 s of outbound silence, and a
-    /// busy server can take longer than that to admit a join (the spawn find
-    /// runs worldgen) — keepalives landing between handshake replies are
-    /// liveness, not answers, and must be skipped, not treated as bad frames.
     #[test]
     fn keepalives_between_replies_are_skipped_not_bad_frames() {
         let mut s = Scripted::new(&[

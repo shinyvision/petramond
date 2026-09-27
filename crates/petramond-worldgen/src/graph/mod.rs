@@ -1,5 +1,3 @@
-//! Pure scalar graph primitives for staged worldgen fields.
-
 mod builders;
 mod cache;
 mod node;

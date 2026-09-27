@@ -8,11 +8,8 @@ use super::neighbourhood::Neighbourhood;
 use super::pad::{mesh_pad_idx, SECTION_PAD};
 
 const FACE_MASK_WORDS: usize = SECTION_VOLUME / u64::BITS as usize;
-// Whole X rows are written as one shifted word OR (see `set_face_row`).
 const _: () = assert!((u64::BITS as usize).is_multiple_of(SECTION_SIZE));
 
-/// Per-face exposure bitsets plus the derived WORK bitset the cell scan
-/// iterates.
 pub(super) struct ExposedMasks {
     faces: [[u64; FACE_MASK_WORDS]; FACES.len()],
     /// Per `(ly, lz)` row, the X positions the cell scan must actually visit:
@@ -23,8 +20,6 @@ pub(super) struct ExposedMasks {
     visit: [u16; SECTION_SIZE * SECTION_SIZE],
 }
 
-/// The scan's fallback when no exposure masks were built (the per-face
-/// reference cull): visit every cell.
 pub(super) const VISIT_ALL: [u16; SECTION_SIZE * SECTION_SIZE] =
     [u16::MAX; SECTION_SIZE * SECTION_SIZE];
 
@@ -46,10 +41,6 @@ pub(super) fn mask_has(masks: &ExposedMasks, face: Face, cell: usize) -> bool {
     masks.faces[face_index(face)][word] & bit != 0
 }
 
-/// Build the section's exposure masks from its pad. Whether a cell's own
-/// geometry seals the boundary under it is [`Neighbourhood::seals_floor`] —
-/// the SAME query the per-face cull asks, so the two culls cannot disagree;
-/// their agreement is what `mesh::tests::parity` pins.
 pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
     let pad = nb.pad();
     let origin = nb.origin();
@@ -70,8 +61,6 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
         bits: u32,
     ) {
         *exposed |= bits;
-        // A row's sixteen X cells are contiguous in `section_idx` order and
-        // sixteen divides the word, so the row lands as one shifted OR.
         let (word, bit) = mask_bit(section_idx(0, ly, lz));
         masks.faces[face_index(face)][word] |= u64::from(bits) * bit;
     }
@@ -108,9 +97,6 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
                         ))
                 {
                     row |= 1u32 << px;
-                // Air, water, plants and plain cubes are the overwhelming
-                // majority of pad cells; the dense flag keeps every one of
-                // them off the shape seam.
                 } else if c & PAD_SEALS != 0
                     && nb.seals_floor(
                         origin - glam::IVec3::ONE
@@ -126,9 +112,6 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
     }
 
     let mut candidate_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
-    // Cells the scan has real work for whatever their exposure: plants,
-    // torches, box shapes, models, fluids, glass — everything that is neither
-    // air/chest/door nor a plain cube.
     let mut work_rows = [0u32; SECTION_SIZE * SECTION_SIZE];
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
@@ -140,17 +123,13 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
                 if registry.cell_class(id) & SKIP == 0 {
                     work |= 1u32 << lx;
                 }
-                if registry.cell_class(id) & FAST_CUBE == 0 {
-                    // Same-material full slab stacks take the cube fast path too;
-                    // this MUST match the box families' whole-cube fall-through
-                    // (`ShapeRender::meshes_as_cube`) the scan dispatches on.
-                    if registry.pad_class(id) & PAD_SLAB == 0
+                if registry.cell_class(id) & FAST_CUBE == 0
+                    && (registry.pad_class(id) & PAD_SLAB == 0
                         || !petramond_world::slab::is_uniform_full_stack(
                             petramond_world::block_state::SlabState::from_cell(pad.cell_states[i]),
-                        )
-                    {
-                        continue;
-                    }
+                        ))
+                {
+                    continue;
                 }
                 row |= 1u32 << lx;
             }
@@ -163,7 +142,6 @@ pub(super) fn build_exposed_masks(nb: &Neighbourhood<'_>) -> ExposedMasks {
         for lz in 0..SECTION_SIZE {
             let cand = candidate_rows[ly * SECTION_SIZE + lz];
             if cand == 0 {
-                // No cube candidate here; only the non-cube work stands.
                 masks.visit[ly * SECTION_SIZE + lz] = work_rows[ly * SECTION_SIZE + lz] as u16;
                 continue;
             }

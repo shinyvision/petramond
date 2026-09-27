@@ -1,6 +1,3 @@
-//! Edits through the cell applicator: schematic placement, history replay,
-//! and the per-tick record of single-block operator edits.
-
 use super::history::{EditRecord, Replay};
 use crate::{
     events::tick::TickEvents,
@@ -10,7 +7,6 @@ use crate::{
 };
 use petramond_math::math::IVec3;
 
-/// An edit being written over several ticks, and what its receipt becomes.
 pub(super) struct EditJob {
     edit: CellEdit,
     kind: JobKind,
@@ -91,8 +87,6 @@ impl ServerGame {
         }
     }
 
-    /// Write this tick's share of the session's edit; a finished or
-    /// interrupted edit is filed in its history.
     pub(super) fn step_edit_job(
         &mut self,
         s: usize,
@@ -109,8 +103,6 @@ impl ServerGame {
         let mut receipt = job.edit.finish();
         let history = &mut self.sessions[s].sim.edits;
         match job.kind {
-            // An interrupted placement records what it did write, so undo
-            // still takes back exactly that.
             JobKind::Placement { update_bounds } => {
                 receipt.target.truncate(receipt.written);
                 receipt.target.append(&mut receipt.cleared);
@@ -118,8 +110,6 @@ impl ServerGame {
                     history.record(receipt.before, receipt.target, Some(update_bounds));
                 }
             }
-            // A replay is unconditional, so an interrupted one is simply
-            // retried from its original stack.
             JobKind::Replay { mut record, replay } => {
                 record.put_side(replay, receipt.target);
                 history.settle(record, replay, outcome.is_ok());
@@ -128,8 +118,6 @@ impl ServerGame {
         outcome.map(|_| ())
     }
 
-    /// Note cells session `s` is about to change outside the applicator, so
-    /// single-block edits share the history bulk edits use.
     pub(in crate::server) fn touch_edit_cells(
         &mut self,
         s: usize,
@@ -149,8 +137,6 @@ impl ServerGame {
         }
     }
 
-    /// File the cells touched since the last close as one edit, once the
-    /// block hooks they queued have settled.
     pub(in crate::server) fn close_open_edit(&mut self, s: usize, events: &mut TickEvents) {
         if !self.sessions[s].sim.edits.has_open() {
             return;

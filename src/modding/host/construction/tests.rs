@@ -14,8 +14,6 @@ use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
 use crate::server::game::ServerGame;
 
-/// A server with a stone floor at y 64 and open air above, and one mob
-/// carrying `slots` standing at (8.5, 65, 8.5).
 fn server_with_worker(slots: Vec<Option<ItemStack>>) -> (ServerGame, u64) {
     let mut server = crate::server::session_build::build_server_inline("", 1, 1);
     server
@@ -53,7 +51,6 @@ fn call(server: &mut ServerGame, call: HostCall) -> HostRet {
     })
 }
 
-/// Apply the queued actions and return the `actor_acted` outcomes they posted.
 fn drain(server: &mut ServerGame) -> Vec<(ActorAction, Option<ActionRefusal>)> {
     let mut events = TickEvents::default();
     server.apply_deferred_actions(&mut events);
@@ -71,7 +68,6 @@ fn drain(server: &mut ServerGame) -> Vec<(ActorAction, Option<ActionRefusal>)> {
         .collect()
 }
 
-/// Where the worker would look to work `pos` from where it stands.
 fn aim(
     server: &mut ServerGame,
     mob: u64,
@@ -93,7 +89,6 @@ fn aim(
     }
 }
 
-/// Turn the worker's eyes onto its work at `pos`.
 fn look(server: &mut ServerGame, mob: u64, pos: IVec3, record: Option<mod_api::BlockRecord>) {
     let at = aim(server, mob, pos, record).expect("the work is seen from here");
     let eye = server.world().actor(mob).unwrap().eye;
@@ -139,7 +134,6 @@ fn a_dig_accrues_on_consecutive_ticks_and_collects_its_drop() {
         match dig(&mut server) {
             HostRet::Dig(DigProgress::Digging { progress }) => {
                 assert!((0.0..1.0).contains(&progress));
-                // A second call in the same tick accrues nothing.
                 assert_eq!(
                     dig(&mut server),
                     HostRet::Dig(DigProgress::Digging { progress })
@@ -263,7 +257,6 @@ fn a_placement_pays_once_from_the_actors_slots_and_needs_a_face() {
     );
     assert_eq!(carried(&server), 1);
 
-    // Requested while valid, then emptied before its turn: nothing commits.
     let second = IVec3::new(8, 65, 11);
     look(&mut server, mob, second, Some(stone_record()));
     assert_eq!(
@@ -327,8 +320,6 @@ fn reach_is_measured_from_the_actors_eye() {
 #[test]
 fn a_face_turned_away_from_the_eye_is_no_face_to_build_on() {
     let (mut server, mob) = server_with_worker(vec![]);
-    // A block overhead, off to one side: the cell on top of it is in plain
-    // view, and the only face it could be placed against is the block's top.
     server.world_mut().set_block_world(10, 67, 8, Block::Stone);
     let above = IVec3::new(10, 68, 8);
     assert_eq!(
@@ -355,7 +346,6 @@ fn a_turned_block_goes_in_only_from_where_a_click_turns_it_so() {
             data: Default::default(),
         })
     };
-    // East of the worker on the floor: whatever face it clicks, it looks east.
     let cell = IVec3::new(10, 65, 8);
     let looking = crate::rules::placement::facing_from_forward(petramond_math::math::Vec3::new(
         1.0, 0.0, 0.0,
@@ -372,8 +362,6 @@ fn a_turned_block_goes_in_only_from_where_a_click_turns_it_so() {
 
 #[test]
 fn a_mob_stepping_aside_under_its_own_power_reads_as_walking() {
-    // Through the whole mob tick, with no route to walk: the brain is idle,
-    // and an idle route must not take a driven step for a walk that arrived.
     let (mut server, mob) = server_with_worker(vec![]);
     let anchors = [crate::mob::PlayerAnchor {
         pos: WorldPos::new(2.5, 65.0, 2.5),

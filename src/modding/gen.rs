@@ -55,7 +55,6 @@ use super::host::budget::FuelBudget;
 use super::host::Registration;
 use super::instance::ModInstance;
 
-/// The addressable stages, in pipeline order (indexes [`GenHooks`] arrays).
 const STAGE_COUNT: usize = 5;
 
 fn stage_index(stage: WorldgenStage) -> usize {
@@ -76,17 +75,10 @@ const ALL_STAGES: [WorldgenStage; STAGE_COUNT] = [
     WorldgenStage::Trees,
 ];
 
-// ---------------------------------------------------------------------------
-// The immutable hook config.
-// ---------------------------------------------------------------------------
-
 struct GenModule {
     id: String,
     module: Module,
-    /// The mod's session-wide health, shared with its tick instance.
     health: Arc<ModHealth>,
-    /// Gen registrations the MAIN load recorded — per-thread inits are
-    /// validated (cheaply, by count) against this.
     expected_gen_regs: usize,
 }
 
@@ -102,18 +94,13 @@ struct StageHook {
     callback_id: u32,
 }
 
-/// One session's worldgen hook set. Immutable after build; shared by `Arc`
-/// with every `ChunkGenerator` of the session.
 pub struct GenHooks {
     epoch: u64,
     seed: u32,
-    /// The session's fuel budgets, for every per-thread instance.
     budget: FuelBudget,
     mods: Vec<GenModule>,
-    /// Registration order == (load order, per-mod order) — the dispatch order.
     features: Vec<FeatureHook>,
     replacements: [Option<StageHook>; STAGE_COUNT],
-    /// One loud engine-fallback line per stage per session, not per section.
     fallback_logged: [AtomicBool; STAGE_COUNT],
 }
 
@@ -121,18 +108,15 @@ pub use petramond_worldgen::hooks::GenInputs;
 use petramond_worldgen::hooks::{FeatureOutcome, GenHookDispatch, GenerationPlan};
 
 impl GenHooks {
-    /// Whether `stage` has a registered replacement.
     pub fn replaces(&self, stage: WorldgenStage) -> bool {
         self.replacements[stage_index(stage)].is_some()
     }
 
-    /// Whether any feature attaches after `stage` (the driver's cheap gate).
     pub fn any_features_after(&self, stage: WorldgenStage) -> bool {
         let i = stage_index(stage);
         self.features.iter().any(|f| f.stage_idx == i)
     }
 
-    /// Indices (dispatch order) of the features attached after `stage`.
     pub fn features_after(&self, stage: WorldgenStage) -> Vec<usize> {
         let i = stage_index(stage);
         (0..self.features.len())
@@ -140,9 +124,6 @@ impl GenHooks {
             .collect()
     }
 
-    /// Dispatch feature `idx` for one section. `Skipped` = the feature
-    /// failed (instance disabled with a logged error) or its filter rejected
-    /// the section.
     pub fn dispatch_feature(&self, idx: usize, inputs: &GenInputs) -> FeatureOutcome {
         let hook = &self.features[idx];
         if !hook
@@ -170,9 +151,6 @@ impl GenHooks {
         .unwrap_or(FeatureOutcome::Skipped)
     }
 
-    /// Run the registered replacement of a write-list stage
-    /// (underground/vegetation/trees). `Skipped` = no replacement registered
-    /// OR it failed — either way the caller runs the ENGINE stage.
     pub fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs) -> FeatureOutcome {
         let Some(hook) = self.replacements[stage_index(stage)].as_ref() else {
             return FeatureOutcome::Skipped;
@@ -191,8 +169,6 @@ impl GenHooks {
         }
     }
 
-    /// Run the registered terrain replacement: the full 4096-block fill.
-    /// `None` = unregistered or failed (engine fill+carve runs).
     pub fn replace_terrain(&self, inputs: &GenInputs) -> Option<Vec<u16>> {
         let stage = WorldgenStage::Terrain;
         let hook = self.replacements[stage_index(stage)].as_ref()?;
@@ -222,8 +198,6 @@ impl GenHooks {
         res
     }
 
-    /// Run the registered climate replacement: the 256-entry column biome map.
-    /// `None` = unregistered or failed (the engine map stands).
     pub fn replace_climate(&self, inputs: &GenInputs) -> Option<Vec<u8>> {
         let stage = WorldgenStage::Climate;
         let hook = self.replacements[stage_index(stage)].as_ref()?;
@@ -275,9 +249,6 @@ impl GenHooks {
         }
     }
 
-    /// Dispatch one call into this thread's instance of `mod_idx`, validating
-    /// the reply. Any failure (instantiation, trap, fuel, deadline, shape,
-    /// ids) disables the mod session-wide and yields `None`.
     fn dispatch<T>(
         &self,
         mod_idx: usize,
@@ -297,8 +268,6 @@ impl GenHooks {
                 t.slots.resize_with(self.mods.len(), || Slot::Empty);
             }
             if matches!(t.slots[mod_idx], Slot::Empty) {
-                // A failed instantiation disabled the mod (checked above on
-                // every later dispatch), so the slot never retries.
                 t.slots[mod_idx] = Slot::Live(Box::new(self.instantiate(mod_idx)?));
             }
             let Slot::Live(inst) = &mut t.slots[mod_idx] else {
@@ -315,8 +284,6 @@ impl GenHooks {
         })
     }
 
-    /// Build this thread's instance of `mod_idx` and run its detached init.
-    /// `None` = it failed, and the mod is now disabled session-wide.
     fn instantiate(&self, mod_idx: usize) -> Option<ModInstance> {
         let m = &self.mods[mod_idx];
         let mut inst = match ModInstance::from_module_side(
@@ -339,8 +306,6 @@ impl GenHooks {
         if inst.disabled() {
             return None;
         }
-        // Registrations from THIS init are accepted-and-ignored (the main load
-        // already recorded them); validate the cheap invariant only.
         let gen_regs = inst
             .take_registrations()
             .iter()
@@ -377,11 +342,6 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
     format!("{call} expected a {expected} reply, got {got}")
 }
 
-/// A write-list reply as the driver consumes it: deferred, or validated.
-///
-/// A deferral is only honoured as the answer to a memo claim that came back
-/// pending, so the section always has a publication to wait for; one with
-/// nothing pending would be re-dispatched in a busy loop, and fails instead.
 fn outcome(output: mod_api::GenOutput, seed: u32) -> Result<FeatureOutcome, String> {
     if output.deferred {
         if !super::has_pending_key() {
@@ -392,8 +352,6 @@ fn outcome(output: mod_api::GenOutput, seed: u32) -> Result<FeatureOutcome, Stri
     validated_writes(output, seed).map(FeatureOutcome::Plan)
 }
 
-/// Validate a write list's block ids against the loaded registry — an
-/// unregistered id must never reach a section buffer.
 fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationPlan, String> {
     let registered = Block::all().len();
     if output.blocks.len() > 262_144 || output.structures.len() > 256 || output.features.len() > 32
@@ -450,17 +408,11 @@ struct ThreadSlots {
 }
 
 thread_local! {
-    /// This thread's gen instances, keyed by the config epoch (a new session's
-    /// config drops the previous session's instances lazily).
     static THREAD_SLOTS: RefCell<ThreadSlots> = const { RefCell::new(ThreadSlots {
         epoch: 0,
         slots: Vec::new(),
     }) };
 }
-
-// ---------------------------------------------------------------------------
-// Builder (fed by ModHost::initialize from the main-load registrations).
-// ---------------------------------------------------------------------------
 
 pub struct GenHooksBuilder {
     seed: u32,
@@ -472,9 +424,6 @@ pub struct GenHooksBuilder {
 }
 
 impl GenHooksBuilder {
-    /// A builder for one session: `health` is the session's board (so gen
-    /// instances share each mod's tick-instance health) and `budget` its fuel
-    /// budgets.
     pub(super) fn new(seed: u32, health: ModHealthBoard, budget: FuelBudget) -> Self {
         Self {
             seed,
@@ -486,7 +435,6 @@ impl GenHooksBuilder {
         }
     }
 
-    /// Fold one main-load registration in (no-op for non-gen registrations).
     pub(super) fn add_registration(&mut self, mod_id: &str, module: &Module, reg: &Registration) {
         match *reg {
             Registration::WorldgenFeature {
@@ -548,8 +496,6 @@ impl GenHooksBuilder {
         });
     }
 
-    /// Whole-generator replacement == every stage replaced by `callback_id`
-    /// (the guest switches on the dispatched stage).
     pub fn add_generator(&mut self, mod_id: &str, module: &Module, callback_id: u32) {
         for stage in ALL_STAGES {
             self.add_stage_replacement(mod_id, module, stage, callback_id);
@@ -573,7 +519,6 @@ impl GenHooksBuilder {
         idx
     }
 
-    /// `None` when nothing registered — the empty-hook fast path.
     pub fn build(self) -> Option<Arc<GenHooks>> {
         if self.features.is_empty() && self.replacements.iter().all(Option::is_none) {
             return None;
@@ -589,10 +534,6 @@ impl GenHooksBuilder {
         }))
     }
 }
-
-// ---------------------------------------------------------------------------
-// Process-wide installation (captured by ChunkGenerator::new).
-// ---------------------------------------------------------------------------
 
 impl GenHookDispatch for GenHooks {
     fn epoch(&self) -> u64 {
@@ -624,9 +565,6 @@ impl GenHookDispatch for GenHooks {
     }
 }
 
-/// Install the session's hook config into the worldgen-owned seam
-/// (`petramond_worldgen::hooks`): worldgen consumes the trait object, this
-/// module provides it.
 pub fn install(hooks: Option<Arc<GenHooks>>) {
     petramond_worldgen::hooks::install(hooks.map(|h| h as Arc<dyn GenHookDispatch>));
 }

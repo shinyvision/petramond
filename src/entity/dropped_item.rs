@@ -1,19 +1,3 @@
-//! A dropped item-stack bobbing in the world after a block breaks — or, once
-//! LAUNCHED, flying along its own heading and lodging in what it hits.
-//!
-//! Physics is intentionally tiny: constant gravity plus axis-resolved collision
-//! against solid blocks (so items rest on the ground and slide off into open
-//! cells without tunnelling). Spin and age advance for the renderer/pickup; the
-//! `entity` module never draws — `App` reads `pos`/`spin`/`stack` directly.
-//!
-//! [`Motion`] is the one axis the three lives of an item entity differ on:
-//! a LOOSE stack falls, settles, spins and merges; a FLIGHT keeps its
-//! velocity's heading and sweeps for what it strikes (the impact itself is
-//! the world store's to find and the server's to resolve); a STUCK item is
-//! frozen where it lodged, posed along its arrival, until its anchor block
-//! goes. Everything else — pickup, lifetime, replication, persistence — is
-//! shared.
-
 use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::fluid::{Buoyancy, FluidCurrent, Immersion};
@@ -21,43 +5,24 @@ use petramond_world::item::ItemStack;
 
 use super::{hash01, hash_signed};
 
-/// Downward acceleration applied to dropped items, in m/s².
 pub const GRAVITY: f32 = -20.0;
 
-/// Half-extent of a dropped item's cube, in metres. Used for both block
-/// collision and the player pickup test (a small ~0.3 m cube).
 pub const ITEM_HALF_EXTENT: f32 = 0.125;
 
-/// Inner absorb radius (player body-centre to item-centre): once the magnetised
-/// item flies this close it is sucked into the inventory and despawned.
 pub const ABSORB_RADIUS: f32 = 0.6;
 
-/// body-centre enters the magnet phase and accelerates toward the chest.
 pub const ATTRACT_RADIUS: f32 = 1.5;
 
-/// Base inward speed (m/s) at the edge of the attract radius. The magnet pull
-/// ramps up as the item nears the player so the suck visibly accelerates.
 const MAGNET_BASE_SPEED: f32 = 6.0;
-/// Extra inward speed (m/s) added as the item closes on the player (scaled by how
-/// far inside the attract radius it is), giving the accelerating "vacuum" feel.
 const MAGNET_RAMP_SPEED: f32 = 10.0;
 
-/// Horizontal velocity damping per second while resting on the ground (drops
-/// quickly settle instead of sliding forever).
 const GROUND_DAMP_PER_SEC: f32 = 6.0;
-/// Air drag applied to horizontal velocity each second (mild).
 const AIR_DAMP_PER_SEC: f32 = 0.8;
-/// Angular speed of the idle spin, in radians/second.
 const SPIN_SPEED: f32 = 2.0;
 
-/// Forward launch speed (m/s) of an item thrown out of the inventory.
 const THROW_SPEED: f32 = 4.0;
-/// Extra upward speed (m/s) added to a throw so the toss arcs clear of the
-/// player instead of dropping straight at their feet.
 const THROW_UP: f32 = 1.5;
 
-/// Which way a flying or lodged item points: yaw about +Y (the player
-/// convention — forward is `(sin yaw, cos yaw)`), pitch up from level.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Heading {
     pub yaw: f32,
@@ -65,7 +30,6 @@ pub struct Heading {
 }
 
 impl Heading {
-    /// The heading a velocity points along, or `None` for a body at rest.
     pub fn of(vel: Vec3) -> Option<Heading> {
         let horizontal = (vel.x * vel.x + vel.z * vel.z).sqrt();
         if horizontal < 1e-6 && vel.y.abs() < 1e-6 {
@@ -77,7 +41,6 @@ impl Heading {
         })
     }
 
-    /// The unit vector this heading points along.
     pub fn dir(self) -> Vec3 {
         let (sp, cp) = self.pitch.sin_cos();
         let (sy, cy) = self.yaw.sin_cos();
@@ -85,41 +48,20 @@ impl Heading {
     }
 }
 
-/// A launched item's flight.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Flight {
-    /// Who launched it — named on the impact. Transient: a reload forgets.
     pub owner: Option<crate::mob::EntityRef>,
-    /// Whether one whole tick of the item's motion has been clear of the
-    /// launcher's body since it launched. It starts inside (or beside) that
-    /// body and a body walking into its own slow shot keeps meeting it, so
-    /// until then the launcher is not a body it can strike; after, it is a
-    /// body like any other — a launch lobbed straight up comes back down on
-    /// the launcher. Derived from the bodies each tick, never from a tick
-    /// count that would encode a body size or a walking speed. Transient:
-    /// `true` on reload, whose owner is forgotten.
     pub left_owner: bool,
-    /// The way the item points: its velocity's heading, held through the
-    /// instant at the top of an arc where the velocity says nothing.
     pub heading: Heading,
 }
 
-/// An item lodged in a block.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Stuck {
-    /// The way it arrived, which is the way it stays.
     pub heading: Heading,
-    /// The cell it is lodged in: while that cell holds collision the item
-    /// stays; the moment it goes, the item drops loose.
     pub anchor: IVec3,
-    /// Whether the anchor has been probed against LIVE collision: set by a
-    /// lodge, cleared by a reload (the block may have gone while the section
-    /// was out), so a restored item re-verifies its anchor on its first
-    /// ticked step. Transient.
     pub verified: bool,
 }
 
-/// The three lives of an item entity — see the module doc.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Motion {
     Loose,
@@ -128,8 +70,6 @@ pub enum Motion {
 }
 
 impl Motion {
-    /// In flight along `vel` for `owner` — or loose, for a zero velocity
-    /// that has no heading to fly along.
     pub fn flying(vel: Vec3, owner: Option<crate::mob::EntityRef>) -> Motion {
         match Heading::of(vel) {
             Some(heading) => Motion::Flight(Flight {
@@ -142,24 +82,14 @@ impl Motion {
     }
 }
 
-/// What becomes of a flying item once its impact is resolved: the
-/// consequence the `projectile_hit` dispatch settles on, applied by the
-/// server. The engine's own default is [`Fate::of_impact`]; a handler may
-/// rewrite it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Fate {
-    /// Removed — spent in what it struck.
     Consume,
-    /// Lodged in the block it struck, heading kept, until that block goes.
-    /// Only a block can hold an item; on a body this is a [`Fate::Drop`].
     Lodge,
-    /// Loose at the impact, an ordinary drop.
     Drop,
 }
 
 impl Fate {
-    /// The engine's default for an item whose row `sticks` (or not) striking
-    /// a block (`true`) or a body (`false`).
     pub fn of_impact(sticks: bool, struck_block: bool) -> Fate {
         if sticks && struck_block {
             Fate::Lodge
@@ -169,56 +99,24 @@ impl Fate {
     }
 }
 
-/// A free-floating stack of items in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DroppedItem {
-    /// Stable session identity for replication (the item-entity analogue of
-    /// `mob::Instance::id`). Assigned by `world::entities::DroppedItems` when
-    /// the drop enters the active set (spawn, reload, or pickup split);
-    /// constructors leave it 0. Never persisted — a reload assigns fresh ids.
     pub id: u64,
-    /// World-space centre of the item cube.
     pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,
     pub stack: ItemStack,
-    /// 6-bit SKY light used by render handoff. The game refreshes this when a
-    /// drop crosses voxel cells, avoiding per-frame world-light lookups for
-    /// long-lived item piles.
     pub skylight: u8,
-    /// 6-bit block (torch) light sampled alongside `skylight` — night-invariant.
     pub blocklight: petramond_world::light::BlockLight6,
-    /// Game ticks this item has been alive (advanced once per fixed tick by the
-    /// world entity step, paused while its chunk is unloaded). Gates the pickup
-    /// delay and drives the despawn timer; persisted with the owning chunk so the
-    /// remaining lifetime survives an unload/reload. NOT touched by physics.
     pub ticks_lived: u32,
-    /// Transient reservation from the pickup planner: the PLAYER this drop is
-    /// reserved for (at most one at a time — first come per tick, in session
-    /// order). Only a requested drop may magnet, and it flies toward ITS
-    /// requester; save/load deliberately reconstructs this as `None` so
-    /// reservations are recomputed from inventory.
     pub pickup_requested: Option<crate::player::PlayerId>,
-    /// Accumulated Y-rotation in radians for the idle spin.
     pub spin: f32,
-    /// Loose, in flight, or lodged — see [`Motion`].
     pub motion: Motion,
-    /// Previous-tick `pos`/`spin`, snapshotted at the top of each physics tick so the
-    /// renderer can interpolate between ticks (physics now runs on the fixed game tick,
-    /// like mobs). Transient — never saved; reconstructed equal to `pos`/`spin`.
     pub prev_pos: petramond_math::world_pos::WorldPos,
     pub prev_spin: f32,
-    /// The committed way out of geometry this drop is stuck inside (see
-    /// `collision::EscapeRoute`) — a block placed or grown on top of a pile
-    /// buries it exactly like it buries a mob. Derived from the world every
-    /// tick, so never persisted.
     escape: petramond_world::collision::EscapeRoute,
 }
 
 impl DroppedItem {
-    /// The one constructor the spawn kinds compose over: at rest in every
-    /// transient (fresh id, no spin, no reservation, previous pose = pose).
-    /// Light starts at full sky as a first guess; the first cell crossing
-    /// samples the real value.
     pub(crate) fn with_motion(
         pos: petramond_math::world_pos::WorldPos,
         stack: ItemStack,
@@ -242,32 +140,18 @@ impl DroppedItem {
         }
     }
 
-    /// Spawn a stack at `pos` with a small deterministic upward+outward "pop".
-    ///
-    /// `seed` varies the pop direction per spawn (use an incrementing counter or
-    /// a hash of the block position): no RNG, fully reproducible. Without a
-    /// varying seed every drop from one break would launch identically and stack
-    /// into a single column.
     pub fn new(pos: petramond_math::world_pos::WorldPos, stack: ItemStack, seed: u32) -> Self {
         let s = seed as u64;
-        // Outward kick in the XZ plane, gentle so drops stay near the block.
         let ang = hash01(s) * std::f32::consts::TAU;
-        let speed = 1.0 + hash01(s ^ 0x5151) * 1.5; // 1.0..2.5 m/s
-        let up = 2.5 + hash01(s ^ 0xA2A2) * 1.5; // 2.5..4.0 m/s upward pop
+        let speed = 1.0 + hash01(s ^ 0x5151) * 1.5;
+        let up = 2.5 + hash01(s ^ 0xA2A2) * 1.5;
         let vel = Vec3::new(ang.cos() * speed, up, ang.sin() * speed);
         let mut item = Self::with_motion(pos, stack, vel, Motion::Loose);
-        // Stagger the starting spin so a pile of drops isn't phase-locked.
         item.spin = hash_signed(s ^ 0x3C3C) * std::f32::consts::PI;
         item.prev_spin = item.spin;
         item
     }
 
-    /// Spawn a stack thrown out of the inventory at `pos`, flying along `dir`
-    /// (the player's look direction) with a small upward arc. Unlike `new`, the
-    /// launch is deliberate rather than a random pop, so the toss reads as "the
-    /// player threw this". `ticks_lived` starts at 0 so the shared pickup delay
-    /// keeps the thrower from instantly vacuuming it back up. A zero `dir` drops it
-    /// straight up (degenerate look direction).
     pub fn thrown(pos: petramond_math::world_pos::WorldPos, stack: ItemStack, dir: Vec3) -> Self {
         let d = dir.normalize_or_zero();
         let vel = Vec3::new(
@@ -278,10 +162,6 @@ impl DroppedItem {
         Self::with_motion(pos, stack, vel, Motion::Loose)
     }
 
-    /// Spawn ONE item launched from `pos` at `vel`, in flight for `owner`
-    /// (`EntityCall::LaunchItem`). A zero velocity has no heading to fly along,
-    /// so it is a loose drop from rest instead. `ticks_lived` starts at 0:
-    /// the pickup delay keeps the launcher from vacuuming it straight back.
     pub fn launched(
         pos: petramond_math::world_pos::WorldPos,
         stack: ItemStack,
@@ -291,8 +171,6 @@ impl DroppedItem {
         Self::with_motion(pos, stack, vel, Motion::flying(vel, owner))
     }
 
-    /// The way this item points, for a flying or lodged item; `None` for a
-    /// loose stack, which spins instead.
     pub fn heading(&self) -> Option<Heading> {
         match self.motion {
             Motion::Loose => None,
@@ -301,14 +179,10 @@ impl DroppedItem {
         }
     }
 
-    /// Whether this item can be vacuumed up: a stack on the ground or an
-    /// item lodged in a wall, never one still in the air.
     pub fn collectable(&self) -> bool {
         !matches!(self.motion, Motion::Flight(_))
     }
 
-    /// Lodge this item where it is, pointing the way it arrived, against the
-    /// live collision it just struck.
     pub fn lodge(&mut self, anchor: IVec3) {
         if let Some(heading) = self.heading() {
             self.motion = Motion::Stuck(Stuck {
@@ -322,32 +196,18 @@ impl DroppedItem {
         self.vel = Vec3::ZERO;
     }
 
-    /// Drop this item loose where it is, keeping `vel`.
     pub fn release(&mut self) {
         self.motion = Motion::Loose;
     }
 
-    /// Reserve this drop for player `by`'s pickup. The world pickup planner
-    /// owns when this is set; physics only consumes the decision.
     pub fn request_pickup(&mut self, by: crate::player::PlayerId) {
         self.pickup_requested = Some(by);
     }
 
-    /// Release this drop from the pickup magnet.
     pub fn clear_pickup_request(&mut self) {
         self.pickup_requested = None;
     }
 
-    /// The LOOSE step: advance physics by `dt` — gravity, axis-resolved block
-    /// collision, and spin. Items rest on solid ground and have horizontal
-    /// velocity damped while grounded. The lifetime counter (`ticks_lived`)
-    /// is advanced separately by the per-tick world step, not here.
-    ///
-    /// `magnet_target` is the player chest (body-centre) the item is sucked into:
-    /// once the item is within `ATTRACT_RADIUS` of it the normal physics are
-    /// bypassed and the item flies straight at the target with an accelerating
-    /// pull, ignoring gravity/collision so the vacuum reads cleanly. Pass `None`
-    /// (or a far target) to disable magnetism.
     pub fn step_loose(
         &mut self,
         dt: f32,
@@ -355,8 +215,6 @@ impl DroppedItem {
         magnet_target: Option<petramond_math::world_pos::WorldPos>,
     ) {
         debug_assert!(matches!(self.motion, Motion::Loose));
-        // The shared, model-aware box source — the item collides with a bbmodel block's
-        // real legs/top, exactly like the player/mob bodies (all via `collision_boxes_at`).
         let cells = world.cursor();
         let boxes = |x: i32, y: i32, z: i32| cells.collision_boxes_xyz(x, y, z);
         let feet = self.pos - Vec3::Y * ITEM_HALF_EXTENT;
@@ -367,11 +225,6 @@ impl DroppedItem {
         self.integrate_with_flow(dt, magnet_target, &boxes, immersion, current);
     }
 
-    /// Advance a FLIGHT's velocity by `dt` without moving it: gravity and
-    /// drag, the heading refreshed from the result. Answers the motion this
-    /// tick wants (`vel · dt`), which the world store sweeps for an impact
-    /// before applying — the sweep needs the bodies, which the entity never
-    /// sees. A loose or lodged item answers `None`.
     pub fn advance_flight(&mut self, dt: f32) -> Option<Vec3> {
         let Motion::Flight(flight) = &mut self.motion else {
             return None;
@@ -387,9 +240,6 @@ impl DroppedItem {
         Some(self.vel * dt)
     }
 
-    /// Pure integration behind [`step_loose`](Self::step_loose). `solid_at` reports whether a
-    /// block cell is solid; bridged here to the shared collision box source so tests can
-    /// drive the full physics against a stub world (a real `World` spins up a worker pool).
     #[cfg(test)]
     fn integrate(
         &mut self,
@@ -415,31 +265,18 @@ impl DroppedItem {
         immersion: Option<Immersion>,
         current: FluidCurrent,
     ) {
-        // Snapshot the pre-tick pose so the renderer can interpolate this tick's motion
-        // (physics runs on the fixed game tick; frames in between blend prev → current).
         self.prev_pos = self.pos;
         self.prev_spin = self.spin;
         self.spin = (self.spin + SPIN_SPEED * dt) % std::f32::consts::TAU;
 
-        // Magnet phase: if a target is within the attract radius, fly straight at
-        // it with an accelerating pull (no gravity/collision) so the suck is
-        // smooth and unmistakable. Falls back to free physics otherwise.
         if let Some(target) = magnet_target {
             let to = target - self.pos;
             let dist = to.length();
             if dist <= ATTRACT_RADIUS {
                 if dist > 1e-4 {
-                    // Speed ramps up as the item closes in (1.0 at the edge of the
-                    // attract radius, ~0 right at the target).
                     let closeness = 1.0 - (dist / ATTRACT_RADIUS);
                     let speed = MAGNET_BASE_SPEED + MAGNET_RAMP_SPEED * closeness;
-                    // The pull is position-based (the step below), so the drop keeps
-                    // no velocity of its own. If the magnet releases it mid-flight —
-                    // the inventory filled as it closed in, e.g. the other half of a
-                    // split was absorbed first — it then falls straight from rest
-                    // instead of being flung away by a leftover magnet velocity.
                     self.vel = Vec3::ZERO;
-                    // Don't overshoot the target in a single step.
                     let step = (speed * dt).min(dist);
                     self.pos += (to / dist) * step;
                 }
@@ -464,9 +301,6 @@ impl DroppedItem {
         }
         self.vel = current.apply(self.vel, dt);
 
-        // Axis-resolved movement via the shared swept-AABB resolver (same one the player
-        // and mobs use): slides along each axis against the block's real collision shape. An
-        // item never auto-steps (step_height = 0) — it's not walking, it tumbles/settles.
         let h = f64::from(ITEM_HALF_EXTENT);
         let min = [self.pos.x - h, self.pos.y - h, self.pos.z - h];
         let max = [self.pos.x + h, self.pos.y + h, self.pos.z + h];
@@ -490,7 +324,6 @@ impl DroppedItem {
             self.vel.z = 0.0;
         }
 
-        // Damping: strong on the ground (settle), mild in the air.
         let damp = if grounded {
             GROUND_DAMP_PER_SEC
         } else {
@@ -504,17 +337,11 @@ impl DroppedItem {
         }
     }
 
-    /// `true` if `player_pos` (player body-centre) is within the inner
-    /// `ABSORB_RADIUS`: the item should be vacuumed into the inventory and
-    /// despawned. Cheap squared-distance test.
     #[inline]
     pub fn within_pickup(&self, player_pos: petramond_math::world_pos::WorldPos) -> bool {
         self.pos.distance_squared(player_pos) <= f64::from(ABSORB_RADIUS * ABSORB_RADIUS)
     }
 
-    /// `true` if `player_pos` (player body-centre) is within the outer
-    /// `ATTRACT_RADIUS`: the item is in the magnet phase and flying at the
-    /// player. Cheap squared-distance test.
     #[inline]
     pub fn within_attract(&self, player_pos: petramond_math::world_pos::WorldPos) -> bool {
         self.pos.distance_squared(player_pos) <= f64::from(ATTRACT_RADIUS * ATTRACT_RADIUS)
@@ -531,19 +358,14 @@ mod tests {
         ItemStack::new(ItemType::Dirt, 1)
     }
 
-    /// A flat floor at y < 0: every cell with y < 0 is solid, everything else air.
     fn floor_at_zero(p: IVec3) -> bool {
         p.y < 0
     }
 
-    /// No solid blocks anywhere.
     fn empty(_p: IVec3) -> bool {
         false
     }
 
-    /// Bridge a cell-solid bool stub into the shared collision box source (a full cube per
-    /// solid cell) — the same mapping `integrate` uses, for tests that drive
-    /// `integrate_with_flow` directly.
     fn boxes_of(
         solid: impl Fn(IVec3) -> bool,
     ) -> impl Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb] {
@@ -587,7 +409,7 @@ mod tests {
     #[test]
     fn gravity_pulls_down_in_free_fall() {
         let mut d = DroppedItem::new(WorldPos::new(0.0, 50.0, 0.0), stack(), 1);
-        d.vel = Vec3::ZERO; // isolate gravity from the pop
+        d.vel = Vec3::ZERO;
         let before = d.pos.y;
         d.integrate(0.1, None, &empty);
         assert!(d.pos.y < before, "free fall should lower the item");
@@ -623,13 +445,11 @@ mod tests {
 
     #[test]
     fn rests_on_a_floor() {
-        // Start just above the floor with downward velocity; integrate a while.
         let mut d = DroppedItem::new(WorldPos::new(0.5, 2.0, 0.5), stack(), 2);
         d.vel = Vec3::new(0.0, -1.0, 0.0);
         for _ in 0..300 {
             d.integrate(1.0 / 60.0, None, &floor_at_zero);
         }
-        // Floor top is y == 0; item half-extent keeps its centre above it.
         assert!(
             d.pos.y >= f64::from(ITEM_HALF_EXTENT - 1e-3),
             "item sank through floor: {}",
@@ -640,15 +460,11 @@ mod tests {
             "item should be resting near the floor: {}",
             d.pos.y
         );
-        // Vertical velocity is killed once grounded.
         assert!(d.vel.y.abs() < 1e-3, "grounded item should stop falling");
     }
 
     #[test]
     fn item_rests_on_an_inset_block_top_not_the_cell_top() {
-        // Model-aware: an item dropped onto an INSET-shaped block (a chest, top at 14/16)
-        // settles on that real top, not the full-cube cell top (y = 1). Proves the dropped
-        // item now collides through the shared `collision_boxes_at` shape, like the player.
         let chest = petramond_world::block::Block::Chest.collision_boxes();
         let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
         assert!(
@@ -661,7 +477,6 @@ mod tests {
         for _ in 0..300 {
             d.integrate_with_flow(1.0 / 60.0, None, &boxes, None, FluidCurrent::NONE);
         }
-        // The item bottom rests on the chest top.
         assert!(
             (d.pos.y - f64::from(ITEM_HALF_EXTENT) - f64::from(chest_top)).abs() < 0.02,
             "item should rest on the chest top {chest_top}, got bottom {}",
@@ -689,7 +504,6 @@ mod tests {
 
     #[test]
     fn physics_does_not_touch_the_lifetime_counter() {
-        // The lifetime advances on the world tick step, never in physics.
         let mut d = DroppedItem::new(WorldPos::ZERO, stack(), 9);
         d.integrate(0.5, None, &empty);
         d.integrate(0.5, None, &empty);
@@ -699,23 +513,17 @@ mod tests {
     #[test]
     fn pickup_range_test() {
         let d = DroppedItem::new(WorldPos::new(0.0, 0.0, 0.0), stack(), 0);
-        // Inside the inner absorb radius.
         assert!(d.within_pickup(WorldPos::new(0.0, 0.0, 0.0)));
-        // Just outside the absorb radius but inside attract: attract-only.
         let just_out = WorldPos::new(f64::from(ABSORB_RADIUS + 0.1), 0.0, 0.0);
         assert!(!d.within_pickup(just_out));
         assert!(d.within_attract(just_out));
-        // More than a block away must not start the magnet/pickup path.
         assert!(!d.within_attract(WorldPos::new(f64::from(ATTRACT_RADIUS + 0.01), 0.0, 0.0)));
-        // Well beyond both radii.
         assert!(!d.within_pickup(WorldPos::new(10.0, 0.0, 0.0)));
         assert!(!d.within_attract(WorldPos::new(10.0, 0.0, 0.0)));
     }
 
     #[test]
     fn magnet_pulls_item_toward_target() {
-        // A target inside the attract radius (but outside absorb) sucks the item
-        // toward it: the distance shrinks each step and it ignores gravity.
         let target = WorldPos::new(0.0, 0.0, 0.0);
         let start = WorldPos::new(0.0, f64::from(ATTRACT_RADIUS - 0.2), 0.0);
         let mut d = DroppedItem::new(start, stack(), 11);
@@ -731,8 +539,6 @@ mod tests {
 
     #[test]
     fn magnet_absorbs_within_inner_radius() {
-        // Starting inside attract range, a few steps fly the item into the inner
-        // absorb radius around the target.
         let target = WorldPos::new(0.0, 0.0, 0.0);
         let start = WorldPos::new(0.0, f64::from(ATTRACT_RADIUS - 0.1), 0.0);
         let mut d = DroppedItem::new(start, stack(), 12);
@@ -751,7 +557,6 @@ mod tests {
 
     #[test]
     fn magnet_does_not_overshoot_target() {
-        // A big dt must not fling the item past the target (clamped to the gap).
         let target = WorldPos::new(0.0, 0.0, 0.0);
         let start = WorldPos::new(0.0, 1.0, 0.0);
         let mut d = DroppedItem::new(start, stack(), 13);
@@ -766,12 +571,9 @@ mod tests {
 
     #[test]
     fn magnet_leaves_no_velocity_to_fling_a_released_drop() {
-        // The magnet pulls by position and clears velocity, so a drop it releases
-        // mid-flight (the inventory filled as it closed in) drops from rest rather
-        // than rocketing off with a leftover magnet velocity.
         let mut d = DroppedItem::new(WorldPos::new(0.0, 1.0, 0.0), stack(), 1);
-        d.vel = Vec3::new(5.0, 5.0, 5.0); // a prior velocity the magnet must clear
-        let target = WorldPos::ZERO; // within ATTRACT_RADIUS (dist 1.0)
+        d.vel = Vec3::new(5.0, 5.0, 5.0);
+        let target = WorldPos::ZERO;
         d.integrate(1.0 / 60.0, Some(target), &empty);
         assert_eq!(
             d.vel,
@@ -782,7 +584,6 @@ mod tests {
 
     #[test]
     fn far_target_leaves_physics_untouched() {
-        // A target beyond the attract radius leaves normal gravity physics intact.
         let far = WorldPos::new(100.0, 0.0, 0.0);
         let mut d = DroppedItem::new(WorldPos::new(0.0, 50.0, 0.0), stack(), 14);
         d.vel = Vec3::ZERO;

@@ -1,11 +1,3 @@
-//! Async section light baking plus the light-shape rules used by the floods.
-//!
-//! Keep this subsystem split by responsibility: the engine's queue owns jobs
-//! and workers, `neighborhood` owns snapshot assembly, `skylight` owns
-//! sky-cover planning, `flood` owns full propagation, `bake`/`batch` run the
-//! full per-section and 2×2×2 bakes, `incremental` relights edits over the
-//! stored cubes, and `shape` owns per-block boundary rules.
-
 pub mod bake;
 pub mod batch;
 pub mod flood;
@@ -28,18 +20,13 @@ pub use incremental::{edit_relightable, relight_edits, RelitSection};
 
 pub use skylight::cover_change_affects_section;
 
-/// Bit for neighbour delta `(dx, dy, dz)` (each −1/0/+1) in a
-/// [`cube_region_changes`] mask; the centre bit `(0,0,0)` reads "any change".
 #[inline]
 pub fn region_bit(dx: i32, dy: i32, dz: i32) -> u32 {
     1 << (((dy + 1) * 9 + (dz + 1) * 3 + (dx + 1)) as u32)
 }
 
-/// All 27 region bits set: every sampling neighbour saw a change.
 pub const REGION_ALL: u32 = (1 << 27) - 1;
 
-/// An all-dark cube, for diffing a dropped (`None`, reads-as-dark) block-light
-/// buffer against a previously cached one.
 pub static ZERO_CUBE: [crate::light::LightRgb; crate::chunk::SECTION_VOLUME] =
     [crate::light::LightRgb::ZERO; crate::chunk::SECTION_VOLUME];
 
@@ -51,7 +38,6 @@ pub static ZERO_CUBE: [crate::light::LightRgb; crate::chunk::SECTION_VOLUME] =
 pub fn cube_region_changes<T: Copy + PartialEq>(old: Option<&[T]>, new: &[T], fallback: T) -> u32 {
     #[inline]
     fn axis_bits(local: usize) -> u32 {
-        // Bit 0: delta −1, bit 1: delta 0, bit 2: delta +1 along one axis.
         if local == 0 {
             0b011
         } else if local == SECTION_SIZE - 1 {
@@ -85,7 +71,6 @@ pub fn cube_region_changes<T: Copy + PartialEq>(old: Option<&[T]>, new: &[T], fa
     match old {
         Some(old) => {
             debug_assert_eq!(old.len(), new.len());
-            // Word-compare fast path: almost every rebake changes few cells.
             let (old8, new8) = (old.chunks_exact(8), new.chunks_exact(8));
             for (w, (o, n)) in old8.zip(new8).enumerate() {
                 if o == n {
@@ -115,7 +100,6 @@ pub fn cube_region_changes<T: Copy + PartialEq>(old: Option<&[T]>, new: &[T], fa
     mask
 }
 
-/// Side length of the light flood neighbourhood (3 sections).
 pub const NBHD: usize = 3 * SECTION_SIZE;
 pub const NBHD_VOLUME: usize = NBHD * NBHD * NBHD;
 pub const NBHD_AREA: usize = NBHD * NBHD;
@@ -134,7 +118,6 @@ mod tests {
     fn region_change_masks_map_changed_cells_to_their_sampling_neighbours() {
         let old = vec![0u8; SECTION_VOLUME];
 
-        // Interior change: only this section's own mesh samples it.
         let mut new = old.clone();
         new[section_idx(8, 8, 8)] = 4;
         assert_eq!(
@@ -142,7 +125,6 @@ mod tests {
             region_bit(0, 0, 0)
         );
 
-        // Border-plane change: the facing neighbour's pad samples it too.
         let mut new = old.clone();
         new[section_idx(0, 8, 8)] = 4;
         assert_eq!(
@@ -150,7 +132,6 @@ mod tests {
             region_bit(0, 0, 0) | region_bit(-1, 0, 0)
         );
 
-        // Corner cell: centre, three faces, three edges, and the corner.
         let mut new = old.clone();
         new[section_idx(15, 15, 15)] = 4;
         let mask = cube_region_changes(Some(&old), &new, 0);
@@ -159,7 +140,6 @@ mod tests {
         assert_ne!(mask & region_bit(1, 0, 0), 0);
         assert_eq!(mask & region_bit(-1, 0, 0), 0);
 
-        // An absent old cube reads as the uniform fallback the accessors use.
         assert_eq!(cube_region_changes(None, &old, 0), 0);
         let full = vec![SKY_FULL; SECTION_VOLUME];
         assert_eq!(cube_region_changes(None, &full, SKY_FULL), 0);

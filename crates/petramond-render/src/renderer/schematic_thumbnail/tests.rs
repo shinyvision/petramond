@@ -118,7 +118,6 @@ fn schematic_thumbnail_smoke() {
     let mut selection = Selection::default();
     selection.region([0, 0, 0], [4, 4, 4], false).unwrap();
     selection.region([5, 0, 0], [5, 0, 0], false).unwrap();
-    // An inline pool meshes the preview inside the call that asks for it.
     let jobs = petramond::worker::JobPool::inline();
     renderer.set_selection_overlay(Some(&selection), None, None);
     renderer.set_schematic_preview(&jobs, Some(scene.clone()), Some([0; 3]));

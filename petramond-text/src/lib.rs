@@ -1,20 +1,3 @@
-//! Renderer-neutral Petramond text: a loaded font's glyph bitmaps, metrics,
-//! measurement, wrapping, atlas generation, and CPU rasterization.
-//!
-//! Text is shared presentation infrastructure, not GUI infrastructure. GUI
-//! documents, canvas overlays, HUDs, and tools all consume this crate.
-//!
-//! Glyphs come from a real font FILE ([`Font::from_ttf`]), rasterized once to
-//! 1 bit at the font's design pixel size — so the UI can spell `×`, `ö` and
-//! `Æ` instead of falling back to a box, while still looking like it was drawn
-//! on a pixel grid. A hardcoded 5×7 ASCII table ([`Font::builtin`]) stays as
-//! the fallback for tests, the placeholder theme, and a pack whose font fails
-//! to load.
-//!
-//! There is no process-global font: every measurement and every raster names
-//! the [`Font`] it uses (the GUI theme owns the UI font), so what is measured
-//! is always what is drawn, and two fonts can coexist in one process.
-
 pub mod builtin;
 mod font;
 pub mod tiny;
@@ -22,7 +5,6 @@ pub mod tiny;
 pub use font::{FaceSource, Font, FontError, Glyph};
 
 impl Font {
-    /// Pixel size of one single-line text run at integer glyph scale.
     pub fn measure_scaled(&self, s: &str, scale: u8) -> [u32; 2] {
         let scale = scale.max(1) as u32;
         [
@@ -31,11 +13,6 @@ impl Font {
         ]
     }
 
-    /// Blend one single-line run into a straight-alpha RGBA8 image.
-    ///
-    /// `position` is the run's top-left in image pixels. Drawing is clipped to
-    /// the destination, so callers can place labels at image edges without
-    /// pre-clipping.
     pub fn draw_rgba(
         &self,
         rgba: &mut [u8],
@@ -52,7 +29,6 @@ impl Font {
         let scale = scale.max(1) as i32;
         let mut pen_x = position[0];
         for ch in text.chars() {
-            // One lookup per character, then its ink straight off the bitmap.
             let glyph = self.glyph(ch);
             for (x, y) in glyph.ink() {
                 let (left, top) = (pen_x + x * scale, position[1] + y * scale);
@@ -93,8 +69,6 @@ fn blend_rgba_pixel(rgba: &mut [u8], width: usize, height: usize, x: i32, y: i32
 mod tests {
     use super::*;
 
-    /// The shipped font is what players read: it must load at its declared
-    /// size and cover the characters item names and UI copy actually use.
     #[test]
     fn the_shipped_font_loads_and_covers_european_latin() {
         let bytes = std::fs::read(concat!(
@@ -107,19 +81,10 @@ mod tests {
             assert!(font.has_glyph(ch), "missing glyph {ch:?}");
         }
         assert!(font.glyph_count() > 200, "{}", font.glyph_count());
-        // Real glyph coverage costs room: accented capitals sit above the cap
-        // line and descenders below the baseline.
         let builtin = Font::builtin();
         assert!(font.line_h() > builtin.line_h());
     }
 
-    /// The rasterizer reproduces the font's own pixel grid.
-    ///
-    /// These are the glyphs that caught it getting this wrong: `w`, `W` and
-    /// `M` each pack three one-pixel stems into five columns, so any
-    /// decimation that averages a cell instead of point-sampling its centre
-    /// merges them into a blob — `hushjaw` renders as `hushjau`. The expected
-    /// bitmaps are FreeType's hinted output for the same face and size.
     #[test]
     fn glyph_bitmaps_match_the_fonts_own_pixel_grid() {
         let bytes = std::fs::read(concat!(
@@ -147,11 +112,9 @@ mod tests {
             let got = trimmed_glyph(&font, *ch);
             assert_eq!(&got, want, "{ch:?} rasterized as {got:#?}");
         }
-        // One-pixel stems mean the advance leaves exactly one column of gap.
         assert_eq!(font.advance('W'), 7);
     }
 
-    /// A glyph's bitmap (already trimmed to its ink) as `#`/`.` rows.
     fn trimmed_glyph(font: &Font, ch: char) -> Vec<String> {
         let glyph = font.glyph(ch);
         let [_, _, w, h] = glyph.bounds();
@@ -170,8 +133,6 @@ mod tests {
         assert!(Font::from_ttf(&[], 10.0).is_err());
     }
 
-    /// Measurement and raster read the SAME font: a run measured at a scale
-    /// fills exactly the pixels it reports, whichever font is passed.
     #[test]
     fn a_drawn_run_stays_inside_its_measured_box() {
         let font = Font::builtin();

@@ -1,32 +1,26 @@
-//! Sitting: PURE MOD POLICY over the engine's actor-pose primitive
-//! (`player_pose_set`). Block row data owns the seat layout (offsets in
-//! unrotated footprint space, like model geometry),
-//! computes each seat's world anchor from the placed group's base + facing
-//! (`block_model_group` + `footprint_local_to_world`), and derives occupancy
-//! from the engine roster (`pose_anchor`) — never from mirrored mod state, so
-//! there is nothing to desync or clean up. The engine owns mechanism: one
-//! pose per player, no two players on one exact anchor, replication, the
-//! seated body, and the release valves (sneak / death / spectator / leave).
+//! Sitting: pure mod policy over the engine's actor-pose primitive (`player_pose_set`).
+//! Block row data owns seat layout (offsets in unrotated footprint space, like model geometry).
+//! We compute each seat's world anchor from the placed group's base + facing
+//! (`block_model_group` + `footprint_local_to_world`), and read occupancy straight from the
+//! engine roster (`pose_anchor`) — never mirrored mod state, so nothing to desync or clean up.
+//! Engine owns the mechanism: one pose per player, no two players on one exact anchor,
+//! replication, seated body, release valves (sneak / death / spectator / leave).
 //!
-//! A click on furniture is ALWAYS claimed — seated, or ABSORBED when every
-//! seat is taken. The absorb is deliberate (an interact-doctrine exception):
-//! occupancy is invisible to the initiating client's replica, so a pass-when-
-//! full would let the client ghost a block placement the server then refuses.
-//! The CLIENT instance mirrors the same always-claim as a predictor. One PASS:
-//! a sneak click holding a placeable block defers to the placement consumer
-//! (sneak-to-build against a chair, like the farming harvest's sneak rule).
+//! A click on furniture is always claimed — seated, or absorbed once every seat is taken.
+//! The absorb is deliberate: occupancy is invisible to the initiating client's replica, so
+//! pass-when-full would let the client ghost a block placement the server then refuses.
+//! Client mirrors the same always-claim as a predictor. One exception: a sneak click while
+//! holding a placeable block defers to the placement consumer (sneak-to-build against a
+//! chair, same as farming's harvest sneak rule).
 //!
-//! Breaking furniture is the one release this mod owes the engine (a pose is
-//! not tied to any block): `block_broken` re-derives which former group the
-//! cell belonged to and releases exactly the players anchored on its seats.
+//! Breaking furniture is the one release this mod owes the engine (a pose isn't tied to any
+//! block): `block_broken` figures out which former group the cell belonged to and releases
+//! just the players anchored on its seats.
 
 use mod_sdk::*;
 
 use super::{keys, Furniture};
 
-/// One sit-able furniture piece: the model footprint (mirror of
-/// the pack's `models.json` `cells`), and its seats in unrotated footprint
-/// space. A bench or sofa is one more row with more seats.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Piece {
@@ -52,7 +46,6 @@ pub(super) fn load_pieces() -> Vec<ResolvedPiece> {
 
 const FACINGS: [Facing; 4] = [Facing::North, Facing::South, Facing::West, Facing::East];
 
-/// A [`Piece`] with its block name resolved to the session id.
 pub(super) struct ResolvedPiece {
     pub(super) block: BlockId,
     pub(super) piece: Piece,
@@ -66,20 +59,12 @@ impl Furniture {
             .map(|p| &p.piece)
     }
 
-    /// Furniture consumer: seat the clicker in the free seat nearest the
-    /// clicked cell (horizontal distance to the seat's world anchor, so the
-    /// pick is facing-correct; declaration order breaks a tie). The claim is
-    /// UNCONDITIONAL once the target is
-    /// furniture — a fully occupied piece ABSORBS the click (see module docs)
-    /// so the initiating client, which cannot see occupancy on its replica,
-    /// never mispredicts a placement. One PASS: a sneak click holding a
-    /// placeable block defers to the placement consumer (sneak-to-build).
     pub(super) fn try_sit(&self, pos: [i32; 3], player: PlayerId, actor: &PlayerSnapshot) -> bool {
         let Some(piece) = self.seat_gate(&SideWorld::Server, pos, actor) else {
             return false;
         };
         let Some(group) = block_model_group(pos) else {
-            return false; // frozen/inconsistent state: never claim
+            return false;
         };
         let occupied: Vec<[f64; 3]> = players()
             .into_iter()
@@ -94,7 +79,7 @@ impl Furniture {
             .filter(|anchor| !occupied.contains(anchor))
             .map(|anchor| ((anchor[0] - cx).powi(2) + (anchor[2] - cz).powi(2), anchor))
             .collect();
-        free.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap()); // stable: ties keep declaration order
+        free.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
         for (_, anchor) in free {
             if player_pose_set(player, anchor, yaw, pose::SITTING) {
                 break;
@@ -121,14 +106,12 @@ impl Furniture {
     }
 }
 
-/// Release every player still posed on the seats of the group the broken
-/// cell belonged to. The group is gone, so its base/facing are re-derived by
-/// HYPOTHESIS: every (facing, contained-cell) pair yields a candidate base;
-/// a candidate whose base still holds the piece is a different, still-
-/// standing group (an adjacent chair) and is skipped; the rest have their
-/// exact seat anchors matched against the roster. Anchors are bit-exact
-/// (same f32 pipeline as the sit), so equality is sound and a neighbouring
-/// piece's sitter can never be released by proximity.
+/// Releases every player still posed on the seats of the group the broken cell belonged to. The
+/// group is gone, so we guess its base and facing: each (facing, contained cell) pair gives a
+/// candidate base. If that base still holds the piece, it's a different group that's still standing
+/// (an adjacent chair) and we skip it. The rest have their exact seat anchors matched against the
+/// roster. Anchors are bit-exact, from the same f32 math as sitting, so a neighbouring piece's
+/// sitter is never released by proximity.
 pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [i32; 3]) {
     let posed: Vec<(PlayerId, [f64; 3])> = players()
         .into_iter()
@@ -139,7 +122,6 @@ pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [
     }
     let [sx, sy, sz] = piece.footprint;
     for facing in FACINGS {
-        // The rotated footprint's world extent: X/Z swap for East/West.
         let (wx, wz) = match facing {
             Facing::North | Facing::South => (sx, sz),
             Facing::East | Facing::West => (sz, sx),
@@ -149,7 +131,7 @@ pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [
                 for dz in 0..wz as i32 {
                     let base = [pos[0] - dx, pos[1] - dy, pos[2] - dz];
                     if get_block(base) == Some(block) {
-                        continue; // a still-standing group owns this base
+                        continue;
                     }
                     for &seat in &piece.seats {
                         let anchor = footprint_local_to_world(base, piece.footprint, facing, seat);

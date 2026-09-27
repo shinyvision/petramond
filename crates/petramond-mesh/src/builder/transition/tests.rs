@@ -118,7 +118,6 @@ fn a_face_renders_in_the_first_set_that_offers_a_donor() {
     let rules = rules();
     let (hard, organic) = (set_id(&rules, "test:hard"), set_id(&rules, "test:organic"));
     assert!(hard < organic, "sets order by name");
-    // Dirt is in both sets; stone only pairs with it in the hard set.
     let blocks = |x, y, z| match (x, y, z) {
         (0, 0, 0) => Block::Dirt,
         (1, 0, 0) => Block::Stone,

@@ -48,25 +48,17 @@ pub(super) fn game() -> TestGame {
     game_with_camera(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0))
 }
 
-/// [`game`] with the world already reduced to one empty chunk at (0,0) — the
-/// standard blank stage for placement/interaction tests.
 pub(super) fn game_on_empty_chunk() -> TestGame {
     let mut game = game();
     install_empty_chunk(&mut game);
-    // Tests using this fixture place entities and blocks in chunk (0, 0).
-    // Keep the local session there as well so server interest filtering sees
-    // those rows and events, regardless of the seed's generated spawn point.
     game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     game
 }
 
-/// The fixture with an explicit camera (the WASM child tests spawn near their
-/// build site).
 pub(super) fn game_with_camera(cam: Camera) -> TestGame {
     assemble("", cam)
 }
 
-/// The fixture on a named world save (a world created or reopened on disk).
 pub(super) fn game_for_world(world: &str) -> TestGame {
     assemble(
         world,
@@ -82,18 +74,12 @@ fn assemble(world: &str, cam: Camera) -> TestGame {
 }
 
 impl TestGame {
-    /// One full production frame with the pipe serviced synchronously in the
-    /// middle: the client's send half, one server pump over the SAME dt, then
-    /// the client's receive half — byte-for-byte the pre-thread `Game::tick`
-    /// semantics (a fixed tick executes iff `dt` banks one).
     pub(super) fn tick(&mut self, dt: f32, input: &GameInput) -> GameEvents {
         self.game.tick_send(dt, input);
         self.pump_server(dt);
         self.game.tick_receive(dt)
     }
 
-    /// Service the server end of the loopback pipe once, standing in for one
-    /// iteration of the server thread's loop.
     pub(super) fn pump_server(&mut self, dt: f32) {
         let mut inbox: Vec<ClientToServer> = Vec::new();
         while let Ok(msg) = self.pipe.inbox.try_recv() {
@@ -105,16 +91,10 @@ impl TestGame {
         }
     }
 
-    /// Inject a raw server→client message into the loopback pipe, as if the
-    /// server thread had sent it — for tests asserting how the client applies
-    /// a hand-crafted batch.
     pub(super) fn send_server_message(&mut self, msg: petramond::net::protocol::ServerToClient) {
         let _ = self.pipe.outbox.send(msg);
     }
 
-    /// [`Self::tick`], but returning a copy of every server→client message
-    /// the pump forwarded — the streaming-path observability the section
-    /// cache tests assert on (payload copies are `Arc` bumps).
     pub(super) fn tick_recorded(
         &mut self,
         dt: f32,
@@ -133,11 +113,6 @@ impl TestGame {
         self.game.tick_receive(dt);
         recorded
     }
-
-    // --- Wrapped Game action methods. In production these queue messages the
-    // next frame sends; stage-driving tests expect them latched on the server
-    // immediately (the old `#[cfg(test)]` inline flushes), so the wrappers
-    // (inherent methods win over `Deref`) forward and flush.
 
     pub(super) fn drop_selected_item(&mut self, all: bool) {
         self.game.drop_selected_item(all);
@@ -160,7 +135,6 @@ impl TestGame {
         self.flush_outbox_for_test();
     }
 
-    /// Queue + latch the close, then apply it the way the next tick would.
     pub(super) fn close_open_menu(&mut self) {
         self.game.close_open_menu();
         self.apply_latched_actions_for_test();
@@ -176,30 +150,18 @@ impl TestGame {
         self.flush_outbox_for_test();
     }
 
-    /// Mirrors the production call plus the replicated-view/session syncs the
-    /// frame pump would provide around it.
     pub(super) fn toggle_held_block_rotation(&mut self) {
-        // Stage-driven tests mutate the session inventory directly; stand in
-        // for the batch that would have refreshed the replicated view.
         self.sync_self_view_for_test();
         self.game.toggle_held_block_rotation();
         self.sync_held_rotation_for_test();
     }
 
-    // --- Test-only state bridges (the pre-Phase-D `Game` helpers, now living
-    // on the harness because only it can see both halves).
-
-    /// Hand the queued outbox messages to the server, standing in for the
-    /// message send `Game::tick` performs each frame.
     pub(super) fn flush_outbox_for_test(&mut self) {
         for msg in self.game.net.take_outbox_for_test() {
             self.server.apply_message(0, msg);
         }
     }
 
-    /// Apply the player actions latched this frame — container edits and item
-    /// drops — standing in for the game tick that resolves them in play, then
-    /// refresh the replicated read models the way the tick's batch would.
     pub(super) fn apply_latched_actions_for_test(&mut self) {
         self.flush_outbox_for_test();
         self.server.apply_latched_actions_for_test();
@@ -207,11 +169,6 @@ impl TestGame {
         self.sync_menu_view_for_test();
     }
 
-    /// Build session 0's `SelfState` exactly as the pump would and apply it —
-    /// for tests that drive tick stages directly (no frame pump) and then
-    /// assert the client-side read models. Forces the inventory body (tests
-    /// replace whole `Inventory` values, which resets the revision the
-    /// on-change gate compares).
     pub(super) fn sync_self_view_for_test(&mut self) {
         self.server.sessions_mut()[0]
             .replication_mut()
@@ -220,23 +177,17 @@ impl TestGame {
         self.game.replica.self_view.apply(&state, true);
     }
 
-    /// Mirror of the next batch's `menu_sync`, for tests that drive menu
-    /// sessions without frames.
     pub(super) fn sync_menu_view_for_test(&mut self) {
         if let Some(sync) = self.server.build_menu_sync(0) {
             self.game.replica.menu_view.apply(sync);
         }
     }
 
-    /// Mirror of what the next batch's `TickUpdate.open_chests` does, for
-    /// tests that drive `chest_viewers` directly (no frame pump).
     pub(super) fn sync_open_chests_for_test(&mut self) {
         let open = self.server.open_chests().into_iter().collect();
         self.game.fx.set_open_chests(open);
     }
 
-    /// Mirror of what the next frame's `PlayerUpdate` does with the rotation
-    /// counter, for tests that drive tick stages without frames.
     pub(super) fn sync_held_rotation_for_test(&mut self) {
         let sess = &mut self.server.sessions_mut()[0];
         let selected = sess.selected_item();
@@ -245,16 +196,10 @@ impl TestGame {
             .apply_wire(self.game.local.held_rotation.rotation, selected);
     }
 
-    /// The SESSION inventory — the authoritative one the sim mutates.
     pub(super) fn inventory(&self) -> &Inventory {
         &self.server_player().inventory
     }
 
-    // --- The authoritative side, reached only through these accessors. The
-    // local client is always session 0 server-side.
-
-    /// The local client's authoritative player (the session's, not the
-    /// client's predicted copy).
     pub(super) fn server_player(&self) -> &petramond::player::Player {
         self.session().player()
     }
@@ -263,8 +208,6 @@ impl TestGame {
         self.session_mut().player_mut()
     }
 
-    /// The local client's server-side session record (latched look, pending
-    /// actions and outcomes, open menu, mount, ...).
     pub(super) fn session(&self) -> &ConnectedPlayer {
         self.session_at(0)
     }
@@ -273,8 +216,6 @@ impl TestGame {
         self.session_at_mut(0)
     }
 
-    /// Session `index` — the local client is 0; extra sessions come from
-    /// [`ServerGame::add_session_for_test`] via [`sim_mut`](Self::sim_mut).
     pub(super) fn session_at(&self, index: usize) -> &ConnectedPlayer {
         &self.server.sessions()[index]
     }
@@ -283,7 +224,6 @@ impl TestGame {
         &mut self.server.sessions_mut()[index]
     }
 
-    /// The authoritative world.
     pub(super) fn server_world(&self) -> &petramond::world::ServerWorld {
         self.server.world()
     }
@@ -292,35 +232,23 @@ impl TestGame {
         self.server.world_mut()
     }
 
-    /// The same edit applied to both worlds: the authoritative one first,
-    /// then the client's replica — for tests staging identical terrain on
-    /// both sides without a stream round trip.
-    /// One fixed world tick of the authoritative world alone (fluids, block
-    /// ticks), without the session stages.
     pub(super) fn server_world_tick(&mut self) {
         let recipes = self.server.recipes().clone();
         self.server.world_mut().game_tick(&recipes);
     }
 
-    /// Apply `msg` server-side exactly as if the local client had sent it.
     pub(super) fn send_to_server(&mut self, msg: ClientToServer) {
         self.server.apply_message(0, msg);
     }
 
-    /// The whole server, read-only — for tests asserting server-owned state
-    /// no narrower accessor covers (event bus registrations, chest viewers).
     pub(super) fn sim(&self) -> &ServerGame {
         &self.server
     }
 
-    /// The whole server — the door for tests that drive individual tick
-    /// stages (`tick_place`, `tick_attack`, ...) rather than whole frames.
     pub(super) fn sim_mut(&mut self) -> &mut ServerGame {
         &mut self.server
     }
 
-    /// Double-click gather: top up the cursor-held stack with every matching
-    /// item in the inventory. See [`Inventory::collect_to_cursor`].
     pub(super) fn collect_to_cursor(&mut self) {
         self.server.sessions_mut()[0]
             .player_mut()
@@ -328,8 +256,6 @@ impl TestGame {
             .collect_to_cursor();
     }
 
-    /// Test injection: replace the mod host (e.g. with a WAT guest) so the GUI
-    /// click dispatch plumbing can be driven without compiled mods.
     pub(super) fn set_mods_for_test(&mut self, mods: petramond::modding::ModHost) {
         self.server.replace_mod_host_for_test(mods);
     }
@@ -339,9 +265,6 @@ impl TestGame {
     }
 }
 
-/// A `PlayerUpdate` mirroring the session player's current transform (what the
-/// in-process client sends on an ordinary frame), with gameplay input live.
-/// Tests tweak fields to drive the message path.
 pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
     let p = game.server.sessions()[0].player();
     PlayerUpdate {
@@ -365,17 +288,12 @@ pub(super) fn player_update(game: &TestGame, gameplay: bool) -> PlayerUpdate {
     }
 }
 
-/// A hotbar slot filled with one full demo stack, for tests that need the
-/// player holding something (the real starting inventory is empty).
 pub(super) fn filled_inventory() -> Inventory {
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Dirt, 64));
     inv
 }
 
-/// Replace the session inventory with a fresh one holding `n` of `item` in
-/// hotbar slot 0 (a new inventory's active slot) — the standard "put X in the
-/// player's hand" setup.
 pub(super) fn give(game: &mut TestGame, item: ItemType, n: u8) {
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(item, n));
@@ -383,15 +301,12 @@ pub(super) fn give(game: &mut TestGame, item: ItemType, n: u8) {
 }
 
 pub(super) fn apply_drop_actions(game: &mut TestGame) -> TickEvents {
-    // The action methods queue MESSAGES now; hand them to the server the way
-    // `Game::tick` would before applying the drop stage.
     game.flush_outbox_for_test();
     let mut events = TickEvents::default();
     game.server.tick_drops(0, &mut events);
     events
 }
 
-/// A latched look target, as `apply_player_update` would leave it.
 pub(super) fn hit(pos: IVec3, normal: IVec3) -> TargetRef {
     TargetRef::face(pos, normal)
 }
@@ -404,11 +319,6 @@ pub(super) fn install_empty_chunk(game: &mut TestGame) {
         .insert_chunk_for_test(pos, petramond_world::chunk::Chunk::new(0, 0));
 }
 
-/// Clear the world and install one chunk at (0,0) with a solid one-block
-/// floor of `floor` at y=63, with the whole column pre-inserted as empty
-/// sections first, so the air ABOVE the floor reads as LOADED — sim reads
-/// treat unloaded air as absent.
-/// Takes the `World` directly so tests driving a bare world can use it too.
 pub(super) fn flat_floor_loaded_air<S: petramond::world::WorldSide>(
     world: &mut petramond::world::World<S>,
     floor: petramond_world::block::Block,
@@ -436,8 +346,6 @@ fn install_flat_floor<S: petramond::world::WorldSide>(
     world.insert_chunk_for_test(pos, chunk);
 }
 
-/// Put the authoritative session eye at `eye`, looking along `dir`, with an
-/// exact matching movement claim so reach validation uses that position.
 pub(super) fn set_server_view(game: &mut TestGame, eye: WorldPos, dir: Vec3) {
     let dir = dir.normalize();
     let sess = game.session_mut();
@@ -449,8 +357,6 @@ pub(super) fn set_server_view(game: &mut TestGame, eye: WorldPos, dir: Vec3) {
     sess.input_mut().ticks_since_claim = 0;
 }
 
-/// Aim the authoritative session through the centre segment of mob `index`,
-/// close enough for an honest target click.
 pub(super) fn aim_server_at_mob(game: &mut TestGame, index: usize) {
     let mob = &game.server.world().mobs().instances()[index];
     let size = petramond::mob::def(mob.kind).size;

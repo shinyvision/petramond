@@ -1,12 +1,3 @@
-//! The guarded zip reader: a pack archive from petramond.com (or `make
-//! addons`) checked entry by entry and unpacked into a fresh staging
-//! directory.
-//!
-//! It re-checks everything the website checked when the archive was
-//! uploaded, with the website's sentences, and adds what only a writer must
-//! care about (names a disk refuses). Hand-written over raw inflate: the
-//! format has one owner both ways, and nothing is inflated without a bound.
-
 use std::collections::{BTreeSet, HashSet};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
@@ -16,7 +7,6 @@ pub const MAX_BYTES: usize = 20 * 1024 * 1024;
 pub const MAX_ENTRIES: usize = 4000;
 pub const MAX_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
-/// Entries below this never inflate long enough to be judged by ratio.
 const RATIO_FLOOR: u64 = 1024 * 1024;
 const MAX_RATIO: u64 = 400;
 const MANIFEST: &str = "pack.json";
@@ -47,7 +37,6 @@ mod write;
 pub use write::pack;
 
 struct Entry {
-    /// The name with the pack's root folder stripped.
     path: String,
     method: u16,
     crc: u32,
@@ -56,7 +45,6 @@ struct Entry {
     data: usize,
 }
 
-/// An archive whose container, names and sizes have all been checked.
 pub struct Archive<'a> {
     bytes: &'a [u8],
     entries: Vec<Entry>,
@@ -81,7 +69,6 @@ fn end_record(b: &[u8]) -> Option<usize> {
         .find(|&at| u32_at(b, at).ok() == Some(END_HEADER))
 }
 
-/// What the website refuses in a name, plus what a disk refuses.
 fn check_name(name: &str) -> Result<(), String> {
     let short: String = name.chars().take(80).collect();
     if name.is_empty() || name.len() > 255 || name.chars().any(char::is_control) {
@@ -124,8 +111,6 @@ fn clutter(name: &str) -> bool {
     name.starts_with("__MACOSX/") || matches!(leaf, ".DS_Store" | "Thumbs.db")
 }
 
-/// `pack.json` at the root, or under exactly one top folder: that folder's
-/// prefix (with its slash), or `""`.
 fn root_of(names: &[&str]) -> Result<String, String> {
     if names.contains(&MANIFEST) {
         return Ok(String::new());
@@ -152,8 +137,6 @@ fn root_of(names: &[&str]) -> Result<String, String> {
 }
 
 impl<'a> Archive<'a> {
-    /// Check the container and every central record, before anything is
-    /// inflated.
     pub fn open(b: &'a [u8]) -> Result<Self, String> {
         if b.len() > MAX_BYTES {
             return Err(TOO_BIG.into());
@@ -162,8 +145,6 @@ impl<'a> Archive<'a> {
             return Err("That file is not a zip archive.".into());
         }
         let end = end_record(b).ok_or(DAMAGED)?;
-        // Only the end record that ends the file counts: one hidden in a
-        // comment is one another reader might pick instead.
         if end + 22 + usize::from(u16_at(b, end + 20)?) != b.len() {
             return Err(DAMAGED.into());
         }
@@ -291,10 +272,6 @@ impl<'a> Archive<'a> {
         Ok(Self { bytes: b, entries })
     }
 
-    /// Unpack into `dest`, which must not exist yet. Files are written
-    /// `0644`, folders `0755`, never through anything already there; the
-    /// zip's own mode bits are never applied. `cancel` is checked between
-    /// entries. A failure leaves `dest` for the caller to remove.
     pub fn extract(&self, dest: &Path, cancel: &AtomicBool) -> Result<(), String> {
         create_dir(dest)?;
         let mut total = 0u64;
@@ -351,7 +328,6 @@ impl<'a> Archive<'a> {
     }
 }
 
-/// The identity `check` read from an archive's `pack.json`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checked {
     pub id: String,
@@ -359,10 +335,6 @@ pub struct Checked {
     pub version: String,
 }
 
-/// Everything the website checks on upload and the installer checks on
-/// unpack, without writing a file: the container, every entry inflated within
-/// its bounds and to its CRC, `pack.json`'s id, name and version as the
-/// website reads them, and an id that is none of `content_packs`.
 pub fn check(bytes: &[u8], content_packs: &BTreeSet<String>) -> Result<Checked, String> {
     let archive = Archive::open(bytes)?;
     let mut total = 0u64;
@@ -385,8 +357,6 @@ pub fn check(bytes: &[u8], content_packs: &BTreeSet<String>) -> Result<Checked, 
     }
     let fields: Fields = serde_json::from_slice(&manifest)
         .map_err(|_| "The pack.json in this archive is not readable JSON.".to_owned())?;
-    // The website strips control characters and trims before judging, and
-    // measures length in UTF-16 units.
     let text = |v: Option<String>| -> String {
         let kept: String = v
             .unwrap_or_default()
@@ -429,8 +399,6 @@ pub fn check(bytes: &[u8], content_packs: &BTreeSet<String>) -> Result<Checked, 
     Ok(Checked { id, name, version })
 }
 
-/// `dest` joined with an archive path, segment by segment: every component
-/// is a plain name, so the result can only lie inside `dest`.
 fn inside(dest: &Path, path: &str) -> Result<PathBuf, String> {
     let mut out = dest.to_path_buf();
     for segment in path.split('/').filter(|s| !s.is_empty()) {
@@ -456,8 +424,6 @@ fn create_dir(path: &Path) -> Result<(), String> {
         .map_err(|e| format!("could not unpack into {}: {e}", path.display()))
 }
 
-/// Every folder from `dest` down to `dir`, each made here (or already made
-/// here earlier) and never a link.
 fn create_dirs(dest: &Path, dir: &Path) -> Result<(), String> {
     let relative = dir.strip_prefix(dest).map_err(|_| DAMAGED.to_owned())?;
     let mut at = dest.to_path_buf();

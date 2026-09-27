@@ -1,8 +1,3 @@
-//! Block placement — the placement consumer of the interact dispatch (see
-//! `server::interact`): validity through the SHARED per-shape placement
-//! ladder (`World::placement_plan`), the commit, and the bookkeeping every
-//! placement path owes.
-
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{BlockPlacePre, Outcome, PostEvent};
@@ -11,9 +6,6 @@ use petramond_math::math::IVec3;
 use petramond_world::block::{Aabb, Block, CellPart};
 
 impl ServerGame {
-    /// Ordinary placement of the held item's block, with the shared
-    /// bookkeeping every placement path owes: the place-sound latch, the
-    /// initiator's presented-place strip, and the placed events.
     pub(super) fn place_held(
         &mut self,
         s: usize,
@@ -21,10 +13,6 @@ impl ServerGame {
         predicted: bool,
         events: &mut TickEvents,
     ) -> Option<IVec3> {
-        // Capture the held block before `try_place` consumes it: on success that is
-        // exactly the block placed, which the client maps to a place sound.
-        // `held()` resolves the ACTING hand — the ladder's off-hand pass
-        // places from the off-hand slot.
         let stack = self.sessions[s].player.held().copied();
         let mut held = stack.and_then(|st| st.item.as_block());
         let pos = self.try_place(s, target, events)?;
@@ -36,17 +24,10 @@ impl ServerGame {
         events.player(s).placed_block = held;
         let hand = self.sessions[s].player.acting_hand;
         self.sessions[s].latch_swing(hand, mod_api::SwingKind::Place);
-        // Strip this cell from the initiator's TickUpdate.events
-        // only when they PRESENTED the place locally (full ghost).
-        // An unpredicted placement — oriented model, replace-in-
-        // place, slab stack, frozen ledger — keeps its event, or
-        // the initiator never hears their own place.
         if predicted {
             self.sessions[s].replication.presented_places.push(pos);
         }
         if let Some(block) = held {
-            // Every observer presents the placement (positional sound)
-            // from the world-anchored event.
             events.world.block_placed.push((pos, block));
             self.mods.emit(PostEvent::BlockPlaced {
                 pos,
@@ -58,10 +39,6 @@ impl ServerGame {
         Some(pos)
     }
 
-    /// Attempt to place the held block against the click's target face;
-    /// returns the anchor cell it landed in (the front-left-bottom cell for
-    /// multi-cell models, the lower cell for doors), or `None` if nothing was
-    /// placed.
     pub fn try_place(
         &mut self,
         s: usize,
@@ -80,12 +57,10 @@ impl ServerGame {
         let item = stack.item;
         let mut block = item.as_block().filter(|&b| b != Block::Air)?;
 
-        // Right-clicking a replaceable block (short grass, a fern…) while holding a block
-        // places straight INTO its cell, overwriting it with no drop — the block just
-        // disappears, as if the cell were empty. Otherwise the placement builds against
-        // the clicked face. Air is replaceable too (a placement may overwrite it) but is
-        // never itself a raycast hit, so exclude it. `p` then feeds the torch support
-        // gate, the model footprint, and the final replaceable check uniformly.
+        // Right-click on replaceable blocks (short grass, fern...) places into the cell,
+        // overwriting with no drop, not against the clicked face like normal. Air counts as
+        // replaceable but never a raycast hit, so it's excluded. `p` feeds the torch support gate,
+        // model footprint, and replaceable check alike.
         let player_facing =
             crate::rules::placement::facing_from_forward(self.sessions[s].player.forward());
         let inputs = crate::world::placement::PlaceInputs::of_click(
@@ -122,10 +97,6 @@ impl ServerGame {
             .is_some();
         let place_pos_for_pre = if slab_stacks_in_hit { h.block } else { p };
 
-        // The placement decision, announced before the shape-specific validity
-        // checks: a cancelled `block_place_pre` refuses the placement outright (the
-        // click does nothing and the held item is kept). `facing` is the raw
-        // player-derived placement input; the shape paths below may orient it further.
         {
             let mut pre = BlockPlacePre {
                 pos: place_pos_for_pre,
@@ -146,15 +117,6 @@ impl ServerGame {
             }
         }
 
-        // The per-shape ladder is the SHARED placement rule (also evaluated by
-        // the client place ghost against its replica): validity + the exact
-        // state write. Only the body-occupancy answer is authoritative-side
-        // specific.
-        // A custom shape places through its OWN pack's WASM callback
-        // (footprint + orientation + initial state are the shape's to decide),
-        // not the engine ladder. A pack with no reachable owner (disabled /
-        // trapped) falls through to the ordinary ladder so its cells still
-        // place as a plain cube — the block id stays load-bearing.
         if block.is_custom_shape() {
             if let Some(landed) = self.try_place_custom_shape(s, block, &inputs, events) {
                 return landed;
@@ -175,16 +137,12 @@ impl ServerGame {
         Some(plan.anchor)
     }
 
-    /// The acting hand's stack hands its carried data to the cell it placed,
-    /// before the placement is paid for (the stack still carries it).
     fn carry_held_into(&mut self, s: usize, block: Block, anchor: IVec3, part: CellPart) {
         if let Some(held) = self.sessions[s].player.held().copied() {
             self.world.carry_into_cell(&held, block, anchor, part);
         }
     }
 
-    /// A placement costs one of the acting hand's stack, unless the player
-    /// places for free.
     fn pay_for_placement(&mut self, s: usize) {
         let player = &mut self.sessions[s].player;
         if !player.abilities().free_placement {
@@ -193,11 +151,6 @@ impl ServerGame {
         }
     }
 
-    /// Place a custom shape via its pack's `shape_placement_plan`
-    /// callback. `None` = no reachable owner, so `try_place` falls through to
-    /// the engine ladder; `Some(None)` = the callback refused (or nothing
-    /// placeable); `Some(Some(anchor))` = placed at `anchor`. The client never
-    /// ghosts a pack block, so this authoritative decision arrives unpredicted.
     fn try_place_custom_shape(
         &mut self,
         s: usize,
@@ -228,10 +181,6 @@ impl ServerGame {
         if !result.accepted {
             return Some(None);
         }
-        // The SHARED plan validation (single-cell, click radius, the
-        // sibling-row override gate) — the client place ghost runs the same
-        // rule against its replica, so both sides compute the same write by
-        // construction.
         let Some((anchor, write_block)) = crate::world::placement::validate_custom_plan(
             &result,
             block,
@@ -255,20 +204,9 @@ impl ServerGame {
             Some(cur) if cur.is_replaceable() && cur != write_block => {}
             _ => return Some(None),
         }
-        // The row's own SUPPORT gate, the same one every engine family runs:
-        // the written row — not the held one — declares where it must be held
-        // (a wall lamp's bracket wall, a hanging lamp's ceiling), so the guest
-        // orients and the host still enforces. Without this a pack row could
-        // declare `support` / `roots_face` and have placement ignore it.
         if !self.world.data().placement_support_ok(write_block, anchor) {
             return Some(None);
         }
-        // The body-occupancy gate every engine placement path runs: a custom
-        // shape's solid boxes may not trap a player or mob. The bake cache
-        // only holds PLACED cells, so for this not-yet-placed cell the shape's
-        // own sim bake answers the hypothetical (a pure function of the same
-        // cell input the post-placement pump will see) — falling back to a
-        // cached bake, then the row's static collision, when no owner replies.
         let boxes = {
             let Self {
                 world,
@@ -276,9 +214,6 @@ impl ServerGame {
                 mods,
                 ..
             } = self;
-            // The hypothetical cell's bake input — the SAME builder the
-            // post-placement pump uses, so the gate and the pump bake from
-            // identical inputs by construction.
             let input = world.data().bake_cell_input(anchor, write_block);
             mods.dispatch(world, sessions, actor, events, |host, ctx| {
                 host.bake_placement_sim_boxes(ctx, shape_key, shape_kind, input)
@@ -295,9 +230,6 @@ impl ServerGame {
         if self.placement_occupied_by_body(Some(s), anchor, boxes) {
             return Some(None);
         }
-        // A stateless single-cell write of the plan's validated row (held or
-        // the sibling-row orientation override) — the same generic commit
-        // every family uses.
         let plan = crate::world::placement::PlacementPlan::single(
             anchor,
             write_block,
@@ -307,18 +239,11 @@ impl ServerGame {
         if !self.world.commit_placement(&plan, true) {
             return Some(None);
         }
-        // A custom shape's placement is single-cell and whole: part 0.
         self.carry_held_into(s, block, anchor, 0);
         self.pay_for_placement(s);
         Some(Some(anchor))
     }
 
-    /// Whether the placed collision boxes at `cell` overlap a gameplay body that
-    /// blocks placement, whoever places. A placing session (`placer`) always
-    /// counts, preserving the self-trapping guard. Other sessions count while
-    /// alive and non-spectator; sleeping players still count because sleep
-    /// keeps the gameplay body on the mattress. Dead mobs do not count,
-    /// matching the ragdoll rule.
     pub(super) fn placement_occupied_by_body(
         &self,
         placer: Option<usize>,
@@ -326,8 +251,6 @@ impl ServerGame {
         boxes: &[Aabb],
     ) -> bool {
         use crate::rules::placement::{placement_blocked_by_bodies, player_occupies, Occupant};
-        // The SHARED body gate the client's place ghost runs against its
-        // predicted body and replicated rows.
         let players = self
             .sessions
             .iter()
@@ -356,8 +279,6 @@ impl ServerGame {
         placement_blocked_by_bodies(cell, boxes, players.chain(mobs))
     }
 
-    /// Test-only wrapper keeping the old bool-shaped call for placement tests
-    /// (the latched look stands in for the click target they never build).
     #[cfg(any(test, feature = "test-support"))]
     pub fn try_place_for_test(&mut self) -> bool {
         let target = self.sessions[0].input.look;

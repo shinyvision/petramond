@@ -1,19 +1,11 @@
-//! The load-time ABI handshake and the `Unsupported` replies that bridge ABI
-//! minors, driven through hand-written WAT guests so each case controls
-//! exactly what the guest declares.
-
 use mod_api::{AbiVersion, Capabilities, GuestCall, GuestRet, HostRet, ABI_VERSION};
 use wasmtime::Module;
 
 use super::super::instance::{wat_abi_exports, ModInstance};
 use super::wat_bytes;
 
-/// Where the guests below stage a baked `GuestRet::Unit` reply.
 const UNIT_REPLY: &str = "(i64.const 2199023255553)";
 
-/// A guest with caller-chosen handshake exports, `mod_init` body and
-/// `mod_dispatch` body. `data` adds data segments; a `GuestRet::Unit` reply is
-/// always staged at 512 ([`UNIT_REPLY`]).
 fn module(handshake: &str, data: &str, init: &str, dispatch: &str) -> Module {
     assert_eq!(mod_api::pack_ptr_len(512, 1), 2199023255553);
     let wat = format!(
@@ -90,8 +82,6 @@ fn a_guest_built_for_a_newer_major_is_refused_at_load() {
     let why = refusal(&wat_abi_exports(new));
     assert!(why.contains(&format!("built for mod ABI {new}")), "{why}");
     assert!(why.contains("update the game"), "{why}");
-    // A newer major is not bound to this ABI's export set: its version alone
-    // refuses it, even without `mod_abi_requires`.
     let bare = format!(
         "  (func (export \"mod_abi_version\") (result i32) (i32.const {}))\n",
         new.pack() as i32
@@ -116,8 +106,6 @@ fn a_guest_requiring_capabilities_the_host_lacks_is_refused_at_load() {
     assert!(instantiate(&requiring(ABI_VERSION, mod_api::HOST_CAPABILITIES)).is_ok());
 }
 
-/// `mod_init` receives the host's packed version and capability bits; this
-/// guest traps unless they are exactly the host's.
 #[test]
 fn mod_init_receives_the_host_version_and_capabilities() {
     let init = format!(
@@ -132,8 +120,6 @@ fn mod_init_receives_the_host_version_and_capabilities() {
     assert!(!inst.disabled(), "init saw the host's handshake values");
 }
 
-/// An older guest declining a newer call leaves the dispatch unanswered but
-/// the mod enabled, and it keeps receiving (and answering) later calls.
 #[test]
 fn a_guest_declining_a_call_as_unsupported_stays_enabled() {
     let unsupported = mod_api::encode(&GuestRet::Unsupported).unwrap();
@@ -164,7 +150,7 @@ fn a_guest_declining_a_call_as_unsupported_stays_enabled() {
 /// unless the reply the host staged at its scratch (4096) is exactly that.
 #[test]
 fn an_unknown_host_call_is_answered_unsupported() {
-    let unknown = [0xff, 0x7f]; // varint 16383: far past the last variant
+    let unknown = [0xff, 0x7f];
     let expected = mod_api::encode(&HostRet::Unsupported).unwrap();
     assert_eq!(expected.len(), 1);
     let data = format!("  (data (i32.const 1024) \"{}\")\n", wat_bytes(&unknown));

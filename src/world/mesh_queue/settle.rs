@@ -1,6 +1,3 @@
-//! Replica-side mesh settling: a freshly ingested section whose neighbours
-//! are still arriving is meshed once they have, not once per arrival.
-
 use std::time::{Duration, Instant};
 
 use crate::world::ReplicaWorld;
@@ -12,11 +9,7 @@ use petramond_world::chunk::SectionPos;
 /// nearly every section twice — and a section that turns out sealed or
 /// hidden once they land never needed meshing at all.
 const QUIET: Duration = Duration::from_millis(500);
-/// How long after the FIRST arrival a section meshes no matter what keeps
-/// arriving, so a busy seam cannot starve it.
 const DEADLINE: Duration = Duration::from_millis(1000);
-/// Sections this close to the player (in sections, per axis) never wait:
-/// their pop-in is what the player is looking at.
 const NEAR_RADIUS: i32 = 2;
 
 pub(in crate::world) struct MeshSettle {
@@ -42,9 +35,6 @@ impl ReplicaWorld {
         entry.quiet_after = now + QUIET;
     }
 
-    /// Whether `pos` should keep waiting for its neighbourhood. Answers false
-    /// (and forgets the entry) once the neighbourhood is complete, the section
-    /// is near the player, the quiet window has elapsed, or the deadline hit.
     pub(in crate::world) fn stream_mesh_waiting(&mut self, pos: SectionPos) -> bool {
         let Some(pending) = self.side.terrain.mesh_settle.get(&pos) else {
             return false;

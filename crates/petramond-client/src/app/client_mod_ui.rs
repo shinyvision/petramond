@@ -1,7 +1,3 @@
-//! App-side bridge for presentation-only client mods: frame/key/UI dispatch,
-//! client-owned GUI/canvas lifecycle, physical-pixel overlays, and document
-//! composition for actual GUI screens.
-
 use super::{App, AppScreen};
 use petramond::gui::{documents, DocImageSource};
 use petramond_world::gui_state::GuiKind;
@@ -14,8 +10,6 @@ pub(super) struct ClientCanvasState {
     rect: Option<[f32; 4]>,
     pointer_captured: bool,
     pending_move: Option<(f32, f32)>,
-    /// Wheel notches accumulated this frame (positive = up); coalesced to one
-    /// dispatch per frame like pointer moves.
     pending_scroll: f32,
 }
 
@@ -47,7 +41,6 @@ impl App {
             .as_ref()
             .filter(|_| self.screen == AppScreen::ClientCanvas)
             .map(|canvas| canvas.canvas_key.as_str());
-        // The player fields stay zero on the shell; a world's game fills them.
         let frame = mod_api::ClientFrameData {
             dt: dt.max(0.0),
             player_pos: [0.0; 3],
@@ -107,9 +100,6 @@ impl App {
         }
     }
 
-    /// Tell every client-mod runtime the rendering device's frame limits,
-    /// which a frame capture and a frame-size claim meet. Called once, before
-    /// the first runtime starts.
     pub fn publish_device_frame_limits(renderer: &petramond_render::Renderer) {
         let (max_side, max_bytes) = renderer.frame_limits();
         petramond::modding::client::presented::FrameLimits {
@@ -119,8 +109,6 @@ impl App {
         .publish();
     }
 
-    /// Tell the client mods which of their screens is up, and which of its
-    /// text inputs could take focus — as of the last drawn frame.
     fn publish_client_screen(&mut self) {
         let screen = match self.screen {
             AppScreen::ClientModGui(kind) => {
@@ -148,8 +136,6 @@ impl App {
         }
     }
 
-    /// Escape over a client document that unwinds its own layers: its owner
-    /// hears `Dismiss` and the document stays. `false` = Escape closes it.
     pub(super) fn dismiss_client_doc(&mut self) -> bool {
         let AppScreen::ClientModGui(kind) = self.screen else {
             return false;
@@ -159,8 +145,6 @@ impl App {
         asks && self.send_client_doc_dismiss()
     }
 
-    /// Tell the client document on screen that Escape was pressed over it;
-    /// it stays open. `false` = no client document is up.
     pub(super) fn send_client_doc_dismiss(&mut self) -> bool {
         let AppScreen::ClientModGui(kind) = self.screen else {
             return false;
@@ -233,8 +217,6 @@ impl App {
             return;
         };
         let delta = std::mem::take(&mut canvas.pending_scroll);
-        // Wheel travel with the cursor off the canvas is dropped, not queued:
-        // canvas-local coordinates only exist inside the rect.
         let Some([left, top, width, height]) = canvas.rect else {
             return;
         };
@@ -276,8 +258,6 @@ impl App {
 
     pub(super) fn apply_client_mod_commands(&mut self) {
         let commands = self.take_client_mod_commands();
-        // A client mod's UI replaces the world's view, or on the shell the
-        // title it was launched from.
         let base = if self.session.is_some() {
             AppScreen::Game
         } else {
@@ -305,7 +285,6 @@ impl App {
                         log::warn!("client mod GUI document '{key}' must have class 'screen'");
                         continue;
                     }
-                    // Leaving an open canvas for the GUI drops the canvas.
                     self.set_screen(AppScreen::ClientModGui(kind));
                 }
                 petramond::modding::ClientCommand::CloseGui { owner } => {
@@ -325,8 +304,6 @@ impl App {
                         );
                         continue;
                     }
-                    // Enter the screen FIRST: leaving a previous canvas
-                    // screen drops that canvas, never this one.
                     self.set_screen(AppScreen::ClientCanvas);
                     self.client_canvas = Some(ClientCanvasState {
                         owner,
@@ -377,9 +354,6 @@ impl App {
 
     pub(super) fn compose_client_overlays(&mut self, screen: (u32, u32)) {
         self.client_overlays.clear();
-        // A HUD overlay follows the HUD (a hidden HUD hides it with the
-        // rest); a tool's own overlay does not. Both draw on the window only,
-        // like every mod surface.
         let on_game = matches!(self.screen, AppScreen::Game | AppScreen::Chat);
         let hud = self.hud_claim_allows();
         if let Some(game) = self
@@ -426,8 +400,6 @@ impl App {
     }
 }
 
-/// Where a canvas sits on screen: its display rect, its logical size, the
-/// scene's view offset, and the host's GUI scale (the glyph size of its text).
 pub(super) struct CanvasPlacement {
     pub(super) rect: [f32; 4],
     pub(super) source_size: (u16, u16),
@@ -435,8 +407,6 @@ pub(super) struct CanvasPlacement {
     pub(super) gui_scale: i32,
 }
 
-/// Append a canvas scene to the overlay layer in its retained order, every
-/// element clipped to the canvas rect.
 pub(super) fn compose_canvas(
     layer: &mut petramond_render::ClientOverlayLayer,
     at: &CanvasPlacement,
@@ -477,10 +447,6 @@ pub(super) fn compose_canvas(
     }
 }
 
-/// Paint one geometry or glyph row. The painter works in physical px
-/// (scale 1): the canvas transform places the row, and the canvas rect
-/// clips it — solids exactly, glyph runs by ellipsis plus scissor, the way
-/// document labels are fitted.
 fn paint_canvas_element(
     painter: &mut petramond_ui::Painter<'_>,
     at: &CanvasPlacement,
@@ -550,7 +516,6 @@ fn paint_canvas_element(
     }
 }
 
-/// A float screen rect snapped to whole pixels by its edges.
 fn pixel_rect(r: [f32; 4]) -> petramond_ui::RectI {
     let (x0, y0) = (r[0].round() as i32, r[1].round() as i32);
     let (x1, y1) = ((r[0] + r[2]).round() as i32, (r[1] + r[3]).round() as i32);
@@ -562,8 +527,6 @@ fn pixel_rect(r: [f32; 4]) -> petramond_ui::RectI {
     }
 }
 
-/// Whether `owner` may open a document or canvas over `screen`: over `base`
-/// (the world, or on the shell the title), or in place of its own.
 fn client_ui_open_permitted(
     screen: AppScreen,
     base: AppScreen,
@@ -708,10 +671,6 @@ pub(super) fn append_layer(
     src: &petramond_ui::DrawList,
     images: &[DocImageSource],
 ) {
-    // Overlay-tier batches must stay last in the composed list, so a layer can
-    // only be appended while nothing has contributed an overlay tier yet. One
-    // document is composed per list; a second would have to splice its base
-    // tier in ahead of the first's overlay tier.
     debug_assert_eq!(
         dst.overlay_start,
         dst.batches.len(),
@@ -758,7 +717,6 @@ mod tests {
             "map",
             &no_canvas
         ));
-        // On the shell a launched mod opens over the title, and only there.
         assert!(client_ui_open_permitted(
             AppScreen::Title,
             AppScreen::Title,
@@ -868,8 +826,6 @@ mod tests {
         let (rect, uv) =
             clip_rect_uv(full, [25.0, 10.0, 50.0, 80.0]).expect("the rectangles overlap");
         assert_eq!(rect, [25.0, 10.0, 50.0, 80.0]);
-        // The two outputs must agree: mapping the UVs back through the full
-        // rect reproduces the clipped rectangle.
         assert!(uv[0] < uv[2] && uv[1] < uv[3], "uv ordering: {uv:?}");
         let roundtrip = [
             full[0] + uv[0] * full[2],

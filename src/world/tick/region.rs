@@ -7,7 +7,6 @@ use petramond_world::{
 };
 
 impl<S: WorldSide> World<S> {
-    /// Recheck existing blocks in inclusive bounds without announcing fake terrain edits.
     pub(crate) fn queue_non_air_updates_in_box(&mut self, min: IVec3, max: IVec3) {
         let min = min.max(IVec3::new(-WORLD_BORDER, WORLD_MIN_Y, -WORLD_BORDER));
         let max = max.min(IVec3::new(

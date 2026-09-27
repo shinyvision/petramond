@@ -1,11 +1,3 @@
-//! Choosing the golem's next step: the lowest open work it can do with what
-//! it carries, reached from where it stands, from a stance it can walk to,
-//! or from the top of a scaffold pillar; otherwise fetching, unloading, or
-//! finishing up.
-//!
-//! A plan is a list of stages tried in order; the first with an answer ends
-//! the tick's planning.
-
 use crate::host::prelude::*;
 
 use super::body::Body;
@@ -33,24 +25,16 @@ pub(super) use here::{clear_of_body, sees_from_here};
 pub(super) use sealing::{as_walls, cutting};
 pub(super) use verdict::waits_there;
 
-/// What a stage of the plan comes to.
 pub(super) enum Flow {
-    /// The golem's next step.
     Go(Step),
-    /// No answer this tick (a search ran out of budget, the world is still
-    /// loading): plan again, saying what is waited on.
     Busy(Waiting),
-    /// Nothing for this stage to do: on to the next.
     Pass,
 }
 
-/// What a job's golem is there to do. Only a building golem lays anything.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
     Building,
-    /// The work is done and its scaffolding still stands: it comes down.
     StrikingScaffold,
-    /// Nothing is left but the way home.
     GoingHome,
 }
 
@@ -64,18 +48,13 @@ impl Mode {
     }
 }
 
-/// What one tick's plan has worked out so far, handed from stage to stage.
 struct Round {
     project: Project,
     mode: Mode,
-    /// The open work being weighed, in the order it is tried.
     candidates: Vec<(Task, [i32; 3])>,
-    /// Whether any placement waits on items, and whether any work waits on time.
     wants_items: bool,
     waiting: bool,
-    /// The walk to each candidate, in moves, where the site's flood gives one.
     walks: Vec<Option<u32>>,
-    /// Candidates no stance was found for, and whether one was only unseen.
     wants_perch: Vec<(Task, bool)>,
     spots: Vec<stances::Spot>,
 }
@@ -83,40 +62,25 @@ struct Round {
 type Stage = fn(&mut Ctx, &mut Projects, &mut Job, &Body, &mut Round) -> Flow;
 
 const STAGES: [Stage; 22] = [
-    // Before the perch is recovered: recovery trusts the scaffold records.
     upkeep::reconcile_scaffolds,
-    // Before the way out: every route is judged from home.
     upkeep::check_home,
-    // Before anything reads where the body stands.
     upkeep::grounded,
     upkeep::rest,
-    // After the records are true, before the way out: a golem on a pillar is
-    // not stranded.
     upkeep::recover_perch,
-    // Before going home and before any work: out first, whatever else waits.
     upkeep::way_out,
     home::go_home,
     upkeep::surveyed,
-    // Before work is gathered: full hands lay nothing.
     supply::full_hands,
     gather::weigh_work,
-    // Before any trip to the chests: none is made from a pillar, and the want
-    // of scaffold blocks must outlive a tick spent aloft.
     perch::aloft,
     supply::scaffold_blocks,
     supply::tools,
-    // Before any stance is sought: work in sight needs no walk.
     here::from_here,
     stances::rank_by_walk,
-    // Before any pillar: work done from the ground builds, scaffolding does not.
     stances::stance_spots,
     stances::nearest_spot,
     climb::pillars,
-    // Before the trip for materials: the trip is long, and the corridor is
-    // what the work waits on.
     unreached::finish_way_in,
-    // Before digging on: work out of reach must not keep the golem from
-    // fetching what reachable work waits for.
     supply::resupply,
     unreached::dig_on,
     waits,
@@ -150,7 +114,6 @@ pub fn plan(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body) 
     finish(projects, job)
 }
 
-/// Work is left but none of it can be started this tick.
 fn waits(
     ctx: &mut Ctx,
     _projects: &mut Projects,
@@ -173,10 +136,7 @@ pub(super) fn places(job: &Job, task: Task) -> bool {
     matches!(task, Task::Unit(i) if matches!(job.survey.as_ref().map(|s| &s.known[i]), Some(Known::Place(_))))
 }
 
-/// Everything buildable is built and no scaffolding is left: head home.
 fn finish(projects: &mut Projects, job: &mut Job) -> Step {
-    // Asked of the world again before any is reported: a survey entry read
-    // mid-change (a fence re-shaped as its neighbour went in) is no loss.
     let lost = match job.survey.as_mut() {
         Some(survey) => {
             let open: Vec<usize> = job
@@ -210,7 +170,6 @@ pub(super) fn walk_to(ctx: &Ctx, to: [i32; 3], then: Then) -> Step {
     walk_via(ctx, to, to, then)
 }
 
-/// Walk the leg to `to` of the way to `goal`, then `then`.
 fn walk_via(ctx: &Ctx, to: [i32; 3], goal: [i32; 3], then: Then) -> Step {
     Step::Walk {
         to,

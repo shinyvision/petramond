@@ -1,21 +1,3 @@
-//! The registry of animated player rigs, read from the layered
-//! `animations/rigs.json` catalog. Each row is a rig: its model, its animator
-//! document, whether other players OBSERVE it, and the PRESENTER that draws
-//! it — with the rig conventions that presenter reads (where each hand grips,
-//! the bone the view rides, the torso bones a head-look untwists, the clip a
-//! hand rests in per held render kind). Nothing in code names a rig's bones
-//! or hold clips; a pack re-points any of them through its own copy of the
-//! catalog.
-//!
-//! The engine draws two presenters — the body every observer sees, and the
-//! first-person viewmodel — so the catalog holds one rig per presenter: a
-//! row for a presenter another row already has is refused, because nothing
-//! would draw it. A new kind of rig is a new presenter.
-//!
-//! The mod ABI names a rig; the name resolves to a [`RigId`] once at the
-//! host call, and everything below — the claims, the wire rows, the join
-//! tables, the render drivers — carries the id.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -28,7 +10,6 @@ use serde_json::{Map, Value};
 
 pub use mod_api::rig::{PLAYER_BODY, PLAYER_FIRST_PERSON};
 
-/// The catalog's pack-relative path.
 const CATALOG_PATH: &str = "animations/rigs.json";
 
 #[derive(Deserialize)]
@@ -54,9 +35,6 @@ struct RawGrips {
     off: String,
 }
 
-/// A rig's index in this process's registry — the compact id every runtime
-/// path carries below the ABI. Both mirrors resolve names against the same
-/// registry; a peer whose table differs remaps by name at the transport.
 #[derive(
     Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord,
 )]
@@ -68,13 +46,9 @@ impl RigId {
     }
 }
 
-/// What draws a rig.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presenter {
-    /// Posed per player over its locomotion and drawn in the world.
     Body,
-    /// Posed for the local player and drawn in the hand pass, its camera
-    /// bone moving the view.
     Viewmodel,
 }
 
@@ -88,34 +62,20 @@ impl Presenter {
     }
 }
 
-/// One registered rig.
 pub struct Rig {
     pub name: String,
     pub model: Model,
-    /// The animator document's pack-relative path.
     pub animator: String,
-    /// `None` when the rig's animator document is missing or its own layer
-    /// is refused (logged once at load): the rig then draws its rest pose
-    /// and answers no animator claim.
     pub graph: Option<Arc<Graph>>,
-    /// Whether OTHER players see this rig. Only an observed rig's claims and
-    /// fired events are replicated to observers; a player's own state keeps
-    /// every rig.
     pub observed: bool,
     pub presenter: Presenter,
-    /// The bones each hand grips at, `[main, off]`.
     pub grips: [usize; 2],
-    /// The bone the rendered view rides, for a presenter that draws a view.
     pub camera: Option<usize>,
-    /// The torso bones whose yaw a head-look takes back out.
     pub twist: Vec<usize>,
-    /// The clip a hand rests in while it holds each render kind
-    /// ([`ItemRenderKind::name`]); a kind not listed rests in the rig's rest.
     pub holds: Vec<(&'static str, ClipId)>,
 }
 
 impl Rig {
-    /// The clip a hand holding `kind` rests in, if the row names one.
     pub fn hold(&self, kind: ItemRenderKind) -> Option<ClipId> {
         self.holds
             .iter()
@@ -124,9 +84,6 @@ impl Rig {
     }
 }
 
-/// Every rig of a content registry — a derived view built on first use. Rig
-/// rows are presentation: a bad row is logged and skipped rather than failing
-/// the registry.
 static RIGS: petramond_world::content::Slot<Vec<Rig>> =
     petramond_world::content::Slot::new("player rigs", &[], load_rigs);
 
@@ -166,9 +123,6 @@ fn load_model(path: &str) -> Option<Model> {
         .ok()
 }
 
-/// The rigs a merged catalog describes, rows in name order, with one error
-/// per row refused. A row is a rig only whole: its model loads, every bone
-/// and hold clip it names exists, and its presenter is not already taken.
 pub(super) fn rigs_from(
     doc: &Map<String, Value>,
     load_model: impl Fn(&str) -> Option<Model>,
@@ -231,8 +185,6 @@ fn rig_from(
                     ItemRenderKind::NAMES.join(", ")
                 )
             })?;
-        // Without a graph the rig draws its rest pose, so a hold has
-        // nothing to rest in; the missing animator is already logged.
         if let Some(graph) = &graph {
             let id = graph
                 .clips()
@@ -255,18 +207,14 @@ fn rig_from(
     })
 }
 
-/// Every registered rig, in id order.
 pub fn all() -> &'static [Rig] {
     rigs()
 }
 
-/// The rig behind `id`; `None` for an id this process never registered (a
-/// remapped peer row can carry none — the transport drops those).
 pub fn get(id: RigId) -> Option<&'static Rig> {
     rigs().get(id.index())
 }
 
-/// Resolve a rig NAME to its id, once at the ABI.
 pub fn id(name: &str) -> Option<RigId> {
     rigs()
         .iter()
@@ -274,7 +222,6 @@ pub fn id(name: &str) -> Option<RigId> {
         .map(|i| RigId(i as u16))
 }
 
-/// The rig `presenter` draws, with its id.
 pub fn presented(presenter: Presenter) -> Option<(RigId, &'static Rig)> {
     let rigs = rigs();
     rigs.iter()
@@ -282,13 +229,10 @@ pub fn presented(presenter: Presenter) -> Option<(RigId, &'static Rig)> {
         .map(|i| (RigId(i as u16), &rigs[i]))
 }
 
-/// The compiled animator of `id`'s rig, if it has one.
 pub fn graph(id: RigId) -> Option<&'static Arc<Graph>> {
     get(id)?.graph.as_ref()
 }
 
-/// Whether other players observe `id`'s rig (an unregistered id is not
-/// observed by anyone).
 pub fn observed(id: RigId) -> bool {
     get(id).is_some_and(|r| r.observed)
 }

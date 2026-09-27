@@ -3,7 +3,6 @@ use petramond_math::world_pos::WorldPos;
 
 #[test]
 fn small_look_turns_move_only_the_head() {
-    // Idle, head 30° off the body: under the 45° threshold the body stays put.
     let body = follow_body_yaw(0.0, 30f32.to_radians(), false, 0.016);
     assert!(
         body.abs() < 1e-6,
@@ -13,23 +12,18 @@ fn small_look_turns_move_only_the_head() {
 
 #[test]
 fn past_the_threshold_the_body_is_dragged_along() {
-    // Idle, head 80° off: the body is pulled so the head-body offset is
-    // exactly the 45° limit.
     let head = 80f32.to_radians();
     let body = follow_body_yaw(0.0, head, false, 0.016);
     assert!(
         (wrap_angle(head - body) - HEAD_YAW_LIMIT).abs() < 1e-5,
         "offset clamps to the limit"
     );
-    // Same on the other side.
     let body = follow_body_yaw(0.0, -head, false, 0.016);
     assert!((wrap_angle(-head - body) + HEAD_YAW_LIMIT).abs() < 1e-5);
 }
 
 #[test]
 fn walking_realigns_the_body_to_the_look() {
-    // While moving the body converges to the head across frames, even when
-    // the offset never crosses the drag threshold.
     let head = 30f32.to_radians();
     let mut body = 0.0;
     for _ in 0..120 {
@@ -43,8 +37,6 @@ fn walking_realigns_the_body_to_the_look() {
 
 #[test]
 fn follow_handles_the_yaw_wrap_seam() {
-    // Head just past +π, body just under -π: the true offset is tiny, so the
-    // body must not spin the long way round.
     let head = std::f32::consts::PI - 0.05;
     let body0 = -std::f32::consts::PI + 0.05;
     let body = follow_body_yaw(body0, head, false, 0.016);
@@ -66,7 +58,6 @@ fn pose_walk_weight_eases_in_and_back_to_rest() {
     );
     let mid_phase = pose.anim_time;
     assert!(mid_phase > 0.0, "the phase advances while moving");
-    // Stop: the weight decays smoothly and eventually clamps to rest.
     for _ in 0..120 {
         pose.advance_gait(1.0 / 60.0, 0.0, 0.0, true, false);
     }

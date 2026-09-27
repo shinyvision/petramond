@@ -7,9 +7,6 @@ use petramond_world::item::{ItemStack, ItemType};
 
 const RACHEL: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([0x2A; 32]);
 
-/// A pre-identity `players/<name>.dat` moves to the FIRST identity that
-/// claims the name; nobody else can adopt it afterwards, and an identity's
-/// own file is never overwritten by a legacy one.
 #[test]
 fn legacy_player_files_are_adopted_once_by_the_first_claimant() {
     let dir = temp_world_dir("legacy-adopt");
@@ -84,8 +81,6 @@ fn temp_world_dir(tag: &str) -> petramond_util::test_dirs::TestScratchDir {
     petramond_util::test_dirs::TestScratchDir::new(&format!("savetest-{tag}"))
 }
 
-/// Read `pos` back and decode it; `None` if the read never answers. A
-/// record that is absent or unreadable fails the test.
 fn load_blocking(
     save: &WorldSave,
     saved: &crate::world::SavedIndex,
@@ -109,14 +104,10 @@ fn load_blocking(
     None
 }
 
-/// Full disk round-trip through the I/O thread: write a modified section (with a
-/// resting item entity carrying a partly-elapsed lifetime) + level + a player
-/// file in one session, reopen in another, and read it all back. Item entities
-/// ride in the section record, so the drop returns when its section loads.
 #[test]
 fn save_reopen_roundtrips_section_level_entities() {
     let dir = temp_world_dir("roundtrip");
-    let pos = SectionPos::new(5, -3, -9); // negative cy: below the old datum
+    let pos = SectionPos::new(5, -3, -9);
 
     {
         let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
@@ -147,12 +138,11 @@ fn save_reopen_roundtrips_section_level_entities() {
             &Default::default(),
         ));
 
-        // The player rides its own file, keyed by identity.
         let mut plr = Player::new(WorldPos::new(80.0, 70.0, -40.0));
         plr.inventory.set_active(4);
         opened.save.save_player(&RACHEL, &plr);
 
-        opened.save.shutdown(); // flush queued writes + join the I/O thread
+        opened.save.shutdown();
     }
 
     {
@@ -178,7 +168,6 @@ fn save_reopen_roundtrips_section_level_entities() {
         assert_eq!(section.block_raw(3, 1, 7), Block::Water.id());
         assert_eq!(section.fluid_meta(3, 1, 7), 0x12);
 
-        // The item entity comes back with its section, lifetime intact.
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].stack, ItemStack::new(ItemType::Dirt, 9));
         assert_eq!(
@@ -259,9 +248,6 @@ fn delete_world_removes_only_a_single_save_directory() {
     assert_eq!(invalid.kind(), std::io::ErrorKind::InvalidInput);
 }
 
-/// The unload/reload dupe, at the save layer: a section record written with a
-/// drop, then re-saved drop-free (the drop was picked up), must not bring the
-/// drop back on reload — and `record_holds_entities` must track the transition.
 #[test]
 fn re_saving_a_drop_free_section_clears_its_stale_record() {
     let dir = temp_world_dir("clear-stale-drops");
@@ -269,7 +255,6 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
 
     let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
 
-    // Unload-with-item: the record is written carrying one drop.
     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
     section.set_block(1, 0, 1, Block::Stone);
     let mut snap = SectionSnapshot::from_section(&section);
@@ -288,9 +273,7 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
         load_blocking(&opened.save, &opened.saved, pos).expect("loads with item");
     assert_eq!(entities.len(), 1, "drop is present before pickup");
 
-    // Pickup-then-unload: the section is re-saved with no drops. The channel is
-    // ordered, so this write lands before the load below reads it back.
-    let empty = SectionSnapshot::from_section(&section); // entities default to empty
+    let empty = SectionSnapshot::from_section(&section);
     opened.save.save_sections(&mut opened.saved, vec![empty]);
     assert!(
         !opened.save.record_holds_entities(pos),
@@ -300,17 +283,11 @@ fn re_saving_a_drop_free_section_clears_its_stale_record() {
     let (section, entities, _) =
         load_blocking(&opened.save, &opened.saved, pos).expect("loads after pickup");
     assert!(entities.is_empty(), "the stale drop must not resurrect");
-    // The section's own edits survive the rewrite (only the drop was cleared).
     assert_eq!(section.block_raw(1, 0, 1), Block::Stone.id());
 
     opened.save.shutdown();
 }
 
-/// The same stale-record guard, for mobs: a section record written with a mob, then
-/// re-saved mob-free (the mob died, wandered off, or distance-despawned), must not
-/// bring the mob back on reload — and `record_holds_entities` must track it. The
-/// guard is one mechanism shared with dropped items, so this pins it for the mob
-/// path too.
 #[test]
 fn re_saving_a_mob_free_section_clears_its_stale_record() {
     let dir = temp_world_dir("clear-stale-mobs");
@@ -318,7 +295,6 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
 
     let mut opened = open_at(dir.to_path_buf()).expect("open fresh");
 
-    // Unload-with-mob: the record is written carrying one mob.
     let section = Section::new(pos.cx, pos.cy, pos.cz);
     let mut snap = SectionSnapshot::from_section(&section);
     snap.mobs.push(crate::mob::SavedMob {
@@ -337,8 +313,6 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
     let (.., mobs) = load_blocking(&opened.save, &opened.saved, pos).expect("loads with mob");
     assert_eq!(mobs.len(), 1, "mob present before it leaves");
 
-    // The mob is gone: the section is re-saved mob-free. The record must be rewritten
-    // so the stale mob can't resurrect on the next load.
     let empty = SectionSnapshot::from_section(&section);
     opened.save.save_sections(&mut opened.saved, vec![empty]);
     assert!(
@@ -352,9 +326,6 @@ fn re_saving_a_mob_free_section_clears_its_stale_record() {
     opened.save.shutdown();
 }
 
-/// A `level.dat` that exists but does not decode must refuse the open: a
-/// world treated as new would get a fresh seed and world KV saved over the
-/// real ones.
 #[test]
 fn an_unreadable_level_dat_refuses_the_open_and_is_left_alone() {
     let dir = temp_world_dir("bad-level");
@@ -367,9 +338,6 @@ fn an_unreadable_level_dat_refuses_the_open_and_is_left_alone() {
     assert_eq!(std::fs::read(dir.join("level.dat")).unwrap(), bad);
 }
 
-/// An unreadable player file is an error, never a fresh player, and its
-/// bytes are kept before anything can overwrite them. One from a newer build
-/// is also never overwritten this session.
 #[test]
 fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
     const PAT: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([7; 32]);
@@ -378,7 +346,6 @@ fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
     let path = super::worlds::player_path(&dir.join("players"), &PAT);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
 
-    // A current version header over a truncated body.
     let mut garbage = player::FORMAT.current.to_le_bytes().to_vec();
     garbage.extend([1, 2]);
     std::fs::write(&path, &garbage).unwrap();
@@ -409,10 +376,6 @@ fn an_unreadable_player_file_is_quarantined_not_respawned_over() {
     );
 }
 
-/// A legacy (name-keyed) player file that does not decode goes through the
-/// same typed-error path: it is quarantined and NEVER moved to the identity's
-/// path, and when it cannot be kept aside the identity's saves are dropped so
-/// a fresh player never shadows it.
 #[test]
 fn an_unreadable_legacy_player_file_is_not_migrated() {
     const ANN: crate::net::identity::PlayerKey = crate::net::identity::PlayerKey([9; 32]);
@@ -453,9 +416,6 @@ fn an_unreadable_legacy_player_file_is_not_migrated() {
     );
 }
 
-/// A section whose record must not be overwritten drops out of the index
-/// (generation stands in for it) and its saves are skipped, so the record on
-/// disk survives the session.
 #[test]
 fn a_write_protected_section_is_never_saved_over() {
     let dir = temp_world_dir("protected");
@@ -504,15 +464,9 @@ fn a_write_protected_section_is_never_saved_over() {
     assert_eq!(section.block_raw(1, 1, 1), Block::Stone.id());
 }
 
-/// Two worlds open in one process at once, with palettes that disagree about
-/// every block's disk id: each world's records map through its OWN palette,
-/// so both read back the blocks they were saved with. (A process-wide
-/// palette made the second open remap the first world's records.)
 #[test]
 fn two_open_worlds_each_map_through_their_own_palette() {
     let (dir_a, dir_b) = (temp_world_dir("two-a"), temp_world_dir("two-b"));
-    // World A: its palette.json lists the blocks rotated by one past air, so
-    // every disk id differs from world B's fresh (registry-order) palette.
     std::fs::create_dir_all(&dir_a).unwrap();
     let name = |v: serde_json::Value| v.as_str().expect("serde name").to_owned();
     let mut blocks: Vec<String> = Block::all()
@@ -561,14 +515,10 @@ fn two_open_worlds_each_map_through_their_own_palette() {
     drop((a, b));
 }
 
-/// A mob whose mod is gone never reaches the world, yet survives its section
-/// being loaded and saved again: the save holds it from the load and writes
-/// it back with the section.
 #[test]
 fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
     let dir = temp_world_dir("kept-mobs");
     std::fs::create_dir_all(&dir).unwrap();
-    // The world's first mob species belongs to a mod this build lacks.
     std::fs::write(
         dir.join("palette.json"),
         r#"{ "blocks": ["petramond:air"], "items": ["petramond:air"], "mobs": ["gonemod:phantom"] }"#,
@@ -591,8 +541,6 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
         opened.save.shutdown();
     }
     {
-        // Loaded: nothing to spawn. Saved again the way the world saves it,
-        // from the section alone.
         let mut opened = open_at(dir.to_path_buf()).expect("reopen");
         let (section, _, mobs) =
             load_blocking(&opened.save, &opened.saved, pos).expect("section loads");
@@ -614,8 +562,6 @@ fn a_mob_whose_mod_is_gone_survives_its_section_being_resaved() {
     drop(opened);
 }
 
-/// Opening a world whose last save had a mod that is missing now reports
-/// it and backs up the small files before anything rewrites them.
 #[test]
 fn opening_with_a_mod_missing_backs_the_world_up_first() {
     let dir = temp_world_dir("missing-mod");

@@ -7,18 +7,8 @@ use super::builders::{
 use crate::renderer::dynamic_draw::new_buffer;
 use crate::uniforms::Uniforms;
 
-/// Size of one MVP slot in the model3d dynamic-offset uniform buffer. A `mat4`
-/// is 64 bytes but dynamic offsets must be a multiple of the device's
-/// `min_uniform_buffer_offset_alignment` (256 on WebGL2 / the WebGPU minimum),
-/// so each per-draw MVP occupies a 256-byte aligned slot.
 pub(super) const MODEL3D_MVP_SLOT_SIZE: u64 = 256;
-/// Number of 256-byte MVP slots in the model3d uniform buffer. The hand uses
-/// slot 0; the isometric inventory icons (Layer 4 UI) cycle through the rest, so
-/// 64 slots covers the open inventory's 36 visible cube icons with headroom.
 pub(super) const MODEL3D_MVP_SLOTS: u64 = 64;
-/// The dynamic-offset per-draw MVP uniform entry: one mat4 (64 bytes) per
-/// draw, selected by a 256-aligned dynamic offset (see
-/// [`MODEL3D_MVP_SLOT_SIZE`]).
 fn mvp_slot_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
@@ -32,8 +22,6 @@ fn mvp_slot_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
     }
 }
 
-/// The matching MVP resource: a 64-byte mat4 window over the slot buffer; the
-/// per-draw dynamic offset selects the slot.
 fn mvp_slot_binding(buf: &wgpu::Buffer) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
         buffer: buf,
@@ -42,7 +30,6 @@ fn mvp_slot_binding(buf: &wgpu::Buffer) -> wgpu::BindingResource<'_> {
     })
 }
 
-/// The values the model3d pass hands back to [`PipelineResources`].
 pub(super) struct Model3dResources {
     pub(super) pipe: wgpu::RenderPipeline,
     pub(super) hand_pipe: crate::pipeline::SampledPipeline,
@@ -53,14 +40,15 @@ pub(super) struct Model3dResources {
     pub(super) ibuf: wgpu::Buffer,
 }
 
-/// model3d pipeline (isometric slot icons + first-person held block).
-/// group(0): a per-draw MVP mat4 via a DYNAMIC-OFFSET uniform (binding 0) plus
-/// the shared uv_rects table (binding 1, same as the block pipeline). group(1):
-/// the block atlas (reuse the atlas bgl shape). Full-bright, back-face culled,
-/// alpha-blended so flat sprite items cut out. Built in TWO depth variants from
-/// the SAME shader/layout: `model3d_pipe` (NO depth) for the depthless UI icon
-/// pass, and `model3d_hand_pipe` (depth test + write) for the hand pass, which
-/// now carries a cleared depth buffer so the held block self-sorts.
+/// model3d pipeline for isometric slot icons and the first-person held block.
+///
+/// group(0) holds a per-draw MVP mat4 in a dynamic-offset uniform (binding 0) and the shared
+/// `uv_rects` table (binding 1, as in the block pipeline). group(1) is the block atlas.
+/// Full-bright, back-face culled, and alpha-blended so flat sprite items cut out.
+///
+/// Built in two depth variants from the same shader and layout. `model3d_pipe` has no depth, for
+/// the UI icon pass. `model3d_hand_pipe` tests and writes depth in the hand pass, which has a
+/// cleared depth buffer, so the held block self-sorts.
 pub(super) fn create_model3d_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -80,8 +68,6 @@ pub(super) fn create_model3d_pipelines(
         entries: &[
             mvp_slot_entry(0),
             crate::uniforms::uv_rects_entry(1),
-            // The frame `Uniforms` buffer: model3d reads only fog_color.w (the
-            // sim's sky scale) so the held block dims in step with terrain.
             uniform_entry(
                 2,
                 wgpu::ShaderStages::VERTEX,
@@ -206,11 +192,11 @@ pub(super) fn create_item3d_pipeline(
         Some(wgpu::BlendState::ALPHA_BLENDING),
         wgpu::ColorWrites::ALL,
     );
-    // Double-sided (cull None): the back face + inward walls must never cull.
-    // Depth-test + write against the hand pass's own (cleared) depth buffer so the
-    // extruded mesh self-sorts: front, stepped side walls and back no longer
-    // overdraw each other in submission order. The hand pass clears depth, so this
-    // stays isolated from the world (the item still draws over terrain).
+    // Cull None: back face and inward walls must never cull.
+    // Depth test + write against hand pass's own cleared depth buffer, so front,
+    // stepped side walls, and back self-sort instead of overdrawing by submission
+    // order. Hand pass clears depth so this stays isolated from world depth (item
+    // still draws over terrain).
     let item3d_pipe = world_pipeline(
         device,
         "item3d pipe",

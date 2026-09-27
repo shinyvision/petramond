@@ -1,4 +1,3 @@
-//! Independently compressed sections and an embedded preview, indexed without decoding blocks.
 mod bytes;
 mod header;
 mod palette;
@@ -12,9 +11,6 @@ pub use header::{Header, Metadata, HEADER_SIZE, MAX_AXIS, MAX_CELLS};
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 pub const EXTENSION: &str = "llschematic";
-/// Largest whole archive accepted, from a file or a network stream. Far
-/// above any real design; it bounds what a hostile length can make a
-/// reader buffer.
 pub const MAX_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
 pub const MAX_THUMBNAIL_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_THUMBNAIL_SIDE: u32 = 512;
@@ -25,8 +21,6 @@ pub fn encode(schematic: &Schematic, thumbnail: &[u8]) -> Result<Vec<u8>, String
     Ok(out.into_inner())
 }
 
-/// An archive for the wire alone: a library file's preview is its owner's to
-/// draw, so this one carries a blank.
 pub fn encode_bare(schematic: &Schematic) -> Result<Vec<u8>, String> {
     static BLANK: std::sync::LazyLock<Vec<u8>> = std::sync::LazyLock::new(|| {
         let mut png = Cursor::new(Vec::new());
@@ -38,14 +32,12 @@ pub fn encode_bare(schematic: &Schematic) -> Result<Vec<u8>, String> {
     encode(schematic, &BLANK)
 }
 
-/// The file writer holds only one encoded section in addition to the schematic.
 pub fn write_to(
     out: &mut (impl Write + Seek),
     schematic: &Schematic,
     thumbnail: &[u8],
 ) -> Result<(), String> {
     schematic.validate()?;
-    // What a reader would refuse is refused here, before it becomes a file.
     if schematic.size.iter().any(|n| *n > MAX_AXIS) || schematic.cell_count() > MAX_CELLS {
         return Err("Schematic is too large".into());
     }
@@ -137,7 +129,6 @@ pub struct Thumbnail {
     pub rgba: std::sync::Arc<[u8]>,
 }
 
-/// Decode a bounded embedded PNG on a worker, never during UI painting.
 pub fn decode_thumbnail(png: &[u8]) -> Result<Thumbnail, String> {
     if png.len() > MAX_THUMBNAIL_BYTES {
         return Err("Schematic thumbnail is too large".into());

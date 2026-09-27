@@ -1,21 +1,3 @@
-//! The dripstone caves: a dry, warm cave habitat lined with dripstone and
-//! grown over with pointed dripstone — stalactites that drip, grow, fall and
-//! impale; stalagmites that grow under them and spike whatever lands on them.
-//!
-//! The habitat is a row in `underground_biomes.json`; the spikes are two
-//! `run` box-set rows the ENGINE shapes and refines (a cell's taper follows
-//! its place in the run, placement picks hanging or standing from the click).
-//! This module is the pack's POLICY over them — what a spike does, never
-//! what it looks like:
-//!
-//! - [`behavior`]: the block hooks. A run that loses its root comes down
-//!   (a stalactite as falling pieces, a stalagmite as drops); a dripping tip
-//!   grows, grows a stalagmite under itself, or fills a vessel.
-//! - [`hazard`]: a falling piece damages what it lands on; a fall onto a
-//!   stalagmite hurts twice.
-//! - [`gen`]: the worldgen dressing — runs off the ceilings and floors of the
-//!   habitat, clustered into formations.
-
 use mod_sdk::*;
 
 use crate::keys;
@@ -24,41 +6,24 @@ pub mod behavior;
 pub mod gen;
 pub mod hazard;
 
-/// Top of the depth band the dripstone_caves row declares (`"y": [-64, 96]`);
-/// worldgen derives its altitude gate from here. The value is data, so
-/// `keys::tests` pins it to the row.
 pub const BIOME_TOP_Y: i32 = 96;
 /// Longest run growth builds. Worldgen places shorter ones.
 pub const MAX_RUN: i32 = 7;
-/// Cell KV marking a spike as PLAYER-PLACED.
-///
-/// Growth reads it, so a naturally generated formation never changes shape:
-/// the caves keep the form they generated with, and a dripstone farm is
-/// something a player BUILDS. Written from `block_placed`, which the server
-/// pushes only on the placement path — a worldgen write never reaches it —
-/// and carried onto every cell growth adds, so a cultivated run keeps
-/// growing from its new tip. A block write clears the cell's KV, so the
-/// mark dies with the spike and a cell that falls and is regenerated comes
-/// back unmarked.
 pub const PLACED_KEY: &str = "exploration:placed";
 
 /// Which run a spike belongs to.
 ///
-/// WETNESS IS A SKIN, not a run: the dry and the dripping hanging rows share
-/// one authored `run` shape, so the engine interns them to one shape kind and
-/// joins them into a single run — and every rule here classifies by this,
-/// never by a block id, or a wet tip under a dry segment would read as
+/// Wetness is a skin, not a run. The dry and dripping hanging rows share one authored `run` shape,
+/// so the engine interns them to one shape kind and joins them into a single run. Every rule here
+/// classifies by this, never by block id, or a wet tip under a dry segment would read as
 /// unsupported and fall.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Run {
-    /// Hangs from the cell above (a stalactite).
     Hanging,
-    /// Stands on the cell below (a stalagmite).
     Standing,
 }
 
 impl Run {
-    /// Vertical step from a segment toward its ROOT.
     pub fn root_step(self) -> i32 {
         match self {
             Run::Hanging => 1,
@@ -67,24 +32,14 @@ impl Run {
     }
 }
 
-/// The pack's dripstone ids, resolved once at init.
 pub struct Dripstone {
     pub block: BlockId,
     pub stalactite: BlockId,
-    /// The hanging row that CARRIES THE DRIP EMITTER. A tip wears it exactly
-    /// while its run hangs from a dripstone block under water, so the drip a
-    /// player sees means "this one is live"; the emitter's own
-    /// `requires_open: below` keeps it to the free end, so a buried wet
-    /// segment shows nothing.
     pub stalactite_wet: BlockId,
     pub stalagmite: BlockId,
-    /// The engine's water source — what must stand over a stalactite's root
-    /// block for the run to drip and grow.
     pub water: BlockId,
-    /// So a snapshot cell holding a fluid is never rock to root on.
     pub fluids: crate::fluids::Fluids,
     pub air: BlockId,
-    /// Vessel row → the row a drip fills it into.
     pub vessels: Vec<(BlockId, BlockId)>,
     pub biome: Option<u8>,
 }
@@ -114,8 +69,6 @@ impl Dripstone {
         self.run_of(b).is_some()
     }
 
-    /// Which run `b` is a segment of, if any — the ONE classification every
-    /// rule reads, so the dry and wet hanging rows are one run.
     pub fn run_of(&self, b: BlockId) -> Option<Run> {
         if b == self.stalactite || b == self.stalactite_wet {
             Some(Run::Hanging)
@@ -126,14 +79,10 @@ impl Dripstone {
         }
     }
 
-    /// Whether the cell at `pos` holds a segment of `run`. An unreadable
-    /// (unloaded) cell answers `false`; callers that must not act on missing
-    /// information check for that themselves.
     pub fn segment_at(&self, pos: [i32; 3], run: Run) -> bool {
         get_block(pos).and_then(|b| self.run_of(b)) == Some(run)
     }
 
-    /// The row a drip fills `vessel` into, if it is one.
     pub fn vessel_fill(&self, vessel: BlockId) -> Option<BlockId> {
         self.vessels
             .iter()
@@ -141,8 +90,6 @@ impl Dripstone {
             .map(|(_, filled)| *filled)
     }
 
-    /// The run's length counted from `pos` toward its root, and the cell
-    /// beyond its last segment — what holds the run up.
     pub fn run_root(&self, pos: [i32; 3], run: Run) -> (i32, [i32; 3]) {
         let step = run.root_step();
         let mut len = 1;

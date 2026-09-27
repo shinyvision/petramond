@@ -1,20 +1,11 @@
-//! The shared memo: a bounded, set-associative table of positional facts that
-//! every generation worker reads and fills, with single-flight derivation and
-//! the counters the cache report is built from.
-
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, RwLock};
 
 use super::{CacheBudget, MemoStats, Scaling};
 
-/// Entries per set. A direct-mapped slot per key evicts on every hash
-/// collision, and a generation frontier's working set sits near a memo's
-/// capacity; a few ways per set keep neighbours from evicting each other.
 const WAYS: usize = 4;
 
-/// A value some worker is deriving right now; the rest wait on it instead of
-/// deriving it again or waiting behind the whole set.
 struct Flight {
     done: Mutex<bool>,
     ready: Condvar,
@@ -28,7 +19,6 @@ impl Flight {
         })
     }
 
-    /// Wait until the deriving worker publishes its value or unwinds.
     fn wait(&self) {
         let done = self.done.lock().unwrap_or_else(PoisonError::into_inner);
         drop(
@@ -51,7 +41,6 @@ enum Entry<V> {
 
 struct Set<K, V> {
     entries: [Option<(K, Entry<V>)>; WAYS],
-    /// Round-robin victim once every way is taken.
     next: u8,
 }
 
@@ -82,7 +71,6 @@ impl<K: Eq, V> Set<K, V> {
         self.entries[victim] = Some((key, entry));
     }
 
-    /// Drop `key`'s marker if it is still the in-flight `flight`.
     fn abandon(&mut self, key: &K, flight: &Arc<Flight>) {
         for slot in &mut self.entries {
             let stale = matches!(
@@ -96,9 +84,6 @@ impl<K: Eq, V> Set<K, V> {
     }
 }
 
-/// One set and its lookup counters. The counters share the set's cache line,
-/// which every lookup already writes through the lock, so counting adds no
-/// contention of its own.
 struct Slot<K, V> {
     set: RwLock<Set<K, V>>,
     hits: AtomicU64,
@@ -120,12 +105,6 @@ impl<K, V> Slot<K, V> {
     }
 }
 
-/// The one worker deriving a key. It either publishes the value or, when the
-/// deriving closure unwinds (or the derivation is otherwise dropped
-/// unpublished), withdraws the in-flight marker and wakes every waiter at
-/// once, so they take the derivation over (meeting the same panic in their
-/// own thread if the input is bad) instead of waiting on a value that will
-/// never come.
 struct Derivation<'a, K: Eq, V> {
     slot: &'a Slot<K, V>,
     key: &'a K,
@@ -153,16 +132,11 @@ impl<K: Eq, V> Drop for Derivation<'_, K, V> {
     }
 }
 
-/// Bounded storage for expensive positional facts shared by generation workers.
-/// Each set has its own lock, and readers never exclude each other: unrelated
-/// samples can be computed concurrently, and hits from many workers on the
-/// same set proceed in parallel.
 struct SharedMemo<K, V> {
     slots: Box<[Slot<K, V>]>,
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
-    /// `capacity` counts entries; it must be a power of two of at least one set.
     pub(crate) fn new(capacity: usize) -> Self {
         assert!(capacity.is_power_of_two() && capacity >= WAYS);
         Self {
@@ -192,7 +166,6 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         }
     }
 
-    /// The memoized value, if any, without computing one.
     pub(crate) fn get(&self, key: &K) -> Option<V> {
         let slot = self.slot(key);
         let value = Self::ready(slot, key);
@@ -200,17 +173,10 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         value
     }
 
-    /// Whether a value is published for `key`, without counting a lookup —
-    /// for a scheduler deciding what to derive ahead of its readers.
     pub(crate) fn contains(&self, key: &K) -> bool {
         Self::ready(self.slot(key), key).is_some()
     }
 
-    /// `compute` must be a pure function of the complete key and must not
-    /// recursively access this memo for the same key. One worker derives a
-    /// missing value while the others asking for that key wait for it; other
-    /// keys of the set are never held up. A derivation that unwinds hands the
-    /// key to the next waiter.
     pub(crate) fn get_or_insert(&self, key: K, compute: impl FnOnce() -> V) -> V {
         let slot = self.slot(&key);
         if let Some(value) = Self::ready(slot, &key) {
@@ -244,10 +210,6 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         }
     }
 
-    /// [`get_or_insert`](Self::get_or_insert) for a cheap value: `compute`
-    /// runs without any coordination, so concurrent misses may compute the
-    /// same pure value twice. Right for per-corner samples; wrong for
-    /// anything whose one-time cost is worth waiting for.
     pub(crate) fn get_or_compute_unlocked(&self, key: K, compute: impl FnOnce() -> V) -> V {
         let slot = self.slot(&key);
         if let Some(value) = Self::ready(slot, &key) {
@@ -260,8 +222,6 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         value
     }
 
-    /// A hit for a request that is only borrowed: `key` must hash exactly as
-    /// the owned key it stands for, and `matches` compares the complete key.
     pub(crate) fn find<Q: Hash + ?Sized>(
         &self,
         key: &Q,
@@ -281,13 +241,10 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         value
     }
 
-    /// Publish a completed value.
     pub(crate) fn insert(&self, key: K, value: V) {
         self.slot(&key).write().store(key, Entry::Ready(value));
     }
 
-    /// Drop every published value. A derivation in flight still publishes
-    /// its own when it completes.
     fn clear(&self) {
         for slot in self.slots.iter() {
             for entry in slot.write().entries.iter_mut() {
@@ -298,7 +255,6 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         }
     }
 
-    /// `(entries, heap bytes the values hold, hits, misses)`.
     fn census(&self, weigh: fn(&V) -> usize) -> (usize, usize, u64, u64) {
         let (mut entries, mut heap, mut hits, mut misses) = (0, 0, 0, 0);
         for slot in self.slots.iter() {
@@ -314,15 +270,11 @@ impl<K: Eq + Hash + Clone, V: Clone> SharedMemo<K, V> {
         (entries, heap, hits, misses)
     }
 
-    /// Bytes of the table itself: every way of every set, filled or not.
     fn table_bytes(&self) -> usize {
         self.slots.len() * std::mem::size_of::<Slot<K, V>>()
     }
 }
 
-/// How a [`Memo`] is declared: its report name, the capacity it was tuned at
-/// (the [`CacheBudget::REFERENCE`] world), how that scales, and how to bill a
-/// value's heap beyond its inline bytes.
 pub(crate) struct MemoSpec<V> {
     pub name: &'static str,
     pub capacity: usize,
@@ -330,9 +282,6 @@ pub(crate) struct MemoSpec<V> {
     pub weigh: fn(&V) -> usize,
 }
 
-/// A named [`SharedMemo`] sized by a [`CacheBudget`]. The table is allocated
-/// on first use, so a world that never generates (a client replica) or a
-/// memo a world never reaches costs nothing.
 pub(crate) struct Memo<K, V> {
     spec: MemoSpec<V>,
     capacity: usize,
@@ -353,27 +302,22 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
         self.table.get_or_init(|| SharedMemo::new(self.capacity))
     }
 
-    /// See [`SharedMemo::get`].
     pub(crate) fn get(&self, key: &K) -> Option<V> {
         self.table().get(key)
     }
 
-    /// See [`SharedMemo::contains`].
     pub(crate) fn contains(&self, key: &K) -> bool {
         self.table().contains(key)
     }
 
-    /// See [`SharedMemo::get_or_insert`].
     pub(crate) fn get_or_insert(&self, key: K, compute: impl FnOnce() -> V) -> V {
         self.table().get_or_insert(key, compute)
     }
 
-    /// See [`SharedMemo::get_or_compute_unlocked`].
     pub(crate) fn get_or_compute_unlocked(&self, key: K, compute: impl FnOnce() -> V) -> V {
         self.table().get_or_compute_unlocked(key, compute)
     }
 
-    /// See [`SharedMemo::find`].
     pub(crate) fn find<Q: Hash + ?Sized>(
         &self,
         key: &Q,
@@ -382,7 +326,6 @@ impl<K: Eq + Hash + Clone, V: Clone> Memo<K, V> {
         self.table().find(key, matches)
     }
 
-    /// See [`SharedMemo::insert`].
     pub(crate) fn insert(&self, key: K, value: V) {
         self.table().insert(key, value);
     }
@@ -439,7 +382,6 @@ mod tests {
         assert_eq!(memo.get_or_insert((7, -3), || 42), 42);
         assert_eq!(memo.get_or_compute_unlocked((9, 0), || 5), 5);
         assert_eq!(memo.get_or_compute_unlocked((9, 0), || 6), 5);
-        // A full set evicts one way and never answers with another key's value.
         for key in 10..20 {
             assert_eq!(memo.get_or_insert((key, 0), || key), key);
         }
@@ -466,7 +408,6 @@ mod tests {
                 });
             });
             started.wait();
-            // Another key of the same set answers while key 1 is being derived.
             assert_eq!(memo.get_or_insert(2, || "fast"), "fast");
             assert_eq!(memo.get(&1), None);
             done.store(true, Ordering::Release);
@@ -474,8 +415,6 @@ mod tests {
         assert_eq!(memo.get(&1), Some("slow"));
     }
 
-    /// A derivation that panics must not strand the workers waiting on it:
-    /// the next one takes the key over at once, with no timeout involved.
     #[test]
     fn an_unwinding_derivation_hands_the_key_to_a_waiter() {
         let memo = SharedMemo::new(WAYS);
@@ -495,9 +434,6 @@ mod tests {
         assert_eq!(memo.get(&3), Some(9));
     }
 
-    /// A key whose derivation always fails wakes every waiter the moment it
-    /// fails; each retries, fails in its own thread and wakes the rest, so
-    /// the panic reaches every caller without any of them stalling.
     #[test]
     fn a_failing_derivation_propagates_to_every_waiter_promptly() {
         let memo: SharedMemo<i32, i32> = SharedMemo::new(WAYS);
@@ -526,7 +462,6 @@ mod tests {
             "waiters were woken on unwind, not by a timeout: {:?}",
             begun.elapsed()
         );
-        // The key is left free rather than poisoned: a good derivation succeeds.
         assert_eq!(memo.get(&4), None);
         assert_eq!(memo.get_or_insert(4, || 11), 11);
     }
@@ -541,8 +476,6 @@ mod tests {
         assert_eq!(memo.find(request.as_slice(), |_| false), None);
     }
 
-    /// The report sees every lookup and every entry, and a clear empties the
-    /// table without forgetting its size.
     #[test]
     fn a_memo_counts_lookups_and_clears() {
         let memo: Memo<u32, Arc<[u8]>> = Memo::new(

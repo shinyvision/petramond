@@ -16,9 +16,6 @@ struct Row {
     file: String,
 }
 
-/// The structure-template catalog stage of every content registry. Templates
-/// name blocks, so it builds after the shared name tables; every template
-/// compiles at load, including ones worldgen never selects.
 pub(crate) static CATALOG: crate::content::Slot<Catalog<Template>> = crate::content::Slot::new(
     crate::content::stage::STRUCTURES,
     &[crate::content::stage::NAMES],
@@ -66,7 +63,6 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<Catalog<Template>, Stri
     })
 }
 
-/// Resolve a namespaced template of the current registry.
 pub fn by_key(key: &str) -> Option<&'static Template> {
     let catalog = CATALOG.current();
     catalog.id(key).map(|id| &catalog.rows()[id as usize])

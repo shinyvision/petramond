@@ -10,7 +10,6 @@ pub struct NoiseExpression {
     pub at: [Expression; 3],
 }
 
-/// Two octave stacks with a named seed fork, independent of caller iteration order.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Perlin {
@@ -19,7 +18,6 @@ pub struct Perlin {
     pub amplitudes: Vec<f64>,
 }
 
-/// A seeded Perlin stack's identity: the seed and every parameter.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
     seed: u32,

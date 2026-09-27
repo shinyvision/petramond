@@ -7,17 +7,12 @@ use petramond_world::chunk::{SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-/// Per rule, the scans its stages reuse across every target.
 struct RuleScans<'a> {
     admission: Scan<'a>,
     material: Scan<'a>,
     preserve: Vec<Scan<'a>>,
 }
 
-/// The terrain a projection's rules compare against where the field left a
-/// cell alone: rock under the surface, water between the surface and the
-/// sea, air above. A cave or an ice sheet at that exact cell is a detail
-/// the mounts do without.
 fn terrain_guess(y: i32, surface: i32) -> u16 {
     if y <= surface {
         Block::Stone.id()
@@ -28,14 +23,8 @@ fn terrain_guess(y: i32, surface: i32) -> u16 {
     }
 }
 
-/// What stands at one height across a 16×16 chunk once the field has cut:
-/// the union of every site's cut on the margin lattice, its material where
-/// it cuts and the terrain guess elsewhere. A probe reads this plane. Keyed
-/// by the context, the excavation row's salt, the chunk and the height.
 pub(in crate::noise::cave_field) type PlaneKey = (GenContext, u64, [i32; 2], i32);
 
-/// The sites of `row` whose bounds reach the chunk within the shape's
-/// height range, in placement order.
 fn reaching_sites(
     field: &CaveField,
     row: &'static Excavation,
@@ -65,7 +54,6 @@ fn reaching_sites(
     sites
 }
 
-/// The input lanes that differ between sites.
 fn varying_of(sites: &[Site]) -> Vec<usize> {
     let first = sites[0].inputs([0; 3], 0);
     (3..=7)
@@ -98,8 +86,6 @@ fn probe_plane(
         }
         let batch = shape.margin.batch(&varying_of(&sites));
         let mut scan = batch.scan(field.seed);
-        // Corners four apart across the chunk and the two lattice heights
-        // bracketing `y`.
         let base = y.div_euclid(STEP) * STEP;
         let ys = [f64::from(base), f64::from(base + STEP)];
         let t = f64::from(y - base) / f64::from(STEP);
@@ -184,8 +170,6 @@ fn probe_plane(
     })
 }
 
-/// Whether a rule's probe passes at a target column: what the field left at
-/// the probe's height there is none of the blocks the rule refuses.
 fn probe_passes(
     field: &CaveField,
     plan: &Plan<'static>,
@@ -203,18 +187,10 @@ fn probe_passes(
     !rule.probe.contains(&block)
 }
 
-/// A rule's chunk anchors: the context, the excavation row's salt, the
-/// rule's index among the row's projections and the chunk.
 pub(in crate::noise::cave_field) type AnchorKey = (GenContext, u64, usize, [i32; 2]);
-/// Per column of a 16×16 chunk, the site owning the rule's anchor there and
-/// its height: the lowest cell the site cuts with one of the rule's source
-/// materials, found on the cut margin's lattice and refined cell by cell.
-/// Every tile stacked over the chunk reads the same answer, so a mount is
-/// whole across tile edges.
 pub(in crate::noise::cave_field) type ChunkAnchors = Arc<[Option<(Site, i32)>; 256]>;
 
 const STEP: i32 = 4;
-/// A corner no site reaches.
 const NONE: f64 = -1.0e9;
 
 fn chunk_anchors(
@@ -305,8 +281,6 @@ fn chunk_anchors(
                         let [b] = scan.output::<1>(k, lane + 1);
                         a + (b - a) * t
                     };
-                    // The lowest lattice bracket where the margin turns
-                    // positive, then the exact cell within it.
                     let mut y = lo;
                     while y <= hi && margin_at(y, &scan) <= 0.0 {
                         let next = (y.div_euclid(STEP) + 1) * STEP;
@@ -346,10 +320,6 @@ pub(super) fn apply(
     field: &CaveField,
 ) {
     let mut writes = Vec::new();
-    // The anchor of every (owner, rule, column) the chunk memo names an
-    // owner for that this tile knows as a plan, visited in key order: two
-    // anchor columns can reach one target through opposite offsets, and the
-    // order they write in must not depend on a hasher.
     let mut anchors: BTreeMap<(usize, usize, usize), i32> = BTreeMap::new();
     let mut chunks: HashMap<([i32; 2], usize), ChunkAnchors> = HashMap::new();
     let mut probe_scan: HashMap<usize, Scan<'_>> = HashMap::new();
@@ -416,8 +386,6 @@ pub(super) fn apply(
             if !probe_passes(field, plan, rule, target, probe_out[0][0]) {
                 continue;
             }
-            // The anchor column's surface, as the rule's author measured
-            // depth from; the target's own only tells the terrain guess.
             let inputs = plan.inputs(target, surface);
             scans
                 .admission
@@ -473,10 +441,6 @@ pub(super) fn apply(
             }
         }
     }
-    // Writes in a fixed order — later placements, later rules and, where
-    // anchors of one rule reach the same cell, later source columns and
-    // offsets win — so overlapping mounts settle the same way whichever tile
-    // asks. The key is total: no two writes share it.
     writes.sort_unstable_by_key(|&(key, _, _)| key);
     for ((owner, _, pos, _, _), block, biome) in writes {
         draft.write(pos, block, biome, owner);

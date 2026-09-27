@@ -1,9 +1,3 @@
-//! A protocol-level fake server: the client joins from a hand-built
-//! `JoinData` over the loopback pipe with NO `ServerGame` behind it. Tests
-//! script the `ServerToClient` stream and assert on the `ClientToServer`
-//! messages the client sends and on its public read models — client
-//! behaviour in isolation, exactly as a remote join sees it.
-
 use petramond::net::handle::{LoopbackServer, ServerHandle};
 use petramond::net::protocol::{
     ChatColor, ChatLine, ChatSpan, ClientToServer, ItemSlotWire, JoinData, PlayerAction,
@@ -16,14 +10,11 @@ use petramond_world::item::ItemType;
 
 use crate::game::{Game, GameEvents, GameInput};
 
-/// The joined client and the server end of its pipe.
 pub(super) struct ScriptedServer {
     pub(super) game: Game,
     pipe: LoopbackServer,
 }
 
-/// The join payload the fake server hands out: a survival player at a fixed
-/// spot holding twelve dirt in hotbar slot 2, with one other player online.
 pub(super) fn join_data(spawn: WorldPos) -> Box<JoinData> {
     let mut slots: Vec<Option<ItemSlotWire>> = vec![None; 37];
     slots[2] = Some(ItemSlotWire {
@@ -44,7 +35,7 @@ pub(super) fn join_data(spawn: WorldPos) -> Box<JoinData> {
                 yaw: 0.0,
                 pitch: 0.0,
             },
-            mode: 0, // survival
+            mode: 0,
             health: 20,
             bed_spawn: None,
             effects: Vec::new(),
@@ -60,7 +51,6 @@ pub(super) fn join_data(spawn: WorldPos) -> Box<JoinData> {
 }
 
 impl ScriptedServer {
-    /// Join the fake server as a remote client.
     pub(super) fn join() -> Self {
         let (handle, pipe) = ServerHandle::loopback();
         let cam = petramond_render::camera::Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0);
@@ -76,18 +66,14 @@ impl ScriptedServer {
         Self { game, pipe }
     }
 
-    /// Queue a server→client message for the client's next drain.
     pub(super) fn push(&mut self, msg: ServerToClient) {
         self.pipe.outbox.send(msg).expect("the client end is alive");
     }
 
-    /// One client frame: its send half, then its receive half draining
-    /// whatever was scripted.
     pub(super) fn frame(&mut self, dt: f32, input: &GameInput) -> GameEvents {
         self.game.tick(dt, input)
     }
 
-    /// Every message the client has sent since the last call, in order.
     pub(super) fn sent(&mut self) -> Vec<ClientToServer> {
         self.pipe.inbox.try_iter().collect()
     }

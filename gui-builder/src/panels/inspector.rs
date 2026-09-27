@@ -1,8 +1,3 @@
-//! Inspector panel: edit the selected node's id, type-specific properties,
-//! layout, style, and bindings. Edits are applied to a clone of the node and
-//! committed through the app's undo-aware mutation API; drag-value edits ride
-//! a coalescing gesture so a slider scrub is one undo entry.
-
 use crate::app::App;
 use crate::bindings::{field_matches, BindField};
 use crate::doc_edit;
@@ -12,13 +7,9 @@ use petramond_ui::{
     Justify, LayoutProps, NodeKind, ScrollAxis, Size, TabSpec,
 };
 
-/// Catalog-fed options for the binding pickers: per-field global state keys
-/// (with doc tooltips) plus — inside a list template — the item's own fields.
 #[derive(Default)]
 struct BindOptions {
-    /// `(key, doc)` per bind field, already type-filtered.
     global: Vec<(BindField, Vec<(String, String)>)>,
-    /// `(field name, type)` of the enclosing list's item map.
     item_fields: Vec<(String, String)>,
 }
 
@@ -48,8 +39,6 @@ impl BindOptions {
             })
             .collect();
 
-        // Nearest strict ancestor list: its `items` key names the item map
-        // whose fields resolve first inside the template.
         let mut item_fields = Vec::new();
         for cut in (0..path.len()).rev() {
             let Some(anc) = doc_edit::node_at(&app.proj.document.root, &path[..cut]) else {
@@ -84,8 +73,6 @@ impl BindOptions {
     }
 }
 
-/// Kind-specific inspector controls, including conditional binding fields.
-/// Adding a kind updates this routing once rather than several panel checks.
 #[derive(Default)]
 struct InspectorSchema {
     flow_dir: bool,
@@ -224,8 +211,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             layout_props(ui, &mut edited.layout, &kind, &mut t, is_root)
         });
 
-    // The document-level breakpoint swaps in `compact_layout` wholesale — a
-    // COMPLETE replacement, so it starts as a copy of the normal layout.
     egui::CollapsingHeader::new("Compact layout")
         .default_open(edited.compact_layout.is_some())
         .show(ui, |ui| {
@@ -287,8 +272,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 }
                 t.hit(r);
             });
-            // Raised paint tier: draws after the base tier's chrome AND host
-            // content, stays interactive (not the tooltip tier).
             let r = ui.checkbox(&mut edited.overlay, "overlay tier");
             t.hit(r);
             if matches!(
@@ -305,8 +288,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     egui::CollapsingHeader::new("Bindings")
         .default_open(false)
         .show(ui, |ui| {
-            // `frame` drives a sprite-sheet frame, so it only makes sense on
-            // framed nodes: `image`, or an image-backed `button`.
             let schema = InspectorSchema::for_kind(&edited.kind);
             let mut rows: Vec<(&str, BindField, &mut Option<String>)> = vec![
                 ("text", BindField::Text, &mut edited.bind.text),
@@ -316,16 +297,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ("items", BindField::Items, &mut edited.bind.items),
                 ("selected", BindField::Selected, &mut edited.bind.selected),
                 ("image", BindField::Image, &mut edited.bind.image),
-                // Applies to any node: the host raises this box's minimum
-                // width for content the layout engine cannot measure.
                 ("min_w", BindField::Value, &mut edited.bind.min_w),
             ];
             if schema.frame_binding {
                 rows.push(("frame", BindField::Frame, &mut edited.bind.frame));
             }
-            // `item` is only read on hooks; the abs binds need an authored
-            // `layout.abs` resting position (either form) — mirror the
-            // engine-side validation.
             if schema.item_binding {
                 rows.push(("item", BindField::Item, &mut edited.bind.item));
             }
@@ -338,15 +314,9 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 rows.push(("abs_x", BindField::Abs, &mut edited.bind.abs_x));
                 rows.push(("abs_y", BindField::Abs, &mut edited.bind.abs_y));
             }
-            // `accepts` narrows a slot's AUTHORED filters at runtime — only
-            // meaningful on a slot/slot_grid that declares some (mirrors the
-            // engine-side validation).
             if schema.accepts_binding {
                 rows.push(("accepts", BindField::Value, &mut edited.bind.accepts));
             }
-            // `palette` recolours a label, badge or text input from a bound
-            // theme-palette entry — only read there (mirrors the engine-side
-            // validation).
             if schema.palette_binding {
                 rows.push(("palette", BindField::Value, &mut edited.bind.palette));
             }
@@ -463,10 +433,6 @@ fn opt_text(ui: &mut Ui, label: &str, v: &mut Option<String>, t: &mut Track) {
     });
 }
 
-/// A binding field with a catalog picker: the combo offers the kind's
-/// type-matching state keys (docs as tooltips) and — inside a list template —
-/// the enclosing item's fields; the text box stays as the open-ended escape
-/// hatch (mod keys).
 fn bind_pick(
     ui: &mut Ui,
     label: &str,
@@ -548,7 +514,6 @@ fn text_prop(ui: &mut Ui, label: &str, v: &mut Option<String>, t: &mut Track, fo
 struct KindCtx<'a> {
     style_keys: &'a [String],
     project_dir: Option<&'a std::path::Path>,
-    /// Status-line message from a side-effecting action (image copy…).
     status: &'a mut Option<String>,
 }
 
@@ -603,9 +568,6 @@ fn kind_props(
             frames,
             fps,
         } => {
-            // An image-backed button draws document art instead of theme
-            // chrome; validation forbids text/icon/children on it, so those
-            // controls hide (and their values clear) while `image` is set.
             let mut backed = image.is_some();
             let r = ui.checkbox(&mut backed, "custom image").on_hover_text(
                 "draw a document image as the button face instead of theme chrome \
@@ -659,12 +621,8 @@ fn kind_props(
                 );
             } else {
                 text_prop(ui, "text", text, t, focus);
-                // Icon = a theme part key (e.g. `icon.edit`), drawn centred when
-                // there's no label, else left of it.
                 icon_pick(ui, "button_icon", icon, ctx.style_keys, t);
             }
-            // Clearing the name reverts to a plain button (an empty `image`
-            // is not image-backed as far as the runtime is concerned).
             if image.as_deref() == Some("") {
                 *image = None;
                 *frames = None;
@@ -672,8 +630,6 @@ fn kind_props(
             }
         }
         NodeKind::Toggle { icon } => {
-            // Icon = a theme part key drawn centred on the toggle face
-            // (on/off icon buttons like the craftable-only filter).
             icon_pick(ui, "toggle_icon", icon, ctx.style_keys, t);
         }
         NodeKind::TabBar { tabs } => {
@@ -920,8 +876,6 @@ fn string_prop(ui: &mut Ui, label: &str, v: &mut String, t: &mut Track) {
     });
 }
 
-/// Theme-part icon picker (buttons, toggles, tab specs): the combo offers
-/// every kit part key; `(none)` clears it.
 fn icon_pick(
     ui: &mut Ui,
     salt: impl std::hash::Hash,
@@ -955,9 +909,6 @@ fn icon_pick(
     });
 }
 
-/// Optional sprite-sheet grid + animation rate, shared by `image` nodes and
-/// image-backed buttons. The drag ranges keep the document valid (grid ≥ 1×1,
-/// fps positive — the runtime's validator rejects anything else).
 fn framed_props(ui: &mut Ui, frames: &mut Option<[u32; 2]>, fps: &mut Option<f32>, t: &mut Track) {
     ui.horizontal(|ui| {
         let mut has = frames.is_some();
@@ -990,9 +941,6 @@ fn framed_props(ui: &mut Ui, frames: &mut Option<[u32; 2]>, fps: &mut Option<f32
     });
 }
 
-/// Host-interpreted slot semantics: the `accepts` item-group list (one text
-/// row per group — an item-tag name or a row-`data` key) and the `take_only`
-/// flag.
 fn slot_semantics(ui: &mut Ui, accepts: &mut Vec<Accept>, take_only: &mut bool, t: &mut Track) {
     ui.label(egui::RichText::new("accepts (item groups)").weak().small());
     let mut remove: Option<usize> = None;
@@ -1041,8 +989,6 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
         ui.label("gap");
         t.hit(ui.add(DragValue::new(&mut l.gap)));
     });
-    // Every container whose flow direction reads `layout.dir` (row/column fix
-    // their own).
     if InspectorSchema::for_kind(kind).flow_dir {
         ui.horizontal(|ui| {
             ui.label("dir");
@@ -1056,7 +1002,6 @@ fn layout_props(ui: &mut Ui, l: &mut LayoutProps, kind: &NodeKind, t: &mut Track
     }
     ui.horizontal(|ui| {
         ui.label("align");
-        // `None` = the node type's default (scroll stretches, others start).
         if ui
             .selectable_label(l.align.is_none(), "auto")
             .on_hover_text("node default: scroll stretches its children, others start")

@@ -1,6 +1,3 @@
-//! Cave sampling, biome queries and bounded excavation composition.
-//! Geometry is evaluated before habitat surface treatment and fluid containment.
-
 use super::settings::*;
 
 use super::{cave_density::CaveDensity, cave_walk::WalkField};
@@ -44,20 +41,17 @@ const LATTICE_STEP_F: f64 = LATTICE_STEP as f64;
 enum CaveCut {
     Solid,
     Shell,
-    /// Open and empty. A fluid the cave holds is a [`CaveCut::Fill`].
     Air,
     Barrier(u16),
     Fill(u16),
 }
 
 impl CaveCut {
-    /// Open and empty: what a pour may fall through.
     #[inline]
     fn is_air(self) -> bool {
         self == Self::Air
     }
 
-    /// Passable: open air, or a fill that is not solid (a fluid).
     #[inline]
     fn is_open(self) -> bool {
         match self {
@@ -68,13 +62,9 @@ impl CaveCut {
     }
 }
 
-/// Immutable world sources; caches only memoize positional results.
 pub struct CaveField {
     seed: u32,
-    /// The seed and catalog fingerprints every memo key of this field
-    /// carries (see `crate::cache::GenContext`).
     context: crate::cache::GenContext,
-    /// The world's memos (see `crate::cache`), captured at construction.
     caches: std::sync::Arc<crate::cache::GenCaches>,
     natural: std::sync::Arc<CaveDensity>,
     terrain: std::sync::Arc<TerrainDensityGraph>,
@@ -91,10 +81,6 @@ struct Fields {
     biome: bool,
     excavations: bool,
     positioned: bool,
-    /// Gather the pools an open cell can belong to. Off for the queries
-    /// that only ask whether a cell is OPEN — the answer never depends on
-    /// what fills it — and off inside a pool's own flood, which reads the
-    /// carve to decide what the pools are.
     fluids: bool,
 }
 
@@ -123,17 +109,11 @@ struct CaveLattice {
     noodle_toggle: Vec<f64>,
     noodle_width: Vec<f64>,
     climate: [Vec<f64>; 6],
-    /// Conservative: no aquifer row can own a cell of this box, so the carve
-    /// skips every aquifer read. Exact when `false` is claimed.
     no_aquifer: bool,
-    /// Conservative: no row lining any surface can own a cell of this box.
     unlined: bool,
-    /// Conservative: only ordinary stone can own a cell of this box, so the
-    /// closest-range decision is settled for every cell without asking it.
     plain: bool,
     geology: bool,
     regions: regions::Columns,
-    /// Per lattice cell, whether any walk cut reaches it (empty without walks).
     walk_cells: Vec<bool>,
     #[cfg(test)]
     chamber_live: bool,
@@ -141,7 +121,6 @@ struct CaveLattice {
     walks: Option<WalkField>,
     volumes: volumes::Tiles,
     claims: volumes::claims::Columns,
-    /// The pools any cell of the box can belong to.
     pools: fluid_pools::Pools,
 }
 
@@ -156,7 +135,6 @@ mod lane {
     pub(super) const COUNT: usize = 12;
 }
 
-/// A vertical cursor reuses horizontal interpolation for every lane.
 struct Col<'a> {
     lat: &'a CaveLattice,
     x: i32,
@@ -210,13 +188,11 @@ impl CaveField {
         )
     }
 
-    /// The same field over `caches` instead of the installed memos.
     pub(crate) fn with_caches(mut self, caches: std::sync::Arc<crate::cache::GenCaches>) -> Self {
         self.caches = caches;
         self
     }
 
-    /// The world memos this field reads and fills.
     pub(crate) fn caches(&self) -> &crate::cache::GenCaches {
         &self.caches
     }
@@ -225,8 +201,6 @@ impl CaveField {
         &self.caches.caves.memos
     }
 
-    /// The seed and the content of the loaded habitat and excavation
-    /// catalogs: what every memo key of this field starts with.
     pub(crate) fn context(&self) -> crate::cache::GenContext {
         self.context
     }
@@ -341,8 +315,6 @@ impl CaveField {
         self.cut_from_col(c, y, gate, interior)
     }
 
-    /// [`Self::cut_col`] for a walk that has already read the cell's
-    /// positioned-field treatment.
     #[inline]
     fn cut_col_treated(
         &self,
@@ -398,9 +370,6 @@ impl CaveField {
             .unwrap_or_else(|| self.underground.id_at(lat.climate_at(x, y, z), y))
     }
 
-    /// [`Self::biome_id_lat`] for the cursor's own column: the cursor's lerp
-    /// sequence is the lattice's, so the id is the same, without re-deriving
-    /// the horizontal interpolation of six lanes.
     #[inline]
     fn biome_id_col(&self, c: &mut Col, y: i32) -> u8 {
         c.lat
@@ -438,9 +407,6 @@ impl CaveField {
         self.biome_id_lat(&lat, x, y, z)
     }
 
-    /// [`Self::surface_after_caves`] for every column of one 16×16 chunk:
-    /// one lattice per source group instead of one per probed cell, with the
-    /// same answer, since corner samples are world-anchored.
     pub fn surfaces_after_caves(&self, ox: i32, oz: i32, surf: &[i32]) -> Vec<i32> {
         let mut probe = ColumnProbe::new(self, ox, oz, surf);
         let mut out = Vec::with_capacity(surf.len());
@@ -465,7 +431,6 @@ impl CaveField {
         out
     }
 
-    /// [`Self::feature_surface_after_caves`] for every column of one chunk.
     pub fn feature_surfaces_after_caves(&self, ox: i32, oz: i32, surf: &[i32]) -> Vec<i32> {
         let mut probe = ColumnProbe::new(self, ox, oz, surf);
         let mut out = Vec::with_capacity(surf.len());
@@ -484,10 +449,6 @@ impl CaveField {
         out
     }
 
-    /// [`Self::cave_carved`] through cursors on the chunk's two probe
-    /// lattices: the surface band for cells the entrance rules govern, the
-    /// interior lattice below it. An interior cell always has the interior
-    /// cursor, because the probe builds that lattice before any descent.
     #[inline]
     fn carved_with<'c, 'l>(
         &self,
@@ -657,8 +618,6 @@ impl CaveField {
 #[cfg(test)]
 mod tests;
 
-/// One chunk's post-cave surface probes: the surface band lattice (built on
-/// first use) and the interior lattice (built once a column descends).
 struct ColumnProbe<'a> {
     field: &'a CaveField,
     ox: i32,
@@ -716,8 +675,6 @@ impl<'a> ColumnProbe<'a> {
         })
     }
 
-    /// Whether the column's surface cell is carved: the entrance rules' own
-    /// lattice answers it, as the point path's non-interior lattice does.
     fn carved_at_surface(&mut self, wx: i32, wz: i32, surf_y: i32) -> bool {
         let field = self.field;
         let band = self.band();
@@ -725,7 +682,6 @@ impl<'a> ColumnProbe<'a> {
         field.carved_with(&mut cursor, None, surf_y, surf_y)
     }
 
-    /// Both lattices a descent from `surf_y` can read.
     fn lattices(&mut self, surf_y: i32) -> (&CaveLattice, Option<&CaveLattice>) {
         let (field, ox, oz, surf_max) = (self.field, self.ox, self.oz, self.surf_max);
         if surf_y - CAVE_SURFACE_BUFFER >= CAVE_MIN_Y {

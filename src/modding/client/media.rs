@@ -1,18 +1,15 @@
-//! The desk between a client mod's frame, clock, tap and media calls and the
-//! client that carries them out.
+//! The desk between a client mod's frame, clock, tap and media calls and the client that carries
+//! them out.
 //!
-//! A host call runs inside a mod dispatch, where the renderer, the audio
-//! engine and the encoder are out of reach. So a call validates, answers from
-//! the desk, and leaves the rest here: an armed capture, a clock claim, a tap,
-//! a media file waiting to start. The client carries each out at its next
-//! frame and writes back where it stands. One desk per runtime, shared by
-//! every mod in it; each entry remembers the mod that made it, so no mod
-//! names another's.
+//! A host call runs inside a mod dispatch, out of reach of the renderer, audio engine and encoder.
+//! So a call validates, answers from the desk, and leaves the rest here: an armed capture, a clock
+//! claim, a tap, a media file waiting to start. The client carries each out at its next frame and
+//! writes back where it stands. One desk per runtime is shared by every mod in it, and each entry
+//! remembers the mod that made it, so no mod names another's.
 //!
-//! A media file's bytes cross from the frame to the encoder's writer thread
-//! through its [`MediaInput`], which is also where the encoder publishes its
-//! progress, so a push is answered from the encoder's own backpressure at the
-//! call.
+//! Media bytes cross from the frame to the encoder's writer thread through [`MediaInput`], where
+//! the encoder also publishes its progress, so a push is answered from the encoder's own
+//! backpressure.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -28,20 +25,15 @@ use mod_api::{
 use super::files::{self, issue_id, FileRef, WriterClaim};
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    // A panic while holding the desk leaves plain data behind; keep going.
     m.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-/// Where a capture's pixels or a tap's samples go.
 #[derive(Clone, Debug)]
 pub enum Destination {
-    /// Appended to this file through its queue.
     File(FileRef),
-    /// Handed to this open media file.
     Media(u64),
 }
 
-/// One armed or taken frame capture.
 #[derive(Clone, Debug)]
 pub struct Capture {
     pub owner: String,
@@ -53,7 +45,6 @@ pub struct Capture {
     pub status: ClientCaptureStatus,
 }
 
-/// One tap on the world's sound.
 #[derive(Clone, Debug)]
 pub struct Tap {
     pub owner: String,
@@ -61,11 +52,9 @@ pub struct Tap {
     pub channels: u16,
     pub into: Destination,
     pub data: ClientAudioTapData,
-    /// The mod ended it; the client delivers what it holds, then ends it.
     pub end_requested: bool,
 }
 
-/// One media file: what the mod asked for, and the input its encoder reads.
 #[derive(Clone)]
 pub struct Media {
     pub owner: String,
@@ -74,12 +63,9 @@ pub struct Media {
     pub audio: Option<ClientMediaAudio>,
     pub options: Vec<(String, String)>,
     pub input: Arc<MediaInput>,
-    /// The mod closed it; the client hands it the captures still on their
-    /// way back, then closes its input.
     pub close_requested: bool,
 }
 
-/// The stepped clock's holder and step.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClockClaim {
     pub holder: String,
@@ -92,28 +78,20 @@ struct Desk {
     taps: BTreeMap<u64, Tap>,
     media: BTreeMap<u64, Media>,
     clock: Option<ClockClaim>,
-    /// `ClientClockAdvance` calls by the holder since the client last took
-    /// them.
     advances: u64,
     encoders: Option<ClientMediaCapabilities>,
-    /// What a mod asked of the machine since the client last looked.
     probe: ProbeRequest,
-    /// Whether this build mixes sound a tap can take; `None` = not said yet.
     mixes: Option<bool>,
 }
 
-/// What a mod asked of the machine's encoder since the client last looked.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum ProbeRequest {
     #[default]
     None,
-    /// What can it write? (The answer the client already has will do.)
     Ask,
-    /// Ask the machine again.
     Refresh,
 }
 
-/// Why a call naming `id` is the mod's bug.
 fn never_issued(what: &str, id: u64) -> String {
     format!("{what} {id} was never issued to this instance")
 }
@@ -126,16 +104,12 @@ impl MediaDesk {
         lock(&self.0)
     }
 
-    // --- captures ---
-
     pub fn arm_capture(&self, capture: Capture) -> u64 {
         let id = issue_id();
         self.desk().captures.insert(id, capture);
         id
     }
 
-    /// How capture `id` of `owner` stands; `Err` = never issued. A capture
-    /// is forgotten once answered as `Delivered` or `Failed`.
     pub fn poll_capture(&self, owner: &str, id: u64) -> Result<ClientCaptureStatus, String> {
         let mut desk = self.desk();
         let status = match desk.captures.get(&id) {
@@ -151,7 +125,6 @@ impl MediaDesk {
         Ok(status)
     }
 
-    /// Disarm capture `id` while it is armed; a taken one goes on.
     pub fn cancel_capture(&self, owner: &str, id: u64) -> Result<(), String> {
         let mut desk = self.desk();
         match desk.captures.get(&id) {
@@ -165,7 +138,6 @@ impl MediaDesk {
         }
     }
 
-    /// Every armed capture, oldest first.
     pub fn armed_captures(&self) -> Vec<(u64, Capture)> {
         self.desk()
             .captures
@@ -175,7 +147,6 @@ impl MediaDesk {
             .collect()
     }
 
-    /// Whether any capture is armed.
     pub fn capture_armed(&self) -> bool {
         self.desk()
             .captures
@@ -183,17 +154,12 @@ impl MediaDesk {
             .any(|c| c.status == ClientCaptureStatus::Armed)
     }
 
-    /// The client's news of capture `id`; inert once it was forgotten.
     pub fn set_capture_status(&self, id: u64, status: ClientCaptureStatus) {
         if let Some(capture) = self.desk().captures.get_mut(&id) {
             capture.status = status;
         }
     }
 
-    // --- the stepped clock ---
-
-    /// `Some(step)` claims the clock for `owner` (or changes its step);
-    /// `None` releases it. `false` = another mod holds it.
     pub fn set_clock(&self, owner: &str, step: Option<ClientStep>) -> bool {
         let mut desk = self.desk();
         if desk.clock.as_ref().is_some_and(|c| c.holder != owner) {
@@ -214,7 +180,6 @@ impl MediaDesk {
         true
     }
 
-    /// The holder steps the clock on the next frame; anyone else is ignored.
     pub fn advance_clock(&self, owner: &str) {
         let mut desk = self.desk();
         if desk.clock.as_ref().is_some_and(|c| c.holder == owner) {
@@ -230,16 +195,12 @@ impl MediaDesk {
         std::mem::take(&mut self.desk().advances)
     }
 
-    // --- taps ---
-
     pub fn begin_tap(&self, tap: Tap) -> u64 {
         let id = issue_id();
         self.desk().taps.insert(id, tap);
         id
     }
 
-    /// How tap `id` of `owner` stands; `None` = no such tap. An ended tap is
-    /// forgotten once its state has been read.
     pub fn tap_state(&self, owner: &str, id: u64) -> Option<ClientAudioTapData> {
         let mut desk = self.desk();
         let data = match desk.taps.get(&id) {
@@ -262,7 +223,6 @@ impl MediaDesk {
         }
     }
 
-    /// Every tap, by id.
     pub fn taps(&self) -> Vec<(u64, Tap)> {
         self.desk()
             .taps
@@ -271,17 +231,12 @@ impl MediaDesk {
             .collect()
     }
 
-    /// The client's news of tap `id`.
     pub fn update_tap(&self, id: u64, update: impl FnOnce(&mut ClientAudioTapData)) {
         if let Some(tap) = self.desk().taps.get_mut(&id) {
             update(&mut tap.data);
         }
     }
 
-    // --- media files ---
-
-    /// What this machine's encoder can write; `None` while it is being asked.
-    /// Asking starts the probe when nobody has yet; `refresh` asks again.
     pub fn encoders(&self, refresh: bool) -> Option<ClientMediaCapabilities> {
         let mut desk = self.desk();
         if refresh {
@@ -293,9 +248,6 @@ impl MediaDesk {
         desk.encoders.clone()
     }
 
-    /// Why `open` is refused, if it is: no encoder, the probe has not
-    /// answered, or a name this machine lacks. (The file store refuses a
-    /// path in use.)
     pub fn open_refusal(
         &self,
         container: &str,
@@ -344,7 +296,6 @@ impl MediaDesk {
         }
     }
 
-    /// Media file `id` of `owner`: `Err` = never issued.
     pub fn media_of(&self, owner: &str, id: u64) -> Result<Media, String> {
         self.owned_media(owner, id)
     }
@@ -365,7 +316,6 @@ impl MediaDesk {
         Ok(())
     }
 
-    /// Every media file, by id.
     pub fn media(&self) -> Vec<(u64, Media)> {
         self.desk()
             .media
@@ -374,14 +324,10 @@ impl MediaDesk {
             .collect()
     }
 
-    // --- the client's side ---
-
-    /// What a mod asked of the machine since the last take.
     pub fn take_probe_request(&self) -> ProbeRequest {
         std::mem::take(&mut self.desk().probe)
     }
 
-    /// Whether the desk has no answer from the machine yet.
     pub fn lacks_encoders(&self) -> bool {
         self.desk().encoders.is_none()
     }
@@ -398,8 +344,6 @@ impl MediaDesk {
         self.desk().mixes
     }
 
-    /// Drop everything `owner` made (it stopped running): armed captures are
-    /// disarmed, its taps end, its media files abort and its clock claim goes.
     pub fn forget_owner(&self, owner: &str, why: &str) {
         let mut desk = self.desk();
         desk.captures.retain(|_, c| c.owner != owner);
@@ -416,7 +360,6 @@ impl MediaDesk {
         }
     }
 
-    /// Every mod with anything on the desk.
     pub fn owners(&self) -> Vec<String> {
         let desk = self.desk();
         let mut owners: Vec<String> = desk
@@ -443,11 +386,9 @@ impl MediaDesk {
     }
 }
 
-/// What a player reads when the machine has no encoder.
 pub const NO_ENCODER: &str = "no media encoder was found: install ffmpeg (on PATH, or name it \
                               with the PETRAMOND_FFMPEG environment variable)";
 
-/// What a media file's input holds and how its encoder stands.
 struct InputState {
     frames: VecDeque<Vec<u8>>,
     audio: VecDeque<Vec<u8>>,
@@ -456,26 +397,16 @@ struct InputState {
     state: ClientMediaStateData,
 }
 
-/// What the writer is to do next.
 pub enum MediaWork {
     Frame(Vec<u8>),
     Audio(Vec<u8>),
-    /// No more input: finish the file.
     Finish,
-    /// Stop now and leave nothing.
     Abort,
 }
 
-/// A media file's input, between the frame (pushes, delivered captures and
-/// tap samples) and its encoder's writer thread.
 pub struct MediaInput {
-    /// Where the finished file goes.
     target: PathBuf,
-    /// The file in its bucket, and the claim that keeps every other writer
-    /// off it until the file is finished or has failed; `None` = a file
-    /// outside any bucket (a test's).
     stored: Mutex<Option<(FileRef, WriterClaim)>>,
-    /// Makes this file's partial names its own.
     serial: u64,
     frame_bytes: Option<usize>,
     audio_frame_bytes: Option<usize>,
@@ -484,8 +415,6 @@ pub struct MediaInput {
 }
 
 impl MediaInput {
-    /// The input of `file`, held by `claim`, with `video` and `audio`
-    /// tracks: `Queued` until an encoder takes it.
     pub fn new(
         file: FileRef,
         claim: WriterClaim,
@@ -497,7 +426,6 @@ impl MediaInput {
         input
     }
 
-    /// The input of a file at `target`, outside any bucket.
     pub fn at(
         target: PathBuf,
         video: Option<&ClientMediaVideo>,
@@ -533,14 +461,10 @@ impl MediaInput {
         lock(&self.inner)
     }
 
-    /// Where the finished file goes.
     pub fn target(&self) -> &Path {
         &self.target
     }
 
-    /// A hidden intermediate beside the target, unique to this file:
-    /// `.<leaf>.<pid>-<n>.<kind>.partial`, or `.<leaf>.<pid>-<n>.partial`
-    /// for the finished file before it moves into place.
     pub fn partial(&self, kind: Option<&str>) -> PathBuf {
         let leaf = self
             .target
@@ -555,9 +479,6 @@ impl MediaInput {
         ))
     }
 
-    /// Move the finished partial into place, replacing whatever file was
-    /// there: through the file store (after every write queued to the path,
-    /// synced first) for a bucket's file. `Ok` = the finished file's size.
     pub fn place(&self) -> Result<u64, String> {
         let partial = self.partial(None);
         let stored = lock(&self.stored).take();
@@ -586,7 +507,6 @@ impl MediaInput {
         Ok(std::fs::metadata(&self.target).map_or(0, |m| m.len()))
     }
 
-    /// Let other writers at the path again (the file failed).
     fn release(&self) {
         lock(&self.stored).take();
     }
@@ -599,7 +519,6 @@ impl MediaInput {
         self.inner().state.phase
     }
 
-    /// Finished or failed.
     pub fn done(&self) -> bool {
         matches!(
             self.phase(),
@@ -607,13 +526,10 @@ impl MediaInput {
         )
     }
 
-    /// The bytes one frame must have; `None` = the file has no video.
     pub fn frame_bytes(&self) -> Option<usize> {
         self.frame_bytes
     }
 
-    /// Whether a frame offered now would be taken: the file is open and no
-    /// frame waits beyond the one its writer is handing to the pipe.
     pub fn takes_frame(&self) -> bool {
         let inner = self.inner();
         inner.state.phase == ClientMediaPhase::Open
@@ -622,7 +538,6 @@ impl MediaInput {
             && inner.frames.is_empty()
     }
 
-    /// A mod's push: taken only when [`takes_frame`](Self::takes_frame).
     pub fn push_frame(&self, rgba: Vec<u8>) -> bool {
         if !self.takes_frame() {
             return false;
@@ -630,8 +545,6 @@ impl MediaInput {
         self.deliver_frame(rgba).is_ok()
     }
 
-    /// A capture routed into the file: always queued while the file is
-    /// open. `Err` = the frame is not the file's size (the file then fails).
     pub fn deliver_frame(&self, rgba: Vec<u8>) -> Result<(), String> {
         let mut inner = self.inner();
         if inner.aborted || matches!(inner.state.phase, ClientMediaPhase::Failed) {
@@ -651,8 +564,6 @@ impl MediaInput {
         Ok(())
     }
 
-    /// A mod's push of samples: taken while the writer holds none it has not
-    /// written, the file is open and no close was asked for.
     pub fn push_audio(&self, pcm: Vec<u8>) -> bool {
         {
             let inner = self.inner();
@@ -668,7 +579,6 @@ impl MediaInput {
         true
     }
 
-    /// Samples a tap routed into the file: always queued.
     pub fn deliver_audio(&self, pcm: Vec<u8>) {
         let Some(frame) = self.audio_frame_bytes else {
             return;
@@ -683,13 +593,10 @@ impl MediaInput {
         self.wake.notify_all();
     }
 
-    /// The bytes of one sample frame; `None` = the file has no audio.
     pub fn audio_frame_bytes(&self) -> Option<usize> {
         self.audio_frame_bytes
     }
 
-    /// No more input: the writer finishes the file once it has written what
-    /// it holds.
     pub fn close(&self) {
         self.inner().closed = true;
         self.wake.notify_all();
@@ -699,7 +606,6 @@ impl MediaInput {
         self.inner().closed
     }
 
-    /// Stop now and leave nothing. A file that has not started fails at once.
     pub fn abort(&self) {
         let mut inner = self.inner();
         if matches!(
@@ -728,10 +634,6 @@ impl MediaInput {
         self.inner().aborted
     }
 
-    // --- the encoder's side ---
-
-    /// The writer's next piece of work, waiting for one. Samples go first,
-    /// so a frame blocked on the pipe never holds up the audio behind it.
     pub fn next_work(&self) -> MediaWork {
         let mut inner = self.inner();
         loop {
@@ -754,7 +656,6 @@ impl MediaInput {
         }
     }
 
-    /// The encoder took a frame.
     pub fn frame_encoded(&self) {
         self.inner().state.frames_encoded += 1;
     }
@@ -782,7 +683,6 @@ impl MediaInput {
     }
 }
 
-/// What an aborted media file reports.
 pub const ABORTED: &str = "the media file was aborted";
 
 #[cfg(test)]

@@ -1,8 +1,3 @@
-//! The preview canvas: the real petramond-ui frame rasterized by the software
-//! renderer (pixel-exactly what the game shows), with editor chrome overlaid
-//! as egui shapes — selection outline + resize handles, hover outline, pixel
-//! grid, role badges, drag-to-move/resize/reorder.
-
 use crate::app::App;
 use crate::doc_edit::{self, NodePath};
 use crate::preview::RectEntry;
@@ -13,7 +8,6 @@ const SEL: Color32 = Color32::from_rgb(90, 170, 255);
 const HOVER: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 90);
 const CARET: Color32 = Color32::from_rgb(255, 200, 60);
 
-/// What the cached preview texture was rendered for.
 #[derive(Clone, PartialEq)]
 pub struct CanvasKey {
     doc_rev: u64,
@@ -52,9 +46,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let screen = app.proj.editor.screen;
     let scale = app.proj.editor.preview_scale.clamp(1, 4) as i32;
     let zoom = app.proj.editor.zoom.clamp(0.25, 16.0);
-    let ppl = scale as f32 * zoom; // screen px per logical px
+    let ppl = scale as f32 * zoom;
 
-    // Ctrl+wheel zooms the canvas.
     if ui.rect_contains_pointer(ui.max_rect()) {
         let (ctrl, scroll) = ui.input(|i| (i.modifiers.ctrl, i.raw_scroll_delta.y));
         if ctrl && scroll != 0.0 {
@@ -66,7 +59,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     app.sync_preview();
     ensure_texture(app, ui.ctx(), screen, scale);
 
-    // Solved once per revision, not per repaint: pointer motion only draws.
     let viewport = ((screen.0 as i32) / scale, (screen.1 as i32) / scale);
     let rects = app.preview.rects(&app.images, viewport, scale);
     let rects = rects.as_slice();
@@ -118,7 +110,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             interact(app, ui, &response, rects, origin, ppl);
 
-            // Overlay chrome after interaction so it reflects this frame.
             if app.overlay {
                 let ptr = response.hover_pos();
                 if app.canvas_drag.is_none() {
@@ -157,7 +148,6 @@ fn from_screen(p: Pos2, origin: Pos2, ppl: f32) -> (i32, i32) {
     )
 }
 
-/// The topmost (last expanded) node whose rect contains the logical point.
 fn topmost_at(rects: &[RectEntry], p: (i32, i32)) -> Option<&RectEntry> {
     rects
         .iter()
@@ -276,7 +266,6 @@ fn interact(
             if !path.is_empty() {
                 let parent = path[..path.len() - 1].to_vec();
                 let cur = *path.last().unwrap();
-                // Moving to its own position (or just after) is a no-op.
                 if insert != cur && insert != cur + 1 {
                     let mut new_sel = None;
                     app.mutate(|doc| {
@@ -298,7 +287,6 @@ fn classify_drag(
     origin: Pos2,
     ppl: f32,
 ) -> Option<CanvasDrag> {
-    // Resize handles of the current selection win over node picking.
     if let Some(sel) = &app.sel {
         if let Some(e) = rects.iter().find(|e| &e.path == sel) {
             let r = Rect::from_min_size(
@@ -319,7 +307,7 @@ fn classify_drag(
     }
     let e = topmost_at(rects, from_screen(p, origin, ppl))?;
     if e.path.is_empty() {
-        return None; // the root doesn't move
+        return None;
     }
     if e.abs {
         let node = doc_edit::node_at(&app.proj.document.root, &e.path)?;
@@ -337,7 +325,6 @@ fn classify_drag(
     }
 }
 
-/// Flow siblings of `path` (first rect entry per sibling index, abs excluded).
 fn flow_siblings(app: &App, rects: &[RectEntry], parent: &[usize]) -> Vec<(usize, RectI)> {
     let Some(parent_node) = doc_edit::node_at(&app.proj.document.root, parent) else {
         return Vec::new();
@@ -403,8 +390,6 @@ fn draw_insert_caret(
     if sibs.is_empty() {
         return;
     }
-    // The caret sits before the first sibling at/after `insert`, or after the
-    // last one.
     let (rect, after) = match sibs.iter().find(|(i, _)| *i >= insert) {
         Some((_, r)) => (*r, false),
         None => (sibs.last().unwrap().1, true),

@@ -1,25 +1,7 @@
-//! `DynamicDraw`: a per-frame-rewritten vertex(+index) buffer pair for one draw
-//! subsystem, collapsing the field group every dynamic subsystem used to spell
-//! out by hand (pipeline + vbuf + ibuf + a CPU staging `Vec` + an uploaded
-//! count). One `bake` does the shape that was repeated ~7× inline: clear the
-//! count, build the geometry, GROW the buffers to fit, upload, store the
-//! count; `draw` binds + issues the indexed draw.
-//!
-//! The buffers GROW. There is no cap: a frame that bakes more than the buffer
-//! holds gets a bigger buffer, never a blank subsystem. Growth carries 25%
-//! headroom at one-page granularity so a slowly rising count reallocates a
-//! handful of times, and a buffer never shrinks — the next crowd is coming.
-//! Every subsystem starts at one small page, so a quiet scene holds almost no
-//! VRAM for the dynamic streams. Every growable buffer in the renderer — the
-//! subsystems here and the hand-managed hand/outline/icon streams alike —
-//! starts through [`new_buffer`] and grows through [`upload`].
-
 use std::ops::Range;
 
-/// Bytes every growable buffer starts at, and the granule growth rounds to.
 const INITIAL_BYTES: u64 = 4096;
 
-/// A fresh growable buffer at its initial size.
 pub(crate) fn new_buffer(
     device: &wgpu::Device,
     usage: wgpu::BufferUsages,
@@ -33,15 +15,10 @@ pub(crate) fn new_buffer(
     })
 }
 
-/// The size a buffer grows to when it must hold `needed` bytes: 25% headroom,
-/// rounded up to whole pages.
 fn grown_size(needed: u64) -> u64 {
     (needed + needed / 4).div_ceil(INITIAL_BYTES) * INITIAL_BYTES
 }
 
-/// Make `buffer` hold at least `needed` bytes: recreated with headroom when it
-/// does not (its contents are gone — callers upload after this), untouched
-/// when it does. Never shrinks.
 pub(super) fn ensure_capacity(
     device: &wgpu::Device,
     buffer: &mut wgpu::Buffer,
@@ -60,7 +37,6 @@ pub(super) fn ensure_capacity(
     });
 }
 
-/// Upload `data` to `buffer`, growing it first when it is too small.
 pub(super) fn upload<T: bytemuck::Pod>(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -74,24 +50,16 @@ pub(super) fn upload<T: bytemuck::Pod>(
     queue.write_buffer(buffer, 0, bytes);
 }
 
-/// The vertex-buffer and index-buffer labels a subsystem's `label` expands to.
 fn buffer_labels(label: &str) -> (String, String) {
     (format!("{label} vbuf"), format!("{label} ibuf"))
 }
 
-/// An indexed dynamic draw: an owned `{ pipeline, vbuf, ibuf }` plus the index
-/// count uploaded this frame (`0` = nothing to draw). The CPU staging vectors
-/// are supplied to [`DynamicDraw::bake`] by the caller — several subsystems
-/// (item-entity, chest, break) deliberately SHARE one scratch pair because they
-/// bake sequentially, so the scratch lives on the renderer, not here, to
-/// preserve that exact reuse.
 pub(super) struct DynamicDraw {
     pub pipeline: crate::pipeline::SampledPipeline,
     pub vbuf: wgpu::Buffer,
     pub ibuf: wgpu::Buffer,
     vbuf_label: String,
     ibuf_label: String,
-    /// Index count uploaded this frame (`0` = nothing baked).
     pub index_count: u32,
 }
 
@@ -112,13 +80,6 @@ impl DynamicDraw {
         }
     }
 
-    /// Bake one frame's indexed geometry. Clears the count, runs `build` to fill
-    /// the supplied CPU scratch (the build returns the index count it emitted),
-    /// and — if it produced geometry — grows the buffers to fit, uploads the
-    /// vertex + index slices and records the count.
-    ///
-    /// The scratch is passed in (not owned) so subsystems that intentionally
-    /// reuse the same `verts`/`indices` across sequential bakes keep doing so.
     pub(super) fn bake<V: bytemuck::Pod>(
         &mut self,
         device: &wgpu::Device,
@@ -151,9 +112,6 @@ impl DynamicDraw {
         self.index_count = count;
     }
 
-    /// Bind this subsystem's pipeline + vbuf/ibuf and draw its baked index range.
-    /// The caller sets any shared bind groups (uniform/atlas) first; this issues
-    /// `set_pipeline` + buffers + one `draw_indexed`. No-op when nothing is baked.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32) {
         if self.index_count == 0 {
             return;
@@ -165,9 +123,6 @@ impl DynamicDraw {
     }
 }
 
-/// The index list for `prims` primitives that each own `verts_per_prim`
-/// consecutive vertices and share one relative index `pattern` — a quad's
-/// `[0, 1, 2, 0, 2, 3]`, a cube's six of those.
 pub(crate) fn prim_index_list(pattern: &[u32], verts_per_prim: u32, prims: u32) -> Vec<u32> {
     let mut out = Vec::with_capacity(pattern.len() * prims as usize);
     for prim in 0..prims {
@@ -177,21 +132,11 @@ pub(crate) fn prim_index_list(pattern: &[u32], verts_per_prim: u32, prims: u32) 
     out
 }
 
-/// How many primitives a patterned draw's index buffer must cover once its
-/// vertex buffer holds `vbuf_bytes` for primitives of `prim_bytes` each and
-/// this frame baked `prims`: every primitive the vertex buffer can hold, and
-/// never fewer than were baked. Indexing the whole buffer is what lets the
-/// index list stand until the NEXT growth instead of being rebuilt per frame.
 fn prims_to_index(vbuf_bytes: u64, prim_bytes: u64, prims: u32) -> u32 {
     let capacity = (vbuf_bytes / prim_bytes.max(1)) as u32;
     capacity.max(prims)
 }
 
-/// A dynamic draw over PATTERNED primitives — the particle cubes, the shadow
-/// quads — whose index list is the same relative pattern per primitive. Only
-/// the vertex stream is rebuilt each frame; the index buffer is regenerated
-/// only when the vertex buffer grows past what it covers. Stores the vertex
-/// count baked this frame; the index count is derived per draw.
 pub(super) struct DynamicVertexDraw {
     pub pipeline: crate::pipeline::SampledPipeline,
     pub vbuf: wgpu::Buffer,
@@ -200,9 +145,7 @@ pub(super) struct DynamicVertexDraw {
     ibuf_label: String,
     verts_per_prim: u32,
     pattern: &'static [u32],
-    /// How many primitives `ibuf` currently indexes.
     prims_indexed: u32,
-    /// Vertex count uploaded this frame (`0` = nothing baked).
     pub vertex_count: u32,
 }
 
@@ -228,10 +171,6 @@ impl DynamicVertexDraw {
         }
     }
 
-    /// Bake one frame's vertex stream. Clears the count, runs `build` to fill the
-    /// supplied scratch (returns the vertex count emitted), grows the vertex
-    /// buffer to fit, and extends the index pattern over every primitive the
-    /// grown buffer can hold.
     pub(super) fn bake<V: bytemuck::Pod>(
         &mut self,
         device: &wgpu::Device,
@@ -271,18 +210,15 @@ impl DynamicVertexDraw {
     }
 }
 
-/// An INSTANCED dynamic draw — the particles: the vertex stage expands each
-/// per-instance row `I` into one primitive's vertices from `vertex_index`, so
-/// the only per-frame upload is one row per primitive. The index buffer is the
-/// primitive's static `pattern`, uploaded once at construction; the instance
-/// buffer grows like every other dynamic buffer.
+/// Instanced version of the dynamic draw, for particles. We only upload one row `I` per primitive
+/// each frame and let the vertex stage expand it from `vertex_index`. The index `pattern` is
+/// uploaded once when this is built.
 pub(super) struct DynamicInstanceDraw<I> {
     pub pipeline: crate::pipeline::SampledPipeline,
     ibuf: wgpu::Buffer,
     index_count: u32,
     instances: wgpu::Buffer,
     label: String,
-    /// Rows uploaded this frame (`0` = nothing baked).
     pub instance_count: u32,
     _row: std::marker::PhantomData<I>,
 }
@@ -311,9 +247,6 @@ impl<I: bytemuck::Pod> DynamicInstanceDraw<I> {
         }
     }
 
-    /// Bake one frame's rows. Clears the count, runs `build` to fill the
-    /// supplied scratch (returns the row count), and — if it produced any —
-    /// grows the instance buffer to fit and uploads them.
     pub(super) fn bake(
         &mut self,
         device: &wgpu::Device,
@@ -337,17 +270,12 @@ impl<I: bytemuck::Pod> DynamicInstanceDraw<I> {
         self.instance_count = count;
     }
 
-    /// Bind the pipeline, the pattern and the rows in `range`, and draw one
-    /// primitive per row. The caller sets the shared bind groups first. No-op
-    /// for an empty range.
     pub(super) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, samples: u32, range: Range<u32>) {
         if range.is_empty() {
             return;
         }
         let stride = std::mem::size_of::<I>() as u64;
         pass.set_pipeline(self.pipeline.get(samples));
-        // Offsetting the row stream to the range start (rather than a
-        // non-zero first instance) keeps the draw valid on every backend.
         pass.set_vertex_buffer(
             0,
             self.instances

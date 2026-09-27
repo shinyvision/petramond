@@ -1,18 +1,6 @@
-//! Day/night cycle arithmetic and the engine-owned sky surface.
-//!
-//! The server's cycle system (`server::daynight`) advances the clock and
-//! publishes it; anything that draws a sky from a clock — the client scene, an
-//! offscreen capture — derives the same shader params from the same fraction
-//! through [`sky_params`]. The `petramond:*` keys are engine-owned public
-//! surface shared with mods.
-
-/// Full day-night cycle ticks for the DEFAULT day length (15-minute day +
-/// 15-minute night at 20 TPS). The actual cycle is per-world: see
-/// [`cycle_ticks_for_day_minutes`] and `World::day_cycle_ticks`.
 pub const DEFAULT_CYCLE_TICKS: u64 =
     cycle_ticks_for_day_minutes(crate::save::settings::DEFAULT_DAY_MINUTES);
 
-/// Moon phases per lunar cycle (one phase per day).
 pub const MOON_PHASES: u64 = 8;
 
 pub const CLOCK_KEY: &str = "petramond:clock";
@@ -26,9 +14,6 @@ const TRANSITION: f32 = 0.04;
 const NIGHT_SKY_SCALE: f32 = 0.04;
 const NIGHT_SKY_COLOR: [f32; 3] = [0.52, 0.62, 1.0];
 
-/// The world's full cycle ticks for a "day length" setting in real minutes:
-/// the night lasts as long as the day, so a 15-minute day is 18 000 day ticks
-/// + 18 000 night ticks at 20 TPS. Clamps to the slider range (10..=30 min).
 pub const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
     let m = if minutes < 10 {
         10
@@ -40,38 +25,28 @@ pub const fn cycle_ticks_for_day_minutes(minutes: u32) -> u64 {
     m as u64 * 60 * 20 * 2
 }
 
-/// Clock offset of "early morning" within a day (fraction 0.05, just after
-/// sunrise) — both the fresh-world start and where sleeping skips to.
 pub const fn fresh_clock(cycle: u64) -> u64 {
     cycle / 20
 }
 
-/// The first early-morning clock strictly after `clock`.
 pub fn morning_after(clock: u64, cycle: u64) -> u64 {
     (clock / cycle + 1) * cycle + fresh_clock(cycle)
 }
 
-/// The clock at day fraction `t` within the day `current_clock` falls in.
 pub fn clock_from_fraction(t: f32, current_clock: u64, cycle: u64) -> u64 {
     let day = current_clock / cycle;
     let tick = (t.rem_euclid(1.0) * cycle as f32).round() as u64 % cycle;
     day * cycle + tick
 }
 
-/// Position within the current day, `0..1` (`0.25` = noon, `0.75` = midnight).
 pub fn day_fraction(clock: u64, cycle: u64) -> f32 {
     (clock % cycle) as f32 / cycle as f32
 }
 
-/// The moon phase (`0..MOON_PHASES`) the clock's day shows.
 pub fn moon_phase(clock: u64, cycle: u64) -> f32 {
     ((clock / cycle) % MOON_PHASES) as f32
 }
 
-/// The two sky shader params for a point in the cycle: `petramond:time`
-/// (`[fraction, daylight, moon phase, 0]`) and `petramond:light`
-/// (`[sky scale, r, g, b]`). Anything that drives the sky from a clock — the
-/// live cycle, an offscreen capture — gets the same sky for the same fraction.
 pub fn sky_params(day_fraction: f32, moon_phase: f32) -> ([f32; 4], [f32; 4]) {
     let t = day_fraction.rem_euclid(1.0);
     let day = daylight(t);
@@ -101,9 +76,6 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// The monsters mod's copy of [`daylight`] (its sunburn and spawn-light
-/// rules read only the published day fraction), compiled here verbatim so a
-/// retune of the curve fails this crate's tests and names the mirror.
 #[cfg(test)]
 #[path = "../../mods-src/monsters/src/daylight.rs"]
 mod monsters_daylight;
@@ -116,7 +88,6 @@ mod tests {
 
     #[test]
     fn day_minutes_map_to_cycle_ticks_and_clamp() {
-        // The spec point: a 15-minute day is 18 000 day ticks (36 000 cycle).
         assert_eq!(cycle_ticks_for_day_minutes(15), 36_000);
         assert_eq!(C, 36_000, "default day length is 15 minutes");
         assert_eq!(
@@ -128,17 +99,13 @@ mod tests {
         assert_eq!(cycle_ticks_for_day_minutes(30), 72_000);
         assert_eq!(cycle_ticks_for_day_minutes(5), 24_000, "clamped low");
         assert_eq!(cycle_ticks_for_day_minutes(99), 72_000, "clamped high");
-        // "Early morning" stays the same fraction at every length.
         assert_eq!(fresh_clock(C) as f32 / C as f32, 0.05);
     }
 
     #[test]
     fn morning_after_is_strictly_the_next_early_morning() {
-        // Mid-night (t = 0.75 of day 0) → morning of day 1; already-morning
-        // still skips a whole day forward (strictly after).
         assert_eq!(morning_after(C * 3 / 4, C), C + fresh_clock(C));
         assert_eq!(morning_after(fresh_clock(C), C), C + fresh_clock(C));
-        // The target is always "early morning": same day fraction as fresh.
         assert!(
             (day_fraction(morning_after(123_456, C), C) - day_fraction(fresh_clock(C), C)).abs()
                 < 1e-6

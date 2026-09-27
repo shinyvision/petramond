@@ -35,7 +35,6 @@ fn water_from_above_or_any_side_makes_stone() {
 fn falling_fluid_makes_stone_where_it_enters_the_other_fluid() {
     for (incoming, receiving) in [(Block::Lava, Block::Water), (Block::Water, Block::Lava)] {
         let mut w = flat_server_world();
-        // A shaft keeps the contact vertical and the deeper fluid enclosed.
         for y in 63..=69 {
             for z in 7..=9 {
                 for x in 7..=9 {
@@ -115,7 +114,6 @@ fn lava_above_water_reacts_only_when_it_flows_into_the_lower_cell() {
 #[test]
 fn descending_lava_blocks_a_waterfall_only_when_it_reaches_the_water() {
     let mut w = flat_server_world();
-    // A water channel ends underneath the lava, then spills down a shaft.
     for y in 65..=70 {
         for x in 5..=9 {
             for z in [7, 9] {

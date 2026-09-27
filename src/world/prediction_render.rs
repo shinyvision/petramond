@@ -1,10 +1,3 @@
-//! Shared light -> mesh bundles for local predicted terrain edits.
-//!
-//! The replica remains the sole owner of live sections. Initial prediction
-//! runs an owned snapshot bundle synchronously; reconciliation runs that same
-//! bundle on a worker. Freshly baked cubes patch the mesh snapshots before the
-//! build, and the owner installs a revision-fresh result atomically.
-
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -20,8 +13,6 @@ use super::mesh_pool::{self, MeshJob};
 
 const PREDICTION_TERRAIN_PRIORITY: i64 = i64::MIN;
 
-/// Cap on pool helper tasks fanned out per bundle stage. Extra helpers beyond
-/// the item count or the pool width only cost a queue slot and an idle wake.
 const MAX_BATCH_HELPERS: usize = 16;
 
 #[derive(Copy, Clone)]
@@ -71,39 +62,28 @@ impl PredictionMeshResult {
     }
 }
 
-/// The pair of light cubes one section carries: skylight and packed-RGB block
-/// light, either of which may be absent (never baked).
 type LightCubes = (
     Option<Arc<[u8]>>,
     Option<Arc<[petramond_world::light::LightRgb]>>,
 );
 
-/// One candidate light bake plus the cubes it would replace, so the runner
-/// can diff the fresh bake against them and prune meshes nothing sampled.
 pub(super) struct PredictionLightJob {
     pub job: LightBakeJob,
     pub prev_skylight: Option<Arc<[u8]>>,
     pub prev_blocklight: Option<Arc<[petramond_world::light::LightRgb]>>,
 }
 
-/// Per-unit light work for a prediction bundle: a lone 48³ bake, or one
-/// aligned 2×2×2 batch (≥3 members) sharing a 64³ flood.
 pub(super) enum PredictionLightUnit {
     Single(Box<PredictionLightJob>),
     Batch {
         job: LightBatchJob,
-        /// Pre-bake cubes in the same order as [`LightBatchJob::member_positions`].
         prev: Vec<LightCubes>,
     },
 }
 
 pub(super) struct PredictionLightResult {
     pub result: LightBakeResult,
-    /// [`super::light::cube_region_changes`] mask vs. the pre-bake cubes:
-    /// `0` = byte-identical rebake (install settles the flag only).
     pub mask: u32,
-    /// The section had no baked cubes before this bundle; its sampling
-    /// neighbours were parked on its `light_dirty`, so no rim requeue applies.
     pub first_bake: bool,
 }
 
@@ -117,8 +97,6 @@ pub(super) struct PredictionTerrainWork {
     pub guards: Vec<SectionGuard>,
     pub lights: Vec<PredictionLightUnit>,
     pub meshes: Vec<PredictionMeshJob>,
-    /// Sections whose mesh pads sample an edited cell: their geometry/AO
-    /// changed, so they rebuild regardless of what the light diff says.
     pub always_mesh: Vec<SectionPos>,
 }
 
@@ -177,9 +155,6 @@ impl PredictionTerrainQueue {
             }
         }
 
-        // A newer edit whose sampled region overlaps an older job contains the
-        // newer world snapshot. Retire the older work instead of spending CPU
-        // on a result its revision guards could never install.
         let requeue = self.cancel_overlapping(&affected);
 
         let id = self.next_id;
@@ -268,18 +243,11 @@ impl PredictionTerrainQueue {
         }
     }
 
-    /// The shared streaming pool, for the synchronous initial-prediction
-    /// caller to fan its bundle out over.
     pub(super) fn pool(&self) -> &Arc<JobPool> {
         &self.pool
     }
 }
 
-/// Run the exact worker bundle on the calling thread, fanning its independent
-/// items across the shared pool. Initial local prediction uses this
-/// deliberately so the edit returns only after its predicted light and meshes
-/// have been installed; reconciliation submits the same work through
-/// [`PredictionTerrainQueue`].
 pub(super) fn run_prediction_terrain_synchronously(
     work: PredictionTerrainWork,
     pool: &Arc<JobPool>,
@@ -287,7 +255,6 @@ pub(super) fn run_prediction_terrain_synchronously(
     run_prediction_terrain(work, &JobCancel::new(), pool)
 }
 
-/// A section's baked light pair: skylight bytes and the RGB block-light grid.
 type BakedLight = (Arc<[u8]>, Arc<[petramond_world::light::LightRgb]>);
 
 fn run_prediction_terrain(
@@ -331,9 +298,6 @@ fn run_prediction_terrain(
     })?;
     let light_results: Vec<PredictionLightResult> = light_batches.into_iter().flatten().collect();
 
-    // Build only the meshes something actually sampled: the edited cells'
-    // geometry samplers, plus every section a changed light region reaches
-    // through the one-cell mesh pad. Unchanged-light candidates drop here.
     let mut needed: FxHashSet<SectionPos> = always_mesh.into_iter().collect();
     let mut baked: FxHashMap<SectionPos, BakedLight> = FxHashMap::default();
     for light in &light_results {
@@ -358,8 +322,6 @@ fn run_prediction_terrain(
             }
         }
     }
-    // Patch the fresh cubes into the surviving mesh snapshots on the
-    // coordinator (a few `Arc` swaps per job) so the builds stay independent.
     let meshes: Vec<PredictionMeshJob> = meshes
         .into_iter()
         .filter(|mesh| needed.contains(&mesh.pos()))
@@ -431,12 +393,10 @@ struct BatchState<J, R> {
     results: Vec<Option<R>>,
 }
 
-/// Run independent jobs with the caller participating: one pool helper task
-/// per item (top priority, capped) plus the caller itself claim items off a
-/// shared list; whoever claims an item runs it. Deadlock-free by construction:
-/// on a saturated pool the caller simply processes every item itself. Returns
-/// `None` when `cancel` fired or an item panicked (its helper counts the item
-/// completed-but-failed, so the coordinator never waits forever).
+/// The caller and one helper task per item claim work off a shared list; whoever grabs an item runs
+/// it. On a saturated pool the caller just does all the work itself, so it can't deadlock. Returns
+/// `None` if `cancel` fires or an item panics (its helper marks it completed-but-failed so we never
+/// hang waiting).
 fn run_parallel<J, R, F>(
     pool: &Arc<JobPool>,
     cancel: &JobCancel,
@@ -488,8 +448,6 @@ where
         if s.completed == n || (s.completed == s.claimed && cancel.is_cancelled()) {
             break;
         }
-        // The timeout only exists to observe a cancel raced in by another
-        // thread; completions always notify.
         let (guard, _) = done
             .wait_timeout(s, std::time::Duration::from_micros(500))
             .expect("batch state never poisoned");
@@ -526,8 +484,6 @@ fn batch_worker<J, R>(
             s.claimed += 1;
             (i, s.jobs[i].take().expect("each index is claimed once"))
         };
-        // A panicking item (an engine bug in a bake/build) must still count as
-        // completed, or the coordinator would wait for it forever.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(job))).ok();
         let mut s = state.lock().expect("batch state never poisoned");
         s.failed |= result.is_none();

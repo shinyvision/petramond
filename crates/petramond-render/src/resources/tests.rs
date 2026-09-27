@@ -1,8 +1,5 @@
 use super::patch::section_index_hash;
 
-/// The vertex-only patch path must refuse a mesh whose model index TOPOLOGY
-/// changed even when every layer count matches — count equality alone let
-/// stale GPU indices rewire a rebaked model's triangles.
 #[test]
 fn index_hash_distinguishes_equal_count_topologies() {
     let mut a = petramond_mesh::ChunkMesh::empty();

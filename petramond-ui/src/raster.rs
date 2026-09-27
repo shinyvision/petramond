@@ -1,18 +1,6 @@
-//! Software rasterizer for [`DrawList`] — the builder's preview backend and
-//! the headless test backend.
-//!
-//! Semantics mirror the GPU path exactly: nearest-neighbour sampling,
-//! straight-alpha over-blending, per-batch scissor. Quads are rasterized as
-//! two triangles with a top-left fill rule, so axis-aligned integer-snapped
-//! quads (all UI chrome) cover exactly the same pixels the GPU covers; only
-//! `rotimage` edges may differ by a pixel of coverage.
-
 use crate::paint::{Batch, DrawList, TexId, UiVertex};
 use crate::theme::ImageData;
 
-/// The textures a draw list references, resolved by the host. `font` is the
-/// theme font's atlas built AFTER painting ([`crate::Theme::font_atlas`]):
-/// painting is what rasterizes a glyph the first time it is drawn.
 pub struct TextureSet<'a> {
     pub theme_pages: &'a [ImageData],
     pub font: &'a ImageData,
@@ -30,8 +18,6 @@ impl TextureSet<'_> {
     }
 }
 
-/// Rasterize `draw` into an RGBA buffer of `size` physical px. The buffer is
-/// cleared to `clear` first.
 pub fn rasterize(
     draw: &DrawList,
     tex: &TextureSet<'_>,
@@ -64,7 +50,6 @@ fn fill_triangle(
     let (w, h) = (size.0 as i32, size.1 as i32);
     let [a, b, c] = [tri[0], tri[1], tri[2]];
 
-    // Scissor ∩ framebuffer ∩ triangle bounds.
     let (mut x0, mut y0, mut x1, mut y1) = (0, 0, w, h);
     if let Some([cx, cy, cw, ch]) = batch.clip {
         x0 = x0.max(cx);
@@ -91,11 +76,6 @@ fn fill_triangle(
     if raw_area == 0.0 {
         return;
     }
-    // Normalize winding so edge values are positive inside, then apply the
-    // top-left fill rule: a pixel center exactly ON an edge belongs to the
-    // triangle only when the (winding-normalized) edge points up, or exactly
-    // right — so the diagonal shared by a quad's two triangles is covered
-    // exactly once and translucent quads never double-blend.
     let sign = if raw_area > 0.0 { 1.0 } else { -1.0 };
     let area = raw_area * sign;
     let includes_zero = |p: [f32; 2], q: [f32; 2]| -> bool {
@@ -166,7 +146,6 @@ fn sample_nearest(img: &ImageData, uv: [f32; 2]) -> [f32; 4] {
     ]
 }
 
-/// Straight-alpha "over" blend of `src` onto the u8 destination pixel.
 fn blend_over(dst: &mut [u8], src: [f32; 4]) {
     let sa = src[3].clamp(0.0, 1.0);
     for i in 0..3 {
@@ -218,15 +197,12 @@ mod tests {
         let size = (16, 16);
         let mut out = Vec::new();
         rasterize(&dl, &tex, size, [0, 0, 0, 255], &mut out);
-        // Physical rect = (2,2)..(8,6): inside red, outside black, no gaps on
-        // the quad diagonal.
         assert_eq!(px(&out, size, 2, 2), [255, 0, 0, 255]);
         assert_eq!(px(&out, size, 7, 5), [255, 0, 0, 255]);
         assert_eq!(px(&out, size, 4, 4), [255, 0, 0, 255]);
         assert_eq!(px(&out, size, 1, 2), [0, 0, 0, 255]);
         assert_eq!(px(&out, size, 8, 2), [0, 0, 0, 255]);
         assert_eq!(px(&out, size, 2, 6), [0, 0, 0, 255]);
-        // Exact coverage count: 6×4 red pixels.
         let red = out
             .chunks_exact(4)
             .filter(|p| p[0] == 255 && p[1] == 0)

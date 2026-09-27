@@ -1,6 +1,3 @@
-//! Presentation-only top-down surface sampling: per-column height + color
-//! grids with lazily built 5×5 biome-blended tints (the map/minimap feed).
-
 use crate::world::{World, WorldSide};
 use std::sync::Arc;
 
@@ -9,8 +6,6 @@ use petramond_world::column::{Column, NO_SURFACE};
 use petramond_world::section::Section;
 
 impl<S: WorldSide> World<S> {
-    /// Whether the column is loaded, and if so its payload revision — the
-    /// change-detection half of [`client_surface_column`](Self::client_surface_column).
     pub fn client_surface_column_revision(&self, pos: ChunkPos) -> Option<u64> {
         self.data
             .columns
@@ -18,15 +13,6 @@ impl<S: WorldSide> World<S> {
             .then(|| self.data.column_payload_revision(pos))
     }
 
-    /// Final top-down surface samples for one whole chunk column, for
-    /// presentation-only client modules: per cell `(height, rgb)`, or `None`
-    /// where the cell is unknown (missing data or a surface section still in
-    /// flight — never guessed from generation; callers retain prior explored
-    /// samples). Returns `false` when the column itself is not loaded.
-    ///
-    /// Column, section finality, and the 5×5 biome tint blend are resolved
-    /// once per column / per section / per tint kind, not per cell — this is
-    /// the sampling hot path.
     pub fn client_surface_column(
         &self,
         pos: ChunkPos,
@@ -36,7 +22,6 @@ impl<S: WorldSide> World<S> {
             return false;
         };
         let mut tints = SurfaceTintGrids::new(self, pos, column);
-        // Surface heights cluster in a handful of sections per column.
         let mut sections: Vec<(i32, Option<&Section>)> = Vec::new();
         for lz in 0..16usize {
             for lx in 0..16usize {
@@ -83,10 +68,9 @@ impl<S: WorldSide> World<S> {
     }
 }
 
-/// Lazy per-column 5×5 biome-blended tint grids for surface sampling: one
-/// 16×16 grid per [`TileTint`] kind, built on first use. With a 20×20 biome
-/// halo the blend is a separable box sum (each halo biome color decodes once);
-/// without one it falls back to the column's own unblended biome colors.
+/// Tint grids for surface sampling, 16x16 per [`TileTint`] kind, filled in the first time a column
+/// asks. If we have a 20x20 biome halo, each cell is a 5×5 box blend (separable, so each halo
+/// color only decodes once). Otherwise we just use the column's own biome colors.
 struct SurfaceTintGrids<'a> {
     halo: Option<&'a [u8]>,
     column: &'a Column,
@@ -152,8 +136,6 @@ impl<'a> SurfaceTintGrids<'a> {
         for (color, &id) in colors.iter_mut().zip(halo) {
             *color = color_of(id);
         }
-        // The halo starts two cells before the column, so the 5x5 blend window
-        // for local (x,z) occupies [x..x+5, z..z+5] directly.
         let mut rows = [[0.0f32; 3]; 20 * 16];
         for z in 0..20 {
             for x in 0..16 {

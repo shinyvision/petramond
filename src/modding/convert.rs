@@ -1,11 +1,3 @@
-//! Engine ↔ ABI type conversions (`crate::events` types to `mod_api` mirrors).
-//!
-//! One total function per direction actually used: engine payloads
-//! flow OUT to guests; only `Outcome` and the taxonomy's mutable fields flow
-//! back (handled at the wiring site, not here). Every match is exhaustive on
-//! purpose — adding an engine event/stage without its ABI mirror must not
-//! compile.
-
 use crate::events::{
     self, AttackAttempt, BlockBreakPre, BlockPlacePre, InteractAttempt, ItemUsePre,
     MobDamageFeedbackComponent, MobDamagePre, MobDamageSound, PlayerDamagePre, PostEvent,
@@ -16,19 +8,16 @@ use petramond_math::facing::Facing;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_world::chunk::SectionPos;
 
-/// Engine → ABI world-cell position (a plain-fn `IVec3::to_array` for `.map`).
 #[inline]
 fn ivec(v: IVec3) -> [i32; 3] {
     v.to_array()
 }
 
-/// Engine → ABI vector (a plain-fn `Vec3::to_array` for `.map`).
 #[inline]
 fn vec(v: Vec3) -> [f32; 3] {
     v.to_array()
 }
 
-/// Engine → ABI entity reference.
 pub(super) fn entity_ref(e: crate::mob::EntityRef) -> api::EntityRef {
     match e {
         crate::mob::EntityRef::Player(id) => api::EntityRef::Player(api::PlayerId(id.0)),
@@ -36,8 +25,6 @@ pub(super) fn entity_ref(e: crate::mob::EntityRef) -> api::EntityRef {
     }
 }
 
-/// ABI → engine entity reference (the one exception to "out only": an
-/// entity a call NAMES, carried onto the entity it creates).
 pub(super) fn entity_ref_in(e: api::EntityRef) -> crate::mob::EntityRef {
     match e {
         api::EntityRef::Player(id) => crate::mob::EntityRef::Player(crate::player::PlayerId(id.0)),
@@ -78,7 +65,6 @@ pub(super) fn attach(stage: api::Stage, side: api::AttachSide) -> events::Attach
     }
 }
 
-/// The engine queue key for an ABI post-event kind; `None` for pre kinds.
 pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
     use api::EventKind as K;
     Some(match kind {
@@ -126,14 +112,10 @@ fn facing(f: Facing) -> api::Facing {
     }
 }
 
-/// Engine container sessions speak `GuiKind` end-to-end; the ABI names the
-/// same kinds by their REGISTRY KEY, so engine and pack containers convert
-/// through one line and no engine identity is baked into the wire enum.
 fn container(kind: petramond_world::gui_state::GuiKind) -> api::ContainerKind {
     api::ContainerKind::new(petramond_world::gui_state::kind_key(kind).unwrap_or("?"))
 }
 
-/// ABI → engine GUI state value.
 pub(super) fn gui_value(v: api::GuiValue) -> petramond_world::gui_state::GuiValue {
     match v {
         api::GuiValue::F32(x) => petramond_world::gui_state::GuiValue::F32(x),
@@ -147,7 +129,6 @@ pub(super) fn gui_value(v: api::GuiValue) -> petramond_world::gui_state::GuiValu
     }
 }
 
-/// A menu session's anchor as the ABI's container address.
 pub(super) fn container_address(anchor: crate::menu::MenuAnchor) -> api::ContainerAddress {
     match anchor {
         crate::menu::MenuAnchor::Block(p) => api::ContainerAddress::Block(p.to_array()),
@@ -162,7 +143,6 @@ pub(super) fn menu_anchor(at: api::ContainerAddress) -> crate::menu::MenuAnchor 
     }
 }
 
-/// Engine → ABI GUI state value.
 pub(super) fn gui_value_out(v: &petramond_world::gui_state::GuiValue) -> api::GuiValue {
     match v {
         petramond_world::gui_state::GuiValue::F32(x) => api::GuiValue::F32(*x),
@@ -225,8 +205,6 @@ pub(super) fn block_break_pre(ev: &BlockBreakPre) -> api::EventPayload {
         block: api::BlockId(ev.block.id()),
         harvested: ev.harvested,
         actor: entity_ref(ev.actor),
-        // An earlier handler's override is part of the live event — later
-        // handlers in the chain must see it to leave or replace it.
         drops: ev
             .drops
             .as_ref()
@@ -234,7 +212,6 @@ pub(super) fn block_break_pre(ev: &BlockBreakPre) -> api::EventPayload {
     }
 }
 
-/// Engine stack → its ABI crossing (registry name + count + instance data).
 pub(super) fn item_stack_out(stack: &petramond_world::item::ItemStack) -> api::ItemStackData {
     let data = petramond_world::item::variant::get(stack.variant)
         .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
@@ -250,10 +227,6 @@ pub(super) fn item_stack_out(stack: &petramond_world::item::ItemStack) -> api::I
     }
 }
 
-/// ABI stack → engine stack, LENIENT: this is runtime data from a mod (an
-/// event-payload drops override), so an unknown item name drops the stack
-/// with a warning and malformed instance data degrades to a plain stack —
-/// never an error, the instance-data rule.
 pub(super) fn item_stack_in(data: &api::ItemStackData) -> Option<petramond_world::item::ItemStack> {
     use petramond_world::item::{variant, ItemStack, ItemType};
     let Some(item) = ItemType::by_name(&data.item) else {
@@ -592,10 +565,6 @@ mod tests {
         assert_eq!(gui_value_out(&wire.into_value()), value);
     }
 
-    /// A drops override is runtime data from a mod, so its ingestion is
-    /// LENIENT like every instance-data read: an unknown item name drops
-    /// that stack (never errors the break), malformed instance data degrades
-    /// to a plain stack, and well-formed data survives the round trip.
     #[test]
     fn a_drops_override_ingests_leniently_and_round_trips() {
         let unknown = api::ItemStackData {

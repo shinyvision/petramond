@@ -1,6 +1,3 @@
-//! Disconnected screen controller: shows why the session ended (the game is
-//! already torn down by the time this screen is up); OK/Enter → title.
-
 use super::ScreenCtx;
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};

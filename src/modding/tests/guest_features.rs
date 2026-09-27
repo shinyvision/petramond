@@ -1,12 +1,5 @@
-//! The wasm feature contract between the guest build and the host engine:
-//! bundled mods are compiled with core SIMD128 (`mods-src/.cargo/config.toml`)
-//! and the engine must accept it, while relaxed SIMD stays off for
-//! determinism. Both sides are asserted here so neither drifts on its own.
-
 use wasmtime::Module;
 
-/// The guest workspace's cargo config, which sets the wasm target features
-/// every bundled mod is compiled with.
 const GUEST_CARGO_CONFIG: &str = include_str!("../../../mods-src/.cargo/config.toml");
 
 #[test]

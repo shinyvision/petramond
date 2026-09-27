@@ -1,14 +1,3 @@
-//! `ChunkGenerator` — owns the worldgen subsystems and runs the ONE generation
-//! pipeline: a column's shared 2D data ([`ColumnGen`]: climate, surfaces and
-//! the tree windows), then each 16³ section's fixed stage order — terrain fill
-//! and carve → underground scatter → vegetation → trees, with mod hooks after
-//! each stage. A whole chunk is those sections assembled
-//! ([`ChunkGenerator::generate_chunk`]), never a second implementation.
-//!
-//! The generator holds only immutable wiring built from `seed` (no interior
-//! mutability). Output is therefore a pure function of `(seed, section)`,
-//! independent of thread or call order.
-
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use mod_api::WorldgenStage;
@@ -33,54 +22,23 @@ pub struct ChunkGenerator {
     seed: u32,
     surface_density: SurfaceDensitySystem,
     caves: CaveField,
-    /// The session's mod worldgen hooks, captured at construction (see
-    /// `modding::gen`). `None` — the common case — costs one branch per stage
-    /// per section and nothing else; the engine pipeline is untouched.
     hooks: Option<Arc<dyn GenHookDispatch>>,
 }
 
-/// Per-column data computed ONCE on the worker, then shared (via `Arc`) by every
-/// per-section job of that column. Holds the column's biome + density surface
-/// (`16×16`), plus the precomputed feature candidate region and redwood-support
-/// surfaces so each section's tree pass does no lattice work. Pure function of
-/// `(seed, cx, cz)`; `Send + Sync` (no interior mutability).
-///
-/// This is the seam between the cheap, inherently-2D part of worldgen (one heavy
-/// job) and the per-16³ terrain/feature fill (many cheap jobs), so generation can
-/// run closest to the player one section at a time — including below y=0 (room for
-/// caves) without ever building a 256-tall column.
 pub struct ColumnGen {
     pub cx: i32,
     pub cz: i32,
-    /// The resident 2D data (biomes, tint halo, surfaces, range scalars) —
-    /// exactly what the column-gen cache persists.
     core: ColumnCore,
-    /// Tree-placement windows (candidate region + redwood-support halo), consumed
-    /// ONLY by tree-band section jobs. `None` once the streamer swaps in a
-    /// [`slimmed`](Self::slimmed) clone after the column's gen burst — they are
-    /// ~15 KB per column, dead weight while resident. A rare late tree-band job
-    /// (vertical window re-entering the surface band) rebuilds them locally via
-    /// [`ChunkGenerator::build_feature_windows`].
     feature_windows: Option<FeatureWindows>,
 }
 
-/// The tree stage's lattice windows: the feature candidate region (chunk +
-/// spacing margin, cave-adjusted) and the redwood-support surface halo. A pure
-/// function of `(seed, cx, cz)` — droppable and rebuildable at will.
 pub struct FeatureWindows {
     plan: OnceLock<FeaturePlan>,
-    /// Feature candidate window (chunk + spacing margin): surfaces + biomes for the
-    /// tree density/spacing rolls.
     candidates: RegionCells,
-    /// Redwood-support surface window (chunk + the larger support margin). `None` unless
-    /// the candidate window actually contains a redwood-supporting biome — the only
-    /// consumer is `redwood_trunk_is_supported`, so most columns never compute this
-    /// (otherwise-eager) larger noise window.
     support: Option<SurfaceHeights>,
 }
 
 impl ColumnGen {
-    /// Resident heap bytes of this column's gen data, for the memory census.
     pub fn memory_bytes(&self) -> u64 {
         let core = &self.core;
         let base = std::mem::size_of::<Self>()
@@ -107,7 +65,6 @@ impl ColumnGen {
     pub fn cz(&self) -> i32 {
         self.cz
     }
-    /// Biome id at column-local `(x,z)`.
     #[inline]
     pub fn biome_at(&self, x: usize, z: usize) -> u8 {
         self.core.biome[z * SECTION_SIZE + x]
@@ -120,13 +77,10 @@ impl ColumnGen {
     pub fn mesh_biome_slice(&self) -> &[u8] {
         &self.core.mesh_biome
     }
-    /// Density top-solid surface (world Y, or `-1`) at column-local `(x,z)`.
     #[inline]
     pub fn surface_y(&self, x: usize, z: usize) -> i32 {
         self.core.surf[z * SECTION_SIZE + x]
     }
-    /// Generated column heightmap before vegetation/trees: waterline for submerged
-    /// columns, otherwise the post-cave top surface so skylight can enter mouths.
     #[inline]
     pub fn heightmap_surface_y(&self, x: usize, z: usize) -> i32 {
         let i = z * SECTION_SIZE + x;
@@ -136,27 +90,20 @@ impl ColumnGen {
             self.core.top_surf[i]
         }
     }
-    /// Lowest / highest density surface across the column (for vertical-window sizing).
     #[inline]
     pub fn surf_range(&self) -> (i32, i32) {
         (self.core.surf_min, self.core.surf_max)
     }
-    /// Highest world Y any generated block in this column can occupy (surface + tree
-    /// reach). Sections whose floor exceeds this are all-air sky.
     #[inline]
     pub fn content_top(&self) -> i32 {
         self.core.content_top
     }
 
-    /// Whether the tree-placement windows are still resident (see `feature_windows`).
     #[inline]
     pub fn has_feature_windows(&self) -> bool {
         self.feature_windows.is_some()
     }
 
-    /// A copy of this column's resident data WITHOUT the tree-placement windows —
-    /// what the world retains once the column's gen burst is done. ~2 KB of 16×16
-    /// arrays instead of ~17 KB.
     pub fn slimmed(&self) -> ColumnGen {
         ColumnGen {
             cx: self.cx,
@@ -166,10 +113,6 @@ impl ColumnGen {
         }
     }
 
-    /// This column's resident data as a column-gen cache record ("Optimize
-    /// explored terrain"). The record IS the slimmed column's core: a load
-    /// through [`from_cache_record`](Self::from_cache_record) reproduces
-    /// exactly what [`slimmed`](Self::slimmed) retains.
     pub fn cache_record(&self, seed: u32) -> crate::colgen::ColumnGenRecord {
         crate::colgen::ColumnGenRecord {
             pos: petramond_world::chunk::ChunkPos::new(self.cx, self.cz),
@@ -178,9 +121,6 @@ impl ColumnGen {
         }
     }
 
-    /// Rebuild a (slim) column from its cache record — no feature windows; a
-    /// rare late tree-band section job rebuilds them locally, exactly like a
-    /// column slimmed after its gen burst.
     pub fn from_cache_record(rec: crate::colgen::ColumnGenRecord) -> ColumnGen {
         ColumnGen {
             cx: rec.pos.cx,
@@ -190,9 +130,6 @@ impl ColumnGen {
         }
     }
 
-    /// Conservative occupancy summary for a generated section that may not be
-    /// materialized yet. This is cheap enough for streaming/meshing decisions and avoids
-    /// generating deep stone just to learn that it is fully solid.
     #[inline]
     pub fn section_summary(&self, cy: i32) -> SectionSummary {
         if !SectionPos::cy_in_range(cy) {
@@ -217,14 +154,10 @@ impl ColumnGen {
     }
 }
 
-/// A hook deferred the section (see [`FeatureOutcome::Deferred`]); `feature`
-/// is the position, among the stage's attached features, to resume at (`0`
-/// for a deferred stage replacement, which reruns the whole stage).
 struct Deferred {
     feature: usize,
 }
 
-/// The section stages, in pipeline order. Climate runs per column.
 const SECTION_STAGES: [WorldgenStage; 4] = [
     WorldgenStage::Terrain,
     WorldgenStage::Underground,
@@ -232,40 +165,27 @@ const SECTION_STAGES: [WorldgenStage; 4] = [
     WorldgenStage::Trees,
 ];
 
-/// Where a [`PendingSection`] picks up within its current stage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Resume {
-    /// The stage's own work (replacement or engine stage) has not run.
     Stage,
-    /// The stage's own work is done; dispatch its attached features from
-    /// this position on.
     Feature(usize),
 }
 
-/// A section a mod hook deferred, holding every stage and hook output
-/// produced before the deferral so [`ChunkGenerator::resume_section`]
-/// continues from the deferring hook instead of regenerating from scratch.
 pub struct PendingSection {
     sp: SectionPos,
     section: Section,
-    /// Index into [`SECTION_STAGES`] of the stage to continue.
     stage: usize,
     resume: Resume,
 }
 
 impl PendingSection {
-    /// The section being generated.
     pub fn pos(&self) -> SectionPos {
         self.sp
     }
 }
 
-/// One non-blocking step of section generation.
 pub enum SectionGen {
-    /// The finished section.
     Ready(Section),
-    /// A hook deferred the section; resume it once the fact it waits on is
-    /// published.
     Deferred(PendingSection),
 }
 
@@ -279,15 +199,10 @@ impl ChunkGenerator {
         Self::with_hooks(seed, crate::hooks::active())
     }
 
-    /// [`new`](Self::new) with an explicit hook config instead of the
-    /// process-installed one — how tests inject hooks without global state,
-    /// and how `None` pins the pure engine pipeline.
     pub fn with_hooks(seed: u32, hooks: Option<Arc<dyn GenHookDispatch>>) -> Self {
         Self::with_caches(seed, hooks, crate::cache::installed())
     }
 
-    /// [`with_hooks`](Self::with_hooks) over explicit memos instead of the
-    /// installed ones.
     pub fn with_caches(
         seed: u32,
         hooks: Option<Arc<dyn GenHookDispatch>>,
@@ -301,9 +216,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// Identity of what [`new`](Self::new) captures besides the seed — the
-    /// installed hook config and memos. A cached generator built under a
-    /// different identity belongs to a previous session or world.
     pub fn installed_config() -> (u64, u64) {
         (
             crate::hooks::installed_epoch(),
@@ -311,12 +223,6 @@ impl ChunkGenerator {
         )
     }
 
-    /// The process's shared generator for `seed` under the installed hook
-    /// config and memos, handed out by `Arc` to every caller without a
-    /// generator of its own: the positional host queries,
-    /// whole-chunk tooling and on-demand section materialization. A seed or
-    /// installed-config change replaces it; concurrent first callers wait for
-    /// the one build.
     pub fn shared(seed: u32) -> Arc<ChunkGenerator> {
         type Slot = Option<((u32, (u64, u64)), Arc<ChunkGenerator>)>;
         static SLOT: Mutex<Slot> = Mutex::new(None);
@@ -332,8 +238,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// The pure engine pipeline over an explicit cave field — how a test
-    /// generates from synthetic cave rows.
     #[cfg(test)]
     pub(crate) fn with_caves(seed: u32, caves: CaveField) -> Self {
         Self {
@@ -344,30 +248,19 @@ impl ChunkGenerator {
         }
     }
 
-    /// The generator's engine sources: the surface density graph and the
-    /// cave field.
     pub(crate) fn sources(&self) -> (&SurfaceDensitySystem, &CaveField) {
         (&self.surface_density, &self.caves)
     }
 
-    /// Whether any mod worldgen hooks are active on this generator.
     pub fn has_gen_hooks(&self) -> bool {
         self.hooks.is_some()
     }
 
-    /// Compute the region for one chunk PLUS the feature margin in a single pass.
-    /// Shared by terrain fill and feature placement, so terrain height and biomes
-    /// are generated exactly once.
     pub fn region(&self, cx: i32, cz: i32) -> RegionCells {
         let (x0, z0, w, h) = super::feature::feature_region_bounds(cx * 16, cz * 16);
         self.surface_density.region(x0, z0, w, h)
     }
 
-    /// Warm one 16×16 world tile of the shared feature-window memo — a pure
-    /// cache fill (the memo is keyed by `(context, tile)`, so any thread's
-    /// computation serves every later reader). Session bootstrap fans the
-    /// spawn area's tiles across the pool with this so the first column jobs
-    /// find them hot instead of computing them serially inside one job.
     pub fn warm_surface_tile(&self, tcx: i32, tcz: i32) {
         let _ = cached_feature_region(
             &self.surface_density,
@@ -379,13 +272,6 @@ impl ChunkGenerator {
         );
     }
 
-    /// The 16×16 surface tiles [`generate_column_gen`](Self::generate_column_gen)
-    /// for `(cx, cz)` reads (its candidate window) that are not memoized yet.
-    /// A scheduler runs them as independent jobs ahead of the column job, each
-    /// through [`warm_surface_tile`](Self::warm_surface_tile): the tiles build
-    /// in parallel across workers, neighbouring columns share them, and the
-    /// column job assembles its window from ready tiles (the memo is
-    /// single-flight, so a tile still building is waited on, never rebuilt).
     pub fn missing_surface_tiles(&self, cx: i32, cz: i32) -> Vec<(i32, i32)> {
         const T: i32 = CHUNK_SX as i32;
         let (x0, z0, w, h) = feature_candidate_bounds(cx * T, cz * T);
@@ -403,19 +289,9 @@ impl ChunkGenerator {
         self.surface_density.biome_at(wx, wz)
     }
 
-    // --- Cubic per-section generation -------------------------------------------
-
-    /// Compute the shared per-column data for `(cx,cz)`: biome + density surface, the
-    /// feature candidate region, and the redwood-support surfaces. This is the heavy,
-    /// inherently-2D part of worldgen; it runs once and is shared by all of the
-    /// column's [`generate_section`](Self::generate_section) jobs.
     pub fn generate_column_gen(&self, cx: i32, cz: i32) -> ColumnGen {
         let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
 
-        // Candidate window (chunk + spacing margin): full biome + surface. The chunk's
-        // own 16×16 biome/surface is the centre of this region, so no separate query.
-        // Served by the per-thread window memo; `raw_surf` carries the
-        // pre-cave-adjustment surfaces the column core stores.
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
         let (candidates, raw_surf) =
             cached_feature_region(&self.surface_density, &self.caves, cx0, cz0, cw, ch);
@@ -448,8 +324,6 @@ impl ChunkGenerator {
 
         let windows = self.finish_feature_windows(ox, oz, candidates);
 
-        // Candidate-window surface range. Feature surfaces are cave-aware, so tree
-        // gating does not root on cave-mouth columns.
         let (mut cand_surf_min, mut cand_surf_max) = (i32::MAX, i32::MIN);
         for &s in &windows.candidates.surf {
             cand_surf_min = cand_surf_min.min(s);
@@ -458,10 +332,6 @@ impl ChunkGenerator {
 
         top_surf.copy_from_slice(&self.caves.surfaces_after_caves(ox, oz, &surf));
 
-        // Mod climate replacement: substitute the column's OWN biome map (what the
-        // terrain skin, vegetation, and every later hook read). The candidate-window
-        // biomes stay the engine's — the tree stage keeps engine climate unless it is
-        // itself replaced.
         if let Some(hooks) = &self.hooks {
             if hooks.replaces(WorldgenStage::Climate) {
                 let inputs = GenInputs {
@@ -501,9 +371,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// Rebuild a column's tree-placement windows from scratch — for a section job
-    /// that received a [`ColumnGen::slimmed`] column. Byte-identical to the windows
-    /// the original column build produced (pure function of `(seed, cx, cz)`).
     fn build_feature_windows(&self, cx: i32, cz: i32) -> FeatureWindows {
         let (ox, oz) = (cx * CHUNK_SX as i32, cz * CHUNK_SZ as i32);
         let (cx0, cz0, cw, ch) = feature_candidate_bounds(ox, oz);
@@ -512,19 +379,12 @@ impl ChunkGenerator {
         self.finish_feature_windows(ox, oz, candidates)
     }
 
-    /// Build the redwood-support halo over the (already cave-adjusted)
-    /// candidate region: the shared tail of [`generate_column_gen`] and
-    /// [`build_feature_windows`]. `candidates` must come from
-    /// `cached_feature_region`.
     fn finish_feature_windows(&self, ox: i32, oz: i32, candidates: RegionCells) -> FeatureWindows {
         let needs_support = candidates.biomes.iter().any(|b| {
             super::biome::trees::profile(*b).support
                 == super::biome::trees::TreeSupport::RedwoodBase
         });
 
-        // Support window (the larger redwood-support halo): surfaces only, and ONLY when
-        // a redwood-supporting biome is actually in range — `redwood_trunk_is_supported`
-        // is its sole reader, so the common (redwood-free) column skips this big window.
         let support = needs_support.then(|| {
             let (sx0, sz0, sw, sh) = feature_region_bounds(ox, oz);
             debug_assert_eq!(sw, sh);
@@ -540,19 +400,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// Generate one 16³ [`Section`] from its column's shared [`ColumnGen`], to
-    /// completion. Runs the fixed stage order — terrain → underground scatter →
-    /// vegetation → trees — but each stage clips to this section, and the
-    /// deep/high stages are skipped when the section provably cannot hold their
-    /// output. Works for any `cy` (incl. below y=0).
-    ///
-    /// For callers that need the finished section NOW — whole-chunk assembly,
-    /// tooling, tests. When a mod hook defers (see [`FeatureOutcome::Deferred`])
-    /// this waits for the fact it depends on to be published, woken by the
-    /// publisher through [`GenHookDispatch::wait_deferred`], and resumes at the
-    /// deferred hook. A streaming or simulation caller must never wait: it uses
-    /// [`start_section`](Self::start_section) and re-queues the
-    /// [`PendingSection`] instead.
     pub fn generate_section(&self, sp: SectionPos, col: &ColumnGen) -> Section {
         let mut attempt = self.start_section(sp, col);
         loop {
@@ -568,18 +415,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// Begin generating section `sp`; never waits. Mod worldgen hooks attach
-    /// here (and ONLY here — every whole-chunk consumer assembles sections, so
-    /// each hook sees identical inputs per `(seed, section)` on every path): a
-    /// registered stage REPLACEMENT runs instead of the engine stage (falling
-    /// back to the engine stage if it fails), and registered FEATURES run after
-    /// their stage, unconditionally — mod content is not bounded by the engine
-    /// stages' reach gates.
-    ///
-    /// Answers [`SectionGen::Deferred`] when a hook deferred the section: a
-    /// positional fact it depends on is being derived by another worker right
-    /// now. The caller hands the [`PendingSection`] to
-    /// [`resume_section`](Self::resume_section) once that fact is published.
     pub fn start_section(&self, sp: SectionPos, col: &ColumnGen) -> SectionGen {
         debug_assert_eq!((sp.cx, sp.cz), (col.cx, col.cz));
         self.advance(
@@ -593,18 +428,11 @@ impl ChunkGenerator {
         )
     }
 
-    /// Continue a deferred section from the hook that deferred it. The stages
-    /// and hooks already applied are kept: each is a pure function of its
-    /// inputs, and the facts a hook reads are positional, so running them
-    /// again would reproduce the same writes — the section's content does not
-    /// depend on when, or how often, it was deferred.
     pub fn resume_section(&self, pending: PendingSection, col: &ColumnGen) -> SectionGen {
         debug_assert_eq!((pending.sp.cx, pending.sp.cz), (col.cx, col.cz));
         self.advance(pending, col)
     }
 
-    /// Run `pending` forward from its cursor until it finishes or a hook
-    /// defers it again.
     fn advance(&self, mut pending: PendingSection, col: &ColumnGen) -> SectionGen {
         while let Some(&stage) = SECTION_STAGES.get(pending.stage) {
             let sp = pending.sp;
@@ -633,8 +461,6 @@ impl ChunkGenerator {
         SectionGen::Ready(pending.section)
     }
 
-    /// One stage's own work on `section`: the mod replacement when one is
-    /// registered and succeeds, else the engine stage behind its reach gate.
     fn run_stage(
         &self,
         stage: WorldgenStage,
@@ -646,7 +472,6 @@ impl ChunkGenerator {
         let sec_hi = sec_lo + SECTION_SIZE as i32 - 1;
         match stage {
             WorldgenStage::Terrain => self.fill_terrain(sp, section, col),
-            // Underground scatter: needs stone in the section AND overlap with the ore band.
             WorldgenStage::Underground => {
                 if !self.run_stage_replacement(stage, sp, section, col)? {
                     let has_stone = sec_lo <= col.core.surf_max;
@@ -656,8 +481,6 @@ impl ChunkGenerator {
                     }
                 }
             }
-            // Ground vegetation: the bare-ground plant cell (anchor+1) can fall here only
-            // if some land column's surface (≥ sea level) sits within reach of the section.
             WorldgenStage::Vegetation => {
                 if !self.run_stage_replacement(stage, sp, section, col)?
                     && col.core.surf_max >= SEA_LEVEL
@@ -677,26 +500,22 @@ impl ChunkGenerator {
                     self.place_trees(sp, section, col);
                 }
             }
-            // Climate is a column stage (`generate_column_gen`), never a section one.
             WorldgenStage::Climate => {}
         }
         Ok(())
     }
 
-    /// Terrain fill (always). It writes the block buffer in bulk (bypassing the
-    /// setter bookkeeping), so the random-tick gate is recounted NOW — before
-    /// the stages after it go through `set_block_raw`, whose incremental adjust
-    /// would otherwise underflow when a feature overwrites a random-tickable
-    /// skin block (e.g. a tree trunk replacing surface grass) while the count
-    /// still read zero.
+    /// Terrain fill (always), writes the block buffer in bulk and skips setter bookkeeping.
+    /// So we recount the random-tick gate right here, before later stages use
+    /// `set_block_raw`. Otherwise its incremental adjust underflows when a feature
+    /// overwrites a random-tickable skin block (tree trunk over grass) while the
+    /// count still reads zero.
     fn fill_terrain(&self, sp: SectionPos, section: &mut Section, col: &ColumnGen) {
         let engine_terrain = match self.replaced_terrain_fill(sp, col) {
             Some(fill) => {
                 *section.blocks_mut() = petramond_world::section::BlockCube::from_ids(&fill);
                 false
             }
-            // A replaced climate fills with the mod's biome map, which the
-            // shared terrain memo (keyed on the engine's) must not carry.
             None if self
                 .hooks
                 .as_ref()
@@ -714,17 +533,11 @@ impl ChunkGenerator {
             }
         };
         section.recompute_opaque_count();
-        // After the recount, like every stage that writes through a setter. A
-        // fall reads the engine's cave, so a replaced terrain carries none.
         if engine_terrain {
             crate::section_memo::stamp_falls(&self.caves, sp, section);
         }
     }
 
-    /// Trees: a tree roots only where the surface is in (sea level, treeline] and
-    /// reaches up to MAX_TREE_REACH_ABOVE. Anchors can sit at margin origins / in
-    /// neighbours, so gate on the candidate-window surface range. Skip the section
-    /// when no anchor can reach it.
     fn place_trees(&self, sp: SectionPos, section: &mut Section, col: &ColumnGen) {
         let sec_lo = sp.cy * SECTION_SIZE as i32;
         let sec_hi = sec_lo + SECTION_SIZE as i32 - 1;
@@ -735,8 +548,6 @@ impl ChunkGenerator {
         {
             return;
         }
-        // A slimmed column (gen burst long done) rebuilds its windows
-        // locally — rare, and byte-identical by construction.
         let rebuilt;
         let windows = match &col.feature_windows {
             Some(w) => w,
@@ -755,8 +566,6 @@ impl ChunkGenerator {
         plan.apply(section);
     }
 
-    /// The mod terrain replacement's 4096-block fill, or `None` when no
-    /// replacement is registered / it failed (the engine fill+carve runs).
     fn replaced_terrain_fill(&self, sp: SectionPos, col: &ColumnGen) -> Option<Vec<u16>> {
         let hooks = self.hooks.as_ref()?;
         if !hooks.replaces(WorldgenStage::Terrain) {
@@ -771,8 +580,6 @@ impl ChunkGenerator {
         })
     }
 
-    /// Run `stage`'s registered replacement into `section`. `false` = no
-    /// replacement / it failed — the caller runs the engine stage.
     fn run_stage_replacement(
         &self,
         stage: WorldgenStage,
@@ -806,9 +613,6 @@ impl ChunkGenerator {
         }
     }
 
-    /// Dispatch every feature attached after `stage`, in registration order,
-    /// from the `first`-th on, each seeing the section as of the previous
-    /// one's writes. A deferral names the feature to resume at.
     fn run_gen_features(
         &self,
         stage: WorldgenStage,
@@ -844,11 +648,6 @@ impl ChunkGenerator {
         Ok(())
     }
 
-    /// A whole chunk column (y 0..256) — the chunk's column data and its
-    /// sections cy 0..16 from [`generate_section`](Self::generate_section),
-    /// assembled. There is no separate whole-chunk pipeline: what tooling, the
-    /// parity hash and the audits read is exactly what the streamer generates,
-    /// hooks included. Content below y=0 exists only in the cubic world.
     pub fn generate_chunk(&self, cx: i32, cz: i32) -> Chunk {
         let col = self.generate_column_gen(cx, cz);
         let mut chunk = Chunk::new(cx, cz);

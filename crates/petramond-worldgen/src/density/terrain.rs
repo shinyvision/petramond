@@ -1,11 +1,3 @@
-//! Stage-3 surface density: the graph of named terrain-density channels the
-//! surface fill (`master_density`), the biome classifier (the climate
-//! channels) and the cave field (`base_height`) sample.
-//!
-//! The recipe is data — `assets/density/terrain.json`, loaded and validated by
-//! [`crate::data::terrain`] — and [`TerrainDensitySpec`] builds a world's
-//! graph from it for the world seed.
-
 use crate::data::terrain::TerrainRecipe;
 use crate::graph::ScalarGraph;
 
@@ -21,14 +13,12 @@ pub mod channels {
     pub const SURFACE_DETECTION: &str = "surface_detection";
 }
 
-/// The terrain recipe a world's density graph is built from.
 #[derive(Clone, Copy)]
 pub struct TerrainDensitySpec {
     recipe: &'static TerrainRecipe,
 }
 
 impl TerrainDensitySpec {
-    /// The loaded surface recipe (`density/terrain.json` and its pack layers).
     pub fn default_surface() -> Self {
         Self {
             recipe: crate::data::terrain::recipe(),
@@ -90,8 +80,6 @@ mod tests {
 
     fn flat_spec(base_height: f64) -> ReferenceTerrainSpec {
         ReferenceTerrainSpec {
-            // Invert the offset→height transform so the assembly yields exactly the
-            // requested base_height (the depth-zero surface).
             shaping: ShapingSplineSpecs {
                 offset: CubicSpline::constant(
                     shaper::axes::CONTINENTALITY,

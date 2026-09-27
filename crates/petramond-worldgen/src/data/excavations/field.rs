@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 mod bounds;
 pub use bounds::{Bounds, RawBounds};
 
-/// Measure a habitat's extent along the six axes before choosing a local shape.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtentProbe {
@@ -35,9 +34,7 @@ pub struct RawFieldShape {
     pub extent_probe: Option<ExtentProbe>,
     #[serde(default)]
     pub bindings: Vec<(String, Expression)>,
-    /// Positive selects this operation; zero or negative leaves earlier terrain.
     pub cut: Expression,
-    /// Index into `palette`, usually an air/fluid/retained-rock selection.
     pub material: Expression,
     pub palette: Vec<RawMaterial>,
     #[serde(default)]
@@ -61,7 +58,6 @@ pub struct RawBiomeFill {
 pub struct BiomeFill {
     pub y: [i32; 2],
     pub formula: Formula,
-    /// The claim's condition as a signed margin, sampled on a lattice.
     pub margin: Formula,
 }
 
@@ -76,11 +72,9 @@ pub struct FieldShape {
     pub separation: i32,
     pub extent_probe: Option<ExtentProbe>,
     pub formula: Formula,
-    /// The cut as a signed margin, positive inside: comparisons become
-    /// differences and conjunctions their minimum, so the field can be
-    /// sampled on a lattice and interpolated like the cave density.
+    /// The cut as a signed margin, positive inside. Comparisons become differences and
+    /// conjunctions their min, so we can sample it on a lattice and interpolate like cave density.
     pub margin: Formula,
-    /// The palette index alone; whether it depends on anything but the site.
     pub material: Formula,
     pub material_varies: bool,
     pub palette: Box<[Material]>,
@@ -92,12 +86,10 @@ pub struct FieldShape {
     pub bounds: Option<Formula>,
 }
 
-/// The signed margin of a predicate: how far inside the cut a point is, in
-/// the predicate's own units. `lt`/`le` become the difference of their sides
-/// (`le` keeps equality inside by half a unit, exact on integer heights),
-/// `and` the minimum of its parts, `or` the maximum; any other expression is
-/// taken as a margin already (positive selects). A name bound to a predicate
-/// is followed so the transformation reaches through bindings.
+/// Signed margin of a predicate, i.e. how far inside the cut a point is, in its own units.
+/// `lt`/`le` turn into the difference of the sides (`le` keeps equality inside by half a unit,
+/// exact on integer heights). `and` takes the min, `or` the max. Anything else is already a
+/// margin, positive selects. Bound names get followed through.
 fn margin_of(cut: &Expression, bindings: &[(String, Expression)], depth: usize) -> Expression {
     let op = |name: &str, parts: Vec<Expression>| {
         let mut all = vec![Expression::Name(name.into())];

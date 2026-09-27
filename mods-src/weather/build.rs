@@ -1,6 +1,3 @@
-//! Keep the shader's field constants generated from the CPU field's source.
-//! The pack installer copies this shader after the mod build finishes.
-
 #[path = "../weather-core/src/field_constants.rs"]
 #[allow(dead_code)]
 mod field_constants;

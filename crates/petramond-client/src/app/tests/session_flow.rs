@@ -22,7 +22,6 @@ fn options_stack_returns_to_its_origin_and_clears_category_state() {
         vec![AppScreen::Title, AppScreen::Options]
     );
 
-    // ESC disarms a remap before it leaves the controls page.
     assert!(app.close_screen());
     assert_eq!(app.screen, AppScreen::OptionsControls);
     assert!(app.options.remap().is_none());

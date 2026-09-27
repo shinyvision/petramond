@@ -25,10 +25,6 @@ fn biome_tint_hint_tracks_incremental_and_bulk_blocks() {
     assert!(section.has_biome_tint_blocks());
 }
 
-/// The sparse emitter-cell index is what presentation walks each frame, and it
-/// is maintained on two independent paths (the per-cell setters and the bulk
-/// metrics install). A path that updates one and not the other renders ghost or
-/// missing flames, so every step is checked against a from-scratch scan.
 #[test]
 fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     fn check(section: &Section) {
@@ -58,9 +54,6 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     assert!(section.has_particle_emitters());
     check(&section);
 
-    // A second, LOWER-indexed emitter: the index must stay ascending, since the
-    // gather's output order (and with it the render's depth-sort tie-break)
-    // follows it.
     section.set_block(0, 0, 3, Block::Torch);
     check(&section);
 
@@ -76,16 +69,11 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     assert!(section.has_particle_emitters());
     check(&section);
 
-    // Bulk install over a section that already carried emitters must not leave
-    // the old cells behind.
     section.blocks_mut().set(0, Block::Stone.id());
     section.recompute_opaque_count();
     check(&section);
 }
 
-/// Sparse state walks in ascending cell order however it was inserted, so
-/// what a walk feeds (furnace reskins into block writes, save records, wire
-/// payloads) is the same on every run and every peer.
 #[test]
 fn sparse_maps_walk_in_cell_order_whatever_the_insertion_order() {
     const CELLS: usize = 24;
@@ -93,7 +81,6 @@ fn sparse_maps_walk_in_cell_order_whatever_the_insertion_order() {
         let mut section = Section::new(0, 0, 0);
         for i in order {
             let (x, y, z) = (i % 16, i / 16, (i * 5) % 16);
-            // A lit skin over an unlit furnace: every tick asks for a reskin.
             section.set_block(x, y, z, Block::FurnaceLit);
             section.insert_furnace(x, y, z, Furnace::default());
             section.insert_container(x, y, z, Container::with_len(3));

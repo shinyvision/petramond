@@ -33,46 +33,30 @@ use petramond::net::handshake::{
 use petramond::net::protocol::{JoinCredential, ModEntry};
 use petramond_render::camera::Camera;
 
-/// Per-step network deadline: the TCP connect and each handshake read.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Matches the document's `max_chars` for the address input.
 const ADDR_MAX_CHARS: usize = 64;
 
 pub(super) enum ConnectPhase {
-    /// Fields editable, no attempt running.
     Editing,
-    /// The worker thread is running; `label` is the muted progress line.
     Connecting { label: &'static str },
-    /// The last attempt failed; `message` fills the danger status label.
     Failed { message: String },
 }
 
-/// What the worker reports back, tagged with the attempt's generation.
 enum ConnectOutcome {
-    /// Progress label change ("Joining world…" once the socket is up).
     Progress(&'static str),
-    /// Handshake succeeded; the connection threads are already running.
     Joined(HandshakeJoin, ServerHandle),
-    /// The server runs mods this client lacks (the join was refused).
     Missing(Vec<ModEntry>),
     Failed(String),
-    /// The join needs a Petramond sign-in this client does not have: the Account
-    /// screen, not another inline error.
     SignInNeeded(String),
 }
 
 pub(super) struct ConnectSession {
     pub(super) phase: ConnectPhase,
-    /// Attempt generation: outcomes tagged with an older gen are stale.
     gen: u64,
     rx: Option<Receiver<(u64, ConnectOutcome)>>,
-    /// Cooperative cancel for the worker thread (checked between steps).
     cancel: Arc<AtomicBool>,
-    /// The mod list of the last refused join (the ModsMissing screen's rows).
     pub(super) missing: Vec<ModEntry>,
-    /// The last ATTEMPTED address — re-seeded into the entry field when the
-    /// ModsMissing screen returns here.
     pub(super) addr: String,
 }
 
@@ -89,14 +73,9 @@ impl Default for ConnectSession {
     }
 }
 
-/// What draining the connect worker decided, for the caller to act on.
 pub(super) enum ConnectEvent {
-    /// The handshake succeeded; the connection threads are already running.
     Joined(Box<HandshakeJoin>, ServerHandle),
-    /// The server runs mods this client lacks: the refusal's list is in
-    /// [`ConnectSession::missing`].
     Missing,
-    /// The join needs a Petramond sign-in: the Account screen, showing why.
     SignInNeeded(String),
 }
 
@@ -105,15 +84,11 @@ impl ConnectSession {
         matches!(self.phase, ConnectPhase::Connecting { .. })
     }
 
-    /// Whether a worker thread's channel is live (tests pin that a parse
-    /// failure never spawns one).
     #[cfg(test)]
     pub(super) fn has_worker(&self) -> bool {
         self.rx.is_some()
     }
 
-    /// Abandon the in-flight attempt (Cancel/Back/ESC): flag the worker and
-    /// make anything it already reported stale.
     pub(super) fn cancel(&mut self) {
         self.cancel.store(true, Ordering::Relaxed);
         self.gen += 1;
@@ -123,9 +98,6 @@ impl ConnectSession {
         }
     }
 
-    /// Drain the worker's outcomes — the ConnectServer screen's per-frame
-    /// prep. Progress and failures land in `phase`; a join or a mod refusal
-    /// comes back for the caller to act on.
     pub(super) fn poll(&mut self) -> Option<ConnectEvent> {
         loop {
             let rx = self.rx.as_ref()?;
@@ -133,8 +105,6 @@ impl ConnectSession {
                 Ok(msg) => msg,
                 Err(TryRecvError::Empty) => return None,
                 Err(TryRecvError::Disconnected) => {
-                    // The worker died without a report (a panic): fail loud
-                    // rather than spin on "Connecting…" forever.
                     self.rx = None;
                     if self.connecting() {
                         self.phase = ConnectPhase::Failed {
@@ -177,10 +147,6 @@ impl ConnectSession {
         }
     }
 
-    /// Reset for a fresh open of the Connect screen, the address seeded from
-    /// client.json's `last_server`. There is no name field: an online server
-    /// names the session from the player's account, and an offline one is
-    /// offered the machine's resolved player name.
     pub(super) fn open_fresh(&mut self, ui: &mut AppUi) {
         let addr = petramond::save::client::load()
             .last_server
@@ -189,7 +155,6 @@ impl ConnectSession {
         seed_connect_fields(ui, &addr);
     }
 
-    /// Back from the ModsMissing screen: the refused attempt's address intact.
     pub(super) fn reopen(&mut self, ui: &mut AppUi) {
         self.phase = ConnectPhase::Editing;
         let addr = self.addr.clone();
@@ -197,48 +162,33 @@ impl ConnectSession {
     }
 }
 
-/// The shell command a connect event asks for.
 pub(super) fn connect_event_command(event: ConnectEvent) -> ShellCommand {
     match event {
         ConnectEvent::Joined(join, handle) => ShellCommand::AdoptRemote(join, handle),
-        // A refusal lists the mods this client lacks; its Back reopens the
-        // connect screen with the attempt intact.
         ConnectEvent::Missing => ShellCommand::Goto(AppScreen::ModsMissing),
         ConnectEvent::SignInNeeded(message) => ShellCommand::OpenAccount(Some(message)),
     }
 }
 
-/// Seed the connect document's address field and focus it.
 fn seed_connect_fields(ui: &mut AppUi, addr: &str) {
-    // Activate the document FIRST: switching kinds resets bound state, which
-    // would wipe the seed below on the screen's first frame.
     ui.ensure_active(petramond_world::gui_state::GuiKind::ConnectServer);
     ui.state_mut()
         .set("server_addr", petramond_ui::UiValue::Str(addr.to_owned()));
-    // Ready to type immediately, editing from the prefill.
     ui.focus_text_input("server_addr", addr, ADDR_MAX_CHARS);
 }
 
 impl App {
-    /// Open the Connect to Server screen from the title, the address prefilled
-    /// from client.json's `last_server`.
     pub(super) fn open_connect_server(&mut self) {
         self.shell.connect.open_fresh(&mut self.ui);
-        // The screen shows who the player will appear as; refresh the cached
-        // credential view so it is not one sign-in behind.
         self.refresh_account_view();
         self.set_screen(AppScreen::ConnectServer);
     }
 
-    /// Back from the ModsMissing screen: same screen, the refused attempt's
-    /// address intact.
     pub(super) fn reopen_connect_server(&mut self) {
         self.shell.connect.reopen(&mut self.ui);
         self.set_screen(AppScreen::ConnectServer);
     }
 
-    /// The Connect button/Enter: validate the address, remember it, and spawn
-    /// the worker thread. Parse failures show inline without any thread.
     pub(super) fn begin_connect(&mut self) {
         let connect = &mut self.shell.connect;
         if connect.connecting() {
@@ -261,8 +211,6 @@ impl App {
             }
         };
         connect.addr = addr_text.clone();
-        // The name an OFFLINE server is offered; an online server's session name
-        // comes out of the redeemed ticket instead.
         let fallback_name =
             petramond::save::client::resolve_player_name(&petramond::save::client::load());
         remember_server(&addr_text);
@@ -277,9 +225,6 @@ impl App {
         connect.phase = ConnectPhase::Connecting {
             label: "Connecting…",
         };
-        // Claim the retained section cache in the Join manifest. Stale or
-        // wrong-server claims are free: they hash-mismatch into ordinary
-        // full sends (or heal through SectionCacheMiss).
         let cache_claims = self
             .retained_section_cache
             .as_ref()
@@ -304,8 +249,6 @@ impl App {
             .expect("spawn connect thread");
     }
 
-    /// Drain the connect worker and act on what it decided, outside the
-    /// screen's frame — for tests that wait on a real join.
     #[cfg(test)]
     pub(super) fn poll_connect_worker(&mut self) {
         if let Some(event) = self.shell.connect.poll() {
@@ -313,9 +256,6 @@ impl App {
         }
     }
 
-    /// Enter the joined REMOTE session — `start_game`'s tail for a handshaked
-    /// connection. The camera position is irrelevant: the constructor snaps
-    /// it to the restored player.
     pub(super) fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
         let cam = Camera::new(
             petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
@@ -334,9 +274,6 @@ impl App {
     }
 }
 
-/// Remember the attempted address so `last_server` prefills the next open.
-/// Suppressed under test — the suite must never rewrite the developer's real
-/// client.json.
 fn remember_server(addr: &str) {
     if cfg!(test) {
         return;
@@ -348,10 +285,6 @@ fn remember_server(addr: &str) {
     }
 }
 
-/// Resolve what this server asked for. Called by the handshake AFTER the
-/// server's `HelloAck`, on the worker thread, so minting a ticket (itself a
-/// blocking call to the account service) only happens for a server that wants
-/// one.
 fn credential_for(
     offer: &ServerOffer,
     fallback_name: &str,
@@ -367,13 +300,6 @@ fn credential_for(
         })
 }
 
-/// The whole blocking connect sequence, on the worker thread: DNS → TCP
-/// connect (each resolved address, [`CONNECT_TIMEOUT`] apiece) → read
-/// deadline → join handshake (which mints an account ticket if the server asks
-/// for one) → connection threads + remote handle. The
-/// cancel flag is honoured between blocking steps; a cancelled attempt's
-/// outcome is stale by generation anyway, so the exact drop point only
-/// affects how soon the socket closes.
 fn run_connect(
     host: &str,
     port: u16,
@@ -441,7 +367,6 @@ fn run_connect(
         cache_claims,
     ) {
         Ok(join) => join,
-        // No farewell frame after a mod refusal — just drop the socket.
         Err(HandshakeError::MissingMods(mods)) => return ConnectOutcome::Missing(mods),
         Err(HandshakeError::Credential {
             message,
@@ -450,12 +375,8 @@ fn run_connect(
         Err(e) => return ConnectOutcome::Failed(e.to_string()),
     };
     if cancelled() {
-        // Dropping the raw socket is the leave: the server reader hits EOF.
         return ConnectOutcome::Failed("Cancelled".to_owned());
     }
-    // Canonical order: the id remap from the join
-    // tables, connection threads over the post-handshake stream, then the
-    // handle that fronts them.
     let remap = petramond::net::remap::IdRemap::build(&join.join.tables);
     let conn = match petramond::net::connection::TcpClientConn::spawn(stream, remap) {
         Ok(conn) => conn,

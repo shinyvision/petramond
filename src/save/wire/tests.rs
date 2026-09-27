@@ -7,7 +7,6 @@ struct Pair {
 }
 wire_struct!(Pair { a, b });
 
-/// A record as one build writes it...
 #[derive(Debug, Default, PartialEq)]
 struct Old {
     name: String,
@@ -19,7 +18,6 @@ tagged_record!(Old {
     2 => count,
 });
 
-/// ...and as a later build writes it, with one field more.
 #[derive(Debug, Default, PartialEq)]
 struct New {
     name: String,
@@ -71,8 +69,6 @@ fn malformed_values_are_rejected() {
     assert_eq!(from_bytes::<BTreeMap<String, u8>>(&repeated), None);
 }
 
-/// The two directions of a positional struct are one statement: the
-/// fields go out in the listed order.
 #[test]
 fn a_wire_struct_writes_its_fields_in_order() {
     let bytes = to_bytes(&Pair {
@@ -82,7 +78,6 @@ fn a_wire_struct_writes_its_fields_in_order() {
     assert_eq!(bytes, [0x02, 0x01, 1, 0, 0, 0, b'z']);
 }
 
-/// Older records read in a newer build: the missing field is its default.
 #[test]
 fn a_field_the_record_lacks_reads_as_its_default() {
     let old = Old {
@@ -102,8 +97,6 @@ fn a_field_the_record_lacks_reads_as_its_default() {
     );
 }
 
-/// Newer records read in an older build: the field it does not know is
-/// kept and written back exactly as it came.
 #[test]
 fn a_field_this_build_does_not_know_is_kept_and_written_back() {
     let new = New {

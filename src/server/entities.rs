@@ -3,10 +3,7 @@ use crate::events::{DamageSource, MobDamagePre, Outcome, PostEvent};
 use crate::mob::{def as mob_def, DeathDrop, MobAttack, MobDamageSound, MobFall, MobSoundCategory};
 use petramond_math::math::Vec3;
 
-/// Falls shorter than this into a fluid make no splash — walking or a one-block
-/// step-down stays quiet; a real fall throws the burst.
 const SPLASH_MIN_FALL: f32 = 1.5;
-/// Falls at least this deep play the fluid's big splash sound.
 const SPLASH_BIG_FALL: f32 = 5.0;
 use crate::world::ServerWorld;
 
@@ -14,25 +11,20 @@ use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::server::health::fall_damage_health;
 
-/// Upward pop of a mob strike's knockback, as a fraction of its horizontal strength —
-/// mirrors the mob-side knockback feel (`KNOCKBACK_UP / KNOCKBACK_SPEED` ≈ 0.65 in
-/// `mob::instance`), so the player is launched like a mob is when hit.
 pub(super) const MOB_ATTACK_UP_RATIO: f32 = 0.65;
 
 impl ServerGame {
-    /// THE mob-damage pipeline, shared by every source: reject the victim's
-    /// engine-owned immunity, dispatch `mob_damage_pre` (mutable amount,
-    /// cancellable), apply what survives through
-    /// [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob), and on a kill queue
-    /// `mob_died` + roll the loot. Returns whether the request was applied.
+    /// Every source of mob damage goes through here. We bail if the victim is immune, fire
+    /// `mob_damage_pre` (mods can change or cancel the amount), apply the rest via
+    /// [`Mobs::damage_mob`](crate::mob::Mobs::damage_mob), and on a kill queue `mob_died` and roll
+    /// loot. Returns whether anything was applied.
     ///
-    /// `feedback` composes THIS request's damage pipeline; `None` = the
-    /// species' resolved `damage_feedback`. A pipeline without the `Immunity`
-    /// component is DoT (burn ticks): neither blocked by an active i-frame
-    /// window nor granting one.
+    /// `feedback` is this request's pipeline; `None` means the species' `damage_feedback`. Without
+    /// the `Immunity` component it's DoT (burn ticks): i-frames don't block it and it doesn't
+    /// start any.
     ///
-    /// `mob_damage_pre` acts for the attacking PLAYER when the source names
-    /// one, and actor-less otherwise (a mob's bite, a fall, a mod's damage).
+    /// `mob_damage_pre` runs as the attacking player when the source names one, and actor-less
+    /// otherwise (a mob's bite, a fall, mod damage).
     pub fn damage_mob_through_pipeline(
         &mut self,
         mob_id: crate::mob::MobId,
@@ -52,9 +44,6 @@ impl ServerGame {
         };
         let (kind, pos, was_dead, damage_immune) = snapshot;
         let mut feedback = feedback.unwrap_or_else(|| mob_def(kind).damage_feedback.clone());
-        // The WEAPON scales the victim's authored shove, before any handler
-        // sees the pipeline — so `mob_damage_pre` reads the knockback that
-        // will land, and a plain hit stays exactly the row's number.
         let weapon = self.weapon_knockback(source);
         if weapon != 1.0 {
             for component in &mut feedback.components {
@@ -63,10 +52,6 @@ impl ServerGame {
                 }
             }
         }
-        // The i-frame window is itself a pipeline component: only requests
-        // whose pipeline participates (`petramond:immunity`) are blocked by
-        // an active window. Blocking happens before `mob_damage_pre` — a
-        // blocked attempt stays a complete non-event.
         if was_dead || (damage_immune && feedback.has_immunity()) {
             return false;
         }
@@ -104,9 +89,6 @@ impl ServerGame {
             pre.source.attacker(),
             &pre.feedback,
         );
-        // The observational twin of `mob_damage_pre`: what the pipeline
-        // actually applied, after every handler had its say. A killing blow
-        // announces both this and `mob_died`, in that order.
         self.mods.emit(PostEvent::MobDamaged {
             mob_id,
             kind,
@@ -130,28 +112,10 @@ impl ServerGame {
         true
     }
 
-    /// Apply the melee strikes the mobs landed this tick (drained from
-    /// `World::tick_mobs`), routing each by its target:
-    ///
-    /// - a PLAYER target runs through the single [`damage_player`] funnel — so
-    ///   engine immunity and `player_damage_pre` cancellation both drop the
-    ///   damage and knockback — and an applied strike shoves the player away
-    ///   from the attacker with an upward pop. Spectators have no body to hit:
-    ///   those strikes are dropped whole.
-    /// - a MOB target runs through the shared mob damage pipeline
-    ///   (`mob_damage_pre`, the row's feedback bundle, loot, ragdoll) with the
-    ///   striking mob as source and origin — mob-vs-mob combat is the same
-    ///   funnel as every other mob hit, so the victim's knockback comes from
-    ///   its own `petramond:knockback` feedback component and its retaliation
-    ///   memory records the biter.
-    ///
-    /// [`damage_player`]: ServerGame::damage_player
     pub fn apply_mob_attacks(&mut self, attacks: Vec<MobAttack>, events: &mut TickEvents) {
         for a in attacks {
             match a.target {
                 crate::mob::EntityRef::Player(pid) => {
-                    // A session gone mid-tick can't happen — the session list
-                    // only changes between ticks.
                     let Some(s) = self.sessions.index_of(pid) else {
                         continue;
                     };
@@ -170,8 +134,6 @@ impl ServerGame {
                     }
                 }
                 crate::mob::EntityRef::Mob(target_id) => {
-                    // Addressed by the STABLE id: an earlier strike this tick
-                    // that killed or removed the target makes this one fizzle.
                     self.damage_mob_through_pipeline(
                         target_id,
                         a.damage.max(0.0),
@@ -188,9 +150,6 @@ impl ServerGame {
         }
     }
 
-    /// Apply fall landings reported by `World::tick_mobs` through the mob damage
-    /// pipeline. Mobs use the same distance curve as players, but fall damage is not an
-    /// attack and carries no origin, so default knockback does not run.
     pub fn apply_mob_fall_damage(&mut self, falls: Vec<MobFall>, events: &mut TickEvents) {
         for fall in falls {
             let amount = fall_damage_health(fall.distance) as f32;
@@ -208,11 +167,6 @@ impl ServerGame {
         }
     }
 
-    /// Queue the entered fluid's splash row (a one-shot burst every client
-    /// presents, plus its sound) at the fluid surface above `feet`. `fall`
-    /// (blocks) is the burst intensity: harder falls throw more particles.
-    /// Falls below [`SPLASH_MIN_FALL`] stay quiet, so wading never splashes,
-    /// and a fluid without a `splash` row enters silently.
     pub fn push_fluid_splash(
         &mut self,
         feet: petramond_math::world_pos::WorldPos,
@@ -233,7 +187,6 @@ impl ServerGame {
         let Some(splash) = surface.fluid.splash else {
             return;
         };
-        // The burst throws from the top face of the surface cell.
         let pos = petramond_math::world_pos::WorldPos::new(
             feet.x,
             f64::from(surface.surface_y.floor() + 1.02),
@@ -258,10 +211,6 @@ impl ServerGame {
         });
     }
 
-    /// Record the gameplay noise of session `s` acting on the block at `pos`
-    /// (place/break), for hearing-based mob AI. The noise sounds at the BLOCK's
-    /// centre and names the acting player — that's what a listener locks onto.
-    /// Natural (sim-caused) breaks stay silent: they have no actor.
     pub fn push_block_noise(
         &mut self,
         s: usize,
@@ -275,7 +224,6 @@ impl ServerGame {
         );
     }
 
-    /// A block noise at `pos` made by `source`, for the next mob AI batch.
     pub fn push_noise_from(
         &mut self,
         source: crate::mob::EntityRef,
@@ -289,8 +237,6 @@ impl ServerGame {
         });
     }
 
-    /// Scatter the carried stacks of every mob that died or despawned since
-    /// the last stage boundary, at the body they left.
     pub fn scatter_mob_spills(&mut self) {
         for spill in self.world.mobs_mut().take_spills() {
             let centre = spill.pos + Vec3::new(0.0, 0.3, 0.0);
@@ -303,9 +249,6 @@ impl ServerGame {
         }
     }
 
-    /// Roll a dead mob's loot table and scatter the drops at its body. Called the
-    /// instant a mob dies (from the attack that killed it), so loot appears "when
-    /// killed" while the corpse ragdolls. No-op for a species with no table.
     pub fn spawn_mob_loot(&mut self, death: DeathDrop) {
         let Some(table) = crate::mob::def(death.kind).loot.as_deref() else {
             return;
@@ -314,7 +257,6 @@ impl ServerGame {
         let stacks = petramond_world::loot::catalog()
             .roll(table, || rng.next_u64())
             .unwrap_or_default();
-        // Pop from roughly the mob's body centre so drops don't clip into the floor.
         let centre = death.pos + Vec3::new(0.0, 0.3, 0.0);
         for stack in stacks {
             let mut drop = DroppedItem::new(centre, stack, self.seeds.draw());
@@ -324,22 +266,12 @@ impl ServerGame {
         }
     }
 
-    /// Per game-tick (20 TPS) pickup for player `s`: pull any eligible drop
-    /// within their pickup radius into their inventory. Item lifetime advances
-    /// once per tick in the stage driver, not here. Returns whether at least
-    /// one item was collected this tick, so the client can play the pickup sound.
     pub fn item_pickup_tick(&mut self, s: usize) -> bool {
-        // A dead body vacuums nothing: without this the corpse standing at the
-        // death spot would re-collect its own spilled inventory behind the
-        // death screen.
         if self.sessions[s].player.health() == 0 {
             return false;
         }
         let requester = self.sessions[s].id;
         let player_pos = self.sessions[s].player.body_center();
-        // Plan first against a cloned inventory, reserving capacity without
-        // mutating the real slots. Only drops requested BY this player are
-        // allowed to magnet toward (and be collected by) them.
         let mut planned = self.sessions[s].player.inventory.clone();
         self.world
             .dropped_items_mut()
@@ -355,24 +287,15 @@ impl ServerGame {
                 count
             });
 
-        // Borrow-split: `dropped_items_mut()` borrows the drops, the session
-        // owns the inventory — disjoint `ServerGame` fields, so this type-checks without
-        // aliasing. Actual inventory mutation only happens after a requested drop
-        // reaches the absorb radius.
         let inventory = &mut self.sessions[s].player.inventory;
         let mut collected = Vec::new();
         self.world
             .dropped_items_mut()
             .collect_requested_pickups(requester, player_pos, |stack| {
                 collected.push(stack);
-                // Pickup routing (off-hand top-up first) — see
-                // `Inventory::pickup`; every other insertion path stays on
-                // `add`.
                 inventory.pickup(stack)
             });
         let picked_up = !collected.is_empty();
-        // One event per collected STACK. Whether the player has ever HELD one
-        // of these is a different question, answered by `item_obtained`.
         for stack in collected {
             self.mods.emit(PostEvent::ItemPickedUp {
                 player: requester,
@@ -405,9 +328,6 @@ fn queue_mob_sound(
     }
 }
 
-/// The two 6-bit light channels `(sky6, block)` for dynamic geometry at a world
-/// position, so the held item, particles, and dropped items are lit — and
-/// coloured — by nearby emitters just like the static blocks around them.
 pub fn light_at_pos(
     world: &ServerWorld,
     pos: petramond_math::world_pos::WorldPos,
@@ -416,11 +336,6 @@ pub fn light_at_pos(
     world.data().dynamic_light_at_world(c.x, c.y, c.z)
 }
 
-/// Record every audibly-moving player's footstep noise for this tick's mob
-/// AI batch — called once per tick right before the mob stage. Sneaking
-/// players are silent (the whole point of sneaking near a listener);
-/// airborne players are silent until they land. Reads the sessions, writes
-/// only the world's noise batch.
 pub(in crate::server) fn push_player_step_noises(
     world: &mut ServerWorld,
     sessions: &crate::server::sessions::SessionRegistry,

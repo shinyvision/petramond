@@ -29,15 +29,11 @@ use serde::Deserialize;
 use crate::block::{BlockTag, ParticleEmitter};
 use crate::tile::Tile;
 
-/// The biggest cube a row can spawn — the size every visibility cull compares
-/// against a pixel, whichever way round the row authored its range.
 #[inline]
 pub fn particle_size(e: &ParticleEmitter) -> f32 {
     e.size[0].max(e.size[1])
 }
 
-/// Engine bundle keys in frozen id order; the completeness oracle
-/// `particle_emitters.json` is validated against.
 const ENGINE_EMITTER_NAMES: &[&str] = &[
     "petramond:torch_flame",
     "petramond:burn_light",
@@ -49,88 +45,43 @@ const ENGINE_EMITTER_NAMES: &[&str] = &[
     "petramond:block_break",
 ];
 
-/// Most particle rows one bundle may declare.
 const MAX_BUNDLE_ROWS: usize = 4;
 
-/// One loaded bundle (`defs()[id]`). Exactly one of: LOOPING (`rows`
-/// non-empty: shown continuously while attached to a block/mob), a ONE-SHOT
-/// `burst` (spawned once per `EmitterBurst` world event, simulated with
-/// gravity + collision), or an `ambient` volume (camera-following
-/// precipitation, derived statelessly per frame on each client).
 pub struct EmitterBundle {
-    /// The bundle's session id (its row index).
     pub id: u8,
-    /// The registry key (`"petramond:burn_light"`, `"mod_id:sparkle"`).
     pub key: &'static str,
-    /// Optional multiply body tint shown while attached to an entity (RGB
-    /// `0..=1`). Ignored by block references.
     pub tint: Option<[f32; 3]>,
-    /// Authored body dimensions; attached rows scale to their wearer when set.
     pub body_size: Option<[f32; 3]>,
-    /// Body light mixed toward full brightness (`0..=1`); attachments compose by max.
     pub body_self_lit: f32,
-    /// The looping particle rows, all shown together while the bundle is
-    /// active. Empty for a burst or ambient bundle.
     pub rows: &'static [ParticleEmitter],
-    /// One-shot burst parameters.
     pub burst: Option<BurstSpec>,
-    /// Ambient parameters: a precipitation band, a volume of motes, or a
-    /// lattice of fliers (see [`AmbientMotion`]).
     pub ambient: Option<AmbientSpec>,
 }
 
-/// A one-shot particle burst: `count_per_intensity × intensity` solid-color
-/// flecks (capped) launched upward and outward in a rough circle from the
-/// event position, simulated by `entity::ParticleSystem` — real gravity, and
-/// (with `die_on_contact`) destroyed the instant they touch a collision box or
-/// water. The event's `intensity` is producer-defined; the engine water splash
-/// passes the fall distance in blocks.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BurstSpec {
-    /// Particles per unit of event intensity (result rounded, min 1).
     pub count_per_intensity: f32,
-    /// Min/max upward launch speed, m/s.
     pub up_speed: [f32; 2],
-    /// Min/max horizontal launch speed, m/s — each particle picks a random
-    /// direction, so the burst spreads in a rough circle.
     pub radial_speed: [f32; 2],
-    /// Min/max particle lifetime, seconds.
     pub lifetime: [f32; 2],
-    /// Min/max cube edge length, blocks.
     pub size: [f32; 2],
-    /// How far the count may run over its base, as a fraction drawn per burst
-    /// (`1` = up to double): a punch sheds two to four flecks, not always three.
     #[serde(default)]
     pub count_spread: f32,
-    /// Half extents of the box particles spawn in, around the burst point.
     #[serde(default = "default_spawn")]
     pub spawn: [f32; 3],
-    /// Min/max speed AWAY from the burst point, through where the particle
-    /// spawned, m/s — a thing coming apart in every direction.
     #[serde(default)]
     pub outward_speed: [f32; 2],
-    /// Min/max speed along the event's own direction (a struck face's normal),
-    /// m/s. Nothing for an event that names none.
     #[serde(default)]
     pub along_speed: [f32; 2],
-    /// RGB endpoints; each particle draws a mix at spawn. A textured particle
-    /// is multiplied by it.
     #[serde(default = "default_color")]
     pub color: [[f32; 3]; 2],
-    /// The texture particles are cut from, when the event firing the burst
-    /// names none; with neither, particles are flat cubes of `color`.
     #[serde(default)]
     pub texture: Option<TextureSlice>,
-    /// How much of its texture slice one particle shows, per axis.
     #[serde(default = "default_patch")]
     pub patch: f32,
-    /// Skews the color mix: `>1` favors the FIRST endpoint (`mix^bias`), `1`
-    /// (default) is uniform.
     #[serde(default = "default_color_bias")]
     pub color_bias: f32,
-    /// Destroy the particle the instant it touches a collision box OR water
-    /// (default: settle on solids like terrain dust, ignore water).
     #[serde(default)]
     pub die_on_contact: bool,
 }
@@ -151,8 +102,6 @@ fn default_patch() -> f32 {
     0.25
 }
 
-/// A named atlas tile and the part of it (`[u0, v0, u1, v1]` in tile
-/// fractions) particles are cut from.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
 #[serde(try_from = "RawTextureSlice")]
 pub struct TextureSlice {
@@ -163,7 +112,6 @@ pub struct TextureSlice {
 impl TextureSlice {
     pub const WHOLE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
-    /// `None` = an unknown tile or a slice outside the tile.
     pub fn named(tile: &str, slice: [f32; 4]) -> Option<Self> {
         let [u0, v0, u1, v1] = slice;
         let inside = slice
@@ -197,95 +145,46 @@ impl TryFrom<RawTextureSlice> for TextureSlice {
     }
 }
 
-/// A world-anchored ambience volume around the local camera, DERIVED
-/// statelessly per frame — nothing is simulated, nothing runs on the tick,
-/// nothing replicates. Its `motion` decides what a particle IS: a falling
-/// drop killed at each column's precipitation ceiling (the topmost
-/// movement-blocking or water cell, so nothing falls under a roof), a drifting
-/// mote, or a flier orbiting above the ground. Activated per client through the
-/// `ClientAmbientSet` host call, or by a biome row's `ambient` density map.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AmbientSpec {
-    /// Particles at intensity 1.0 (scaled linearly, capped at `max_count`).
-    /// Falls and volumes only: a flight's population is its lattice.
     #[serde(default)]
     pub count_per_intensity: f32,
-    /// Hard volume cap (falls and volumes only).
     #[serde(default)]
     pub max_count: u32,
-    /// Horizontal spawn radius around the camera, blocks.
     pub radius: f32,
-    /// Vertical band `[below, above]` the camera the volume covers, blocks.
     pub height: [f32; 2],
-    /// Min/max downward fall speed, blocks/s (falls and volumes only).
     #[serde(default)]
     pub fall_speed: [f32; 2],
-    /// Multiplier on the activation's wind vector (0 = ignores wind).
     #[serde(default = "default_drift_wind")]
     pub drift_wind: f32,
-    /// `[amplitude blocks, hz]` per-particle sinusoidal horizontal wobble
-    /// (snowflakes); `[0, 0]` (default) disables (rain).
     #[serde(default)]
     pub flutter: [f32; 2],
-    /// Min/max cube edge length, blocks.
     pub size: [f32; 2],
-    /// Vertical elongation of the cube (rain streaks); 1 (default) = a cube.
     #[serde(default = "default_stretch")]
     pub stretch: f32,
-    /// Min/max particle alpha.
     pub alpha: [f32; 2],
-    /// RGB endpoints; each particle draws a mix at birth.
     pub color: [[f32; 3]; 2],
-    /// Skews the color mix like a burst's (`>1` favors the first endpoint).
     #[serde(default = "default_color_bias")]
     pub color_bias: f32,
-    /// Discrete weighted colours drawn INSTEAD of the `color` mix when
-    /// non-empty — for families that must stay distinct (a white, a pink and a
-    /// blue butterfly, never a mauve one).
     #[serde(default)]
     pub palette: Vec<PaletteStop>,
-    /// What the ceiling hit shows: nothing (`"die"`, default), or a derived
-    /// splash from a named BURST bundle's launch/lifetime/color data
-    /// (`{"burst": "ns:key"}` — resolved and shape-checked at load).
     #[serde(default)]
     pub hit: AmbientHit,
-    /// How a particle MOVES, and therefore what its position is anchored to.
-    /// `"precipitation"` (default) falls through the band; `"volume"` is a
-    /// drifting body of motes; `{"flight": {...}}` is a lattice of fliers
-    /// orbiting above the ground.
     #[serde(default)]
     pub motion: AmbientMotion,
-    /// Where a particle STOPS. `"ceiling"` (default) is precipitation: each
-    /// column kills at its topmost movement-blocking or water cell, so
-    /// nothing falls under a roof. `"interior"` is what a volume that lives
-    /// INDOORS (drifting motes, dust, ash) needs instead — no column
-    /// ceiling, and a particle is dropped where it would sit inside a wall.
     #[serde(default)]
     pub kill: AmbientKill,
-    /// Where a particle's light comes from. `"sky"` (default) is
-    /// precipitation: sky-open by construction, so full skylight and the
-    /// ordinary sky lanes dim it at night. `"world"` samples the real
-    /// skylight + coloured block light at each particle, which is what any
-    /// volume that can sit in the dark needs — motes go black in an unlit
-    /// pocket and light up next to a lamp.
     #[serde(default)]
     pub light: AmbientLight,
-    /// Column-biome filter (at most one of the two, names from the stable
-    /// biome vocabulary): particles derive only over columns whose biome is
-    /// in `biomes` (or NOT in `exclude_biomes`). How rain and snow draw an
-    /// exact side-by-side divide at a biome border — each bundle filters
-    /// itself per column; the driving mod runs both.
     #[serde(default)]
     pub biomes: Vec<String>,
     #[serde(default)]
     pub exclude_biomes: Vec<String>,
-    /// Resolved at load: 256-bit allow-set over biome ids (`None` = all).
     #[serde(skip)]
     pub biome_allow: Option<[u64; 4]>,
 }
 
-/// Whether `biome` passes the resolved allow-set.
 #[inline]
 pub fn biome_allowed(allow: &Option<[u64; 4]>, biome: u8) -> bool {
     match allow {
@@ -298,8 +197,6 @@ fn default_drift_wind() -> f32 {
     1.0
 }
 
-/// One entry of an [`AmbientSpec::palette`]: drawn with probability
-/// `weight / Σ weights`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaletteStop {
@@ -307,42 +204,22 @@ pub struct PaletteStop {
     pub color: [f32; 3],
 }
 
-/// A lattice of world-anchored FLIERS. Every `spacing`-sized ground cell seeds
-/// one candidate (a fraction `occupancy` of them exist at intensity 1); a
-/// candidate orbits a closed-form path above the HIGHEST ground its whole
-/// orbit covers, so no phase of the flight ever clips a slope. A candidate is
-/// refused outright — never lifted — where any column under its orbit is
-/// unloaded, roofed by a non-ground block (a canopy, a slab, a pane of glass),
-/// excluded by the bundle's biome filter, or rolls above the biome's density.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlightSpec {
-    /// Horizontal lattice pitch, blocks — one candidate per cell.
     pub spacing: f32,
-    /// Fraction of lattice cells occupied at intensity 1.
     pub occupancy: f32,
-    /// Orbit half-extents `[x, z]` around the cell's anchor, blocks.
     pub orbit: [f32; 2],
-    /// Cruise height above the anchor ground `[base, bob amplitude]`, blocks.
     pub hover: [f32; 2],
-    /// Min/max orbit rate, radians/s.
     pub speed: [f32; 2],
-    /// Min/max wingbeat rate, Hz (used with `sprite`).
     #[serde(default)]
     pub flap_hz: [f32; 2],
-    /// Atlas tile whose left and right halves are the two wings, hinged at the
-    /// body and flapping. Absent: the ordinary solid particle cube.
     #[serde(default)]
     pub sprite: Option<String>,
-    /// Block tags, ANY of which the ground under the orbit must carry (empty:
-    /// any ground). Butterflies list `soil` so a canopy is an obstruction, not
-    /// a floor.
     #[serde(default)]
     pub ground_tags: Vec<String>,
-    /// `sprite` resolved at load.
     #[serde(skip)]
     pub sprite_tile: Option<Tile>,
-    /// `ground_tags` resolved at load.
     #[serde(skip)]
     pub ground: Vec<BlockTag>,
 }
@@ -351,40 +228,24 @@ fn default_stretch() -> f32 {
     1.0
 }
 
-/// An ambient particle's ceiling-hit behavior.
 #[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbientHit {
-    /// Disappear silently.
     #[default]
     Die,
-    /// Show a stateless splash derived from this BURST bundle's data.
     Burst(String),
 }
 
-/// How an ambient volume's particles are anchored and move.
-///
-/// Every kind is world-anchored: the body follows the player without dragging
-/// its contents along (falls and volumes wrap positions into the camera's box;
-/// fliers live on a fixed ground lattice).
 #[derive(Clone, Debug, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbientMotion {
-    /// Falling particles reseed their column when recycling across the
-    /// vertical band and can derive splashes at their world-space hit time.
     #[default]
     Precipitation,
-    /// A BODY of drifting motes: all three axes are world-anchored, and Y
-    /// wraps into the `height` band exactly as X/Z wrap into `radius`. Without
-    /// this the band re-centres on the camera every frame and the whole field
-    /// rides the player's jump.
     Volume,
-    /// A lattice of fliers orbiting above the ground — see [`FlightSpec`].
     Flight(FlightSpec),
 }
 
 impl AmbientMotion {
-    /// The flight parameters, for the kind that has them.
     pub fn flight(&self) -> Option<&FlightSpec> {
         match self {
             AmbientMotion::Flight(f) => Some(f),
@@ -393,35 +254,22 @@ impl AmbientMotion {
     }
 }
 
-/// Where an ambient volume's particles stop.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbientKill {
-    /// At the column's precipitation ceiling (topmost movement-blocking or
-    /// water cell) — falls on roofs and lakes, never under them.
     #[default]
     Ceiling,
-    /// No column ceiling at all; a particle is dropped only where the cell it
-    /// occupies blocks movement. The interior twin of the ceiling rule: every
-    /// enclosed space in the world sits UNDER some column's ceiling, so a
-    /// precipitation volume can never show indoors however it is tuned, and
-    /// what an indoor volume actually needs is "not inside the wall".
     Interior,
 }
 
-/// Where an ambient volume's particles take their light.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AmbientLight {
-    /// Full skylight — correct for anything that only exists under open sky.
     #[default]
     Sky,
-    /// The world's own sampled skylight + coloured block light.
     World,
 }
 
-/// One bundle row as written in `particle_emitters.json`: exactly one of
-/// `particles` (looping), `burst` (one-shot), or `ambient` (camera volume).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawBundle {
@@ -445,18 +293,14 @@ struct RawFile {
     emitters: Vec<RawBundle>,
 }
 
-/// The bundle registered under `key`, or `None` when no such row is loaded.
 pub fn by_key(key: &str) -> Option<&'static EmitterBundle> {
     catalog().id(key).map(|id| &catalog().rows()[id as usize])
 }
 
-/// The bundle with session id `id`, or `None` for an unregistered id.
 pub fn def(id: u8) -> Option<&'static EmitterBundle> {
     defs().get(id as usize)
 }
 
-/// The loaded bundle table, id-ordered. Loads exactly once; a missing or
-/// inconsistent `particle_emitters.json` fails loudly at startup.
 pub fn defs() -> &'static [EmitterBundle] {
     catalog().rows()
 }
@@ -465,11 +309,6 @@ fn catalog() -> &'static crate::registry::Catalog<EmitterBundle> {
     &tables().0
 }
 
-/// The bundle catalog plus the biome-density table over it — one stage of
-/// every content registry, after the biomes (and the tiles and sounds bundles
-/// name). Either failing fails the registry build: a biome row naming a
-/// bundle that does not exist (or is not ambient) is a content error, not a
-/// silent no-show.
 pub(crate) static TABLES: crate::content::Slot<(
     crate::registry::Catalog<EmitterBundle>,
     BiomeTable,
@@ -502,24 +341,16 @@ fn tables() -> &'static (crate::registry::Catalog<EmitterBundle>, BiomeTable) {
     TABLES.current()
 }
 
-/// The density at which `biome` drives `bundle` — the biome row's `ambient`
-/// entry, `0` for a biome that omits a biome-driven bundle, and `1` for a
-/// bundle no biome row names at all (a mod-driven bundle is not thinned by
-/// biome unless it declares its own filter).
 #[inline]
 pub fn biome_intensity(bundle: u8, biome: u8) -> f32 {
     tables().1.intensity(bundle, biome)
 }
 
-/// The bundles some biome row drives, id-ordered. Every client derives these
-/// every frame; no mod activation is involved.
 pub fn biome_driven() -> &'static [u8] {
     &tables().1.driven
 }
 
-/// Per-(bundle, biome) density, dense over the byte id spaces.
 pub(crate) struct BiomeTable {
-    /// `cells[bundle * 256 + biome]`; rows of bundles no biome names are all 1.
     cells: Box<[f32]>,
     driven: Box<[u8]>,
 }
@@ -642,8 +473,6 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
             })
         },
     )?;
-    // Cross-bundle references resolve against the FINISHED table (an ambient
-    // may name a burst declared by any pack, in any load order).
     for row in catalog.rows() {
         if let Some(AmbientSpec {
             hit: AmbientHit::Burst(key),
@@ -670,8 +499,6 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<EmitterBundle
     Ok(catalog)
 }
 
-/// Resolve the row's biome filter to an id bitset against the stable
-/// vocabulary. Unknown names and declaring BOTH list kinds are load errors.
 fn resolve_biome_filter(key: &str, a: &AmbientSpec) -> Result<Option<[u64; 4]>, String> {
     if a.biomes.is_empty() && a.exclude_biomes.is_empty() {
         return Ok(None);
@@ -787,15 +614,9 @@ fn validate_ambient(key: &str, a: &AmbientSpec) -> Result<(), String> {
             }
         }
     }
-    // A splash is derived AT the kill height; an interior volume has no
-    // impact plane to derive it at, so the pair is a load error rather than a
-    // silently ignored field.
     if a.kill == AmbientKill::Interior && a.hit != AmbientHit::Die {
         return err("kill 'interior' has no impact point, so hit must be 'die'");
     }
-    // A splash is solved from the fall's cycle — when the drop crossed the
-    // column's kill height. A world-anchored volume has no fall to solve, so
-    // the pair is a load error rather than a silently wrong crown.
     if a.motion == AmbientMotion::Volume && a.hit != AmbientHit::Die {
         return err("motion 'volume' does not fall onto anything, so hit must be 'die'");
     }
@@ -838,8 +659,6 @@ fn validate_flight(key: &str, f: &FlightSpec) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve a flight's names against the tile manifest and the block-tag
-/// vocabulary — both load-time facts, so a typo is a load error.
 fn resolve_flight(key: &str, f: &mut FlightSpec) -> Result<(), String> {
     if let Some(name) = &f.sprite {
         let Some(tile) = Tile::from_name(name) else {

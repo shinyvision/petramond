@@ -1,9 +1,7 @@
 use super::*;
 
-/// The patch share the engine's dust rows use: a 4×4 texel fleck of a 16px tile.
 const PATCH_FRAC: f32 = 0.25;
 
-/// Full-bright shorthands over the engine's own rows.
 impl ParticleSystem {
     fn spawn_mining(&mut self, block_pos: IVec3, face_normal: IVec3, block: Block) {
         let spec = petramond_world::particle_emitters::by_key(BLOCK_DUST)
@@ -67,7 +65,6 @@ fn tile_of(p: &Particle) -> Tile {
     }
 }
 
-/// No solid surfaces (particles never hit ground).
 fn empty(_p: petramond_math::world_pos::WorldPos) -> bool {
     false
 }
@@ -75,18 +72,13 @@ fn empty(_p: petramond_math::world_pos::WorldPos) -> bool {
 /// Every fleck patch must stay STRICTLY inside its tile rect on both axes and
 /// both edges, for every tile and both atlas halves (base + dye twin). A patch
 /// touching a tile boundary samples the ADJACENT tile under nearest filtering
-/// (the iron-ore-flashes-magenta-flower bug: the old scalar `uv_size` scaled V
-/// by tile WIDTH, overshooting into the tile below in the double-height atlas).
+/// if the V coordinate reaches the tile below in the double-height atlas.
 #[test]
 fn atlas_uv_stays_strictly_inside_the_tile_rect() {
-    // Quarter of a base texel: comfortably above f32 rounding error at these
-    // magnitudes, below the half-texel inset the mapping guarantees.
     let quarter_texel = 0.25 / atlas::TILE as f32;
     for tile in Tile::all() {
         let [u0, v0, u1, v1] = atlas::tile_uv(tile);
         let (tw, th) = (u1 - u0, v1 - v0);
-        // Patch origins at the spawner's extremes (`patch_min` yields
-        // `[0, 1 - PATCH_FRAC)`; 1 - PATCH_FRAC itself is even more adverse).
         for m in [0.0, 1.0 - PATCH_FRAC] {
             for dyed in [false, true] {
                 let p = Particle {
@@ -151,7 +143,7 @@ fn alpha_fades_at_end_of_life() {
     assert_eq!(p.alpha(), 1.0, "still inside the solid phase");
     p.age = 1.0;
     assert!(p.alpha() <= 1e-6, "fully aged is transparent");
-    p.age = 0.8; // 80% through a 40% tail → 0.5
+    p.age = 0.8;
     assert!(
         (p.alpha() - 0.5).abs() < 1e-3,
         "mid-fade ~0.5, got {}",
@@ -182,7 +174,7 @@ fn render_size_shrinks_during_fade() {
         (p.render_size() - 0.1).abs() < 1e-6,
         "young particle is full size"
     );
-    p.age = 0.8; // mid-fade, alpha ~0.5
+    p.age = 0.8;
     assert!(
         (p.render_size() - 0.05).abs() < 1e-3,
         "shrinks with the fade curve"
@@ -222,10 +214,7 @@ fn spawn_break_burst_emits_a_handful() {
 
 #[test]
 fn particle_passes_inset_margin_but_stops_in_the_box() {
-    // Model-aware: a fleck drifting through the empty SIDE MARGIN of an inset/model cell
-    // keeps moving; one dropping into the actual box stops. Proves particles settle on
-    // the real shape (`point_in_solid` / `World::point_blocked`), not the full cell.
-    let chest = Block::Chest.collision_boxes(); // inset: x/z in [1/16, 15/16]
+    let chest = Block::Chest.collision_boxes();
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
     let blocked = |p: petramond_math::world_pos::WorldPos| {
         petramond_world::collision::point_in_solid(p.to_array(), |_x, y, _z| {
@@ -253,7 +242,6 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         lifetime: 100.0,
         size: 0.1,
     };
-    // In the 1/16 side margin (x = 0.02, left of the inset face at 1/16): falls through.
     let mut sys = ParticleSystem::new();
     sys.push(fleck(
         WorldPos::new(0.02, 0.5, 0.5),
@@ -265,7 +253,6 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
         sys.particles()[0].pos.y < y0,
         "a fleck in the side margin keeps falling"
     );
-    // Centred, dropping just into the box top: stops dead on the surface.
     let mut hit = ParticleSystem::new();
     hit.push(fleck(
         WorldPos::new(0.5, f64::from(chest_top + 0.02), 0.5),
@@ -282,7 +269,6 @@ fn particle_passes_inset_margin_but_stops_in_the_box() {
 #[test]
 fn grass_top_mining_dust_is_green_but_dirt_side_is_not() {
     let grass = Biome::PLAINS.grass_color();
-    // Mining the grass-block TOP samples GrassTop -> green flecks.
     let mut sys = ParticleSystem::new();
     sys.spawn_mining(IVec3::new(0, 64, 0), IVec3::Y, Block::Grass);
     assert!(!sys.is_empty());
@@ -290,14 +276,12 @@ fn grass_top_mining_dust_is_green_but_dirt_side_is_not() {
         assert_eq!(tile_of(p), Tile::from_name("grass_top").unwrap());
         assert_eq!(p.tint, grass, "grass-top dust must be tinted green");
     }
-    // Mining a grass-block SIDE samples the pre-baked GrassSide tile -> no tint.
     let mut side = ParticleSystem::new();
     side.spawn_mining(IVec3::new(0, 64, 0), IVec3::new(1, 0, 0), Block::Grass);
     for p in side.particles() {
         assert_eq!(tile_of(p), Tile::from_name("grass_side").unwrap());
         assert_eq!(p.tint, NO_TINT, "grass-block side dust stays untinted");
     }
-    // A plain non-foliage block is never tinted on any face.
     let mut stone = ParticleSystem::new();
     stone.spawn_mining(IVec3::new(0, 64, 0), IVec3::Y, Block::Stone);
     for p in stone.particles() {
@@ -311,7 +295,6 @@ fn leaf_burst_flecks_carry_the_foliage_tint() {
     let mut sys = ParticleSystem::new();
     sys.spawn_break_burst(IVec3::ZERO, Block::OakLeaves);
     assert!(!sys.is_empty());
-    // Leaves use the same tile on every face, so every fleck is foliage-tinted.
     for p in sys.particles() {
         assert_eq!(p.tint, foliage, "leaf fleck must carry the foliage tint");
     }
@@ -370,7 +353,7 @@ fn emitter_burst_count_scales_with_intensity() {
 
 #[test]
 fn burst_color_bias_favors_the_first_endpoint() {
-    let spec = splash_spec(); // bias 2.5 toward the deep first endpoint
+    let spec = splash_spec();
     let mut sys = ParticleSystem::new();
     for _ in 0..10 {
         sys.spawn_emitter_burst(
@@ -381,7 +364,6 @@ fn burst_color_bias_favors_the_first_endpoint() {
             petramond_world::light::BlockLight6::DARK,
         );
     }
-    // mix^2.5 has mean ~0.29: most droplets sit nearer color[0] (deep).
     let mean_g: f32 = sys.particles().iter().map(|p| p.tint[1]).sum::<f32>() / sys.len() as f32;
     let mid_g = (spec.color[0][1] + spec.color[1][1]) * 0.5;
     assert!(
@@ -397,8 +379,6 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
     let pool = |p: petramond_math::world_pos::WorldPos| p.y < 0.0;
     let none = |_: petramond_math::world_pos::WorldPos| false;
 
-    // Falling onto a solid: a contact-dying droplet is culled, while an
-    // ordinary fleck would have settled (velocity zeroed, still alive).
     let mut sys = ParticleSystem::new();
     sys.spawn_emitter_burst(
         &spec,
@@ -408,12 +388,11 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
         petramond_world::light::BlockLight6::DARK,
     );
     for p in &mut sys.particles {
-        p.vel = Vec3::new(0.0, -2.0, 0.0); // force straight down
+        p.vel = Vec3::new(0.0, -2.0, 0.0);
     }
     sys.tick_with(0.1, &floor, &none);
     assert!(sys.is_empty(), "droplets die on solid contact");
 
-    // Falling into water: same instant destruction.
     let mut wet = ParticleSystem::new();
     wet.spawn_emitter_burst(
         &spec,
@@ -428,7 +407,6 @@ fn die_on_contact_particles_vanish_on_blocks_and_water() {
     wet.tick_with(0.1, &none, &pool);
     assert!(wet.is_empty(), "droplets die on water contact");
 
-    // Ordinary dust on the same floor settles instead of dying.
     let mut dust = ParticleSystem::new();
     dust.spawn_break_burst(IVec3::new(0, 0, 0), Block::Stone);
     for p in &mut dust.particles {
@@ -445,7 +423,6 @@ fn tick_ages_and_culls_dead() {
     let mut sys = ParticleSystem::new();
     sys.spawn_break_burst(IVec3::ZERO, Block::Dirt);
     assert!(!sys.is_empty());
-    // Step past the maximum lifetime (3 s) so all are culled.
     for _ in 0..400 {
         sys.tick_with(0.01, &empty, &empty);
     }

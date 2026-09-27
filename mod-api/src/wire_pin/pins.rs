@@ -1,6 +1,3 @@
-//! The recorded wire bytes. Regenerate by running the pin test after a
-//! DELIBERATE ABI change and pasting the block it prints (then `make mods`).
-
 #[rustfmt::skip]
 pub(super) const PINS: &[(&str, &str)] = &[
     ("HostCall::Log", "00000161"),

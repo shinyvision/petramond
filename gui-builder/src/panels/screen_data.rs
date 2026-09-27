@@ -1,8 +1,3 @@
-//! Screen-data panel: the current kind's full data catalog from
-//! `assets/ui/bindings.json` — every state key the game populates (bindable)
-//! and every widget id it reacts to — so an author can read what a screen can
-//! do without leaving the tool.
-
 use crate::app::App;
 use eframe::egui;
 

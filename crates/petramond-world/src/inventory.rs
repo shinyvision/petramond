@@ -12,12 +12,8 @@ pub use slots::{
 
 pub const HOTBAR_LEN: usize = 9;
 pub const MAIN_LEN: usize = 27;
-pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN; // 36
+pub const TOTAL_SLOTS: usize = HOTBAR_LEN + MAIN_LEN;
 
-/// Which hand an action reads its held item from. `Main` is the selected
-/// hotbar slot; `Off` is the dedicated off-hand slot. The off-hand never
-/// participates in pickup routing (`add`) or crafting — it only holds what a
-/// player deliberately put there.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Hand {
     #[default]
@@ -31,14 +27,6 @@ pub struct Inventory {
     cursor: Option<ItemStack>,
     off_hand: Option<ItemStack>,
     active: u8,
-    /// Mutation counter for replication: bumped by every mutating public
-    /// method (conservatively — a mutable borrow via [`slot_mut`]/
-    /// [`cursor_mut`] bumps at borrow time). The server includes the full
-    /// inventory in a `SelfState` only when this moved, so a spurious bump
-    /// costs one redundant send, never a stale client.
-    ///
-    /// [`slot_mut`]: Self::slot_mut
-    /// [`cursor_mut`]: Self::cursor_mut
     revision: u64,
 }
 
@@ -58,14 +46,10 @@ impl Inventory {
     pub fn new() -> Self {
         Self::default()
     }
-    /// The mutation counter (see the field docs). Replication compares this
-    /// against the last value it shipped.
     #[inline]
     pub fn revision(&self) -> u64 {
         self.revision
     }
-    /// Mark the inventory changed. Public for callers that mutate through a
-    /// long-lived reference and can't rely on the borrow-time bump.
     #[inline]
     pub fn bump_revision(&mut self) {
         self.revision = self.revision.wrapping_add(1);
@@ -76,7 +60,6 @@ impl Inventory {
     }
     #[inline]
     pub fn slot_mut(&mut self, i: usize) -> Option<&mut Option<ItemStack>> {
-        // Conservative: assume the borrower mutates.
         self.bump_revision();
         self.slots.get_mut(i)
     }
@@ -94,7 +77,6 @@ impl Inventory {
     }
     pub fn scroll_active(&mut self, delta: i32) {
         let len = HOTBAR_LEN as i32;
-        // rem_euclid keeps the result in 0..len for any sign / magnitude.
         let next = (self.active as i32 + delta).rem_euclid(len) as u8;
         if next != self.active {
             self.active = next;
@@ -111,12 +93,9 @@ impl Inventory {
     }
     #[inline]
     pub fn off_hand_mut(&mut self) -> &mut Option<ItemStack> {
-        // Conservative: assume the borrower mutates.
         self.bump_revision();
         &mut self.off_hand
     }
-    /// The stack a `hand` holds — the one accessor every acting-hand read
-    /// resolves through, so main and off behave identically by construction.
     #[inline]
     pub fn held_in(&self, hand: Hand) -> Option<&ItemStack> {
         match hand {
@@ -130,10 +109,6 @@ impl Inventory {
         }
         self.off_hand.take()
     }
-    /// Swap the off-hand slot with inventory slot `i` — the F gesture: the
-    /// selected hotbar slot in gameplay, the hovered slot in a menu. A swap
-    /// with one side empty moves the stack across; both empty is a true
-    /// no-op (revision untouched).
     pub fn swap_off_hand_with_slot(&mut self, i: usize) {
         let Some(slot) = self.slots.get_mut(i) else {
             return;
@@ -144,15 +119,6 @@ impl Inventory {
         std::mem::swap(slot, &mut self.off_hand);
         self.bump_revision();
     }
-    /// The off-hand swap against an EXTERNAL cell (an open container's slot),
-    /// spec-checked like a click — but ALL-OR-NOTHING: a cell whose spec
-    /// refuses the off-hand stack (filter or runtime mask or take-only)
-    /// swaps NOTHING, unlike a click, which still takes. A swap is one
-    /// gesture over two stacks; half-executing it (take without give) reads
-    /// as item loss, not as a refusal. An EMPTY off-hand is a pure take and
-    /// is never gated (takes never are). Runs identically on the server's
-    /// world cell and the client's mirror cell — the `click_container_cell`
-    /// parity contract.
     pub fn swap_off_hand_with_cell(
         &mut self,
         spec: Option<&crate::container::SlotSpec>,
@@ -171,19 +137,12 @@ impl Inventory {
         self.bump_revision();
         true
     }
-    /// World-PICKUP routing: top up the OFF-HAND first when it already holds
-    /// the same item (a torch stack in the left hand keeps itself filled),
-    /// then route the remainder through the ordinary hotbar→main insertion
-    /// ([`add`](Self::add)). An empty or different-item off-hand is never a
-    /// pickup destination. Pickup is the ONLY path with this routing — gives,
-    /// crafting returns, and menu moves deliberately stay on `add`.
     pub fn pickup(&mut self, stack: ItemStack) -> Option<ItemStack> {
         match self.pickup_into_off_hand(stack) {
             None => None,
             Some(rest) => self.add(rest),
         }
     }
-    /// Capacity twin of [`pickup`](Self::pickup) — the partial-pickup planner.
     pub fn pickup_fits_count(&self, stack: ItemStack) -> u8 {
         if stack.is_empty() {
             return 0;
@@ -212,7 +171,6 @@ impl Inventory {
         (rest > 0).then(|| stack.restack(rest))
     }
     pub fn add(&mut self, stack: ItemStack) -> Option<ItemStack> {
-        // The whole inventory in slot order: hotbar `[0, 9)` then main `[9, 36)`.
         self.add_to_range(stack, 0, TOTAL_SLOTS)
     }
     fn add_to_range(&mut self, stack: ItemStack, start: usize, end: usize) -> Option<ItemStack> {
@@ -242,12 +200,6 @@ impl Inventory {
             }
         }
     }
-    /// Swap ONE of the selected stack for `replacement` — a bucket filling or
-    /// emptying in the hand. A single item swaps in place (keeping its slot);
-    /// one of a larger stack converts, with the replacement going to any open
-    /// slot. Refuses (returning `false`, changing nothing) when the selected
-    /// slot is empty or the replacement has nowhere to go — all-or-nothing, so
-    /// the world mutation it accompanies can be gated on it.
     pub fn replace_selected_one(&mut self, replacement: ItemStack) -> bool {
         self.replace_held_one(Hand::Main, replacement)
     }
@@ -264,7 +216,6 @@ impl Inventory {
         }
         stack.count -= 1;
         if self.add(replacement).is_some() {
-            // No room for the replacement anywhere: restore and refuse.
             if let Some(stack) = self.held_slot_mut(hand).as_mut() {
                 stack.count += 1;
             }
@@ -284,7 +235,6 @@ impl Inventory {
     }
     #[inline]
     pub fn cursor_mut(&mut self) -> &mut Option<ItemStack> {
-        // Conservative: assume the borrower mutates.
         self.bump_revision();
         &mut self.cursor
     }
@@ -338,9 +288,6 @@ impl Inventory {
             return;
         };
         self.bump_revision();
-        // Two passes so loose partials are merged before any full stack is split:
-        // pass 1 skips full stacks, pass 2 (only reached if room remains) takes
-        // from them too.
         for take_full in [false, true] {
             Self::drain_into(&mut cursor, &mut self.slots, take_full);
             Self::drain_into(
@@ -401,12 +348,6 @@ impl Inventory {
         self.bump_revision();
         Self::apply_right_click(&mut self.cursor, slot);
     }
-    /// One container cell's click, spec and all — the SINGLE decision the
-    /// server's menu tick and the client's optimistic mirror both run.
-    ///
-    /// Two copies of this rule is a class of bug, not one bug: whatever the
-    /// client does differently shows up as a click that lands and then snaps
-    /// back a tick later, which reads as lag rather than as a refusal.
     pub fn click_container_cell(
         &mut self,
         spec: Option<&crate::container::SlotSpec>,
@@ -414,14 +355,6 @@ impl Inventory {
         cell: &mut Option<ItemStack>,
         secondary: bool,
     ) {
-        // A slot that declares what it ACCEPTS refuses everything else on a
-        // manual click, not only on shift-routing: a filter that holds for the
-        // convenience gesture and not the deliberate one is not a filter, and
-        // a machine reading a fixed slot index cannot defend itself against
-        // what it finds there. Refusing behaves exactly like a take-only slot —
-        // the click still takes the cell's contents out. The session's
-        // `gui_state` narrows a bound slot's filters the same way on both
-        // mirrors (see `SlotSpec::accepts_mask`).
         let refuses = match spec {
             None => false,
             Some(spec) => match self.cursor() {
@@ -438,9 +371,6 @@ impl Inventory {
         }
     }
 
-    /// Click a take-only output. Primary takes the whole output when it fits;
-    /// secondary takes half onto an empty cursor, or one onto a compatible
-    /// cursor. The held cursor stack is never placed into the output cell.
     pub fn click_take_only_external_slot(&mut self, slot: &mut Option<ItemStack>, secondary: bool) {
         self.bump_revision();
         Self::apply_take_only_click(&mut self.cursor, slot, secondary);
@@ -483,7 +413,6 @@ impl Inventory {
         match (cursor.take(), slot.take()) {
             (None, None) => {}
             (None, Some(mut s)) => {
-                // ceil(count / 2): the dragged half is the larger one.
                 let take = s.count - s.count / 2;
                 s.count -= take;
                 *cursor = Some(s.restack(take));
@@ -575,23 +504,17 @@ impl Inventory {
             return;
         };
         self.bump_revision();
-        // Hotbar `[0, 9)` ships to the main grid; the main grid ships to the hotbar.
         let (start, end) = if i < HOTBAR_LEN {
             (HOTBAR_LEN, TOTAL_SLOTS)
         } else {
             (0, HOTBAR_LEN)
         };
-        // Whatever doesn't fit in the destination region stays in the source slot.
         self.slots[i] = self.add_to_range(stack, start, end);
     }
     pub fn raw_slots(&self) -> &[Option<ItemStack>; TOTAL_SLOTS] {
         &self.slots
     }
 
-    /// Atomically decrement the planned quantities from concrete inventory
-    /// slots. The crafting planner computes this against the same inventory
-    /// borrow immediately before commit; validation here keeps the mutation
-    /// all-or-nothing if a future caller ever hands in a stale plan.
     pub fn consume_slots(&mut self, takes: &[(usize, u8)]) -> bool {
         let mut totals = [0u16; TOTAL_SLOTS];
         for &(slot, count) in takes {
@@ -631,9 +554,6 @@ impl Inventory {
         true
     }
 
-    /// Every carried slot in the ONE layout the mod surface publishes and
-    /// spends in: the grid in slot order (hotbar first), then the off hand
-    /// last. The cursor is not carried — it is a click in progress.
     pub fn carried(&self) -> impl Iterator<Item = Option<&ItemStack>> {
         self.slots
             .iter()
@@ -694,8 +614,6 @@ impl Inventory {
         Some(ItemStack::with_variant(item, count, variant))
     }
 
-    /// Move the off-hand stack into the ordinary grid (the shift-click on the
-    /// off-hand cell). Whatever does not fit stays in the off-hand.
     pub fn shift_move_off_hand(&mut self) {
         let Some(stack) = self.off_hand.take() else {
             return;
@@ -731,9 +649,6 @@ mod take_tests {
         variant::intern(&m).unwrap()
     }
 
-    /// `take` is whole-or-nothing across stacks and never blends variants:
-    /// a partial take would strand a spend that already committed, and a
-    /// blended one would hand one variant's data to a stack of another.
     #[test]
     fn take_is_whole_or_nothing_and_drains_one_variant_across_stacks() {
         let tinted = tinted();
@@ -764,8 +679,6 @@ mod take_tests {
         assert!(inv.take(ItemType::Stone, 1, None).is_none());
     }
 
-    /// A named variant takes only its own stacks, even when a plain stack
-    /// sits earlier in the layout.
     #[test]
     fn take_by_data_skips_every_other_variant() {
         let tinted = tinted();
@@ -795,8 +708,6 @@ mod take_tests {
         );
     }
 
-    /// The layout is one fact the read and the spend share: the grid, then
-    /// the off hand last.
     #[test]
     fn carried_lists_the_grid_then_the_off_hand() {
         let mut inv = Inventory::new();
@@ -823,13 +734,6 @@ mod click_filter_tests {
         }
     }
 
-    /// A filtered slot refuses the cursor stack on a plain click, and refusing
-    /// still TAKES: the click is not swallowed, it just does not deposit.
-    ///
-    /// This exact call runs on BOTH sides of prediction — the client mirror in
-    /// `menu_prediction` and the server's menu tick — so a divergence here is
-    /// not a wrong pixel, it is a click that visibly lands and then snaps back
-    /// a tick later, which reads as lag rather than as a refusal.
     #[test]
     fn a_filtered_container_cell_refuses_a_place_but_still_gives_up_its_stack() {
         let fuel_only = spec(
@@ -854,13 +758,11 @@ mod click_filter_tests {
         inv.click_container_cell(Some(&fuel_only), None, &mut cell, false);
         assert!(cell.is_some(), "fuel enters a fuel slot");
 
-        // Refusing still takes: a filtered slot is not inert.
         *inv.cursor_mut() = None;
         let mut occupied = Some(ItemStack::new(coal, 3));
         inv.click_container_cell(Some(&fuel_only), None, &mut occupied, false);
         assert!(occupied.is_none(), "the click still empties the slot");
 
-        // An unfiltered slot is unchanged by any of this.
         *inv.cursor_mut() = Some(ItemStack::new(stone, 1));
         let mut open = None;
         inv.click_container_cell(Some(&unfiltered), None, &mut open, false);

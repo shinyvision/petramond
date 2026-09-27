@@ -1,37 +1,22 @@
-//! Kitchen mod: craftable food machines built entirely on the mod
-//! container-slot API, one module per machine.
+//! Kitchen mod: craftable food machines on the mod container-slot API, one module per machine.
 //!
-//! - [`oven`] — the kitchen oven: cooks like the engine furnace (fuel below,
-//!   food above, take-only output) but consumes its OWN recipe class,
-//!   `kitchen:cooking`, so it cooks food and never smelts ore. While burning
-//!   it flips to the `kitchen:oven_lit` row (fire cube + glow + particles are
-//!   that row's data).
-//! - [`vessels`] — the bowl a finished dish leaves behind, hung on the
-//!   engine's `item_used` primitive (`ItemUseEvent::Eaten`).
-//! - [`oven_draw`] — what a placed oven shows: its cooking input in the
-//!   chamber's middle and its finished output on the sill, drawn each tick
-//!   with `set_block_draw` item prims off the machine's own slots.
-//! - [`miller`] — the miller: grinds one input into its `kitchen:milling`
-//!   product every 200 ticks, no fuel. While the output slot holds anything
-//!   it flips to the `kitchen:miller_full` row (the authored `flour` cube).
+//! - [`oven`]: like the furnace but runs its own `kitchen:cooking` recipe class, so it never smelts
+//!   ore. Flips to `kitchen:oven_lit` row while burning (fire cube, glow, particles).
+//! - [`vessels`]: bowl left behind after eating, hooked into `ItemUseEvent::Eaten`.
+//! - [`oven_draw`]: draws the oven's input and output items each tick via `set_block_draw`.
+//! - [`miller`]: grinds input into `kitchen:milling` product every 200 ticks, no fuel. Flips to
+//!   `kitchen:miller_full` row while there's output waiting.
 //!
-//! Both are `MachineSpec`s over the shared `machine-core` driver, which owns
-//! the persisted world-KV anchor registries (self-healingly pruned each tick
-//! from ONE batched block read), the session registry caches, and the slot
-//! arithmetic.
+//! Both are `MachineSpec`s over `machine-core`, which owns the persisted anchor registries (pruned
+//! each tick from one batched block read), session caches, and slot arithmetic.
 //!
-//! Content is pack data (blocks/items/recipes/models/GUI documents); this
-//! crate is only the machine logic. Both machines follow the same
-//! composition rule: the RECIPE CLASSES are the extension surface — any pack
-//! adds `kitchen:cooking` / `kitchen:milling` rows (plus the
-//! `kitchen:cookable` / `kitchen:millable` slot-filter tags on its items)
-//! and the machines pick them up with no code change here or in the engine.
-//! The farming pack's dough→bread (oven) and wheat→flour (miller) rows are
-//! exactly that.
+//! This crate is only the machine logic; blocks/items/recipes/models/GUI are pack data. The recipe
+//! classes are the extension point: a pack adds `kitchen:cooking`/`kitchen:milling` rows plus the
+//! matching slot-filter tags, no code change needed here or in the engine. Farming pack's
+//! dough→bread and wheat→flour recipes work this way.
 //!
-//! Everything runs on one tick system right after the engine's own
-//! `WorldScheduled` window, reading every machine's slots through batched
-//! calls (the ABI hot-loop rule) and writing back only what changed.
+//! Runs as one tick system right after the engine's `WorldScheduled` window, reading all machine
+//! slots via batched calls and writing back only what changed.
 
 mod keys;
 mod miller;
@@ -70,7 +55,6 @@ impl Mod for Kitchen {
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
         register_event_handler(EventKind::ItemUsed, 0, ON_ITEM_USED);
-        // After WorldScheduled = right after the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
     }
 

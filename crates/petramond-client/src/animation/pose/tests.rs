@@ -7,8 +7,6 @@ use petramond_world::bbmodel::{euler_quat, face_corners};
 use super::{locomotion, pose_body};
 use crate::animation::BodyState;
 
-/// The body rig's main arm is the authored LEFT one, which the yaw+π
-/// placement shows on the visual right; the off arm is the authored right.
 const HELD_SHOULDER_BONE: &str = "left_shoulder";
 const HELD_ELBOW_BONE: &str = "left_elbow";
 const OFF_ELBOW_BONE: &str = "right_elbow";
@@ -17,9 +15,6 @@ fn body_rig() -> &'static Rig {
     rigs::presented(Presenter::Body).expect("the body rig").1
 }
 
-/// Every cube corner of one posed body, relative to its feet, in blocks —
-/// what the renderer skins from the pose array and the placement, spelled on
-/// the CPU so a pose is testable without a GPU.
 fn bake(state: &BodyState) -> Vec<Vec3> {
     let model = &body_rig().model;
     let mut pose = Vec::new();
@@ -86,11 +81,9 @@ fn swimming_gaze_stays_on_target_through_torso_rotation() {
 
 #[test]
 fn body_poses_and_walks_and_looks() {
-    // Rest pose bakes geometry standing at the feet.
     let rest = bake(&BodyState::default());
     assert!(!rest.is_empty(), "player model bakes geometry");
 
-    // Walking at two phases differs (limbs swing).
     let mut walking = BodyState {
         walk_weight: 1.0,
         ..Default::default()
@@ -100,7 +93,6 @@ fn body_poses_and_walks_and_looks() {
     let b = bake(&walking);
     assert!(differs(&a, &b), "walk animation moves the limbs");
 
-    // Head-look moves geometry while idle (the head bone override is wired).
     let turned = BodyState {
         head_yaw: 0.6,
         head_pitch: 0.3,
@@ -111,7 +103,6 @@ fn body_poses_and_walks_and_looks() {
 
 #[test]
 fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
-    // Full sneak while standing still: a crouch stance, not the upright rest.
     let rest = bake(&BodyState::default());
     let mut crouched = BodyState {
         sneak_weight: 1.0,
@@ -120,8 +111,6 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
     let stance = bake(&crouched);
     assert!(differs(&rest, &stance), "the sneak stance poses the body");
 
-    // A STILL sneaker holds the clip's first frame: the walk phase must not
-    // leak into the stance.
     crouched.anim_time = 0.4;
     assert_eq!(
         stance,
@@ -129,7 +118,6 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
         "standing sneak freezes on the sneak clip's frame 0"
     );
 
-    // A MOVING sneaker animates through the sneak clip (its own cycle)...
     crouched.walk_weight = 1.0;
     crouched.anim_time = 0.1;
     let step_a = bake(&crouched);
@@ -140,7 +128,6 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
         "sneak-walking advances the sneak cycle"
     );
 
-    // ...and that cycle is the sneak clip, not the upright walk.
     let upright = BodyState {
         walk_weight: 1.0,
         anim_time: 0.1,
@@ -154,11 +141,6 @@ fn sneak_weight_poses_the_crouch_and_replaces_the_walk_cycle() {
 
 #[test]
 fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
-    // Seated (mounted): the height shrinks by roughly a thigh (the legs
-    // fold), the lowest geometry rises off the anchor (no foot at y=0 —
-    // the shins hang from the forward knees), and the knees stick out
-    // toward the FACING (+Z at engine yaw 0), while the torso stays
-    // upright (still much taller than a lying body).
     let standing = bake(&BodyState::default());
     let seated = bake(&BodyState {
         seated: true,
@@ -186,9 +168,6 @@ fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
         "the torso stays upright (not lying): {}",
         sit_hi - sit_lo
     );
-    // Direction proof, not a reach pin: the folded legs must extend the
-    // body's FACING side (+Z at yaw 0 — the head already reaches part of
-    // the way there, so the margin is what the knees add past it).
     let (_, stand_z_hi) = span(&standing, 2);
     let (_, sit_z_hi) = span(&seated, 2);
     assert!(
@@ -199,8 +178,6 @@ fn seated_swings_the_thighs_forward_and_hangs_the_shins() {
 
 #[test]
 fn sleeping_lies_the_body_flat() {
-    // Standing spans ~1.85 blocks of height; asleep the same model must lie
-    // flat (height collapses to body thickness) and stretch horizontally.
     let standing = bake(&BodyState::default());
     let lying = bake(&BodyState {
         sleeping: true,
@@ -217,9 +194,6 @@ fn sleeping_lies_the_body_flat() {
         "sleeping body lies flat: {}",
         height(&lying)
     );
-    // The body rests on the mattress plane: the torso (2 px half-thickness)
-    // sits on it, and only the deeper head cube (4 px + hat inflate) may
-    // nestle slightly below — into the pillow — never the whole body.
     let min_y = lying.iter().map(|v| v.y).fold(f32::MAX, f32::min);
     assert!(
         min_y >= -0.2,
@@ -229,9 +203,6 @@ fn sleeping_lies_the_body_flat() {
 
 #[test]
 fn walk_weight_blends_between_rest_and_the_full_cycle() {
-    // A half-weight walk pose sits strictly between rest and the full cycle:
-    // it differs from both, so stopping eases through intermediate poses
-    // instead of flipping rest↔walk in one frame.
     let at = |walk_weight| {
         bake(&BodyState {
             anim_time: 0.25,
@@ -271,7 +242,6 @@ fn a_held_arm_ignores_the_walk_cycle_and_a_composed_one_rides_it() {
     let off_elbow = model.bone_named(OFF_ELBOW_BONE).expect("off forearm");
     let rot = Vec3::new(59.0, 19.0, -20.0);
 
-    // The fist's pose in the TORSO's frame — what "the arm moved" means.
     let fist = |gait: &str, phase: f32, hold_shoulder: bool, hold_elbow: bool, bone: usize| {
         let anim = model.animation(gait).expect(gait);
         let mut pose = model.pose_layers(&[(anim, phase, 1.0)]);
@@ -307,7 +277,6 @@ fn a_held_arm_ignores_the_walk_cycle_and_a_composed_one_rides_it() {
                 moved(rest, fist(gait, phase, true, true, elbow)) < 1e-4,
                 "a held arm must not move through the {gait} cycle"
             );
-            // Non-vacuous: the OTHER arm swings at these very phases.
             assert!(
                 moved(
                     fist(gait, 0.0, true, true, off_elbow),

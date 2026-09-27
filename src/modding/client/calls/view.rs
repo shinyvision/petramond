@@ -1,10 +1,3 @@
-//! The view-claim calls: camera, chrome, perspective, shader-param overrides,
-//! and the read of what the client actually presents.
-//!
-//! Writes land on the calling mod's own store and are resolved across mods by
-//! [`view::fold`](super::super::view::fold). The read answers the snapshot the
-//! frame dispatch published, the same way `PlayerState` answers the actor's.
-
 use mod_api::{ClientCall, HostRet, CLIENT_ENV_OVERRIDE_MAX};
 
 use crate::modding::client::state::ClientStoreData;
@@ -21,8 +14,6 @@ pub(super) fn handle(client: &mut ClientStoreData, call: ClientCall) -> HostRet 
             fov_y,
             anchor,
         } => {
-            // An anchored position is an offset, not a world point: finite
-            // is its whole contract (the border clamps the resolved point).
             let pos = match anchor {
                 Some(_) if pos.iter().all(|v| v.is_finite()) => pos,
                 Some(_) => {
@@ -73,7 +64,6 @@ pub(super) fn handle(client: &mut ClientStoreData, call: ClientCall) -> HostRet 
             None => HostRet::invalid("ClientViewState: no frame has presented yet".into()),
         },
         ClientCall::ClientViewFrameSet { size } => {
-            // The device's own limit; before a renderer has presented, only the floor.
             let max_side = client
                 .presented
                 .lock()
@@ -102,9 +92,6 @@ pub(super) fn handle(client: &mut ClientStoreData, call: ClientCall) -> HostRet 
                 ));
             }
             for (key, value) in &params {
-                // Overrides cross namespaces, like the read they answer: a
-                // param is the renderer's, not one pack's. Only the key's
-                // shape and the value's finiteness are the mod's contract.
                 if key.is_empty() || key.len() > KV_MAX_KEY_BYTES {
                     return HostRet::invalid(format!("invalid ClientEnvSet param key '{key}'"));
                 }

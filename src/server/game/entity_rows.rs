@@ -1,8 +1,3 @@
-//! Interest-scoped entity rows: each tick window refreshes every session's
-//! [`EntityInterest`](super::interest::EntityInterest), builds the row of
-//! every entity SOMEBODY tracks exactly once, and cuts each recipient's
-//! lanes as selections over those shared tables.
-
 use std::sync::Arc;
 
 use crate::events::tick::TickEvents;
@@ -19,7 +14,6 @@ use super::interest::{
 };
 use super::ServerGame;
 
-/// One recipient's entity replication for a tick window.
 pub struct RecipientEntities {
     pub mobs: MobLane,
     pub items: ItemLane,
@@ -27,9 +21,6 @@ pub struct RecipientEntities {
     pub player_actions: Arc<[(PlayerId, PlayerActionKind)]>,
 }
 
-/// One lane's rows for a window: only the entities some recipient tracks, in
-/// world order, plus where each index-order entity landed (`u32::MAX` =
-/// tracked by nobody, never built).
 struct RowTable<R> {
     rows: Arc<[R]>,
     slot: Vec<u32>,
@@ -73,9 +64,6 @@ impl<R> RowTable<R> {
 }
 
 impl ServerGame {
-    /// Advance every session's interest to this window and build each
-    /// recipient's lanes (indexed like `sessions`). A session always tracks
-    /// itself, and a tracked rider always brings its mount.
     pub(super) fn entity_lanes(&mut self, events: &TickEvents) -> Vec<RecipientEntities> {
         let mobs = self.world.mobs().instances();
         let mob_index = LaneIndex::new(mobs.iter().map(|m| (m.id(), m.pos)));
@@ -90,7 +78,6 @@ impl ServerGame {
                 MountTarget::Anchor(_) => None,
             })
             .collect();
-        // Interest never reaches past what the server streams at all.
         let view_cap = self.world.data().render_dist;
         let selections: Vec<_> = self
             .sessions
@@ -168,8 +155,6 @@ impl ServerGame {
             .collect()
     }
 
-    /// Session `s`'s player row. `hurt_recent` ships the damage EDGE —
-    /// sessions track no hurt timer; each client runs its own flash envelope.
     fn player_row(&self, s: usize, events: &TickEvents) -> PlayerStateRow {
         let sess = &self.sessions[s];
         let alive = sess.player.health() > 0;
@@ -202,9 +187,6 @@ impl ServerGame {
                 .off_hand()
                 .and_then(|st| petramond_world::item::variant::blob(st.variant))
                 .map(|b| (*b).clone()),
-            // The same overlay state `SelfState::mining` ships for the
-            // player's own hand: target cell + crack stage. Observers derive
-            // the arm-swing flag AND the remote crack overlay.
             mining: sess.sim.mining.overlay(),
             eating: sess.sim.eating.is_some(),
             eating_off_hand: sess
@@ -212,9 +194,6 @@ impl ServerGame {
                 .eating
                 .as_ref()
                 .is_some_and(|eat| eat.hand == Hand::Off),
-            // Mod-set held-item poses (`SetPlayerHeldPose`), already resolved
-            // across mods — this is what makes a raised guard visible on
-            // somebody ELSE's body.
             held_pose_main: sess.player.claims.held_pose(Hand::Main),
             held_pose_off: sess.player.claims.held_pose(Hand::Off),
             held_display: [
@@ -259,9 +238,6 @@ fn mob_row(m: &crate::mob::Instance, now: u64) -> MobStateRow {
             .iter()
             .map(|l| (l.name.clone(), l.phase))
             .collect(),
-        // Present only while the death ragdoll plays (bounded): the pose as
-        // of this tick (alpha 1.0); the client interpolates consecutive
-        // batches.
         ragdoll: m.ragdoll_pose(1.0).map(|pose| {
             pose.into_iter()
                 .map(|(p, q)| (p.to_array(), q.to_array()))

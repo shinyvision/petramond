@@ -1,7 +1,3 @@
-//! The canonical sample per ABI enum variant, in DECLARATION ORDER.
-//! Split from the pin test only because one file may not hold both and
-//! stay inside the source audit's ceiling.
-
 use super::Samples;
 use crate::*;
 
@@ -9,7 +5,6 @@ use crate::*;
 pub(super) fn samples() -> Samples {
     let mut s = Samples(Vec::new());
 
-    // --- HostCall: every variant, declaration order ------------------------
     s.pin("HostCall::Log", &HostCall::from(calls::Log { msg: "a".into() }));
     s.pin("HostCall::CurrentTick", &HostCall::from(calls::CurrentTick));
     s.pin("HostCall::RngU64", &HostCall::from(calls::RngU64 { stream_key: "s".into() }));
@@ -422,7 +417,6 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::TerrainHeightsAt", &HostCall::from(calls::TerrainHeightsAt { columns: vec![[1, -2]] }));
     s.pin("HostCall::TerrainSectionAt", &HostCall::from(calls::TerrainSectionAt { section: [1, -2, 3] }));
 
-    // --- HostRet: every variant, declaration order --------------------------
     s.pin("HostRet::Unit", &HostRet::Unit);
     s.pin("HostRet::U64", &HostRet::U64(1));
     s.pin("HostRet::Err", &HostRet::invalid("e".into()));
@@ -569,7 +563,6 @@ pub(super) fn samples() -> Samples {
         requirements: vec![StructureRequirementData { min: [-1, -2, -3], max: [1, 2, 3], space: TerrainSpace::Solid }],
     }))));
 
-    // --- GuestCall: every variant, declaration order -------------------------
     s.pin("HostRet::Loot", &HostRet::Loot(Some(Vec::new())));
     s.pin("HostRet::MobDataRows", &HostRet::MobDataRows(vec![(MobId(4), "{}".into())]));
     s.pin("HostRet::MemoClaim (value)", &HostRet::MemoClaim(MemoClaim::Value(b"v".to_vec())));
@@ -659,7 +652,6 @@ pub(super) fn samples() -> Samples {
         inputs: PlaceInputsView { hit: [0, 0, 0], normal: [0, 1, 0], place_pos: [0, 1, 0], player_facing: 0 },
     });
 
-    // --- GuestRet: every variant, declaration order --------------------------
     s.pin("GuestRet::Unit", &GuestRet::Unit);
     s.pin("GuestRet::Event", &GuestRet::Event {
         outcome: Outcome::Cancel, payload: None,
@@ -675,12 +667,7 @@ pub(super) fn samples() -> Samples {
         claims: ChannelClaims::of(&[DecisionChannel::Attack, DecisionChannel::Target]),
         tags: vec![MobTagWrite { key: "m:k".into(), value: Some(MobTagValue::Bool(true)) }],
     })));
-    // The claim mask is a bit set: a sample past bit 6 pins its width.
     s.pin("ChannelClaims (all)", &ChannelClaims::ALL);
-    // Registry ids are TWO bytes, and postcard varint-encodes them: any sample
-    // below 128 encodes byte-for-byte like the one-byte ids used to, so ONLY a
-    // high id pins the width. Without these, silently narrowing `BlockId` /
-    // `ItemId` back to `u8` would pass every other pin in this file.
     s.pin("BlockId (wide)", &BlockId(300));
     s.pin("ItemId (wide)", &ItemId(4095));
     s.pin("GuestRet::GenOutput (wide)", &GuestRet::GenOutput(vec![([1, 2, 3], BlockId(300))].into()));
@@ -712,7 +699,6 @@ pub(super) fn samples() -> Samples {
     }));
     s.pin("GuestRet::Unsupported", &GuestRet::Unsupported);
 
-    // --- EventPayload: every variant, declaration order ----------------------
     s.pin("EventPayload::BlockPlacePre", &EventPayload::BlockPlacePre {
         pos: [1, 2, 3], block: BlockId(1), facing: Facing::North, actor: EntityRef::Mob(3),
     });
@@ -825,7 +811,6 @@ pub(super) fn samples() -> Samples {
         key: "m:e".into(), data: vec![1, 2],
     });
 
-    // --- Auxiliary enums: ALL variants of each, encoded as one Vec ----------
     s.pin("Outcome::*", &vec![Outcome::Continue, Outcome::Cancel]);
     s.pin("Stage::*", &vec![
         Stage::Mining, Stage::Placement, Stage::Attack, Stage::Drops, Stage::Menu,
@@ -1175,7 +1160,6 @@ pub(super) fn samples() -> Samples {
     }]));
     s.pin("HostCall::ClientKeyLabels", &HostCall::from(calls::ClientKeyLabels { ids: vec!["open_map".into()] }));
 
-    // --- files, world capture, presentation, frames/clock/taps/media, facts ---
     let pose = crate::ClientPose { pos: [1.5, 70.0, -3.25], yaw: 0.5, pitch: -0.25 };
     let ranges = crate::ClientFileRanges {
         scope: ClientStorageScope::Pack, path: "r/w.pmc".into(), ranges: vec![[40, 80], [200, 12]],

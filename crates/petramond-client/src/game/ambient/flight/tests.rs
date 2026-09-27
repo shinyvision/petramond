@@ -4,7 +4,6 @@ use petramond_world::block::{Block, BlockTag};
 use petramond_world::particle_emitters::{AmbientHit, AmbientKill, AmbientMotion};
 use petramond_world::tile::Tile;
 
-/// A synthetic flier row: soil-bound, a 7-block lattice, a 24-block gather.
 fn flier_spec(sprite: bool) -> AmbientSpec {
     AmbientSpec {
         count_per_intensity: 0.0,
@@ -73,8 +72,6 @@ fn collect(
     );
 }
 
-/// A 3×3-chunk dirt plateau (top face 65) split down x = 0 into biome 1
-/// (west) and biome 2 (east).
 fn habitat() -> ReplicaWorld {
     habitat_with_height(|_, _| 64)
 }
@@ -286,7 +283,6 @@ fn roofs_and_overhangs_reject_flights_even_above_a_ground_floor() {
     for roof in [Block::OakPlanks, Block::Glass, Block::StoneSlab] {
         assert!(world.set_block_world(0, 70, 8, roof));
         assert!(ground(&world, 0.5).is_none());
-        // The anchor stays outside: only part of the orbit passes under the eave.
         assert!(ground(&world, -1.0).is_none());
         assert!(ground(&world, -8.0).is_some());
         assert!(world.set_block_world(0, 70, 8, Block::Air));
@@ -320,7 +316,6 @@ fn canopies_reject_ground_flights_instead_of_lifting_them_to_the_treetop() {
     for canopy_y in [67, 75] {
         assert!(world.set_block_world(0, canopy_y, 8, Block::OakLeaves));
         assert!(ground(&world, 0.5).is_none());
-        // A canopy at the orbit's edge rejects it for every flight phase too.
         assert!(ground(&world, -1.0).is_none());
         assert!(ground(&world, -8.0).is_some());
         assert!(world.set_block_world(0, canopy_y, 8, Block::Air));

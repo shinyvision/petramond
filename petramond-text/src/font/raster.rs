@@ -1,9 +1,3 @@
-//! Face rasterization: one glyph at a time, thresholded to 1 bit at the
-//! face's design size, as ink relative to the pen origin on the baseline.
-//!
-//! A [`Face`] owns its font file so glyphs can be rasterized whenever text
-//! first uses them, long after loading.
-
 use super::{FaceSource, FontError};
 use ab_glyph::{Font as _, ScaleFont as _};
 
@@ -24,33 +18,21 @@ const INK_THRESHOLD: f32 = 0.5;
 /// voting matches 7.
 const SUPERSAMPLE: i32 = 3;
 
-/// The codepoint space probed when a face declares no ranges: the Basic
-/// Multilingual Plane and the Supplementary Multilingual Plane (historic
-/// scripts, symbols, emoji). Probing (rather than walking the cmap) keeps
-/// codepoints that share one glyph — a space and a no-break space — both
-/// covered.
 const PROBE_ALL: [u32; 2] = [0x20, 0x1FFFF];
 
-/// One rasterized glyph before layout: ink pixels relative to the pen origin
-/// on the baseline (y down, negative above the baseline).
 pub(super) struct RawGlyph {
     pub advance: i32,
     pub ink: Vec<(i32, i32)>,
 }
 
-/// A face's vertical metrics at its design size, in font-pixels.
 #[derive(Clone, Copy)]
 pub(super) struct FaceMetrics {
-    /// Baseline distance from the top of the line box.
     pub ascent: i32,
-    /// Line box height (ascent + descent).
     pub line_h: i32,
 }
 
-/// One loaded face of a chain, ready to rasterize any glyph it maps.
 pub(super) struct Face {
     font: ab_glyph::FontVec,
-    /// The ab_glyph scale that renders an em of the authored pixel size.
     raster_px: f32,
     pub metrics: FaceMetrics,
 }
@@ -64,8 +46,6 @@ impl std::fmt::Debug for Face {
 }
 
 impl Face {
-    /// Parse `source` (copying its bytes, so the face outlives the caller's
-    /// buffer).
     pub fn open(source: &FaceSource<'_>) -> Result<Face, FontError> {
         let font = ab_glyph::FontVec::try_from_vec(source.bytes.to_vec())
             .map_err(|e| FontError::Parse(e.to_string()))?;
@@ -92,8 +72,6 @@ impl Face {
         })
     }
 
-    /// Every printable codepoint this face maps within `ranges` (none =
-    /// everything it maps) that `wanted` still accepts, ascending.
     pub fn coverage(&self, ranges: &[[u32; 2]], wanted: &dyn Fn(char) -> bool) -> Vec<char> {
         candidate_chars(&self.font, ranges)
             .into_iter()
@@ -101,13 +79,11 @@ impl Face {
             .collect()
     }
 
-    /// Pen advance of `ch`, in font-pixels, without rasterizing it.
     pub fn advance(&self, ch: char) -> i32 {
         let scaled = self.font.as_scaled(self.raster_px);
         scaled.h_advance(self.font.glyph_id(ch)).round().max(0.0) as i32
     }
 
-    /// Rasterize `ch` at the design size.
     pub fn raster(&self, ch: char) -> RawGlyph {
         let id = self.font.glyph_id(ch);
         let ss = SUPERSAMPLE.max(1);
@@ -118,9 +94,6 @@ impl Face {
         {
             let bounds = outline.px_bounds();
             let (hi_x, hi_y) = (bounds.min.x.floor() as i32, bounds.min.y.floor() as i32);
-            // Take the centre subpixel of each target pixel, in ABSOLUTE
-            // coordinates so a glyph's own origin cannot shift the grid under
-            // it.
             let centre = ss / 2;
             outline.draw(|x, y, coverage| {
                 if coverage < INK_THRESHOLD {
@@ -139,13 +112,10 @@ impl Face {
     }
 }
 
-/// Every printable codepoint to try, in ascending order: the declared
-/// ranges, or (none declared) everything the face maps.
 fn candidate_chars(face: &ab_glyph::FontVec, ranges: &[[u32; 2]]) -> Vec<char> {
     let mut out: Vec<char> = if ranges.is_empty() {
         let [lo, hi] = PROBE_ALL;
         let mut chars: Vec<char> = (lo..=hi).filter_map(char::from_u32).collect();
-        // Mapped codepoints beyond the probed planes (private use, tags).
         chars.extend(
             face.codepoint_ids()
                 .map(|(_, ch)| ch)
@@ -165,7 +135,6 @@ fn candidate_chars(face: &ab_glyph::FontVec, ranges: &[[u32; 2]]) -> Vec<char> {
     out
 }
 
-/// The built-in 5×7 table's vertical metrics (baseline at the bottom row).
 pub(super) fn builtin_metrics() -> FaceMetrics {
     use crate::builtin::GLYPH_H;
     FaceMetrics {
@@ -174,10 +143,6 @@ pub(super) fn builtin_metrics() -> FaceMetrics {
     }
 }
 
-/// The codepoints the built-in table draws: printable ASCII, plus its U+FFFD
-/// box when `replacement` — wanted only when the table is the primary face:
-/// at the end of a real font's chain a 5×7 box would be a speck, and the
-/// chain draws a body-sized box instead.
 pub(super) fn builtin_chars(replacement: bool) -> Vec<char> {
     (0x20u8..0x7F)
         .map(char::from)
@@ -185,7 +150,6 @@ pub(super) fn builtin_chars(replacement: bool) -> Vec<char> {
         .collect()
 }
 
-/// One built-in glyph as raw ink, baseline at the bottom row.
 pub(super) fn builtin_raw(ch: char) -> RawGlyph {
     use crate::builtin::{glyph, ADVANCE, GLYPH_H, GLYPH_W};
     let mut ink = Vec::new();

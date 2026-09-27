@@ -1,8 +1,3 @@
-//! Petramond: noise-driven voxel world with biomes and trees.
-//!
-//! Native desktop target. Worldgen runs off the render thread via an OS thread
-//! pool (rayon).
-
 pub mod account;
 pub mod capture;
 pub mod content;

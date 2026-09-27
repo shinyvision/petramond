@@ -1,11 +1,3 @@
-//! Server-side movement, on the tick: integrate each session from latched
-//! intent (F2), then soft-accept a validated client transform claim (F1).
-//! The claim checks are the anti-cheat
-//! surface: velocity envelope, per-axis displacement bound, body
-//! penetration, and ground-support verification for the fall tracker. The
-//! same drift ring bounds the reach eye ([`reach_eye`]) so a fabricated
-//! claim cannot grant remote block interaction.
-
 use crate::player::{self, Input};
 use petramond_math::math::Vec3;
 
@@ -15,36 +7,13 @@ use super::sessions::SessionRegistry;
 use crate::events::tick::TICK_DT;
 use crate::world::ServerWorld;
 
-/// Base allowance of the claim-closeness ring, in ticks of worst-case
-/// legitimate speed on top of the observed claim gap: absorbs frame/tick
-/// phase and entity-push jitter.
 const CLAIM_DRIFT_TICKS: f32 = 2.0;
-/// Flat allowance on top of the speed-proportional drift bound (step-ups,
-/// shoves, float noise).
 const CLAIM_DRIFT_SLACK: f32 = 1.0;
-/// Cap on the claim gap the drift ring scales with: past this the client
-/// must adopt `SelfTransform` corrections instead of stretching the ring
-/// (bounds how far withheld updates can displace a player).
 const MAX_CLAIM_GAP_TICKS: u32 = 40;
-/// Claimed-velocity headroom over the physics caps, applied to each axis
-/// envelope: the bodies' own slack, so every launch they make fits it.
 const CLAIM_VEL_SLACK: f32 = crate::entity::VELOCITY_SLACK;
-/// Horizontal speed cap shared by the velocity envelope and the horizontal
-/// drift ring: sprint plus headroom for every legitimate horizontal transient
-/// (PvP knockback 5.0, mob-strike knockback 6.5, entity push). Sharing the cap
-/// keeps the two checks consistent — no claim that passes the velocity
-/// envelope is rejected by the ring at the same speed.
 const CLAIM_H_SPEED: f32 = player::SPRINT * 1.5;
-/// How deep the claimed body may overlap solid collision geometry before the
-/// claim is rejected: shallow contact from step-up easing and float error is
-/// legitimate; a body meaningfully inside a block is not.
 const PENETRATION_TOL: f32 = 0.1;
 
-/// The movement stage: integrate every session against one immutable
-/// pre-mob obstacle snapshot. Building segmented solid-body geometry once
-/// keeps movement cost proportional to players + solid mobs, rather than
-/// their product just for snapshot construction. Borrows only what it
-/// touches: the world read-only, the sessions mutably.
 pub(in crate::server) fn tick_movements(world: &ServerWorld, sessions: &mut SessionRegistry) {
     let obstacles = world.mobs().solid_obstacles();
     for sess in sessions {
@@ -53,8 +22,6 @@ pub(in crate::server) fn tick_movements(world: &ServerWorld, sessions: &mut Sess
 }
 
 impl ServerGame {
-    /// Focused tests often advance one session without running the whole
-    /// stage; production uses [`tick_movements`].
     #[cfg(any(test, feature = "test-support"))]
     pub fn tick_movement(&mut self, s: usize) {
         let obstacles = self.world.mobs().solid_obstacles();
@@ -84,10 +51,6 @@ fn integrate_session(
     let claimed_on_ground = sess.input.claim_on_ground;
     let spectator = sess.player.is_spectator();
     let fresh = sess.input.claim_fresh;
-    // How many ticks the server free-ran since the previous claim — a slow
-    // client's report is that much staler, so the closeness ring (and the
-    // correction deadband) widen with it instead of rubber-banding every
-    // frame gap.
     let gap = if fresh {
         std::mem::replace(&mut sess.input.ticks_since_claim, 0)
     } else {
@@ -96,7 +59,7 @@ fn integrate_session(
     };
     sess.input.claim_fresh = false;
     if sess.sim.mount.is_some() {
-        return; // the riding pass owns a mounted transform (see above)
+        return;
     }
 
     let input = Input {
@@ -105,9 +68,6 @@ fn integrate_session(
         sprint,
         sneak,
     };
-    // Where the server's OWN integration ended this tick, if grounded —
-    // trusted ground contact for the fall tracker below (claim adoption
-    // overwrites the transform before the tracker samples it).
     let integrated_ground_y = if spectator
         || (sess.player.columns_loaded(world.data()) && body_terrain_final(&sess.player, world))
     {
@@ -118,8 +78,6 @@ fn integrate_session(
         None
     };
 
-    // F1: only soft-accept a claim from a PlayerUpdate this pump. Stale
-    // claims must not yank the player every tick (tests and idle sessions).
     let fly_scale = sess.player.fly_scale();
     let velocity_plausible = if sess.player.is_flying() {
         claimed_vel.is_finite()
@@ -132,12 +90,6 @@ fn integrate_session(
         && velocity_plausible
         && claim_within_drift(spectator, gap, claimed_pos - sess.player.pos)
         && (claim_not_deeply_penetrating(claimed_pos, world, obstacles, spectator)
-            // A body ESCAPING geometry is inside it by definition, so the
-            // anti-noclip rule cannot apply while the server's own
-            // integration is in there too: both sides run the same
-            // deterministic escape, and rejecting the claim would fight
-            // it with corrections for as long as it takes to get out.
-            // The drift ring still bounds where the claim may be.
             || !claim_not_deeply_penetrating(sess.player.pos, world, obstacles, spectator));
 
     if accept_claim {
@@ -154,11 +106,6 @@ fn integrate_session(
             .data()
             .body_fluid(pos, player::HEIGHT, petramond_world::fluid::Buoyancy::Swim);
     let swimming = immersion.is_some();
-    // On a ladder? Same feet-cell probe the shared physics uses (see
-    // `Player::update`): a climbing body's descent is controlled, so the
-    // authoritative fall tracker must re-anchor while it is on the ladder —
-    // otherwise a climb up then a step off would measure the whole climb as
-    // one fall the client physics never latched.
     let climbing = !swimming
         && world
             .data()
@@ -184,17 +131,13 @@ fn integrate_session(
         sess.sim.pending_fall = 0.0;
         sess.sim.pending_splash = 0.0;
     } else if climbing {
-        // Re-anchor like immersion, but land nothing: grabbing a ladder is not a
-        // splash, and controlled ladder descent is never fall damage.
         sess.sim.fall.reset(pos.y);
     } else {
-        // Sprinting down stairs touches each step for only a frame or two, so
-        // the once-per-tick claim samples are legitimately airborne for the
-        // whole descent and the tracker would measure the staircase as one
-        // tall fall. The server's own integration (trusted physics, never a
-        // client flag) did land on those steps: when the claim sample is
-        // airborne and dry, re-anchor the tracker at the integration's contact
-        // first — which also latches any real landing that happened between
+        // Sprinting downstairs, each step only gets touched for a frame or two, so the
+        // once-per-tick claim samples look airborne the whole way down and the tracker would count
+        // the staircase as one tall fall. Server integration (trusted physics, never a client
+        // flag) did land on those steps, so when a claim sample is airborne and dry, re-anchor the
+        // tracker at the integration's contact first. That also catches any real landing between
         // claim samples.
         if !grounded_for_fall && !swimming {
             if let Some(y) = integrated_ground_y {
@@ -217,14 +160,8 @@ fn integrate_session(
             _ => {}
         }
     }
-    // Do NOT overwrite last_reported_transform here: it stays the client's
-    // claim so a rejected claim (or tick teleport) ships SelfTransform.
 }
 
-/// The claimed velocity must fit the physics envelope: horizontal speed within
-/// the sprint cap, vertical within [terminal fall, jump take-off]. Checked
-/// per-axis — a legitimate sprint jump combines BOTH caps, so a single
-/// 3D-magnitude test would reject every airborne claim.
 fn claim_velocity_plausible(vel: Vec3, spectator: bool, fly_scale: f32) -> bool {
     if !vel.is_finite() {
         return false;
@@ -238,22 +175,11 @@ fn claim_velocity_plausible(vel: Vec3, spectator: bool, fly_scale: f32) -> bool 
         && vel.y >= -player::TERMINAL * CLAIM_VEL_SLACK
 }
 
-/// One axis of the anti-teleport bound: how far a claim may sit from the
-/// server's own integration at `rate` and still be soft-accepted. Scaled by
-/// `gap_ticks` (ticks since the previous claim): a slow client's report is
-/// stale by the whole gap and both integrations legitimately drifted apart
-/// over it. The displacement RATE stays capped at legitimate speed either way.
 fn drift_ring(rate: f32, gap_ticks: u32) -> f32 {
     let ticks = gap_ticks.min(MAX_CLAIM_GAP_TICKS) as f32 + CLAIM_DRIFT_TICKS;
     rate * TICK_DT * ticks + CLAIM_DRIFT_SLACK
 }
 
-/// Whether a claimed position sits within the drift ring of the server's own
-/// integration. Per-axis for survival players — the horizontal ring runs at
-/// the horizontal velocity envelope's speed, the vertical at terminal fall —
-/// so a fall stays as relaxed as ever while a fabricated sideways jump can no
-/// longer ride the (much larger) terminal-speed allowance. Spectators
-/// legitimately fly fast in any direction and keep one isotropic ring.
 pub fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool {
     if spectator {
         return delta.length() <= drift_ring(player::SPECTATOR_SPRINT * CLAIM_VEL_SLACK, gap_ticks);
@@ -263,15 +189,6 @@ pub fn claim_within_drift(spectator: bool, gap_ticks: u32, delta: Vec3) -> bool 
         && delta.y.abs() <= drift_ring(player::TERMINAL * CLAIM_VEL_SLACK, gap_ticks)
 }
 
-/// Whether every cell the player's body spans (plus one below the feet — the
-/// support the next step lands on) is a TRUTHFUL physics read: present, or
-/// absent with a generated summary proving uniform contents. A column counts
-/// as "loaded" from its FIRST restored section, so a freshly joined session
-/// could otherwise integrate while the sections around its body are still
-/// re-streaming — reading them as air and free-falling through terrain that
-/// pops in a moment later (buried-on-join). Until the body's cells are final,
-/// the authoritative body holds still; the client's claims (which gate on its
-/// own replica the same way) take over the moment terrain is real.
 fn body_terrain_final(player: &crate::player::Player, world: &crate::world::ServerWorld) -> bool {
     let (hw, height) = (f64::from(player::HALF_W), f64::from(player::HEIGHT));
     let (x0, x1) = (
@@ -298,13 +215,10 @@ fn body_terrain_final(player: &crate::player::Player, world: &crate::world::Serv
     true
 }
 
-/// The eye every block-reach check for this session measures from: the
-/// CLAIMED eye while the claim sits inside the F1 drift ring of the server's
-/// own integration, else the integrated eye. A legitimate client's claim is
-/// always inside the ring (outside it the claim is also rejected for movement
-/// and a `SelfTransform` correction is in flight), so reach never tightens
-/// for real clients — but a fabricated far-away claim no longer grants
-/// remote reach over mining, placement, and interaction.
+/// Reach checks measure from the claimed eye if it's inside the F1 drift ring, else from the
+/// integrated eye. Honest clients always claim inside the ring (outside it, movement rejects the
+/// claim too and a `SelfTransform` fix is on its way), so they never lose reach. Faking a far-away
+/// eye doesn't buy remote mining, placing or interacting.
 pub fn reach_eye(sess: &ConnectedPlayer) -> petramond_math::world_pos::WorldPos {
     let delta = sess.input.claim_pos - sess.player.pos;
     let spectator = sess.player.is_spectator();
@@ -316,17 +230,10 @@ pub fn reach_eye(sess: &ConnectedPlayer) -> petramond_math::world_pos::WorldPos 
     base + Vec3::new(0.0, player::EYE, 0.0)
 }
 
-/// Velocity divergence beyond which a `SelfTransform` correction ships:
-/// large enough to ignore the gravity the server accrued past the client's
-/// last report (scaled by the claim gap), small enough that a knockback
-/// impulse corrects immediately.
 pub fn vel_correction_eps(gap_ticks: u32) -> f32 {
     4.0 + gap_ticks.min(MAX_CLAIM_GAP_TICKS) as f32 * player::GRAVITY * TICK_DT
 }
 
-/// Whether the claimed body position overlaps solid collision geometry deeper
-/// than [`PENETRATION_TOL`] — the anti-noclip check, over every cell the
-/// player AABB spans.
 fn claim_not_deeply_penetrating(
     pos: petramond_math::world_pos::WorldPos,
     world: &crate::world::ServerWorld,
@@ -349,16 +256,9 @@ fn claim_not_deeply_penetrating(
         )
 }
 
-/// How far below the feet the ground-support probe reaches. Generous: any
-/// legitimately grounded pose has a collision-box top well inside this band
-/// (float noise and step-up easing keep feet within millimetres of the top).
 const GROUND_PROBE_DEPTH: f32 = 0.25;
 const GROUND_PROBE_UP: f32 = 0.05;
 
-/// Whether solid collision geometry — world cells OR a solid entity's box
-/// (standing on a boat deck) — sits directly under the feet at `pos`: the
-/// verification behind an accepted claim's `on_ground` flag (fall
-/// measurement only; the flag itself is still adopted for physics).
 fn feet_supported(
     pos: petramond_math::world_pos::WorldPos,
     world: &crate::world::ServerWorld,
@@ -380,8 +280,6 @@ fn feet_supported(
         )
 }
 
-/// Whether the world AABB `[min, max]` overlaps any collision box of any cell
-/// it spans.
 pub fn aabb_hits_collision(
     world: &crate::world::ServerWorld,
     min: [f64; 3],

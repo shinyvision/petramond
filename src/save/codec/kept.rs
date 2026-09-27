@@ -1,17 +1,3 @@
-//! Blocks and container slots this build cannot resolve, kept in their
-//! cell's KV.
-//!
-//! A cell whose disk block id the save palette cannot resolve (a removed
-//! mod's block, or one disabled for the world) loads as AIR, and the cell's
-//! KV gains [`KEPT_BLOCK_KEY`]: the disk id and the cell's state record as
-//! stored. A container slot whose item cannot be resolved loads EMPTY, and
-//! the container cell's KV gains [`KEPT_SLOTS_KEY`]. Encoding writes each
-//! back — the block into its cell while the cell is still air, a slot into
-//! its slot while that slot is still empty — and keeps both keys out of the
-//! stored KV (the next load derives them again). Any block write to the cell
-//! clears its KV (`Section::set_block`), so building there replaces the
-//! kept block, and breaking a container drops its kept slots with it.
-
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
@@ -24,15 +10,11 @@ use crate::save::container::KeptSlots;
 use crate::save::palette::Palette;
 use crate::save::wire::{from_bytes, to_bytes, wire_struct};
 
-/// The cell KV key of a kept block (value: [`KeptBlock`]).
 pub(super) const KEPT_BLOCK_KEY: &str = "petramond:kept_block";
-/// The cell KV key of a container's kept slots (value: [`KeptSlots`]).
 pub(super) const KEPT_SLOTS_KEY: &str = "petramond:kept_slots";
 
 type CellKv = CellMap<BTreeMap<String, Vec<u8>>>;
 
-/// A block kept in disk form: its disk id and its cell-state record as
-/// stored (empty when it had none).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct KeptBlock {
     pub(super) disk: u16,
@@ -40,12 +22,9 @@ pub(super) struct KeptBlock {
 }
 wire_struct!(KeptBlock { disk, state });
 
-/// What a snapshot's cell KV keeps, as the encoder needs it.
 #[derive(Default)]
 pub(super) struct KeptCells {
-    /// By cell; only cells still air.
     pub(super) blocks: CellMap<KeptBlock>,
-    /// By container cell; only cells still holding a container.
     pub(super) slots: CellMap<KeptSlots>,
 }
 
@@ -71,8 +50,6 @@ impl KeptCells {
         kept
     }
 
-    /// The cell-state records to write: every live state, and each kept
-    /// block's stored record in its cell.
     pub(super) fn cell_states<'a>(&'a self, live: &'a CellMap<ShapeState>) -> CellMap<Stored<'a>> {
         let mut states: CellMap<Stored<'a>> = live
             .iter()
@@ -92,8 +69,6 @@ fn is_kept_key(key: &str) -> bool {
     key == KEPT_BLOCK_KEY || key == KEPT_SLOTS_KEY
 }
 
-/// The cell KV as stored: without the kept keys (borrowed when there are
-/// none, the common case).
 pub(super) fn stored_kv(kv: &CellKv) -> Cow<'_, CellKv> {
     if !kv.values().any(|map| map.keys().any(|k| is_kept_key(k))) {
         return Cow::Borrowed(kv);
@@ -112,10 +87,6 @@ pub(super) fn stored_kv(kv: &CellKv) -> Cow<'_, CellKv> {
     )
 }
 
-/// The decoded cells' live states and KV: `unknown_cells` (`(cell, disk
-/// id)` of every unresolvable block) keep their disk id and stored state
-/// record under [`KEPT_BLOCK_KEY`], `kept_slots` go under [`KEPT_SLOTS_KEY`],
-/// and every other stored state translates to live.
 pub(super) fn restore_cells(
     unknown_cells: Vec<(u16, u16)>,
     mut stored_states: CellMap<Vec<u8>>,

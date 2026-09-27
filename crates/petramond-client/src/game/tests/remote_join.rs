@@ -1,7 +1,3 @@
-//! Contract tests for the remote client's entry point:
-//! `Game::new_remote` seeds the whole client from `JoinData` alone (no save,
-//! no `ServerGame`), and the roster tracks join/leave broadcasts.
-
 use crate::game::Game;
 use petramond::net::handle::ServerHandle;
 use petramond::net::protocol::{ItemSlotWire, JoinData, SelfRestore, ServerToClient};
@@ -64,7 +60,6 @@ fn new_remote_seeds_the_client_from_join_data() {
         None,
     );
 
-    // The server's consent reaches the client's mods.
     assert!(matches!(
         game.client_mods.presented().lock().context,
         mod_api::ClientContext::Remote {
@@ -73,8 +68,6 @@ fn new_remote_seeds_the_client_from_join_data() {
         }
     ));
 
-    // The locally-predicted player mirrors the restore (the wire twin of
-    // `PlayerData::restore`).
     assert_eq!(game.local.player.pos, WorldPos::new(4.5, 90.0, -7.5));
     assert_eq!(game.local.player.yaw, 1.5);
     assert_eq!(game.local.player.health(), 13);
@@ -101,7 +94,6 @@ fn new_remote_seeds_the_client_from_join_data() {
         vec![(petramond_world::effect::Effect::Regeneration, 400)],
         "effects resolve by registry name"
     );
-    // The HUD read model seeded from the same restore, before any batch.
     assert_eq!(game.replica.self_view.health, 13);
     assert_eq!(
         game.replica.self_view.inventory.selected().map(|s| s.item),
@@ -109,7 +101,6 @@ fn new_remote_seeds_the_client_from_join_data() {
     );
     assert_eq!(game.current_tick(), 0, "no tick replicated yet");
 
-    // The join roster, then live join/leave broadcasts.
     assert_eq!(game.player_roster().len(), 2);
     assert_eq!(
         game.player_roster().get(&PlayerId(1)).map(String::as_str),

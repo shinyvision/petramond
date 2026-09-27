@@ -2,7 +2,6 @@ use super::*;
 use crate::state::UiState;
 use crate::theme::Theme;
 
-/// A catalog that knows a fixed tag set, like a host's item-tag registry.
 struct Tags(&'static [&'static str]);
 
 impl EngineCatalog for Tags {
@@ -151,7 +150,6 @@ fn slot_semantics_follow_the_engine_rules() {
     assert!(slot_semantics_issues(&slot("container", r#""petramond:fuel""#), &tags).is_empty());
     let issues = slot_semantics_issues(&slot("container", r#""doctest:no_such_tag""#), &tags);
     assert!(issues[0].contains("unknown item tag"), "{issues:?}");
-    // A data key has no registry to be absent from: only its form counts.
     let data_key = slot("container", r#"{"data": "doctest:metal"}"#);
     assert!(slot_semantics_issues(&data_key, &tags).is_empty());
     let issues = slot_semantics_issues(&slot("container", r#"{"data": "metal"}"#), &tags);
@@ -187,7 +185,6 @@ fn image_refs_keep_first_reference_order_and_the_first_grid() {
     assert_eq!(
         image_refs(&d),
         vec![
-            // Anchored at the node whose grid was kept.
             ImageRef {
                 name: "a.png".into(),
                 frames: Some([2, 1]),
@@ -257,7 +254,6 @@ fn a_panel_taller_than_the_smallest_viewport_is_reported_with_its_path() {
         "{issues:#?}"
     );
 
-    // Inside a scroll, vertical overflow is the feature.
     let scrolled = doc(
         "doctest:fit",
         "screen",

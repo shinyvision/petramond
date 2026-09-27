@@ -164,8 +164,6 @@ fn representative_messages_roundtrip_through_postcard() {
 #[test]
 fn arc_backed_section_payloads_roundtrip_byte_exact() {
     let blocks: Vec<u16> = (0..4096u32).map(|i| (i % 251) as u16).collect();
-    // A COLOURED light cube: two bytes per cell, all three channels distinct,
-    // so a lane slip or an endianness flip in `SectionLight` cannot pass.
     let light: Vec<petramond_world::light::LightRgb> = (0..4096u32)
         .map(|i| {
             petramond_world::light::LightRgb::new(
@@ -208,7 +206,6 @@ fn arc_backed_section_payloads_roundtrip_byte_exact() {
         panic!("variant preserved");
     };
     assert_eq!(*got, payload);
-    // The local path never serializes: cloning the message bumps the Arc.
     let cloned = payload.clone();
     assert!(Arc::ptr_eq(&cloned.blocks.0, &payload.blocks.0));
     assert!(Arc::ptr_eq(
@@ -353,9 +350,6 @@ fn tick_updates_roundtrip() {
                     held_pose_main: None,
                     held_pose_off: None,
                     held_display: [None; 2],
-                    // Non-empty on the ROW, because this is the field that ships for
-                    // every player every tick — an encoding that silently drops it
-                    // would look exactly like nobody posing anything.
                     bone_poses: vec![crate::player::BonePose {
                         bone: 3,
                         rotation: [-11.0, 3.0, 41.0],
@@ -515,17 +509,11 @@ fn tick_updates_roundtrip() {
     })));
 }
 
-/// The section payload's block cube is palette-packed on the wire, and the
-/// only thing that can go wrong there is silent narrowing. A cube spanning
-/// the byte boundary — and one past the NARROW palette index — must come back
-/// cell-for-cell.
 #[test]
 fn wire_block_cubes_carry_ids_past_one_byte() {
     let cases: Vec<Vec<u16>> = vec![
         vec![0, 1, 255, 256, 257, 4095, 0, 256],
-        // Every cell distinct, so the packer must take its wide-index arm.
         (0..600u16).collect(),
-        // Uniform: the shortest possible palette.
         vec![777; 4096],
     ];
     for cells in cases {
@@ -560,8 +548,6 @@ fn item(id: u64, x: f64) -> ItemStateRow {
     }
 }
 
-/// A selection over a shared table encodes ONLY its picks, in pick order, and
-/// decodes to an owned set equal to it.
 #[test]
 fn a_row_selection_encodes_only_its_picks() {
     let table: Arc<[ItemStateRow]> = (0..6).map(|i| item(i, i as f64)).collect::<Vec<_>>().into();
@@ -578,8 +564,6 @@ fn a_row_selection_encodes_only_its_picks() {
     assert_eq!(back.iter().map(|r| r.id).collect::<Vec<_>>(), [1, 4]);
 }
 
-/// Folding consecutive lanes equals applying them in order: a despawn wipes
-/// the older row, a re-entry stays a spawn, the newest row per id wins.
 #[test]
 fn absorbing_a_newer_lane_composes_spawns_updates_and_despawns() {
     let mut lane: ItemLane = EntityLane {

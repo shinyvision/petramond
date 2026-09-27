@@ -1,21 +1,10 @@
-//! Manual perf harnesses (`#[ignore]`): run alone, with output, e.g.
-//! `cargo test --profile playtest --lib app::tests::perf -- --ignored --nocapture`.
-//! They print frame-time profiles instead of asserting thresholds — a timing
-//! pin would flake under load ([[perf-timing-under-load]] rules apply: run on
-//! a quiet machine and compare like with like).
-
 use super::*;
 use std::time::Instant;
 
-/// Mirrors the minimap's region storage format in its RAW mode (see
-/// `mods-src/minimap/src/codec.rs` — the decoder accepts RAW forever exactly
-/// so harnesses can fabricate values); update alongside it.
 const BASE_REGION_PREFIX: &str = "minimap:r:";
 const MIP_REGION_PREFIX: &str = "minimap:m:";
 const RAW_VERSION: u8 = 0;
 
-/// One RAW region value: 16 sub-tiles of 256 cells, cell = (le i16 height,
-/// rgb) derived from the world position by a deterministic pattern.
 fn synthetic_region_value(rx: i32, rz: i32, blocks_per_cell: i32) -> Vec<u8> {
     let mut out = Vec::with_capacity(1 + 16 * (1 + 256 * 5));
     out.push(RAW_VERSION);
@@ -48,15 +37,6 @@ fn profile(label: &str, frames: &[f64]) {
     );
 }
 
-/// Surface-sample stability audit: sample the same world across two sessions
-/// on shared client storage and report which persisted tiles get REWRITTEN
-/// with different bytes on the resample — stable host-sampled colors rewrite
-/// nothing. VERIFIED 2026-07-15: 49/49 overlapping tiles, zero rewrites —
-/// the replica's tint halo arrives atomically with each column payload and
-/// stream-finality gates the rest, so host colors are byte-stable across
-/// sessions. Playtest-observed tile churn is therefore live-world evolution
-/// (random ticks), not sampling instability. Prints per-cell analysis of any
-/// diffs (edge clustering, height vs color) should this ever regress.
 #[test]
 #[ignore = "manual audit harness (wall-clock paced): run alone with --ignored --nocapture"]
 fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
@@ -79,8 +59,6 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
         out
     };
 
-    // Both sessions sample from the same pinned spot, so their explored sets
-    // overlap fully and a byte diff is meaningful.
     let home = WorldPos::new(100.5, 90.0, 100.5);
     let session = || {
         let mut app = app_with_render_dist(4);
@@ -89,8 +67,6 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
         let mut kinds = std::collections::BTreeMap::<String, usize>::new();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut frames = 0u32;
-        // Settle terrain in, then keep sampling long enough for the mod's
-        // flush interval to fire a few times.
         while frames < 900 {
             app.frame_and_pump_recorded((1280, 720), &mut kinds);
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -134,8 +110,6 @@ fn resampled_sessions_should_rewrite_no_unchanged_tiles() {
     );
 }
 
-/// Count the full-map terrain tiles currently in the published canvas scene
-/// (excludes the player sprite): the map's "present" content.
 fn present_full_tiles(app: &TestApp) -> usize {
     app.app
         .game()
@@ -154,8 +128,6 @@ fn present_full_tiles(app: &TestApp) -> usize {
         .unwrap_or(0)
 }
 
-/// Visible full-map tile count for a pan/zoom, mirroring the mod's
-/// `full_tile_bounds` (800 px canvas, fixed 160 px tile images).
 fn expected_full_tiles(pan: [f64; 2], zoom: i8) -> usize {
     let (cell_blocks, cell_px) = match zoom {
         i8::MIN..=-2 => (2, 1),
@@ -175,12 +147,6 @@ fn expected_full_tiles(pan: [f64; 2], zoom: i8) -> usize {
     axis(pan[0]) * axis(pan[1])
 }
 
-/// Time-to-content harness for the zoomed-out world map: how long visible
-/// tiles stay blank after a zoom-out and DURING/AFTER long fast drags across
-/// a widely-explored synthetic world. The frame profile above keeps frames
-/// cheap; this one measures the latency those budgets cost. Frames are paced
-/// ~4 ms so the storage worker gets at least the slack it would have at real
-/// frame rates — frame counts here are a lower bound on the 60 fps counts.
 #[test]
 #[ignore = "manual perf harness: run alone with --ignored --nocapture"]
 fn world_map_drag_fill_latency() {
@@ -192,9 +158,6 @@ fn world_map_drag_fill_latency() {
         (eye.z.floor() as i32).div_euclid(16),
     );
 
-    // Seed explored ground along the +x drag corridor: mip regions cover the
-    // whole path (the −2 source), base regions cover it too (the adjacent
-    // −1 prefetch reads them while browsing at −2).
     let (prx, prz) = ((pcx * 16).div_euclid(64), (pcz * 16).div_euclid(64));
     let (pmx, pmz) = ((pcx * 16).div_euclid(128), (pcz * 16).div_euclid(128));
     let mut entries = Vec::new();
@@ -223,8 +186,6 @@ fn world_map_drag_fill_latency() {
     );
     println!("seeded {seeded} regions in {:.0?}", seed_started.elapsed());
 
-    // 1600×1000: the 800×800 canvas fits at native resolution, so cursor
-    // deltas are canvas deltas and the harness can mirror the mod's pan math.
     let screen = (1600u32, 1000u32);
     let frame = |app: &mut TestApp| {
         app.app.update_frame(screen);
@@ -241,7 +202,6 @@ fn world_map_drag_fill_latency() {
     assert!(app.app.screen.client_canvas_open(), "map open");
     app.app.compose_client_overlays(screen);
 
-    // The mod snapped its pan to the player position on open (zoom 0 grid).
     let zoom0 = 0i8;
     let mut pan = [(eye.x / 0.5).round() * 0.5, (eye.z / 0.5).round() * 0.5];
     let fill = |app: &mut TestApp, pan: [f64; 2], zoom: i8, label: &str| {
@@ -265,8 +225,6 @@ fn world_map_drag_fill_latency() {
     };
     fill(&mut app, pan, zoom0, "open @ zoom 0");
 
-    // Wheel to −2, anchored at the canvas center (so pan is unchanged);
-    // the app's scroll delta is positive = wheel down = zoom out.
     app.app.set_cursor_position(800.0, 500.0);
     for _ in 0..2 {
         app.app.add_scroll_delta(1.0);
@@ -276,8 +234,6 @@ fn world_map_drag_fill_latency() {
     pan = [(pan[0] / 2.0).round() * 2.0, (pan[1] / 2.0).round() * 2.0];
     fill(&mut app, pan, zoom, "zoom 0 → −2");
 
-    // Four fast right-to-left strokes: each pans +1440 blocks at −2. Track
-    // the per-frame present/expected deficit — blank tiles the player sees.
     let bpp = 2.0f64;
     let mut deficit_frames = 0u32;
     let mut deficit_sum = 0u64;
@@ -318,15 +274,9 @@ fn world_map_drag_fill_latency() {
     fill(&mut app, pan, zoom, "settle after drag");
 }
 
-/// Frame-time profile of the world map over a large synthetic explored world:
-/// open at the default zoom, then ride the wheel to the outermost (−2) level
-/// and let the progressive fill run. The "after" numbers of every world-map
-/// optimization compare against this exact scenario.
 #[test]
 #[ignore = "manual perf harness: run alone with --ignored --nocapture"]
 fn world_map_zoom_out_frame_profile() {
-    // Manual harness: surface the engine's slow-dispatch diagnostics when
-    // run with RUST_LOG=petramond::modding::perf=debug.
     let _ = env_logger::builder().is_test(true).try_init();
     let mut app = app();
     let eye = app.app.game().listener_position();
@@ -335,9 +285,6 @@ fn world_map_zoom_out_frame_profile() {
         (eye.z.floor() as i32).div_euclid(16),
     );
 
-    // Cover the −2 viewport generously with both stores: ±16 base regions
-    // (= ±64 chunk tiles, ~22 MB raw) plus the mip regions over the same
-    // ground — the "long-played world" case that stuttered.
     let (prx, prz) = ((pcx * 16).div_euclid(64), (pcz * 16).div_euclid(64));
     let (pmx, pmz) = ((pcx * 16).div_euclid(128), (pcz * 16).div_euclid(128));
     let mut entries = Vec::new();
@@ -373,7 +320,6 @@ fn world_map_zoom_out_frame_profile() {
         started.elapsed().as_secs_f64() * 1e3
     };
 
-    // Warmup + open the map at the default zoom.
     for _ in 0..10 {
         frame(&mut app);
     }
@@ -387,7 +333,6 @@ fn world_map_zoom_out_frame_profile() {
     assert!(app.app.screen.client_canvas_open(), "map open");
     profile("open @ zoom 0", &open_frames);
 
-    // Wheel down to −2 with the cursor centered on the canvas.
     app.app.compose_client_overlays(screen);
     app.app.set_cursor_position(640.0, 360.0);
     let mut zoom_frames = Vec::new();
@@ -400,14 +345,12 @@ fn world_map_zoom_out_frame_profile() {
     }
     profile("zoom to −2 + fill", &zoom_frames);
 
-    // Steady state: everything loaded and rastered.
     let mut steady_frames = Vec::new();
     for _ in 0..60 {
         steady_frames.push(frame(&mut app));
     }
     profile("steady @ −2", &steady_frames);
 
-    // Pan a long diagonal drag: boundary crossings + band loads.
     app.app
         .set_pointer_button(petramond_world::gui_state::PointerButton::Primary, true);
     let mut pan_frames = Vec::new();

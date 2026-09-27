@@ -1,13 +1,9 @@
-//! The ORDER of every file operation, with no I/O: one ordered queue per
-//! file, the dependencies between operations, and what a queue says about a
-//! file's size before it lands.
+//! Order of file ops, no I/O. One queue per file, deps between ops, what a queue implies about file
+//! size before it lands.
 //!
-//! Every mutation of one file waits for the one queued before it, so a file's
-//! mutations land in submission order while different files proceed in
-//! parallel. A read waits only for the last queued mutation whose bytes it
-//! overlaps. A directory operation (a delete or a rename) waits for
-//! everything queued under it, and everything queued under it later waits
-//! for it.
+//! Mutations on a file land in submission order, one waits on the previous. Different files run in
+//! parallel. A read only waits on the last queued mutation overlapping its bytes. Delete/rename
+//! wait on everything queued under them, and later ops under them wait on the dir op.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::ops::Bound;
@@ -17,10 +13,6 @@ use rustc_hash::FxHashMap;
 
 pub(super) type OpId = u64;
 
-/// A file or directory's identity: its bucket's `files` directory (by
-/// number, so comparing keys never walks a path) and its path there,
-/// CASE-FOLDED, so two names one filesystem would store as one file always
-/// share one queue.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub(in crate::modding) struct FileKey {
     pub root: u64,
@@ -36,7 +28,6 @@ impl FileKey {
     }
 }
 
-/// Every key strictly under `dir` (`""` = the bucket's root).
 pub(super) fn under<V>(map: &BTreeMap<FileKey, V>, dir: &FileKey) -> Vec<FileKey> {
     if dir.folded.is_empty() {
         return map
@@ -49,16 +40,13 @@ pub(super) fn under<V>(map: &BTreeMap<FileKey, V>, dir: &FileKey) -> Vec<FileKey
         root: dir.root,
         folded: format!("{}{last}", dir.folded).into(),
     };
-    // '0' follows '/', so every "dir/..." sorts inside this range.
     map.range(bound('/')..bound('0'))
         .map(|(key, _)| key.clone())
         .collect()
 }
 
-/// What one queued mutation does to its file's size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Effect {
-    /// Adds bytes at the end; `None` = a record whose size is not known yet.
     Grow(Option<u64>),
     Put {
         offset: u64,
@@ -66,9 +54,7 @@ pub(super) enum Effect {
         truncate: bool,
     },
     Sync,
-    /// Deleted, or renamed away.
     Gone,
-    /// Renamed onto, with the size the source will have (if known).
     Replace(Option<u64>),
 }
 
@@ -77,7 +63,6 @@ struct Entry {
     effect: Effect,
 }
 
-/// What the store last knew of a file on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Disk {
     Unknown,
@@ -87,16 +72,11 @@ pub(super) enum Disk {
 
 pub(super) struct FileState<H> {
     queue: VecDeque<Entry>,
-    /// Reads and listings not yet finished, with their `[offset, end)`.
     reads: BTreeMap<OpId, [u64; 2]>,
     pub disk: Disk,
     pub modified_ms: Option<u64>,
-    /// The most recent write failure, cleared by a later successful write.
     pub error: Option<String>,
-    /// Open while mutations are queued; closed when the file goes idle, so
-    /// a mod with ten thousand files never holds ten thousand descriptors.
     pub handle: Option<H>,
-    /// Written since it was last synced.
     pub dirty: bool,
 }
 
@@ -119,8 +99,6 @@ impl<H> FileState<H> {
         !self.queue.is_empty()
     }
 
-    /// The size the file will have once every queued mutation whose size is
-    /// known has landed, from `base` (its size now); `None` = no file.
     pub fn projected(&self, base: Option<u64>) -> Option<u64> {
         self.queue
             .iter()
@@ -141,10 +119,7 @@ impl<H> FileState<H> {
             })
     }
 
-    /// The last queued mutation that changes any byte of `[start, end)`.
     fn last_touching(&self, start: u64, end: u64) -> Option<OpId> {
-        // A lower bound on the file's size before each entry lands: a record
-        // whose size is unknown still lands at or past it.
         let mut len = match self.disk {
             Disk::Len(n) => n,
             _ => 0,
@@ -162,7 +137,6 @@ impl<H> FileState<H> {
                     len: n,
                     truncate,
                 } => {
-                    // A write past the end also turns the gap into zeros.
                     let from = offset.min(len);
                     let hit = end > from && (truncate || start < offset + n);
                     len = if truncate {
@@ -232,8 +206,6 @@ impl<J, H> Sched<J, H> {
         deps.extend(key.ancestors().filter_map(|dir| self.last_of(&dir)));
     }
 
-    /// The last mutation of `key` and of everything under it, and every read
-    /// of them not yet finished.
     fn subtree_deps(&self, key: &FileKey, deps: &mut Vec<OpId>) {
         for k in std::iter::once(key.clone()).chain(under(&self.files, key)) {
             if let Some(file) = self.files.get(&k) {
@@ -271,8 +243,6 @@ impl<J, H> Sched<J, H> {
         id
     }
 
-    /// A mutation of one file: an append, a positioned write, a sync, or an
-    /// engine record (`held` = it waits for its bytes too).
     pub fn mutate(&mut self, key: &FileKey, effect: Effect, job: J, held: bool) -> OpId {
         let mut deps: Vec<OpId> = self.last_of(key).into_iter().collect();
         self.ancestor_deps(key, &mut deps);
@@ -285,7 +255,6 @@ impl<J, H> Sched<J, H> {
             Some(file),
         ) = (effect, self.files.get(key))
         {
-            // A read queued earlier must not see bytes written after it.
             let end = if truncate { u64::MAX } else { offset + len };
             deps.extend(
                 file.reads
@@ -299,8 +268,6 @@ impl<J, H> Sched<J, H> {
         id
     }
 
-    /// Rename `from` onto `to`, after everything queued to, under or reading
-    /// either.
     pub fn relocate(&mut self, from: &FileKey, to: &FileKey, job: J) -> OpId {
         let mut deps = Vec::new();
         for key in [from, to] {
@@ -324,8 +291,6 @@ impl<J, H> Sched<J, H> {
         id
     }
 
-    /// Delete `key` and everything under it, after the mutations queued
-    /// there. The reads still WAITING there come back, to be failed by name.
     pub fn delete(&mut self, key: &FileKey, job: J) -> (OpId, Vec<J>) {
         let mut failed = Vec::new();
         for k in std::iter::once(key.clone()).chain(under(&self.files, key)) {
@@ -355,8 +320,6 @@ impl<J, H> Sched<J, H> {
         (id, failed)
     }
 
-    /// Read `[offset, offset + len)` of `key`, after exactly the queued
-    /// mutations that change those bytes.
     pub fn read(&mut self, key: &FileKey, offset: u64, len: u64, job: J) -> OpId {
         let end = offset.saturating_add(len.max(1));
         let mut deps: Vec<OpId> = self
@@ -371,14 +334,11 @@ impl<J, H> Sched<J, H> {
         id
     }
 
-    /// List `dir`, after whatever queued before it creates, deletes or
-    /// renames something in it.
     pub fn list(&mut self, dir: &FileKey, job: J) -> OpId {
         let mut deps: Vec<OpId> = self.last_of(dir).into_iter().collect();
         self.ancestor_deps(dir, &mut deps);
         for key in under(&self.files, dir) {
             let queue = &self.files[&key].queue;
-            // The first queued mutation creates the file if anything does.
             deps.extend(queue.front().map(|entry| entry.op));
             deps.extend(
                 queue
@@ -393,12 +353,10 @@ impl<J, H> Sched<J, H> {
         id
     }
 
-    /// Work with no file to order it: it runs as soon as a thread is free.
     pub fn detached(&mut self, job: J) -> OpId {
         self.add(job, Vec::new(), 0, Vec::new())
     }
 
-    /// The operations queued to `key` after `op`, in order.
     pub fn queued_behind(&self, key: &FileKey, op: OpId) -> Vec<OpId> {
         self.files.get(key).map_or_else(Vec::new, |file| {
             file.queue
@@ -414,7 +372,6 @@ impl<J, H> Sched<J, H> {
         self.ops.get_mut(&op).and_then(|op| op.job.as_mut())
     }
 
-    /// A held record learned its size and may run once its turn comes.
     pub fn release(&mut self, op: OpId, len: u64) {
         let Some(entry) = self.ops.get_mut(&op) else {
             return;
@@ -444,7 +401,6 @@ impl<J, H> Sched<J, H> {
         None
     }
 
-    /// Nothing queued, waiting or ready.
     pub fn is_idle(&self) -> bool {
         self.ops.is_empty()
     }
@@ -453,8 +409,6 @@ impl<J, H> Sched<J, H> {
         self.ready.len()
     }
 
-    /// `op` is over: its files' queues move on, and whatever waited only for
-    /// it becomes ready.
     pub fn finish(&mut self, id: OpId) {
         let Some(op) = self.ops.remove(&id) else {
             return;
@@ -463,7 +417,6 @@ impl<J, H> Sched<J, H> {
             let Some(file) = self.files.get_mut(key) else {
                 continue;
             };
-            // A file's mutations run in order, so the finished one is first.
             if file.queue.front().is_some_and(|entry| entry.op == id) {
                 file.queue.pop_front();
             } else {
@@ -472,7 +425,6 @@ impl<J, H> Sched<J, H> {
             file.reads.remove(&id);
             if file.queue.is_empty() {
                 file.handle = None;
-                // A file only read keeps nothing worth its entry.
                 if file.reads.is_empty()
                     && file.error.is_none()
                     && !matches!(file.disk, Disk::Len(_))
@@ -491,7 +443,6 @@ impl<J, H> Sched<J, H> {
         }
     }
 
-    /// `key` and every key under it.
     pub fn subtree(&self, key: &FileKey) -> Vec<FileKey> {
         let mut keys = under(&self.files, key);
         keys.insert(0, key.clone());
@@ -518,9 +469,6 @@ mod tests {
         sched.file_mut(key).disk = Disk::Len(len);
     }
 
-    /// A read runs at once over bytes that have landed, whatever the file's
-    /// queue holds, and waits for exactly the queued writes it overlaps —
-    /// including a record queued ahead whose size nobody knows yet.
     #[test]
     fn a_read_waits_only_for_the_queued_writes_it_overlaps() {
         let mut sched = Sched::<&'static str, ()>::default();
@@ -550,10 +498,6 @@ mod tests {
         assert_eq!(ready(&mut sched), vec!["overlaps the write"]);
     }
 
-    /// A rename waits for every write queued to either name, and a delete
-    /// for everything queued under it; what is queued under a directory
-    /// after its delete waits for the delete, and a read still waiting there
-    /// comes back to be failed.
     #[test]
     fn renames_and_deletes_are_ordered_after_queued_writes() {
         let mut sched = Sched::<&'static str, ()>::default();

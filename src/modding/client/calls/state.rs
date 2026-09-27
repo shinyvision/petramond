@@ -1,7 +1,3 @@
-//! `ClientWorldStateWrite`: the presented world's state into a mod file.
-//! The selection is taken here, on the frame, as handles; the record is
-//! encoded and written off it (`capture::state`).
-
 use mod_api::capture::{ClientCapturedSession, ClientStateTicketData};
 use mod_api::{ClientCaptureCall, ClientFileAnswer, HostRet};
 

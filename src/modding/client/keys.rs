@@ -1,14 +1,8 @@
-//! Client key actions: the ABI's key names, the default-collision rule, and
-//! where a registered action may fire.
-
 use petramond_input::controls::{
     fixed_control_from_key_code, BindMods, BindableAction, Binding, BindingSet, BoundInput,
 };
 use petramond_input::keycode::KeyCode;
 
-/// The ABI name of a physical key: the snake_case of its position name —
-/// `KeyA` → `key_a`, `Digit1` → `digit_1`, `ArrowLeft` → `arrow_left`,
-/// `Numpad0` → `numpad_0`, `F9` → `f9` (a one-letter word keeps its number).
 pub fn key_name(code: KeyCode) -> String {
     let name = code.name();
     let mut out = String::with_capacity(name.len() + 4);
@@ -37,7 +31,6 @@ pub fn key_name(code: KeyCode) -> String {
     out
 }
 
-/// The key behind an ABI key name, or `None` for a name no key has.
 pub fn key_code_for_name(name: &str) -> Option<KeyCode> {
     KeyCode::ALL
         .iter()
@@ -45,7 +38,6 @@ pub fn key_code_for_name(name: &str) -> Option<KeyCode> {
         .find(|&code| key_name(code) == name)
 }
 
-/// The engine binding a registered DEFAULT is.
 pub(super) fn default_binding(code: KeyCode, mods: mod_api::ClientKeyMods) -> Binding {
     Binding {
         mods: BindMods {
@@ -58,12 +50,6 @@ pub(super) fn default_binding(code: KeyCode, mods: mod_api::ClientKeyMods) -> Bi
     }
 }
 
-/// Why a registered default may not stand, if it may not. A default the
-/// player would meet in GAMEPLAY must not equal an engine default binding
-/// (key and chord) or a bare fixed control — the player could no longer
-/// tell who owns the key out of the box. A default that fires only over the
-/// mod's own screens shadows nothing there but Escape, which always belongs
-/// to the engine. Remaps are the player's own choice and are not policed.
 pub(super) fn default_refusal(binding: Binding, gameplay: bool) -> Option<&'static str> {
     if binding.input == BoundInput::Key(KeyCode::Escape) {
         return Some("Escape always belongs to the engine");
@@ -84,9 +70,6 @@ pub(super) fn default_refusal(binding: Binding, gameplay: bool) -> Option<&'stat
         .then_some("it is an engine default binding")
 }
 
-/// Where one registered action may fire, as the app reports the frame: the
-/// world takes gameplay input, and which client screen (document kind or
-/// canvas key) is open.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct KeyContext<'a> {
     pub gameplay: bool,
@@ -122,8 +105,6 @@ mod tests {
             ctrl,
             ..Default::default()
         };
-        // A chord and its bare key are different bindings, so an engine chord
-        // no longer poisons its bare key (Ctrl+Z used to refuse Z).
         let default_chord = BindableAction::ALL
             .iter()
             .map(|a| BindingSet::default().binding(*a))

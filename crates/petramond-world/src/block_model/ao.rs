@@ -31,53 +31,30 @@ use super::geometry::posed_cube_bounds;
 use super::query::ray_box_face_hit;
 use super::ModelCube;
 
-/// One WORLD pixel in footprint space (16 px = 1 cell).
 const PX: f32 = 1.0 / 16.0;
-/// How far a caster can reach: occlusion falls linearly to zero at this distance.
 const REACH: f32 = 2.0 * PX;
-/// Maximum total darkening of a fully occluded corner (shade multiplier `1 - CAP`).
 const MAX_DARKEN: f32 = 0.5;
-/// Minimum caster thickness: at or below this an element casts nothing.
 const THIN_MIN: f32 = 0.5 * PX;
-/// Full caster participation at or above this thickness.
 const THIN_FULL: f32 = 2.0 * PX;
-/// Ray origins are lifted off the face plane so a ray never re-hits geometry at
-/// or below its own surface (flush coplanar neighbours forming one continuous
-/// surface are geometrically unreachable by a rising ray).
 const ORIGIN_LIFT: f32 = 0.25 * PX;
-/// A hit must rise at least this far above the receiving face plane to count —
-/// the numerical backstop behind the lifted-origin guarantee.
 const MIN_RISE: f32 = 0.1 * PX;
 
-/// Contact stamp: maximum darkening of the terrain texel under the model.
 const CONTACT_MAX_DARKEN: f32 = 0.3;
-/// Vertical reach of the contact field: a cuboid floating higher than this above
-/// the model floor stamps nothing (a tabletop casts no floor blob — its legs do).
 const CONTACT_REACH: f32 = 2.0 * PX;
-/// Horizontal falloff of the stamp beyond the cuboid's footprint edge.
 const CONTACT_SPREAD: f32 = 10.0 * PX;
-/// Corner-grid resolution of the per-cell contact field (an 8×8 quad lattice).
 pub(super) const CONTACT_GRID: usize = 9;
 
-/// Caster participation weight from the cuboid's minimum authored extent:
-/// 0 at ≤ [`THIN_MIN`], fading to 1 at ≥ [`THIN_FULL`].
 fn caster_weight(cube: &ModelCube) -> f32 {
     let thick = (cube.to - cube.from).abs().min_element();
     ((thick - THIN_MIN) / (THIN_FULL - THIN_MIN)).clamp(0.0, 1.0)
 }
 
-/// The cube's static tilt about its pivot (the same pose every other consumer
-/// composes).
 fn cube_tilt(cube: &ModelCube) -> Mat4 {
     Mat4::from_translation(cube.origin)
         * Mat4::from_quat(euler_quat(cube.rotation))
         * Mat4::from_translation(-cube.origin)
 }
 
-/// Deterministic hemisphere ray set in the face's tangent frame:
-/// `(tangent, bitangent, normal)` coefficients. Two elevation rings of eight
-/// azimuths plus the face normal — enough directions for a smooth gradient at
-/// this reach, few enough that the whole bake is startup noise.
 fn hemisphere_rays() -> Vec<[f32; 3]> {
     let mut rays = Vec::with_capacity(17);
     for &elev_deg in &[30.0f32, 60.0] {
@@ -91,9 +68,6 @@ fn hemisphere_rays() -> Vec<[f32; 3]> {
     rays
 }
 
-/// One cuboid as the face bake sees it: its authored box, the transform that
-/// poses it among the others, which faces it draws, and whether it may
-/// darken its neighbours.
 pub struct AoBox {
     pub from: Vec3,
     pub to: Vec3,
@@ -102,7 +76,6 @@ pub struct AoBox {
     pub casts: bool,
 }
 
-/// Per-caster precomputation for the ray casts.
 struct Caster {
     pose: Mat4,
     inv_pose: Mat4,
@@ -111,11 +84,6 @@ struct Caster {
     weight: f32,
 }
 
-/// Bake the per-cube, per-face (`Face::ALL` slot order), per-corner
-/// (`face_corners` order) shade multipliers. `face_opaque(cube, face, mn, mx,
-/// local_hit)` answers whether the caster's texel at the hit is opaque — the
-/// production closure samples the model atlas exactly like the pixel-perfect ray
-/// pick; tests inject constants. Faces a cube omits keep 1.0.
 pub(super) fn bake_face_ao(
     cubes: &[ModelCube],
     face_opaque: impl Fn(&ModelCube, Face, Vec3, Vec3, Vec3) -> bool,
@@ -135,13 +103,6 @@ pub(super) fn bake_face_ao(
     })
 }
 
-/// The face bake over any posed boxes. `px` is one WORLD pixel (1/16 block) in
-/// the boxes' own units, so reach and the thin-caster guards mean the same
-/// distance on a block model in footprint space and a creature in authored
-/// pixels at its species' scale. `curve` shapes the response without moving
-/// its ends: a corner's occlusion (0..1) is raised to it before it darkens, so
-/// below 1 light occlusion bites sooner — a steeper falloff into the same
-/// darkest corner — and 1 is the linear response static models were tuned at.
 pub fn bake_box_ao(
     boxes: &[AoBox],
     px: f32,
@@ -179,8 +140,6 @@ pub fn bake_box_ao(
                 let local = face_corners(face, cube.from, cube.to);
                 let es = Vec3::from(local[1]) - Vec3::from(local[0]);
                 let et = Vec3::from(local[3]) - Vec3::from(local[0]);
-                // Degenerate tangent frame (a cube flat on two+ axes) — never
-                // emitted anyway.
                 if es.length_squared() < 1e-10 || et.length_squared() < 1e-10 {
                     continue;
                 }
@@ -213,9 +172,6 @@ pub fn bake_box_ao(
                                 if contrib <= best {
                                     continue;
                                 }
-                                // Only geometry genuinely RISING above the
-                                // receiving plane occludes; a flush coplanar
-                                // continuation of the same surface does not.
                                 let hit_fp = other.pose.transform_point3(hit);
                                 if (hit_fp - posed).dot(normal) < min_rise {
                                     continue;
@@ -237,15 +193,10 @@ pub fn bake_box_ao(
         .collect()
 }
 
-/// Bake the contact-shadow field for the floor cell at `(cx, cz)` — a bottom
-/// footprint cell OR a ring cell of the one-cell dilation around the footprint
-/// (coordinates may be `-1` / `footprint`): darkening at the corners of an 8×8
-/// lattice over that cell's floor, from substantial cuboids within
-/// [`CONTACT_REACH`] of the model floor (`y = 0` in footprint space). The
-/// one-cell ring is sufficient by construction: [`CONTACT_SPREAD`] plus any
-/// authored caster overhang stays within 16 px of the footprint edge. Per-caster
-/// contributions MAX-combine; `None` when nothing near this cell reaches the
-/// floor.
+/// Contact shadow for floor cell `(cx, cz)`. The cell can be in the footprint or in the ring one
+/// cell outside it, so the coords may be `-1` or `footprint`. Casters are cuboids within
+/// [`CONTACT_REACH`] of the floor. One ring is enough since [`CONTACT_SPREAD`] plus overhang stays
+/// within 16px. Strongest caster wins. `None` if nothing reaches the floor.
 pub(super) fn bake_contact_field(
     cubes: &[ModelCube],
     cx: i32,
@@ -322,19 +273,14 @@ mod tests {
         Face::ALL.iter().position(|&f| f == face).unwrap()
     }
 
-    /// A table leg under a top: the leg's side-face corners TOUCHING the top
-    /// darken, the corners at the floor stay unshaded, and the cap holds.
     #[test]
     fn joint_corners_darken_within_the_cap() {
         let cubes = vec![
-            // Leg: 2px square column up to y=0.75.
             cube([0.4375, 0.0, 0.4375], [0.5625, 0.75, 0.5625]),
-            // Top: full-cell slab above it.
             cube([0.0, 0.75, 0.0], [1.0, 0.875, 1.0]),
         ];
         let ao = bake_face_ao(&cubes, |_, _, _, _, _| true);
         let side = &ao[0][slot(Face::PosX)];
-        // face_corners order is bl, br, tr, tl: the two `t` corners touch the top.
         assert!(
             side[2] < 1.0 && side[3] < 1.0,
             "top corners darken: {side:?}"
@@ -355,13 +301,10 @@ mod tests {
         }
     }
 
-    /// Thin elements (≤ 0.5 px) cast nothing — a decal plane next to a face
-    /// leaves it fully lit.
     #[test]
     fn thin_casters_cast_nothing() {
         let cubes = vec![
             cube([0.0, 0.0, 0.0], [0.5, 0.5, 0.5]),
-            // A plane rising flush against the first cube's +X face.
             cube([0.51, 0.0, 0.0], [0.51, 1.0, 0.5]),
         ];
         let ao = bake_face_ao(&cubes, |_, _, _, _, _| true);
@@ -372,8 +315,6 @@ mod tests {
         }
     }
 
-    /// Two flush cubes forming one continuous surface: no darkening anywhere on
-    /// the shared top plane (the classic bake false-positive).
     #[test]
     fn flush_coplanar_surfaces_stay_unshaded() {
         let cubes = vec![
@@ -389,7 +330,6 @@ mod tests {
         }
     }
 
-    /// A caster whose texels are all transparent occludes nothing.
     #[test]
     fn transparent_casters_cast_nothing() {
         let cubes = vec![
@@ -413,11 +353,8 @@ mod tests {
         }
     }
 
-    /// The contact field darkens under near-floor geometry, fades out with
-    /// distance, ignores thin planes and floating cuboids, and holds its cap.
     #[test]
     fn contact_field_covers_floor_geometry_only() {
-        // A leg in the cell's -X/-Z quarter.
         let leg = cube([0.1, 0.0, 0.1], [0.3, 0.8, 0.3]);
         let field = bake_contact_field(std::slice::from_ref(&leg), 0, 0).expect("leg stamps");
         assert!(field[1][1] > 0.0, "under the leg darkens");

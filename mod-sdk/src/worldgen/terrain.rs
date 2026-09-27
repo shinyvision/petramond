@@ -1,18 +1,10 @@
-//! Bounded material reads for features that cross section boundaries.
-
 use crate::{terrain_section_at, BlockId};
 use std::collections::{HashMap, VecDeque};
 
 pub struct TerrainCache {
     capacity: usize,
-    /// Tile slot per section, the tiles themselves, and the free slots left
-    /// by evictions; a planner reads thousands of cells from the same few
-    /// tiles, so the slot of the last tile read answers most reads without a
-    /// map lookup.
     slots: HashMap<[i32; 3], usize>,
     tiles: Vec<Option<Box<[BlockId]>>>,
-    /// Each resident tile's distinct ids, sorted: what a feature asks before
-    /// walking a tile for blocks it may not hold at all.
     ids: Vec<Vec<BlockId>>,
     free: Vec<usize>,
     order: VecDeque<[i32; 3]>,
@@ -32,7 +24,6 @@ impl TerrainCache {
         }
     }
 
-    /// Positional values belong to one world-generation input set.
     pub fn clear(&mut self) {
         self.slots.clear();
         self.tiles.clear();
@@ -46,8 +37,6 @@ impl TerrainCache {
         self.block_with(pos, terrain_section_at)
     }
 
-    /// Whether the section holding `pos` contains any of `ids`, fetching the
-    /// section if it is not resident.
     pub fn section_has_any(&mut self, pos: [i32; 3], ids: &[BlockId]) -> Option<bool> {
         self.section_has_any_with(pos, ids, terrain_section_at)
     }
@@ -70,7 +59,6 @@ impl TerrainCache {
         )
     }
 
-    /// `query` answers one section's 4,096 cells in section order.
     fn block_with(
         &mut self,
         pos: [i32; 3],

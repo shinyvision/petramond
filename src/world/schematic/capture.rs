@@ -15,13 +15,10 @@ enum SnapshotSection {
     Uniform(Block),
 }
 
-/// Immutable section handles taken at one tick; cell reads happen on the worker.
 pub(crate) struct Capture {
     name: String,
     regions: Vec<SelectionBox>,
     include_air: bool,
-    /// Keep only the public construction design: no stored inventories,
-    /// machine state, or cell data an item does not carry.
     public_only: bool,
     sections: FxHashMap<SectionPos, SnapshotSection>,
 }
@@ -72,8 +69,6 @@ impl Capture {
             };
             nearby.iter().any(|r| r.intersection(bounds).is_some())
         };
-        // Retain final sections for compound members too. Cloning these handles
-        // does not copy blocks, inventories or mod data; writes use copy-on-write.
         let mut sections = FxHashMap::default();
         for (sp, section) in &world.data.sections {
             if needed(*sp) && world.physics_cell_final_at(sp.cx * 16, sp.cy * 16, sp.cz * 16) {
@@ -214,7 +209,6 @@ impl SnapshotSection {
 }
 
 fn footprint(p: [i32; 3], data: &ResolvedCell) -> Vec<[i32; 3]> {
-    // Compound ownership must follow the captured state, not later live-world edits.
     data.block
         .compound_members(IVec3::from_array(p), data.state)
         .map_or_else(Vec::new, |members| {

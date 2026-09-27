@@ -2,27 +2,17 @@ use crate::world::{World, WorldSide};
 use petramond_world::block::Block;
 use petramond_world::chunk::SectionPos;
 
-/// Whether a cell holding `block` puts its section in the block-entity index:
-/// the animated-block gather that draws OUTSIDE the chunk mesh walks that
-/// index, so every block with an animated model must be admitted by it.
-/// Shared by the index refresh and by every writer that must notice a fresh
-/// one — an animated block missing from the index is simply invisible.
 pub(in crate::world) fn indexes_block_entity(block: Block) -> bool {
     block.animated_model().is_some() || block.directional_view()
 }
 
 impl<S: WorldSide> World<S> {
-    /// [`refresh_block_entity_index`](Self::refresh_block_entity_index) for the
-    /// section owning world cell `pos`.
     pub(in crate::world) fn note_block_entity_change(&mut self, pos: petramond_math::math::IVec3) {
         if let Some(sp) = SectionPos::from_world(pos.x, pos.y, pos.z) {
             self.refresh_block_entity_index(sp);
         }
     }
 
-    /// Keep [`block_entity_sections`](Self::block_entity_sections) in sync after
-    /// `pos`'s content may have changed (section install, container/door/furnace
-    /// insert or removal).
     pub(in crate::world) fn refresh_block_entity_index(&mut self, pos: SectionPos) {
         let has = self.data.sections.get(&pos).is_some_and(|s| {
             !s.containers().is_empty()
@@ -39,8 +29,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Keep [`particle_emitter_sections`](Self::particle_emitter_sections) in sync after
-    /// `pos`'s block ids may have changed.
     pub(in crate::world) fn refresh_particle_emitter_index(&mut self, pos: SectionPos) {
         let has = self
             .data

@@ -24,12 +24,10 @@ mod sounds;
 mod view_claims;
 
 impl App {
-    /// Whether a game session is running.
     fn has_session(&self) -> bool {
         self.session.is_some()
     }
 
-    /// The running session (panics without one: the fixture loads a world).
     fn sess(&self) -> &Session {
         self.session.as_ref().expect("test app has a loaded game")
     }
@@ -46,14 +44,11 @@ impl App {
         &mut self.sess_mut().game
     }
 
-    /// The session's recipe/item hooks from the last solved document frame.
     fn doc_hooks_for_test(&mut self) -> &[petramond::gui::DocHook] {
         self.ui.refresh_doc_geometry();
         self.ui.doc_geometry().1
     }
 
-    /// One footstep pass over `rows` at `tick`, against the session's
-    /// cadence state.
     fn tick_footsteps_for_test(
         &mut self,
         listener: petramond_audio::SpatialListener,
@@ -65,8 +60,6 @@ impl App {
             .tick_footsteps(&mut session.sounds, listener, rows, tick);
     }
 
-    /// One idle-mob-sound pass over `mobs` at `tick`, against the session's
-    /// schedule.
     fn tick_idle_mob_sounds_for_test(
         &mut self,
         listener: petramond_audio::SpatialListener,
@@ -78,15 +71,12 @@ impl App {
             .tick_idle_mob_sounds(&mut session.sounds, listener, mobs, tick);
     }
 
-    /// Solve one input-free document frame for the open menu so its slot rects
-    /// are available on `self.ui.out()`.
     fn solve_menu_frame_for_test(&mut self, screen: (u32, u32)) {
         let kind = self.doc_ui_kind().expect("open menu is document-backed");
         self.drive_doc_menu(kind, screen, 0.0);
     }
 }
 
-/// One inventory-tier test recipe: consume 1 `ingredient` → `result`.
 fn test_recipe(
     key: &str,
     ingredient: ItemType,
@@ -107,10 +97,6 @@ fn test_recipe(
     )
 }
 
-/// Keep test saves and client-mod storage out of the real user data dir.
-/// Every test in this process gets the same per-process temp root, so the
-/// benign parallel re-sets all write one identical value. Call before
-/// computing any data-dir-derived path.
 fn ensure_test_data_dir() {
     std::env::set_var(
         "PETRAMOND_DATA_DIR",
@@ -140,17 +126,12 @@ fn app_with_render_dist(render_dist: i32) -> TestApp {
     TestApp::new(app, server, pipe)
 }
 
-/// An app whose player holds one full stack in hotbar slot 0 - the starting
-/// inventory is empty now, so inventory-interaction tests seed a stack first.
 fn app_with_grass() -> TestApp {
     let mut app = app();
     app.add_to_inventory(ItemStack::new(ItemType::Grass, 64));
     app
 }
 
-/// The cursor pixel over the slot cell the open menu's DOCUMENT resolves to
-/// `want`, from the real solved layout — tests never pin document pixel
-/// positions.
 fn cursor_over_menu(app: &mut App, screen: (u32, u32), want: MenuSlot) -> (f32, f32) {
     app.solve_menu_frame_for_test(screen);
     for slot in &app.ui.out().slots {
@@ -172,8 +153,6 @@ fn cursor_over_craft_result(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
     cursor_over_menu(app, screen, MenuSlot::CraftResult)
 }
 
-/// Center of one real document widget instance. `item` identifies a repeated
-/// list row; `None` addresses an ordinary singleton widget.
 fn cursor_over_widget(
     app: &mut App,
     screen: (u32, u32),
@@ -194,7 +173,6 @@ fn cursor_over_widget(
     )
 }
 
-/// A point inside the open menu's panel rectangle that is NOT over any slot.
 fn panel_gap_point(app: &mut App, screen: (u32, u32)) -> (f32, f32) {
     app.solve_menu_frame_for_test(screen);
     let out = app.ui.out();

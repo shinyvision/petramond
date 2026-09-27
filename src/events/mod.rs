@@ -1,12 +1,10 @@
-//! Event bus + tick-stage scheduler — the engine seams mods attach to.
+//! Event bus + tick-stage scheduler, seams mods attach to.
 //!
-//! Pure engine seams, no WASM: pre events dispatch synchronously at their decision
-//! site (mutable payload, cancellable), post events queue and drain FIFO at stage
-//! boundaries within the same tick, and systems attach `Before`/`After` the named
-//! engine tick stages. Handler and system order is `(priority ascending,
-//! registration order)` everywhere — part of the multiplayer determinism contract.
-//! Engine code and WASM mods attach through the same seams; engine registrations
-//! always precede mod registrations.
+//! Pre events fire at the decision site, mutable and cancellable. Post events queue and drain FIFO
+//! at stage boundaries. Systems hook Before/After named tick stages.
+//!
+//! Don't reorder priority-then-registration, multiplayer determinism depends on it. Engine hooks go
+//! in before mods.
 
 mod bus;
 mod payload;
@@ -15,7 +13,7 @@ mod stages;
 pub mod tick;
 
 pub use crate::mob::{MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound};
-#[allow(unused_imports)] // named only by tests that build a `SimCtx` by hand.
+#[allow(unused_imports)]
 pub use bus::PostQueue;
 pub use bus::{EventBus, Outcome, SimCtx};
 pub use payload::{

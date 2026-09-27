@@ -27,35 +27,24 @@ use crate::net::identity::{canonical_name, PlayerKey};
 use crate::player::Player;
 use crate::save::{PlayerFiles, WorldSave};
 
-/// Identity → display name for everyone who ever joined this world.
 #[derive(Debug, Default)]
 pub struct PlayerRegistry {
     names: BTreeMap<PlayerKey, String>,
-    /// Bumped on every change, so registry writes finishing out of order
-    /// never roll the file back ([`PlayerFiles::store_player_registry`]).
     generation: u64,
 }
 
-/// A name reserved for a joining identity by [`PlayerRegistry::reserve`].
 pub struct Reservation {
-    /// The session's final display name (the request, possibly suffixed).
     pub name: String,
-    /// Whether the registry already knew the identity before this claim —
-    /// half of the first-seen test [`restore`] completes.
     pub known: bool,
-    /// The registry as it now stands, when this claim changed it.
     pub changed: Option<RegistrySnapshot>,
 }
 
-/// The registry's serialized form at one generation, ready to be written by
-/// whichever thread gets to it.
 pub struct RegistrySnapshot {
     generation: u64,
     bytes: Vec<u8>,
 }
 
 impl RegistrySnapshot {
-    /// Write this snapshot unless a newer one already landed.
     pub fn write(&self, files: &PlayerFiles) {
         if let Err(e) = files.store_player_registry(self.generation, &self.bytes) {
             log::warn!("could not write the player registry: {e}");
@@ -63,23 +52,11 @@ impl RegistrySnapshot {
     }
 }
 
-/// What [`restore`] found for a joining identity.
 pub struct Restored {
-    /// The identity's saved player, when it has one on this world.
     pub player: Option<Player>,
-    /// First time this world sees the identity: the caller migrates legacy
-    /// name-keyed operator rights to it.
     pub first_seen: bool,
 }
 
-/// Read `key`'s saved player: its own file, or — the first time this world
-/// sees the identity — the legacy file of the name it now goes by. Blocking
-/// file I/O, safe off the server thread.
-///
-/// An unreadable file (own or legacy) is an error, never silently a fresh
-/// player: the save quarantines it and, when it must not be overwritten,
-/// stops saving this identity (`PlayerFiles::load_player`). The session
-/// still spawns fresh.
 pub fn restore(files: Option<&PlayerFiles>, key: PlayerKey, name: &str, known: bool) -> Restored {
     let own = files.map_or(Ok(None), |f| f.load_player(&key));
     let first_seen = !known && matches!(own, Ok(None));
@@ -98,21 +75,13 @@ pub fn restore(files: Option<&PlayerFiles>, key: PlayerKey, name: &str, known: b
     Restored { player, first_seen }
 }
 
-/// The outcome of [`PlayerRegistry::claim`].
 pub struct Claim {
-    /// The session's final display name (the request, possibly suffixed).
     pub name: String,
-    /// The identity's saved player, when it has one on this world.
     pub restored: Option<Player>,
-    /// First time this world sees the identity: the caller migrates legacy
-    /// name-keyed operator rights to it.
     pub first_seen: bool,
 }
 
 impl PlayerRegistry {
-    /// Read the registry from the save (empty without a save, or when the
-    /// file is missing; a corrupt file warns and starts empty — the player
-    /// files themselves are keyed by identity and stay intact).
     pub fn load(save: Option<&WorldSave>) -> PlayerRegistry {
         let Some(bytes) = save.and_then(WorldSave::load_player_registry) else {
             return PlayerRegistry::default();
@@ -150,12 +119,10 @@ impl PlayerRegistry {
         }
     }
 
-    /// The display name `key` last joined with.
     pub fn name_of(&self, key: &PlayerKey) -> Option<&str> {
         self.names.get(key).map(String::as_str)
     }
 
-    /// The identity that owns `name` (case-insensitive).
     pub fn key_for_name(&self, name: &str) -> Option<PlayerKey> {
         let wanted = canonical_name(name);
         self.names
@@ -164,13 +131,6 @@ impl PlayerRegistry {
             .map(|(key, _)| *key)
     }
 
-    /// Reserve a display name for `key` and record it at once (no I/O), so
-    /// concurrent joins resolve against it. `requested` must already be a
-    /// validated name (`net::identity::validate_player_name`);
-    /// `in_use_by_other(candidate)` says whether a connected (or joining)
-    /// session of ANOTHER identity currently goes by `candidate`. The final
-    /// name is `requested` or, when another identity owns or uses it, the
-    /// lowest free suffix (`{name}2`, …).
     pub fn reserve(
         &mut self,
         key: PlayerKey,
@@ -201,10 +161,6 @@ impl PlayerRegistry {
         }
     }
 
-    /// Bind `key` to a display name and restore its saved player, all on the
-    /// calling thread — the listen server's own session at startup, where
-    /// nothing else is running yet. Remote joins take the split path
-    /// (`server::admissions`).
     pub fn claim(
         &mut self,
         save: Option<&WorldSave>,
@@ -296,8 +252,6 @@ mod tests {
         let reloaded = PlayerRegistry::load(Some(&opened.save));
         assert_eq!(reloaded.name_of(&A), Some("Visitor"));
 
-        // Another identity asking for the name later gets neither the name
-        // nor the (already migrated) legacy state.
         let mut reg = reloaded;
         let other = reg.claim(Some(&opened.save), B, "Visitor", nobody_connected);
         assert_eq!(other.name, "Visitor2");

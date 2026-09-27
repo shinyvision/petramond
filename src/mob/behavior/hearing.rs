@@ -1,47 +1,16 @@
-//! Hearing chase (`chase_sound`): hunt by NOISE, not sight.
-//!
-//! The node listens to the tick's gameplay noises (see `mob::noise`) within
-//! `radius` of the mob. A player noise locks the player who made it; a mob noise
-//! may — with per-heard-tick probability `mob_chance`, and only for species in
-//! the `mob_targets` whitelist — lock that mob instead. While locked, the node
-//! emits the target's LIVE position as the navigation goal every tick and
-//! publishes the lock as the brain's target, with **no line-of-sight anywhere**:
-//! a hearing hunter tracks through walls. What it can never do is hear the
-//! inaudible — noise *emission* already excludes sneaking players, so sneaking
-//! is invisible to this node by construction, not by a radius penalty.
-//!
-//! The lock decays on silence: `memory_ticks` consecutive ticks without a
-//! qualifying noise FROM THE LOCKED TARGET within `radius` drops it (each such
-//! noise resets the countdown). The lock is committed — other entities' noises
-//! neither refresh nor steal it — so a multiplayer decoy can't retarget a chase
-//! mid-hunt; once the lock drops, the loudest world wins again.
-//!
-//! Player noises always beat mob noises at acquisition (players are the point
-//! of a hostile), and the `mob_chance` roll is drawn from the mob's own
-//! deterministic RNG only on ticks where an eligible mob noise was actually
-//! heard, so quiet worlds don't consume the stream.
-
 use serde::Deserialize;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::{EntityRef, Mob, MobDef, Noise};
 use super::chase::goal_cell_near;
 
-/// `chase_sound` params as written in a `mobs.json` brain row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChaseSoundParams {
-    /// Hearing range in blocks (3-D) — noises beyond it don't exist to this mob.
     radius: f64,
-    /// Consecutive silent ticks (no qualifying noise from the locked target)
-    /// before the lock drops.
     memory_ticks: u32,
-    /// Per-heard-tick probability of locking onto an eligible MOB noise source
-    /// while unlocked. Optional; defaults to 0 (never hunts mobs).
     #[serde(default)]
     mob_chance: f64,
-    /// Species keys eligible for mob targeting (`["monsters:zombie"]`).
-    /// Optional; empty means no mob is ever a target regardless of chance.
     #[serde(default)]
     mob_targets: Vec<String>,
 }
@@ -67,16 +36,9 @@ impl ChaseSoundAi {
         }
     }
 
-    /// Build from a brain row's `params` — the `chase_sound` node factory core.
-    /// Species keys resolve against `all` — the def table handed down by the
-    /// factory seam (the IN-FLIGHT table during load validation; calling
-    /// `defs()` here would re-enter its initializing LazyLock and deadlock the
-    /// load) — so a typo'd or missing-pack whitelist entry fails the load,
-    /// never the first spawn.
     pub(super) fn from_params(params: &serde_json::Value, all: &[MobDef]) -> Result<Self, String> {
         let p: ChaseSoundParams =
             serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-        // `partial_cmp` (not `<=`) so a NaN radius is rejected too.
         if p.radius.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err("radius must be > 0".into());
         }
@@ -104,11 +66,6 @@ impl ChaseSoundAi {
         ))
     }
 
-    /// Try to acquire a lock from this tick's audible noises. Player noises
-    /// win outright (nearest first); mob noises need the whitelist AND the
-    /// per-tick chance roll (drawn once, only when an eligible one was heard).
-    /// Only the noises within hearing are visited (see `NoiseField::near`);
-    /// equally distant noises break ties on batch order.
     fn acquire(&mut self, ctx: &mut AiCtx) {
         let nearest_player = nearest(ctx, self.radius, |n: &Noise| {
             matches!(n.source, EntityRef::Player(_))
@@ -126,14 +83,11 @@ impl ChaseSoundAi {
             let EntityRef::Mob(id) = n.source else {
                 return false;
             };
-            // Never its own footsteps, and only whitelisted, still-live species.
             id != ctx.mob_id
                 && ctx
                     .live_mob(id)
                     .is_some_and(|m| self.mob_targets.contains(&m.kind))
         });
-        // The roll draws only when something eligible was actually heard, so
-        // the RNG stream is untouched on quiet ticks (like the despawn roll).
         if let Some(source) = nearest_mob {
             if ctx.rng.next_f32() < self.mob_chance {
                 self.target = Some(source);
@@ -143,8 +97,6 @@ impl ChaseSoundAi {
     }
 }
 
-/// The source of the nearest noise within `radius` that `eligible` accepts —
-/// ties on distance go to the noise pushed first.
 fn nearest(ctx: &AiCtx, radius: f32, eligible: impl Fn(&Noise) -> bool) -> Option<EntityRef> {
     ctx.noises
         .near(ctx.pos, radius)
@@ -156,12 +108,9 @@ fn nearest(ctx: &AiCtx, radius: f32, eligible: impl Fn(&Noise) -> bool) -> Optio
 
 impl AiBehavior for ChaseSoundAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
-        // A dead/vanished target unlocks immediately.
         if self.target.is_some_and(|t| !ctx.entity_alive(t)) {
             self.target = None;
         }
-        // The silence countdown: any qualifying noise FROM THE LOCKED TARGET
-        // within hearing resets it; memory_ticks of silence drops the lock.
         if let Some(locked) = self.target {
             let heard = ctx
                 .noises
@@ -182,7 +131,6 @@ impl AiBehavior for ChaseSoundAi {
         let Some(pos) = self.target.and_then(|t| ctx.entity_pos(t)) else {
             return BehaviorOutput::default();
         };
-        // Chase the LIVE position, through walls — no line of sight anywhere.
         BehaviorOutput {
             goal: goal_cell_near(ctx, pos),
             target: self.target,
@@ -254,11 +202,9 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        let player = WorldPos::new(9.5, 64.9, 2.5); // 7 blocks: audible
+        let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
 
-        // A solid wall between them — sight-based chase would refuse; hearing
-        // doesn't care.
         for y in 64..=66 {
             assert!(world.set_block_world(5, y, 2, Block::Stone));
         }
@@ -275,8 +221,6 @@ mod tests {
         assert!(out.goal.is_some(), "a heard step locks and chases");
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
 
-        // Silent ticks: the chase persists on the LIVE position for
-        // memory_ticks - 1 ticks, then the lock drops.
         for t in 1..40 {
             let out = ai.tick(&mut ctx(
                 &world,
@@ -321,7 +265,6 @@ mod tests {
             ))
             .goal
             .is_some());
-        // 39 silent ticks, then one more noise: the countdown restarts whole.
         for _ in 0..39 {
             assert!(ai
                 .tick(&mut ctx(
@@ -380,7 +323,7 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        let far = WorldPos::new(20.5, 64.9, 2.5); // 18 blocks: out of hearing
+        let far = WorldPos::new(20.5, 64.9, 2.5);
         let players = [anchor(3, far)];
         let noises = NoiseField::from_noises([step(far, EntityRef::Player(PlayerId(3)))]);
 
@@ -398,9 +341,6 @@ mod tests {
             "an out-of-range noise does not exist to this mob"
         );
 
-        // Lock from an in-range noise, then move the player out of hearing:
-        // their far noises no longer refresh, and the lock times out even
-        // though they keep stomping.
         let near = WorldPos::new(9.5, 64.9, 2.5);
         let near_players = [anchor(3, near)];
         let near_noise = NoiseField::from_noises([step(near, EntityRef::Player(PlayerId(3)))]);
@@ -447,7 +387,7 @@ mod tests {
         let mut ai = ChaseSoundAi::new(12.0, 40, 0.0, Vec::new());
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let a = WorldPos::new(9.5, 64.9, 2.5);
-        let b = WorldPos::new(4.5, 64.9, 2.5); // B is NEARER than A
+        let b = WorldPos::new(4.5, 64.9, 2.5);
         let players = [anchor(3, a), anchor(4, b)];
 
         let only_a = NoiseField::from_noises([step(a, EntityRef::Player(PlayerId(3)))]);
@@ -461,7 +401,6 @@ mod tests {
         ));
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
 
-        // B stomps closer while A stays audible: the lock holds on A.
         let both = NoiseField::from_noises([
             step(b, EntityRef::Player(PlayerId(4))),
             step(a, EntityRef::Player(PlayerId(3))),
@@ -489,7 +428,7 @@ mod tests {
         let prey_pos = WorldPos::new(7.5, 64.0, 2.5);
         let mobs = MobSnapshot::from_mobs([
             AiMob {
-                id: 1, // the listener itself
+                id: 1,
                 kind: Mob::Owl,
                 pos: mob,
                 active: true,
@@ -504,22 +443,19 @@ mod tests {
             },
         ]);
 
-        // Chance 1.0 with the sheep whitelisted: the first heard tick locks it.
         let mut ai = ChaseSoundAi::new(12.0, 40, 1.0, vec![Mob::Sheep]);
         let noises = NoiseField::from_noises([
-            step(mob, EntityRef::Mob(1)), // its own footsteps: never a target
+            step(mob, EntityRef::Mob(1)),
             step(prey_pos, EntityRef::Mob(9)),
         ]);
         let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &noises, &mobs));
         assert_eq!(out.target, Some(EntityRef::Mob(9)));
         assert!(out.goal.is_some(), "locked prey is chased");
 
-        // An empty whitelist never locks a mob regardless of chance.
         let mut deaf = ChaseSoundAi::new(12.0, 40, 1.0, Vec::new());
         let out = deaf.tick(&mut ctx(&world, &mut rng, mob, &[], &noises, &mobs));
         assert_eq!(out.target, None);
 
-        // Chance 0 never locks either.
         let mut timid = ChaseSoundAi::new(12.0, 40, 0.0, vec![Mob::Sheep]);
         let out = timid.tick(&mut ctx(&world, &mut rng, mob, &[], &noises, &mobs));
         assert_eq!(out.target, None);
@@ -530,7 +466,7 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        let prey_pos = WorldPos::new(4.5, 64.0, 2.5); // mob noise NEARER
+        let prey_pos = WorldPos::new(4.5, 64.0, 2.5);
         let player = WorldPos::new(9.5, 64.9, 2.5);
         let players = [anchor(3, player)];
         let mobs = MobSnapshot::from_mobs([AiMob {

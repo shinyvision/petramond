@@ -1,16 +1,9 @@
-//! The one test builder for [`AiCtx`]: a neutral context each test customizes
-//! per field, so adding a perception fact costs one default here instead of a
-//! struct-literal edit in every behavior/brain/manager test module.
-
 use crate::mob::brain::AiCtx;
 use crate::mob::MobRng;
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_math::world_pos::WorldPos;
 
-/// A neutral, idle, dry context: a small mob at the origin, the nearest
-/// player at the origin too, no perception input of any kind. Tests set only
-/// the fields they vary (the fields are `pub`).
 pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
     AiCtx {
         reach: None,
@@ -44,8 +37,6 @@ pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
     }
 }
 
-/// The shared empty tag map for neutral contexts (a `&'static` so the ctx
-/// builder needs no owner).
 pub fn empty_tags(
 ) -> &'static std::sync::Arc<std::collections::BTreeMap<String, crate::mob::MobTagValue>> {
     static EMPTY: std::sync::LazyLock<
@@ -54,7 +45,6 @@ pub fn empty_tags(
     &EMPTY
 }
 
-/// [`ctx`] positioned at `pos` (cell derived from the feet).
 pub fn ctx_at<'a>(world: &'a ServerWorld, rng: &'a mut MobRng, pos: WorldPos) -> AiCtx<'a> {
     let mut c = ctx(world, rng);
     c.pos = pos;

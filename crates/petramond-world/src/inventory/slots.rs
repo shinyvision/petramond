@@ -7,7 +7,6 @@ pub fn insert_into_slots(
         return None;
     }
 
-    // Pass 1: top up existing matching, non-full stacks in slot order.
     for existing in slots.iter_mut().flatten() {
         if existing.can_stack_with(&stack) {
             let space = existing.space_left();
@@ -22,7 +21,6 @@ pub fn insert_into_slots(
         }
     }
 
-    // Pass 2: drop the remainder into empty slots, one full stack at a time.
     for slot in slots.iter_mut() {
         if slot.is_none() {
             let put = stack.count.min(stack.item.max_stack_size());
@@ -37,10 +35,6 @@ pub fn insert_into_slots(
     Some(stack)
 }
 
-/// How many items of `stack`'s identity a storage cell can accept without
-/// swapping its contents. This is the placement capacity used by slot-drag
-/// distribution. Identity includes the variant: data-bearing stacks never top
-/// up a plain stack of the same item (or vice versa).
 pub fn slot_capacity(slot: &Option<ItemStack>, stack: &ItemStack) -> u8 {
     match slot {
         None => stack.item.max_stack_size(),
@@ -49,10 +43,6 @@ pub fn slot_capacity(slot: &Option<ItemStack>, stack: &ItemStack) -> u8 {
     }
 }
 
-/// Plan the per-destination counts for one ordered slot-drag gesture. The
-/// capacity callback filters incompatible/full cells before primary-button
-/// division, while actual placement remains responsible for capacity limits.
-/// This pure plan is shared by authoritative mutation and its visual preview.
 pub fn plan_drag_distribution<T: Copy + Eq>(
     hits: &[T],
     held_count: u8,
@@ -93,8 +83,6 @@ pub fn plan_drag_distribution<T: Copy + Eq>(
         .collect()
 }
 
-/// Move at most `wanted` items from the cursor into a compatible storage
-/// cell. Unlike an ordinary primary click this never swaps mismatched stacks.
 pub fn place_cursor_count(
     cursor: &mut Option<ItemStack>,
     slot: &mut Option<ItemStack>,
@@ -115,7 +103,6 @@ pub fn place_cursor_count(
     moved
 }
 
-/// Remove one item or a whole stack from a concrete slot.
 pub fn take_slot_stack(slot: &mut Option<ItemStack>, all: bool) -> Option<ItemStack> {
     if all {
         return slot.take();
@@ -129,9 +116,6 @@ pub fn take_slot_stack(slot: &mut Option<ItemStack>, all: bool) -> Option<ItemSt
     Some(one)
 }
 
-/// Merge `src` into `dst`: fill an empty `dst`, top up a matching stack to
-/// its cap (leaving the remainder in `src`), and leave both untouched on a
-/// mismatch — the unit move behind every shift-route into container slots.
 pub fn merge_stack(src: &mut Option<ItemStack>, dst: &mut Option<ItemStack>) {
     let Some(mut incoming) = src.take() else {
         return;

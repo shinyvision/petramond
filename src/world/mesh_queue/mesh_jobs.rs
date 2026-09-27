@@ -6,15 +6,6 @@ use petramond_world::chunk::{self, ChunkPos, SectionPos};
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
 
 impl ReplicaWorld {
-    /// Install meshes the pool finished, dropping any whose section has since changed
-    /// (re-edited or re-lit, so its `mesh_revision` moved) or unloaded.
-    ///
-    /// Every submission reports exactly once (the pool's stage contract), so
-    /// the in-flight count and cancel slot are released for built, cancelled
-    /// AND failed jobs alike. A failed build (the mesher panicked on this
-    /// section) keeps the section's previous mesh and settles its dirty flag:
-    /// re-queueing a deterministic panic would only spin, while the next edit
-    /// or relight of the section re-queues it normally.
     pub(super) fn drain_finished_meshes(&mut self) {
         let start = std::time::Instant::now();
         let mut drained = 0usize;
@@ -59,7 +50,7 @@ impl ReplicaWorld {
             if !fresh {
                 continue;
             }
-            mesh.mesh_dirty = true; // needs a GPU upload on the next sync
+            mesh.mesh_dirty = true;
             self.side.terrain.install_mesh(done.pos, mesh);
             if let Some(s) = self.data.section_mut(done.pos) {
                 s.dirty = false;
@@ -67,10 +58,6 @@ impl ReplicaWorld {
         }
     }
 
-    /// Snapshot `pos` and its one-block-padded neighbourhood into an owned [`MeshJob`]
-    /// the mesh pool can build with no access to the live world. Reads match the live
-    /// neighbour accessors exactly (air / open-sky / not-loaded fallbacks), so the
-    /// off-thread mesh is byte-identical to an inline one.
     pub(in crate::world) fn build_mesh_job(
         &self,
         pos: SectionPos,
@@ -83,10 +70,6 @@ impl ReplicaWorld {
         let center = (**self.data.sections.get(&pos)?).clone();
         let revision = center.mesh_revision;
 
-        // Snapshot the 3×3×3 neighbourhood as cheap field-Arc bundles: four refcount bumps
-        // each, no allocation, and no shared `Arc<Section>` — so a streaming edit/relight
-        // never copy-on-write clones a section just because a mesh job is reading it. The
-        // worker assembles the padded mesh buffers from these off-thread.
         let mut nbhd: [Option<NeighborSnap>; 27] = std::array::from_fn(|_| None);
         for dy in -1..=1 {
             for dz in -1..=1 {
@@ -125,9 +108,6 @@ impl ReplicaWorld {
             }
         }
 
-        // Every live column carries the complete tint halo, replicated by the
-        // server. Hand-built test worlds fall back to loaded column facts only;
-        // live submission never runs analytical worldgen on this thread.
         let biome = self
             .data
             .column_biome_halos
@@ -163,8 +143,6 @@ impl ReplicaWorld {
     }
 }
 
-/// Owned copy of a section's sparse per-cell state map for a mesh job, `None`
-/// when the section carries none (the common case — no allocation).
 fn sparse_state_snapshot<T: Copy>(
     map: &petramond_world::section::CellMap<T>,
 ) -> Option<Box<[(u16, T)]>> {

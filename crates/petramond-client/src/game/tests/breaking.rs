@@ -5,9 +5,6 @@ use petramond_world::item::ItemType;
 
 #[test]
 fn stone_pickaxe_harvests_iron_as_raw_iron() {
-    // Mining only spawns drops when harvested; the drop item comes from the
-    // block's drop spec. Iron ore yields raw iron (here via spawn_drops, which
-    // the mining path calls on a harvested break).
     let mut game = game();
     game.sim_mut().spawn_drops(
         IVec3::new(0, 64, 0),

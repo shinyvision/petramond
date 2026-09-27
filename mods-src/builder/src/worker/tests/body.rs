@@ -9,7 +9,6 @@ use crate::worker::legs::{centre, hold_still};
 fn a_body_stands_in_the_cell_under_its_feet_or_the_one_it_rests_on() {
     let (session, _, _) = working(HOME);
     assert_eq!(standing_cell([4.5, 0.0, 4.5]), [4, 0, 4]);
-    // Feet near the edge of a cell over a hole rest on the cell beside.
     session.world.set([4, -1, 4], AIR);
     assert!(!stands_at([4, 0, 4]) && stands_at([5, 0, 4]));
     assert_eq!(standing_cell([4.9, 0.0, 4.5]), [5, 0, 4]);
@@ -18,7 +17,6 @@ fn a_body_stands_in_the_cell_under_its_feet_or_the_one_it_rests_on() {
         [4, 0, 4],
         "square in its cell, the cell is its own"
     );
-    // Feet on top of a block.
     session.world.set([6, 0, 6], STONE);
     assert_eq!(standing_cell([6.5, 1.0, 6.5]), [6, 1, 6]);
 }

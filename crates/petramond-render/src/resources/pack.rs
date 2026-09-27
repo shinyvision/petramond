@@ -1,15 +1,7 @@
-//! Packing a column: laying every section's streams out as per-column regions
-//! (see [`SectionStream`]) and writing them — new sections straight from their
-//! sealed mesh streams into wgpu's staging memory, retained siblings by GPU
-//! copy. Nothing is converted or concatenated on the CPU; only the sparse
-//! model index streams are rebased as they are copied.
-
 use super::layers::{mesh_bytes, mesh_count, mesh_indices};
 use super::patch::section_index_hash;
 use super::*;
 
-/// The frame's terrain upload work that must reach the GPU in one submit: the
-/// retained-sibling copies, and the layers they read from.
 #[derive(Default)]
 pub(crate) struct TerrainUploadBatch {
     encoder: Option<wgpu::CommandEncoder>,
@@ -21,20 +13,13 @@ impl TerrainUploadBatch {
         if let Some(encoder) = self.encoder {
             queue.submit([encoder.finish()]);
         }
-        // Source allocations must stay live until copies have been submitted:
-        // earlier recycling could let a queued CPU write overwrite their data.
         drop(self.retired);
     }
 }
 
-/// Where a planned span's elements come from.
 enum Source<'a> {
-    /// A sealed mesh stream, copied byte for byte.
     Bytes(&'a [u8]),
-    /// Section-local indices, rebased by the given vertex start as written.
     Indices(&'a [u32], u32),
-    /// The previous column buffer, from this element on: a retained sibling
-    /// whose CPU mesh may already be released.
     Retained(u32),
 }
 
@@ -44,19 +29,15 @@ impl Source<'_> {
     }
 }
 
-/// One section's range of one buffer, and where its bytes come from.
 struct Planned<'a> {
     destination: u32,
     count: u32,
     source: Source<'a>,
 }
 
-/// One section's place in the column being packed.
 struct Entry<'a> {
     pos: SectionPos,
     mesh: &'a ChunkMesh,
-    /// The installed record whose GPU bytes are still current (the mesh is
-    /// clean), if any.
     retained: Option<&'a GpuSectionMesh>,
     record: GpuSectionMesh,
 }
@@ -91,8 +72,6 @@ pub(super) fn pack_column(
     let (regions, buffer_len) = place_spans(&mut entries);
     let plans = plan_buffers(&entries);
 
-    // The largest implied-triangulation draw this column can submit: one
-    // whole quad buffer (the far region is a prefix of the opaque one).
     let largest_quad_draw = ColumnBuffer::ALL
         .iter()
         .filter(|buffer| matches!(buffer, ColumnBuffer::Quads(_)))
@@ -133,9 +112,6 @@ pub(super) fn pack_column(
     }
 }
 
-/// Every section's record with its per-stream element counts (starts are
-/// placed by the caller). A clean section whose record is installed keeps its
-/// GPU bytes; anything else reads its sealed mesh.
 fn section_entries<'a>(
     meshes: &[(SectionPos, &'a ChunkMesh)],
     prev_sections: &'a [(SectionPos, GpuSectionMesh)],
@@ -152,14 +128,10 @@ fn section_entries<'a>(
                 !mesh.is_released() || retained.is_some(),
                 "released mesh requires its GPU copy"
             );
-            // A remeshed section keeps its record's LOD hysteresis state.
             let mut record = old.cloned().unwrap_or_default();
             record.origin = pos.origin_world();
             match retained {
                 Some(old) => {
-                    // A retained section keeps the flags its record carries:
-                    // its mesh may have been released, and a released mesh
-                    // reports no far LOD.
                     for stream in SectionStream::ALL {
                         record.spans[stream.index()].count = old.span(stream).count;
                     }
@@ -185,10 +157,6 @@ fn section_entries<'a>(
         .collect()
 }
 
-/// Place every section's ranges: each stream's region is its sections'
-/// ranges in section order, and a buffer's regions follow each other in
-/// [`SectionStream::ALL`] order. Returns the region lengths and each buffer's
-/// total elements.
 fn place_spans(
     entries: &mut [Entry<'_>],
 ) -> ([u32; SectionStream::COUNT], [u32; ColumnBuffer::COUNT]) {
@@ -215,7 +183,6 @@ fn place_spans(
     (regions, buffer_len)
 }
 
-/// Every buffer's spans in destination order, each with its byte source.
 fn plan_buffers<'a>(entries: &[Entry<'a>]) -> [Vec<Planned<'a>>; ColumnBuffer::COUNT] {
     let mut plans: [Vec<Planned<'a>>; ColumnBuffer::COUNT] = Default::default();
     for entry in entries {
@@ -226,9 +193,6 @@ fn plan_buffers<'a>(entries: &[Entry<'a>]) -> [Vec<Planned<'a>>; ColumnBuffer::C
             if span.is_empty() {
                 continue;
             }
-            // Index streams are always rebuilt from the section-local
-            // indices: a sibling that changed size moves this section's
-            // vertex start, which every one of its indices must follow.
             let source = match (stream.is_index(), retained) {
                 (true, Some(old)) => Source::Indices(old.local_indices(stream), vertex_base),
                 (true, None) => Source::Indices(mesh_indices(mesh, stream), vertex_base),
@@ -248,7 +212,6 @@ fn plan_buffers<'a>(entries: &[Entry<'a>]) -> [Vec<Planned<'a>>; ColumnBuffer::C
     plans
 }
 
-/// Write one buffer's plan into GPU memory (see [`pack_column`]).
 #[allow(clippy::too_many_arguments)]
 fn upload_buffer(
     device: &wgpu::Device,
@@ -274,8 +237,6 @@ fn upload_buffer(
         Some(p) if unmoved && layer_fits(&p, len) => (p.alloc, None),
         other => (fresh_layer_alloc(device, arena, len), other),
     };
-    // One staging write per run of adjacent new spans, filled straight from
-    // the sealed meshes.
     let mut at = 0;
     while at < plan.len() {
         if !plan[at].source.is_cpu() {
@@ -300,8 +261,6 @@ fn upload_buffer(
         debug_assert!(written, "a planned span left its allocation");
         at = end;
     }
-    // In place, an unmoved retained span already holds its bytes; into a
-    // fresh allocation every retained span is a GPU copy.
     if let Some(previous) = &source {
         let encoder = encoder.get_or_insert_with(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -326,7 +285,6 @@ fn upload_buffer(
     Some(Layer { alloc, len })
 }
 
-/// Copy a run of adjacent new spans into their staging bytes.
 fn fill_run(dst: &mut [u8], run: &[Planned<'_>], stride: u64) {
     let mut at = 0;
     for p in run {

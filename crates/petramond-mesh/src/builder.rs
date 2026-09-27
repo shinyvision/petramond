@@ -35,19 +35,14 @@ pub use closure_pad::WorldReads;
 pub use foliage::FOLIAGE_OVERHANG;
 pub use transition::{SamplingHalo, SAMPLING_HALO};
 
-/// What a section mesh is built against: the block dispatch tables and the
-/// texture-transition policy. Passed into every build rather than read from
-/// process globals, so one process can mesh against several registries.
 #[derive(Copy, Clone)]
 pub struct MeshContext<'a> {
-    /// The content whose block rows and texture rules this build uses.
     pub content: Content,
     pub registry: &'a MeshRegistry,
     pub rules: &'a Rules,
 }
 
 impl MeshContext<'static> {
-    /// Build a mesh context for a specific content registry.
     pub fn for_content(content: Content) -> Self {
         let _pin = pin(content);
         Self {
@@ -57,19 +52,11 @@ impl MeshContext<'static> {
         }
     }
 
-    /// A context for the registry selected on this thread.
     pub fn global() -> Self {
         Self::for_content(Content::current())
     }
 }
 
-/// Build the mesh for one cubic [`Section`] from world-coordinate reads: they
-/// are sampled over the section's one-cell pad (see [`SectionMeshPad`]) and
-/// the pad is meshed exactly as the live world's is, so reads beyond that pad
-/// are never made. Out-of-world / unloaded reads return air / open sky as the
-/// reads define. Block-entity state (furnace lit/facing, torch placement,
-/// model offset/facing) is read from `section` directly. The renderer culls
-/// the resulting mesh by its [`SectionPos`].
 pub fn build_section_mesh(
     section: &Section,
     pos: SectionPos,
@@ -81,7 +68,6 @@ pub fn build_section_mesh(
     build_section_mesh_from_pad(section, pos, pad.view(), ctx)
 }
 
-/// [`build_section_mesh_cancellable`] that always finishes.
 pub fn build_section_mesh_from_pad(
     section: &Section,
     pos: SectionPos,
@@ -91,8 +77,6 @@ pub fn build_section_mesh_from_pad(
     build_section_mesh_cancellable(section, pos, pad, ctx, &|| false).expect("uncancelled mesh")
 }
 
-/// Build one section's mesh from its assembled pad. Workers can abandon
-/// superseded snapshots between section rows.
 pub fn build_section_mesh_cancellable(
     section: &Section,
     pos: SectionPos,
@@ -108,10 +92,6 @@ pub fn build_section_mesh_cancellable(
     (!cancelled()).then_some(mesh)
 }
 
-/// Mesh the section at `pos` of the world `reads` describe, with the
-/// exposure-mask fast path on (the production build) or off (`false`: every
-/// cube face culled by asking its front cell). The two must match byte for
-/// byte — the reference the parity tests hold the fast path to.
 #[cfg(test)]
 pub(super) fn build_section_mesh_with(
     section: &Section,

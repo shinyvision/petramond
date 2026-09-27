@@ -1,5 +1,3 @@
-//! Body-condition primitives. Applying never deals damage outside the tick.
-
 use mod_api::{ConditionCall, EntityRef, HostRet};
 use petramond_world::condition::ConditionDef;
 use petramond_world::exposure::BodyExposure;

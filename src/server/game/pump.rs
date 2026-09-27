@@ -6,9 +6,6 @@ use crate::server::player::PendingMenuAction;
 use super::{PumpOutput, ServerGame};
 
 impl ServerGame {
-    /// [`pump_tagged`](Self::pump_tagged) for a local-only server — the
-    /// synchronous test harness's pipe service; production always goes
-    /// through the thread loop's `pump_tagged`.
     #[cfg(any(test, feature = "test-support"))]
     pub fn pump(&mut self, dt: f32, inbox: &mut Vec<ClientToServer>) -> PumpOutput {
         let local = self.sessions[0].id;
@@ -17,30 +14,12 @@ impl ServerGame {
         self.pump_tagged(dt, &mut tagged, &[])
     }
 
-    /// Consume this frame's client→server messages (tagged by the sending
-    /// session's `PlayerId` — resolved to indices here, so a session that
-    /// left during the drain simply drops its residue), run the fixed ticks,
-    /// then stream the world (gen/load around every session) and build every
-    /// recipient's outbound messages — the whole per-frame server step.
-    ///
-    /// Per-recipient ordering contract: terrain payloads first (each column
-    /// before its sections), then at most one `Tick(TickUpdate)` when a fixed
-    /// tick executed. Each client applies its list in order, so a delta for a
-    /// section shipped this same pump lands after its install. In-process the
-    /// payloads are `Arc` refcount bumps.
-    ///
-    /// `headroom` is each remote connection's free outbound-queue slots
-    /// (`RemoteHub::send_headroom`), keyed by `PlayerId`; the streamer paces
-    /// terrain against it. A session with no entry (the local pipe, tests) is
-    /// unbounded.
     pub fn pump_tagged(
         &mut self,
         dt: f32,
         inbox: &mut Vec<(PlayerId, ClientToServer)>,
         headroom: &[(PlayerId, usize)],
     ) -> PumpOutput {
-        // Each message applies isolated: a panic kicks its sender (see
-        // `isolation`), whose residue then drops like a leaver's.
         for (id, msg) in inbox.drain(..) {
             let Some(s) = self.sessions.index_of(id) else {
                 continue;
@@ -49,34 +28,16 @@ impl ServerGame {
                 self.isolated(s, "message handling", |server| server.apply_message(s, msg));
             }
         }
-        // Before the ticks, while no per-session events are outstanding: a
-        // leave now shifts no event index.
         let mut kicked = self.evict_faulted();
-        // Snapshot for the teleport detector below (bed tuck, wake, respawn,
-        // a mod Teleport): those tick-side position WRITES are teleports,
-        // never falls, so the tracker re-anchors across them.
         for sess in &mut self.sessions {
             sess.replication.pos_before_ticks = sess.player.pos;
         }
-        // An EMPTY session list (a headless server between players) freezes
-        // the sim exactly like pause: the world clock stops and nothing
-        // spawns. Streaming/autosave keep pumping.
         let (mut events, ticks_ran) = if self.clock.is_paused() || self.sessions.is_empty() {
-            // Skip the fixed ticks ONLY, and bank no tick debt, so resume
-            // doesn't fast-forward.
             self.clock.hold();
             (self.mods.open_feed(), 0)
         } else {
             self.run_fixed_ticks(dt)
         };
-        // Observers skip interpolating across a tick-side TELEPORT (bed,
-        // respawn, mod teleport). Ordinary F2/F1 movement must still lerp —
-        // and since the server integrates real player physics on the tick,
-        // the discontinuity bound must scale with the ticks THIS pump ran: a
-        // frame hitch (menu open, pause transition) pumps several ticks at
-        // once, and a terminal-speed fall legitimately covers 1.5 blocks per
-        // tick. A fixed bound wiped the fall tracker mid-fall — flashing the
-        // inventory while falling cancelled the landing's damage.
         let legit_motion =
             ticks_ran as f32 * crate::player::TERMINAL * crate::events::tick::TICK_DT;
         for sess in &mut self.sessions {
@@ -96,8 +57,6 @@ impl ServerGame {
                 }
             }
         }
-        // Recipes unlocked since this recipient last heard: unlocking only
-        // ever appends, so the catch-up is the untold suffix.
         for (s, out) in per_session.iter_mut().enumerate() {
             let sess = &mut self.sessions[s];
             let unlocked = sess.player.progression.unlocked();
@@ -108,8 +67,6 @@ impl ServerGame {
                 sess.replication.sent_unlock_count = unlocked.len();
             }
         }
-        // Mods disabled since this recipient last heard (same append-only
-        // suffix bookkeeping): its client instances must fall back with ours.
         let disabled_mods = self.mods.host().disabled_count();
         for (s, out) in per_session.iter_mut().enumerate() {
             let sess = &mut self.sessions[s];
@@ -133,13 +90,8 @@ impl ServerGame {
                     .map_or(usize::MAX, |&(_, room)| room)
             })
             .collect();
-        // AFTER the ticks, so this pump's payloads carry the tick's edits and
-        // freshly-final sections ship the same frame they land.
         self.pump_streaming(dt, &mut per_session, &queue_room);
         if ticks_ran > 0 {
-            // Shared batch parts built ONCE per tick window: the drained
-            // world feeds (events, coalesced deltas, live loops) and the
-            // entity/chest rows; each recipient's batch is cut from them.
             let feeds = self.take_window_feeds(&mut events);
             let shared = self.shared_tick_rows(&events).with_feeds(feeds);
             for (s, out) in per_session.iter_mut().enumerate() {
@@ -168,13 +120,8 @@ impl ServerGame {
             .map(|sess| sess.id)
             .zip(per_session)
             .collect();
-        // Sessions that faulted during the ticks or replication leave now,
-        // after every recipient's batch was cut (indices are settled), and
-        // before autosave could persist their failed state.
         kicked.extend(self.evict_faulted());
         remote.retain(|(id, _)| kicked.iter().all(|(gone, _)| gone != id));
-        // Autosave is server-owned (wall-clock dt fed by the thread's loop);
-        // it keeps running while paused.
         self.maybe_autosave(dt);
         PumpOutput {
             msgs,
@@ -183,8 +130,6 @@ impl ServerGame {
         }
     }
 
-    /// Apply one message from session `s`, latching intents/edges the fixed
-    /// tick consumes. Message order within a frame is preserved.
     pub fn apply_message(&mut self, s: usize, msg: ClientToServer) {
         match msg {
             ClientToServer::PlayerUpdate(u) => self.apply_player_update(s, &u),
@@ -275,23 +220,16 @@ impl ServerGame {
                     );
                     return;
                 }
-                // A slash is a command prefix only at byte zero. Leading
-                // whitespace deliberately turns it into ordinary player chat.
                 if text.starts_with('/') {
                     let id = self.sessions[s].id;
                     if let Some(clean) = crate::server::chat::clean_text(&text) {
                         self.execute_player_command(id, clean.strip_prefix('/').unwrap_or(""));
                     }
                 } else {
-                    // A headless server echoes chat to its log: it has no
-                    // local client that would otherwise show it.
                     let echo = !self.sessions.has_local_session();
                     self.chat.player(&self.sessions[s].name, &text, echo);
                 }
             }
-            // Pause is honorable only while the sole connection has always
-            // been the local one; once the server has been open to LAN the
-            // gate is permanent (see `FrameClock::request_pause`).
             ClientToServer::Pause(paused) => self.clock.request_pause(paused),
             ClientToServer::StreamBatchAck {
                 messages_per_second,
@@ -304,18 +242,11 @@ impl ServerGame {
             }
             ClientToServer::SetViewDistance { chunks } => {
                 self.sessions[s].transport.view_radius = (chunks as i32).clamp(4, 64);
-                // The HOST's own slider also moves the server budget — its
-                // machine runs the world, so its setting IS the server
-                // setting. Remote requests only shrink under the budget
-                // (streaming clamps per anchor).
                 if s == 0 && self.sessions.has_local_session() {
                     self.world.set_render_dist((chunks as i32).clamp(4, 64));
                 }
             }
             ClientToServer::KeepAlive => {}
-            // Handshake/lifecycle messages are consumed by the transport
-            // (the hub's pre-join state machine and its leave path); one
-            // reaching a joined session is protocol misuse.
             ClientToServer::Hello { .. }
             | ClientToServer::ModQuery
             | ClientToServer::Join { .. }
@@ -325,10 +256,6 @@ impl ServerGame {
         }
     }
 
-    /// Latch a `PlayerUpdate`: movement intent (F2), validated transform (F1),
-    /// hotbar + held rotation, held intents (menu focus forces them off and
-    /// drops queued edges, exactly as the old `capture_intent` did), the
-    /// reach-validated look target, and the fall tracker.
     fn apply_player_update(&mut self, s: usize, u: &PlayerUpdate) {
         let t = u.transform;
         if !(t.pos.is_finite()
@@ -349,9 +276,6 @@ impl ServerGame {
         sess.input.claim_vel = t.vel;
         sess.input.claim_on_ground = u.on_ground;
         sess.input.claim_fresh = true;
-        // What the client last claimed — after the ticks, a session transform
-        // that drifted from this means the server rejected the claim or a
-        // tick-side teleport/knockback moved the player.
         sess.replication.last_reported_transform = Some(SelfTransform {
             transform: t,
             on_ground: u.on_ground,
@@ -370,10 +294,9 @@ impl ServerGame {
             sess.input.intent_break_held = u.break_held;
             sess.input.intent_use_held = u.use_held;
         } else {
-            // Menu focus drops queued action edges so clicks cannot fire
-            // behind screens. The dropped use click still owes its outcome:
-            // deny, so the client rolls its place ghost back instead of
-            // leaking the ledger entry.
+            // Menu focus drops queued action edges so clicks can't fire behind screens.
+            // But the dropped use click still owes an outcome, so send deny here or the client's
+            // place ghost never rolls back and the ledger entry leaks.
             if let Some(id) = sess.input.drop_action_edges() {
                 sess.replication
                     .push_outcome(crate::net::protocol::ActionOutcome::deny(
@@ -383,9 +306,6 @@ impl ServerGame {
             }
         }
 
-        // Reach validation against the claimed eye, BOUNDED by the F1 drift
-        // ring (`movement::reach_eye`) — an implausible claim must not grant
-        // remote reach. Measured to the CLOSEST point of the cell.
         let eye = crate::server::movement::reach_eye(sess);
         sess.input.look = u
             .target

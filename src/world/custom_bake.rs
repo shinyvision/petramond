@@ -1,15 +1,3 @@
-//! The custom-shape SIM bake cache: per-cell collision boxes a pack's
-//! WASM baked, read by the shape's collision facet. A cache MISS (never baked,
-//! or a trapped/timed-out bake) falls back to the block row's static collision
-//! boxes — the failure policy that keeps placed world data intact while only the
-//! bake logic is suspended.
-//!
-//! Boxes are CONTENT-INTERNED to `'static`, so `World::collision_boxes_at` keeps
-//! its `&'static [Aabb]` return without leaking per cell: a gate has two
-//! configurations (open / closed), so at most two box sets are ever interned no
-//! matter how many gates exist. The intern set is bounded by the shapes'
-//! distinct geometries, not by the world.
-
 #[cfg(test)]
 use crate::world::ServerWorld;
 use crate::world::WorldData;
@@ -19,12 +7,6 @@ use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
 impl<S: WorldSide> World<S> {
-    /// A block at `(wx, wy, wz)` became `new_block`: drop the cached bake for the
-    /// cell and its face neighbours (a custom shape may read them), and re-mark
-    /// any custom cell dirty for the next bake pump. The single hook both the
-    /// authoritative edit (`set_block_world`) and the replica ingest
-    /// (`apply_remote_delta`) call, so client prediction bakes the same cells the
-    /// server does.
     pub fn mark_custom_bake_edit(&mut self, wx: i32, wy: i32, wz: i32, new_block: Block) {
         for (dx, dy, dz) in [
             (0, 0, 0),
@@ -45,18 +27,10 @@ impl<S: WorldSide> World<S> {
             if cell.is_custom_shape() {
                 self.data.content.custom_bake_dirty.insert(p);
             } else {
-                // The cell is no longer a custom shape: drop any stale baked
-                // light aperture so a later ungated read can't see it (the
-                // render-box cache re-bakes with the cell, but the aperture map
-                // has no such rewrite path).
                 self.clear_custom_light_aperture(p);
             }
         }
     }
-    /// Record a custom shape cell's freshly-baked RENDER boxes on its section
-    /// (a no-op if the section isn't loaded) — the client render-bake pump. The
-    /// section keeps it (and bumps its mesh revision) so the next mesh job draws
-    /// the baked geometry instead of the cube fallback.
     pub fn set_custom_render_bake(
         &mut self,
         pos: IVec3,
@@ -66,22 +40,10 @@ impl<S: WorldSide> World<S> {
             if let Some(section) = self.data.section_mut(sp) {
                 let idx = petramond_world::chunk::section_idx(lx, ly, lz) as u16;
                 section.set_shape_render(idx, boxes);
-                // A fresh bake must ALWAYS end in a remesh. The revision bump
-                // above only re-triggers a mesh job already in flight — a
-                // block edit queues one on its own apply, but a KV-ONLY
-                // re-bake (a dye color change) has no other trigger, so
-                // without this the new geometry sat installed and undrawn
-                // until an unrelated edit queued the section (the
-                // stale-dye-color bug, 2026-07-23).
                 self.queue_dirty_meshes_sampling_cell(pos.x, pos.y, pos.z);
             }
         }
     }
-    /// Record a custom shape cell's baked light aperture on its section (the
-    /// deterministic SIM bake). The wire aperture is already a per-cell "opaque to
-    /// light" decision — Opaque blocks light, Open passes it. A real opacity
-    /// TRANSITION relights the change (see `relight_aperture_change`); an
-    /// unchanged bake costs nothing.
     pub fn set_custom_light_aperture(&mut self, pos: IVec3, aperture: mod_api::LightAperture) {
         let opaque = match aperture {
             mod_api::LightAperture::Opaque => true,
@@ -96,8 +58,6 @@ impl<S: WorldSide> World<S> {
             }
         }
     }
-    /// Clear a cell's stored baked light aperture (it stopped being a custom
-    /// shape), relighting its section neighbourhood only on a real change.
     fn clear_custom_light_aperture(&mut self, pos: IVec3) {
         if let Some((sp, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) {
             if let Some(section) = self.data.section_mut(sp) {
@@ -109,12 +69,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// One cell's light aperture changed. When its region's stored light can
-    /// be trusted, an authoritative world relights it incrementally like any
-    /// other single-cell light change, instead of rebaking all 27 sections
-    /// around it. Otherwise — the replica (its light is server-owned), or a
-    /// bake landing on freshly streamed terrain — the section neighbourhood
-    /// is marked as before.
     fn relight_aperture_change(&mut self, pos: IVec3, sp: petramond_world::chunk::SectionPos) {
         if !self.queue_incremental_relight(pos) {
             self.mark_light_dirty_neighborhood(sp, true);
@@ -138,7 +92,6 @@ mod tests {
             min: [0.0, 0.0, 0.0],
             max: [1.0, 0.5, 1.0],
         }];
-        // Equal content interns to the SAME 'static slice (pointer identity).
         assert!(std::ptr::eq(
             intern_boxes(&a).unwrap(),
             intern_boxes(&b).unwrap()
@@ -156,7 +109,6 @@ mod tests {
         assert_eq!(w.data.custom_shape_boxes(pos), None, "no bake yet");
         w.data.set_custom_bake(pos, &half);
         assert_eq!(w.data.custom_shape_boxes(pos), Some(&half[..]));
-        // An edit at the cell drops the bake (the next read falls back / re-bakes).
         w.data.invalidate_custom_bake(pos);
         assert_eq!(w.data.custom_shape_boxes(pos), None);
     }

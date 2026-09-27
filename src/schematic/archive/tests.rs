@@ -292,7 +292,6 @@ fn a_header_declaring_an_absurd_design_is_refused() {
     assert!(Header::parse(&oversized).is_err());
 }
 
-/// The prefix, then a panic: a refusal has to come before the body is read.
 struct PrefixOnly(std::io::Cursor<Vec<u8>>);
 impl Read for PrefixOnly {
     fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {

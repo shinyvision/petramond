@@ -1,6 +1,3 @@
-//! Slab shape, stacking state, and material helpers shared by placement,
-//! collision, selection, lighting, and meshing.
-
 use crate::block::{Aabb, Block};
 use crate::block_state::{SlabSplit, SlabState};
 use crate::facing::Facing;
@@ -16,9 +13,6 @@ const FULL_BOX: Aabb = Aabb {
     max: [1.0, 1.0, 1.0],
 };
 
-/// Every (split, occupancy-mask) shape is a single box: one half-cell for a
-/// lone layer, the full cell for a complete stack. The mask-0 entry is never
-/// read (`boxes_for_state` returns an empty slice for it).
 static SHAPES: [[[Aabb; 1]; 4]; 3] = make_shapes();
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -55,10 +49,6 @@ pub fn normalize_state(block: Block, state: SlabState) -> SlabState {
     }
 }
 
-/// A full stack of the SAME slab material is visually the material's full cube,
-/// so the mesher routes it down the ordinary cube path (fast path + greedy merge
-/// included). Mixed full stacks keep the per-layer emitter to preserve each
-/// layer's texture, but still cull/occlude like a full block.
 #[inline]
 pub fn is_uniform_full_stack(state: SlabState) -> bool {
     state.is_full() && state.layers[0] == state.layers[1]
@@ -83,9 +73,6 @@ pub fn default_boxes() -> &'static [Aabb] {
     boxes_for_state(default_state(Block::Dirt))
 }
 
-/// Whether the face of `state` with outward normal `dir` is a complete
-/// surface: a full stack always, else every half-cell on that face occupied.
-/// The slab family's answer to the cross-family `full_face` question.
 pub fn face_full(state: SlabState, dir: crate::mathh::IVec3) -> bool {
     if state.is_full() {
         return true;
@@ -169,12 +156,6 @@ pub fn slot_for_rotation(rotation: SlabRotation, normal: IVec3, facing: Facing) 
     }
 }
 
-/// The slot a click stacks into the HIT slab cell, or `None` when the clicked
-/// face cannot stack at all. A face stacks only when its normal runs along the
-/// candidate slot's split axis — i.e. the player clicked the face fronting the
-/// half the layer would fill (the top face of a bottom slab, the mid face of a
-/// vertical slab, …). Side clicks never stack; they build into the adjacent
-/// cell like any other placement.
 #[inline]
 pub fn stack_slot(rotation: SlabRotation, normal: IVec3, facing: Facing) -> Option<SlabSlot> {
     let slot = match rotation {

@@ -40,7 +40,6 @@ use crate::worker::JobPool;
 use crate::world::{Cached, PieceRange, ReplicaWorld, Resident};
 use io::{Done, Io, Read};
 
-/// A call that changes the presented world, in issue order.
 #[derive(Clone, Debug)]
 pub enum Op {
     Apply {
@@ -53,31 +52,19 @@ pub enum Op {
     Time(f64),
 }
 
-/// What a frame's drive hands the client presenting the world.
 #[derive(Debug, Default)]
 pub struct DriveOut {
-    /// An apply landed: the moment starts over from `messages` (reset what
-    /// presents a moment before ingesting them).
     pub jumped: bool,
-    /// World messages to ingest, in order; their terrain is already in the
-    /// replica, so they carry none.
     pub messages: Vec<ServerToClient>,
-    /// The captured player's predictions and dig cell, as released.
     pub cues: Vec<CapturedCues>,
-    /// The captured view samples released (after a jump: all kept ones).
     pub views: Vec<ViewCue>,
-    /// Applies that landed this frame, in order.
     pub landed: Vec<u64>,
-    /// Applies that failed this frame, with why.
     pub failed: Vec<(u64, String)>,
 }
 
-/// An apply being prepared.
 struct Preparing {
     id: u64,
-    /// Every read it asked for; none = it was in memory when issued.
     waited: bool,
-    /// A fold submitted to the job pool.
     folding: bool,
 }
 
@@ -104,21 +91,16 @@ pub struct Presentation {
     released_through: Option<u64>,
     window: Option<Window>,
     window_dirty: bool,
-    /// Away columns inside the window still to load, farthest first.
     entering: Vec<ChunkPos>,
     views: Vec<ViewCue>,
     applied: u64,
     error: Option<String>,
-    /// Measured read latency (seconds) and bytes per released tick, for
-    /// read-ahead: what the position will need before a new read lands.
     read_seconds: f64,
     bytes_per_tick: f64,
     ticks_per_second: f64,
 }
 
 impl Presentation {
-    /// A presentation of a world whose id vocabulary is `tables`. It holds
-    /// nothing until the first apply lands.
     pub fn new(tables: NameTables, pool: Arc<JobPool>) -> Self {
         let vocab = Arc::new(Vocab::of(&tables));
         let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -160,7 +142,6 @@ impl Presentation {
         &self.tables
     }
 
-    /// Queue a call; it takes effect in issue order.
     pub fn push(&mut self, op: Op) {
         match &op {
             Op::Apply { state, events, .. } => {
@@ -181,8 +162,6 @@ impl Presentation {
         }
     }
 
-    /// `true`: apply `id` will never land. `false`: it already did (or
-    /// failed).
     pub fn cancel(&mut self, id: u64) -> bool {
         let queued = self
             .ops
@@ -201,7 +180,6 @@ impl Presentation {
         }
     }
 
-    /// Applies not yet landed, in issue order.
     pub fn pending(&self) -> Vec<u64> {
         self.ops
             .iter()
@@ -236,10 +214,6 @@ impl Presentation {
         self.queue.is_empty()
     }
 
-    /// No apply pending, and every batch the position needs is released or
-    /// the queue has nothing more. A frame applying several batches is due
-    /// at its newest: until then the next frame, read and not due, is what
-    /// the position needs next, not a batch it is missing.
     pub fn ready(&self) -> bool {
         let floor = self.position.max(0.0).floor() as u64;
         self.ops.is_empty()
@@ -253,13 +227,10 @@ impl Presentation {
                 }))
     }
 
-    /// Every stated column outside the window.
     pub fn away(&self) -> &Stated {
         &self.stated
     }
 
-    /// The load window, around the presented camera; `None` before there is
-    /// a camera, and nothing is resident then.
     pub fn set_window(&mut self, window: Option<Window>) {
         if self.window != window {
             self.window = window;
@@ -267,8 +238,6 @@ impl Presentation {
         }
     }
 
-    /// One frame's drive: land what is prepared, carry out what is due, and
-    /// keep the window resident.
     pub fn drive(&mut self, replica: &mut ReplicaWorld, dt: f32) -> DriveOut {
         replica.keep_provenance();
         let mut out = DriveOut::default();
@@ -292,8 +261,6 @@ impl Presentation {
         }
     }
 
-    /// Block until every read and fold this presentation asked for has
-    /// answered, taking each answer in. For a test's determinism.
     #[cfg(any(test, feature = "test-support"))]
     pub fn wait_for_reads(&mut self, replica: &mut ReplicaWorld) {
         while !self.requested.is_empty() || self.preparing.as_ref().is_some_and(|p| p.folding) {
@@ -322,8 +289,6 @@ impl Presentation {
                         !matches!(n, Need::Shape { incarnation: i, offset: o, .. }
                             if *i == incarnation && *o == offset)
                     });
-                    // A record's pieces are each a range a mod may pass
-                    // alone later: their shapes are known too.
                     if let Ok(Shape::Record(pieces)) = &result {
                         for piece in pieces {
                             self.shapes
@@ -383,7 +348,6 @@ impl Presentation {
         }
     }
 
-    /// Frames' full arrivals, decoded, kept like any piece read.
     fn cache_frame_pieces(&self, replica: &mut ReplicaWorld, frame: &Frame) {
         for item in &frame.items {
             if let super::unpack::FrameItem::Terrain(crate::world::TerrainEdit::Column(
@@ -450,14 +414,11 @@ impl Presentation {
         }
     }
 
-    /// What one frame read should take: the ticks the position will need
-    /// before another read could land, at the measured bytes per tick.
     fn frame_block(&self) -> u64 {
         let horizon = (self.ticks_per_second * self.read_seconds * 2.0).max(2.0);
         ((self.bytes_per_tick * horizon) as u64).max(64 * 1024)
     }
 
-    /// Carry out the op at the front, if it can. `true` = progress.
     fn step(&mut self, replica: &mut ReplicaWorld, out: &mut DriveOut) -> bool {
         if let Some((id, result)) = self.folded.take() {
             self.preparing = None;
@@ -472,9 +433,6 @@ impl Presentation {
             None => false,
             Some(Op::Time(at)) => {
                 self.ops.pop_front();
-                // Checked against the position the ops before it left: one
-                // accepted against an apply that never landed goes back no
-                // further than the pair.
                 if crate::modding::client::present::time_reaches(self.position, at) {
                     self.position = at;
                 }
@@ -511,7 +469,6 @@ impl Presentation {
         out.failed.push((id, why));
     }
 
-    /// Plan the front apply. Answers whether anything moved.
     fn prepare(
         &mut self,
         replica: &mut ReplicaWorld,
@@ -568,7 +525,6 @@ impl Presentation {
         }
     }
 
-    /// Everything the front apply needs, or what it still waits on.
     fn plan(
         &mut self,
         replica: &ReplicaWorld,
@@ -596,7 +552,6 @@ impl Presentation {
         let window = self.window;
         let in_window = |c: ChunkPos| window.is_some_and(|w| w.contains(c));
 
-        // Which terrain pieces fold, which only re-index, which change nothing.
         let mut folded_cols: BTreeSet<ChunkPos> = touched.clone();
         let mut terrain = Vec::new();
         let mut index_only = Vec::new();
@@ -663,8 +618,6 @@ impl Presentation {
             }
         }
 
-        // A whole-world statement removes what it does not list AFTER what
-        // waits on an away column applies: those columns fold.
         if presence.is_some() {
             folded_cols.extend(
                 self.stated
@@ -674,7 +627,6 @@ impl Presentation {
                     .map(|(&c, _)| c),
             );
         }
-        // The folded columns as presented.
         let mut base = std::collections::BTreeMap::new();
         for &c in &folded_cols {
             let col = if resident(c) {
@@ -730,7 +682,6 @@ impl Presentation {
             return Ok(Plan::Waiting(needs));
         }
 
-        // A whole-world statement may name only what is presented or stated.
         if let Some(pr) = &presence {
             check_presence(pr.presence(), replica, &self.stated, &pieces)?;
         }
@@ -753,9 +704,6 @@ impl Presentation {
     }
 }
 
-/// Read the `Tables` piece a presentation opens with, and check it: one
-/// whole piece of this format and protocol, of the vocabulary its own
-/// tables hash to. The answer arrives on the returned channel.
 pub fn open_tables(tables: &FileRanges) -> Receiver<Result<NameTables, String>> {
     let (tx, rx) = std::sync::mpsc::channel();
     let Some(&[offset, len]) = tables.ranges.first() else {
@@ -814,7 +762,6 @@ fn ema(old: f64, new: f64) -> f64 {
     }
 }
 
-/// `Err` when `presence` lists a key nothing presents or states.
 fn check_presence(
     presence: &ClientPresence,
     replica: &ReplicaWorld,

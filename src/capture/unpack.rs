@@ -1,8 +1,3 @@
-//! Reading capture bytes back: a piece checked against its CRC, this build's
-//! protocol and the presentation's vocabulary, then decoded into what the
-//! presented world installs. Ids are remapped here, once, exactly as a
-//! remote join remaps what arrives off the wire.
-
 use std::sync::Arc;
 
 use mod_api::capture::{
@@ -23,11 +18,9 @@ use crate::net::remap::IdRemap;
 use crate::net::PROTOCOL_VERSION;
 use crate::world::{decode_section_payload, PieceRange, SectionContent, TerrainEdit};
 
-/// What every piece of one presentation must agree with.
 #[derive(Clone)]
 pub struct Vocab {
     pub vocabulary: u64,
-    /// `None` when the captured ids are this build's own.
     pub remap: Option<Arc<IdRemap>>,
 }
 
@@ -47,12 +40,10 @@ impl Vocab {
     }
 }
 
-/// Where a failure is, as a player reads it: `label@offset: why`.
 pub fn at(label: &str, offset: u64, why: impl std::fmt::Display) -> String {
     format!("{label}@{offset}: {why}")
 }
 
-/// Check one whole piece (`bytes` = head and body) read from `range`.
 pub fn checked<'a>(
     bytes: &'a [u8],
     range: PieceRange,
@@ -91,7 +82,6 @@ pub fn checked<'a>(
     Ok((head, body))
 }
 
-/// A state piece, decoded.
 #[derive(Clone, Debug)]
 pub enum StateBody {
     Section(SectionContent),
@@ -122,7 +112,6 @@ fn opaque<T: serde::de::DeserializeOwned>(body: &[u8]) -> Result<T, String> {
     decode_body(body).map_err(|e| e.0)
 }
 
-/// Decode a checked state piece.
 pub fn decode_state(
     head: &CapturePieceHead,
     body: &[u8],
@@ -220,7 +209,6 @@ pub fn decode_state(
     Ok((key, decoded))
 }
 
-/// A section payload remapped and decoded into what its install holds.
 pub fn section_content(payload: SectionPayload, vocab: &Vocab) -> Result<SectionContent, String> {
     let payload = remapped_section(payload, vocab);
     decode_section_payload(payload).ok_or_else(|| "a malformed section body".to_string())
@@ -252,42 +240,30 @@ fn rows_tick(rows: BatchRows, vocab: &Vocab) -> TickUpdate {
     *t
 }
 
-/// One thing a captured frame applied, in apply order.
 #[derive(Clone, Debug)]
 pub enum FrameItem {
-    /// Terrain the frame wrote.
     Terrain(TerrainEdit),
-    /// Any other world message the frame applied (a roster join or leave).
     Message(ServerToClient),
-    /// A tick batch, its terrain already stated by the `Terrain` before it.
     Batch(Arc<TickUpdate>),
-    /// The local predictions the frame presented.
     Cues(CapturedCues),
-    /// The locally presented view.
     View(Box<ViewCue>),
 }
 
-/// A frame record, decoded.
 #[derive(Clone, Debug)]
 pub struct Frame {
-    /// The whole record.
     pub record: PieceRange,
     pub presented_tick: f64,
-    /// The largest of its batch ticks and `⌊presented_tick⌋`: the frame
-    /// releases once the position needs that batch.
     pub due: u64,
     pub batches: Vec<u64>,
     pub items: Vec<FrameItem>,
 }
 
 impl Frame {
-    /// The newest tick batch this frame applies.
     pub fn newest_batch(&self) -> Option<u64> {
         self.batches.iter().copied().max()
     }
 }
 
-/// Decode a whole frame record read from `record`.
 pub fn decode_frame(
     bytes: &[u8],
     record: PieceRange,
@@ -421,7 +397,6 @@ pub fn decode_frame(
     })
 }
 
-/// One batch's pieces as a frame lists them, merged into its three bodies.
 struct PendingBatch {
     tick: u64,
     world: BatchWorld,
@@ -448,7 +423,6 @@ impl PendingBatch {
         self.world.block_draws.extend(w.block_draws);
     }
 
-    /// A slice of the lanes: its lists continue the ones before it.
     fn rows(&mut self, r: BatchRows) {
         join_lane(&mut self.rows.mobs, r.mobs);
         join_lane(&mut self.rows.items, r.items);
@@ -460,8 +434,6 @@ impl PendingBatch {
         self.rest.sections.extend(r.sections);
     }
 
-    /// The batch as one tick update in this build's ids, its terrain writes
-    /// stated apart ahead of it.
     fn finish(self, vocab: &Vocab, items: &mut Vec<FrameItem>) {
         let BatchWorld {
             block_deltas,

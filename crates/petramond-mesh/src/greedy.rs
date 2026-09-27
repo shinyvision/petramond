@@ -35,11 +35,6 @@ use super::vertex::{
 #[derive(Copy, Clone, PartialEq)]
 pub(super) struct FlatFace {
     pub(super) gen: u32,
-    /// Tile id, with the row-declared UV turn folded into bits 12..13 and the
-    /// DYED flag into bit 31 (see [`super::vertex::DYED_FLAG2`]) so both
-    /// participate in the merge key — two faces sharing a tile but sampling
-    /// it at different turns must never merge — and split back out at quad
-    /// emit.
     pub(super) tile: u32,
     /// AO (2 bits) | sky light (6) | the block-light CHANNELS (18), packed into
     /// one word. Merges require every one of them equal, so a merged quad's
@@ -49,8 +44,6 @@ pub(super) struct FlatFace {
     /// scan writes into it scattered across six planes, so its size is cache
     /// footprint on the mesher's hottest write.
     pub(super) shade: u32,
-    /// The finished `Vertex::tint` word (albedo lanes + the chroma low byte), so a
-    /// merged quad is byte-identical to the per-cell faces it replaces.
     pub(super) tint: u32,
 }
 
@@ -95,14 +88,10 @@ pub(super) struct GreedyScratch {
     pub(super) faces: Vec<FlatFace>,
     pub(super) merged: Vec<bool>,
     pub(super) gen: u32,
-    /// Deferred-face count per (direction, slice), so the merge pass scans only the few slices
-    /// that actually received flat faces instead of all 6×16 (empty slices dominate — flat
-    /// faces cluster in the surface/floor layers).
     pub(super) slice_counts: [u32; FACES.len() * SECTION_SIZE],
 }
 
 impl GreedyScratch {
-    /// An unallocated scratch; [`begin`](Self::begin) sizes it on first use.
     pub(super) const fn new() -> Self {
         Self {
             faces: Vec::new(),
@@ -112,9 +101,6 @@ impl GreedyScratch {
         }
     }
 
-    /// Retire the previous build and return this build's generation. No `faces` reset: a bumped
-    /// `gen` makes every prior entry read as absent. Only allocates on first use per thread, and
-    /// only re-zeroes on the (≈4-billion-build) `gen` wrap so a stale entry can't alias.
     pub(super) fn begin(&mut self) -> u32 {
         if self.faces.len() != FACES.len() * SECTION_VOLUME {
             self.faces = vec![FLAT_ABSENT; FACES.len() * SECTION_VOLUME];
@@ -138,11 +124,8 @@ impl Default for GreedyScratch {
     }
 }
 
-/// Greedy-merge every deferred flat face (in `scratch.faces`) into the fewest tiled quads and
-/// push them to the opaque buffers. For each direction and each 16-cell slice, it 2D-merges
-/// maximal rectangles of identical `FlatFace`s (extend width along U, then height along V),
-/// emitting one quad per rectangle with `(W-1, H-1)` packed so the shader tiles its layer.
-/// `origin` is the section's minimum corner in mesh space.
+/// Merges `scratch.faces` into as few tiled quads as possible, slice by slice (U first, then V).
+/// (W-1, H-1) gets packed in so the shader tiles right. `origin` is the section's min corner.
 pub(super) fn emit_greedy_quads(
     scratch: &mut GreedyScratch,
     opaque: &mut Vec<Vertex>,
@@ -169,7 +152,7 @@ pub(super) fn emit_greedy_quads(
         let (n, ua, va) = face_axes(face);
         for s in 0..SECTION_SIZE {
             if slice_counts[fi * SECTION_SIZE + s] == 0 {
-                continue; // no deferred faces in this slice — skip its 16×16 scan + fill.
+                continue;
             }
             scratch.merged.fill(false);
             for v in 0..SECTION_SIZE {
@@ -179,9 +162,8 @@ pub(super) fn emit_greedy_quads(
                     }
                     let key = key_at(&scratch.faces, fi, n, s, ua, u, va, v);
                     if key.gen != cur {
-                        continue; // stale (prior build) or never written = absent.
+                        continue;
                     }
-                    // Extend the run along U while cells match and are unmerged.
                     let mut w = 1;
                     while u + w < SECTION_SIZE
                         && !scratch.merged[v * SECTION_SIZE + u + w]
@@ -189,7 +171,6 @@ pub(super) fn emit_greedy_quads(
                     {
                         w += 1;
                     }
-                    // Extend along V while the whole W-wide row matches and is unmerged.
                     let mut h = 1;
                     'grow: while v + h < SECTION_SIZE {
                         for k in 0..w {
@@ -231,9 +212,6 @@ pub(super) fn emit_greedy_quads(
     }
 }
 
-/// Push one greedy-merged quad: four flat vertices over the world box `[min,max]` with the
-/// merge extents `(w,h)` in the overlay payload ([`pack_greedy_span`]), which the
-/// block shader reads to tile the layer. Uniform AO ⇒ no diagonal flip (default winding).
 fn push_greedy_quad(
     opaque: &mut Vec<Vertex>,
     face: Face,

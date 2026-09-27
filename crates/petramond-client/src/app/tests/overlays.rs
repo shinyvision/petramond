@@ -1,7 +1,3 @@
-//! Screen wiring for the gameplay overlays (sleep fade, death screen): they
-//! open from tick events, keep the simulation classification (not shell, not a
-//! slot menu), and close only the way they're meant to.
-
 use super::app;
 use crate::app::screen::AppScreen;
 use crate::game::GameEvents;
@@ -53,9 +49,6 @@ fn sleep_overlay_closes_when_the_tick_reports_the_sleep_ended() {
 fn bed_interaction_latches_hand_jab_for_sleep_overlay() {
     let mut app = app();
     let mut ev = events();
-    // The sim reports every consumed block interaction through `interacted`
-    // (the generic jab default); `bed_interacted` rides along for the sleep
-    // overlay's hand-visibility timer.
     ev.interacted = true;
     ev.bed_interacted = true;
     ev.open_sleep = true;
@@ -88,10 +81,8 @@ fn death_opens_the_death_screen_and_only_respawn_leaves_it() {
     assert!(matches!(app.screen, AppScreen::Dead));
     assert!(app.doc_overlay_kind().is_some());
 
-    // ESC is swallowed: death cannot be escaped.
     assert!(app.handle_control(Control::CloseScreen, true));
     assert!(matches!(app.screen, AppScreen::Dead));
-    // The inventory key must not open a menu over the death screen.
     assert!(app.handle_control(Control::ToggleInventory, true));
     assert!(matches!(app.screen, AppScreen::Dead));
 

@@ -1,13 +1,3 @@
-//! The client's easing of every animated block's open fraction — one map and
-//! one rule for a chest's lid, a door's or trapdoor's swing, a pack's own.
-//!
-//! A block rests at its logical open state (its cell's pose, or whoever is
-//! looking inside a container — the replicated open-chest set this type also
-//! owns), so only a block mid-swing holds an entry: a
-//! change of logical state seeds one at the OLD resting pose, the per-frame
-//! advance eases it toward the new one at its model's `open_speed`, and it is
-//! dropped on arrival. Client-side presentation only, never persisted.
-
 use std::collections::HashMap;
 
 use petramond_math::math::IVec3;
@@ -15,18 +5,11 @@ use rustc_hash::FxHashSet;
 
 #[derive(Default)]
 pub(super) struct BlockAnimations {
-    /// Linear open progress (`0.0` closed .. `1.0` open) of each block
-    /// mid-swing, keyed by its anchor cell (a door's lower half).
     swings: HashMap<IVec3, f32>,
-    /// Chests with at least one open screen anywhere (replicated per batch —
-    /// the server's viewer key set): open whatever their cell pose says.
     open_chests: FxHashSet<IVec3>,
 }
 
 impl BlockAnimations {
-    /// Adopt the REPLICATED open-chest set: a chest entering it starts its
-    /// lid opening, one leaving starts it closing — ANY player's open screen
-    /// lifts the lid on every client.
     pub(super) fn set_open_chests(&mut self, open: FxHashSet<IVec3>) {
         let entered: Vec<IVec3> = open.difference(&self.open_chests).copied().collect();
         let left: Vec<IVec3> = self.open_chests.difference(&open).copied().collect();
@@ -39,21 +22,14 @@ impl BlockAnimations {
         self.open_chests = open;
     }
 
-    /// The chests someone is looking inside.
     pub(super) fn open_chests(&self) -> &FxHashSet<IVec3> {
         &self.open_chests
     }
 
-    /// The linear open progress of the block at `anchor` whose cell pose says
-    /// `pose_open`: eased mid-swing, else resting at its logical state — the
-    /// pose, or anyone looking inside it.
     pub(super) fn open_progress(&self, anchor: IVec3, pose_open: bool) -> f32 {
         self.progress(anchor, pose_open || self.open_chests.contains(&anchor))
     }
 
-    /// [`advance`](Self::advance) where `pose` answers a block's
-    /// `(pose_open, open_speed)` from its cell and the open-chest set is
-    /// folded in here.
     pub(super) fn advance_poses(&mut self, dt: f32, pose: impl Fn(IVec3) -> Option<(bool, f32)>) {
         let open_chests = std::mem::take(&mut self.open_chests);
         self.advance(dt, |anchor| {
@@ -62,17 +38,12 @@ impl BlockAnimations {
         self.open_chests = open_chests;
     }
 
-    /// The block at `anchor` changed its logical open state away from
-    /// `was_open`: ease it from that resting pose. A block already mid-swing
-    /// keeps its progress and simply turns around.
     pub(super) fn begin(&mut self, anchor: IVec3, was_open: bool) {
         self.swings
             .entry(anchor)
             .or_insert(if was_open { 1.0 } else { 0.0 });
     }
 
-    /// The linear open progress of the block at `anchor` whose logical state
-    /// is `open`: its eased value mid-swing, else its resting pose.
     pub(super) fn progress(&self, anchor: IVec3, open: bool) -> f32 {
         self.swings
             .get(&anchor)
@@ -80,9 +51,6 @@ impl BlockAnimations {
             .unwrap_or(if open { 1.0 } else { 0.0 })
     }
 
-    /// Ease every swinging block toward its logical state by `dt` seconds.
-    /// `target` answers a block's `(open, open_speed)`, or `None` once it is
-    /// gone (broken mid-swing); gone and arrived blocks are dropped.
     pub(super) fn advance(&mut self, dt: f32, target: impl Fn(IVec3) -> Option<(bool, f32)>) {
         self.swings.retain(|&anchor, progress| {
             let Some((open, speed)) = target(anchor) else {

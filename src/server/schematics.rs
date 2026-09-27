@@ -1,9 +1,3 @@
-//! Schematic sharing with each connected client: open choices and
-//! positionings a mod asked for, archive uploads the world does not hold yet,
-//! archive downloads a client asked for, and the anchored ghosts each client
-//! should draw. Requests land at message time; streams and ghosts advance
-//! once per tick.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc;
 
@@ -16,36 +10,27 @@ use crate::schematic::share::{
 };
 use crate::schematic::store::{Digest, Finished};
 
-/// How many downloads one client may have queued at once.
 const FETCH_QUEUE: usize = 8;
 
-/// What the server asked a client's archive for.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Wanted {
-    /// The open choice with this tag: the archive becomes a world asset.
     Choice(String),
-    /// An operator's paste: used once, never kept.
     Edit,
 }
 
-/// An archive read off the tick thread, or why it could not be.
 type ArchiveBytes = Result<std::sync::Arc<[u8]>, String>;
 
 #[derive(Default)]
 pub struct SchematicSession {
     choose: Option<String>,
     position: Option<(String, Digest)>,
-    /// The archive the server asked this client to upload, for which choice.
     wanted: Option<(Wanted, Digest)>,
     upload: Option<BlobReceiver>,
-    /// Uploads handed to the store, awaiting publication, by choice.
     publishing: Vec<(String, Digest)>,
     fetches: VecDeque<Digest>,
     reading: Option<(Digest, mpsc::Receiver<ArchiveBytes>)>,
     download: Option<BlobSender>,
-    /// Blobs of the server's own making, sent ahead of fetched assets.
     sending: VecDeque<BlobSender>,
-    /// The ghosts as this client last heard them.
     ghosts_sent: BTreeMap<String, GhostPlacement>,
     notices: Vec<SchematicNotice>,
 }
@@ -55,8 +40,6 @@ impl SchematicSession {
         std::mem::take(&mut self.notices)
     }
 
-    /// Ask the client for the archive of `digest`; `false` while another
-    /// upload is still wanted or arriving.
     pub(super) fn want(&mut self, wanted: Wanted, digest: Digest) -> bool {
         if self.wanted.is_some() || self.upload.is_some() {
             return false;
@@ -66,24 +49,20 @@ impl SchematicSession {
         true
     }
 
-    /// Whether the upload of `digest` is still wanted or arriving.
     pub(super) fn wants(&self, digest: &Digest) -> bool {
         self.wanted.as_ref().is_some_and(|(_, d)| d == digest)
     }
 
-    /// Stream `bytes` to the client as the blob `digest`.
     pub(super) fn send(&mut self, digest: Digest, bytes: std::sync::Arc<[u8]>) {
         self.sending.push_back(BlobSender::new(digest, bytes));
     }
 
-    /// Whether a mod's choice is open on this client.
     pub fn choice_open(&self) -> bool {
         self.choose.is_some()
     }
 }
 
 impl ServerGame {
-    /// A client's schematic request, at message time.
     pub(super) fn apply_schematic_request(&mut self, s: usize, request: SchematicRequest) {
         let player = self.sessions[s].id;
         match request {
@@ -149,8 +128,6 @@ impl ServerGame {
         }
     }
 
-    /// The world cell under the design's centred bottom pivot, when the design
-    /// is decoded and the transform lies inside the world.
     fn positioned_pivot(&mut self, digest: &Digest, origin: [i32; 3], turns: u8) -> Option<IVec3> {
         let crate::schematic::store::Lookup::Ready(asset) =
             self.world.schematics_mut().store.lookup(digest)
@@ -222,7 +199,6 @@ impl ServerGame {
         }
     }
 
-    /// Mod requests that open a choice or a positioning on a client.
     pub(super) fn open_schematic_choice(&mut self, player: crate::player::PlayerId, tag: String) {
         if let Some(sess) = self.sessions.iter_mut().find(|sess| sess.id == player) {
             sess.sim.schematic.choose = Some(tag.clone());
@@ -252,7 +228,6 @@ impl ServerGame {
         }
     }
 
-    /// Advance every session's streams and ghosts: once per tick.
     pub(super) fn tick_schematics(&mut self) {
         for finished in self.world.schematics_mut().store.poll() {
             let Finished::Published(result) = finished;

@@ -1,5 +1,3 @@
-//! Weighing a pillar's trip against the work it lays.
-
 use super::*;
 
 fn trip(moves: Option<u32>, levels: i32, lays: i32, covers: i32) -> Trip {
@@ -16,7 +14,6 @@ fn trip(moves: Option<u32>, levels: i32, lays: i32, covers: i32) -> Trip {
 fn a_trip_is_its_walk_climb_and_mount_per_block_laid() {
     let key = trip(Some(10), 3, 2, 1).key();
     assert_eq!(key, (10 + 3 * LEVEL_MOVES + MOUNT_MOVES) * 64 / (4 * 2 + 1));
-    // Nothing laid still divides by a block's worth, never by nothing.
     assert_eq!(
         trip(Some(10), 3, 0, 0).key(),
         (10 + 3 * LEVEL_MOVES + MOUNT_MOVES) * 64 / 4

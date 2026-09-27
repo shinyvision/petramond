@@ -1,14 +1,3 @@
-//! The paint pass: walk the solved instance tree in arena (paint) order and
-//! emit every themed quad and glyph into the [`crate::DrawList`].
-//!
-//! Face states resolve here from [`FrameState`] + bindings (hover, pressed,
-//! focus, disabled, on/off, selected) — the same inputs interaction uses, so
-//! what you see is what clicks. This module resolves each instance's state
-//! and walks the tree; `kinds` holds one painter per widget kind.
-//!
-//! Host-drawn content (item icons, hearts) is NOT painted here; the host
-//! layers it over this list using the frame's named rects.
-
 mod kinds;
 
 use crate::doc::{NodeKind, ScrollAxis};
@@ -19,34 +8,29 @@ use crate::theme::{palette, FaceState, Part, PartFace, Theme};
 use crate::tree::{Inst, InstKey, InstTree, ROOT};
 use crate::widget;
 
-/// Resolves document-relative image names to host texture ids + pixel sizes.
 pub trait DocImages {
     fn resolve(&self, name: &str) -> Option<(u16, (u32, u32))>;
 
-    /// The host-kept scene a `canvas` node's `scene` binding names, if the
-    /// host keeps one by that name.
     fn scene(&self, _name: &str) -> Option<&SceneView> {
         None
     }
 }
 
-/// One element of a host-kept 2-D scene, in scene units (one unit = one
-/// logical pixel of the canvas node): what a `canvas` node paints. Images are
-/// named like every other document image.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SceneElement {
-    /// An image stretched over `rect` `[x, y, w, h]`.
-    Image { image: String, rect: [f32; 4] },
-    /// An image at its own size, one image pixel per logical pixel, centred.
-    Sprite { image: String, center: [f32; 2] },
-    /// A filled rectangle, or a one-pixel outline.
+    Image {
+        image: String,
+        rect: [f32; 4],
+    },
+    Sprite {
+        image: String,
+        center: [f32; 2],
+    },
     Rect {
         rect: [f32; 4],
         color: [f32; 4],
         filled: bool,
     },
-    /// One line at the UI's glyph size (`small` one step down), ellipsized
-    /// into `max_w` when given, else at the canvas's right edge.
     Text {
         pos: [f32; 2],
         text: String,
@@ -56,15 +40,12 @@ pub enum SceneElement {
     },
 }
 
-/// A scene as a canvas node paints it: its elements in paint order, shifted
-/// by `offset` (the scene's pan).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SceneView {
     pub offset: [f32; 2],
     pub elements: Vec<SceneElement>,
 }
 
-/// No document images (screens that use none; tests).
 pub struct NoImages;
 
 impl DocImages for NoImages {
@@ -73,11 +54,6 @@ impl DocImages for NoImages {
     }
 }
 
-/// The frame an `image`/image-backed `button` shows, from its optional grid
-/// `[cols, rows]`, the resolved `bind.frame` value, its `fps`, and the frame
-/// clock. A bound frame is authoritative and clamps into the sheet; a
-/// positive finite `fps` cycles row-major from `now`; anything else rests on
-/// frame 0. `None` grid = a single-frame sheet.
 pub(crate) fn frame_index(
     frames: Option<[u32; 2]>,
     bound: Option<i32>,
@@ -99,10 +75,6 @@ pub(crate) fn frame_index(
     }
 }
 
-/// The pixel source rect of the current frame within a sheet of `size`,
-/// row-major: the whole sheet when unframed, one grid cell otherwise. This is
-/// the ONE place frame geometry is computed — `image` nodes and image-backed
-/// buttons both draw through it, so the two can never disagree.
 pub(crate) fn frame_src(
     size: (u32, u32),
     frames: Option<[u32; 2]>,
@@ -119,13 +91,10 @@ pub(crate) fn frame_src(
     [col * fw, row * fh, fw, fh]
 }
 
-/// One `*` per character, so a masked field still shows its length and its
-/// caret lands where the character it stands for does.
 fn mask(text: &str) -> String {
     "*".repeat(text.chars().count())
 }
 
-/// A framed sheet's natural layout size: ONE frame, not the whole sheet.
 pub(crate) fn frame_cell(sheet: (i32, i32), frames: Option<[u32; 2]>) -> (i32, i32) {
     match frames.filter(|&[c, r]| c > 0 && r > 0) {
         Some([c, r]) => (sheet.0 / c as i32, sheet.1 / r as i32),
@@ -140,41 +109,34 @@ pub(crate) struct PaintCtx<'a> {
     pub fs: &'a FrameState,
     pub images: &'a dyn DocImages,
     pub metrics: SlotMetrics,
-    /// Topmost pointer-target instance under the cursor.
     pub hover: Option<u32>,
-    /// Hovered slot cell as `(inst, cell)`.
     pub slot_hover: Option<(u32, u32)>,
-    /// Hovered list row as `(list inst, row)`.
     pub row_hover: Option<(u32, u32)>,
-    /// Hovered tab cell as `(tab_bar inst, tab)`.
     pub tab_hover: Option<(u32, u32)>,
     pub preview: Option<&'a PreviewState>,
 }
 
-/// Everything one instance's paint reads, resolved once before the per-kind
-/// painter runs.
 pub(super) struct Here<'a> {
     pub i: u32,
     pub inst: &'a Inst<'a>,
     pub rect: RectI,
     pub clip: Option<RectI>,
-    /// The node's theme part (style override, else the widget default).
     pub part: Option<&'a Part>,
-    /// A list stamp's row face (`None` outside a list).
     pub row: Option<FaceState>,
     pub hovered: bool,
     pub pressed: bool,
     pub focused: bool,
 }
 
-/// A resolved button/toggle/tab icon: a theme part or a document image.
 pub(super) enum Icon<'a> {
     Part {
         face: &'a PartFace,
         size: (i32, i32),
     },
-    /// Document art dims with its widget; theme parts carry their own faces.
-    Doc { src: SpriteSrc, size: (i32, i32) },
+    Doc {
+        src: SpriteSrc,
+        size: (i32, i32),
+    },
 }
 
 impl Icon<'_> {
@@ -185,8 +147,6 @@ impl Icon<'_> {
     }
 }
 
-/// Whether an authored icon name names a `.png` beside the document rather
-/// than a theme part — the loader checks such a file exists.
 pub fn is_doc_image_icon(name: &str) -> bool {
     name.ends_with(".png")
 }
@@ -194,18 +154,9 @@ pub fn is_doc_image_icon(name: &str) -> bool {
 impl<'a> PaintCtx<'a> {
     pub fn paint(&self, p: &mut Painter<'_>) {
         self.node(ROOT, None, p);
-        // The overlay tier paints last: the host layers its base item icons
-        // over the base tier, so anything that must sit ABOVE that content —
-        // `overlay: true` subtrees, then floating tooltips topmost — paints
-        // here instead of in document order. Unconditional, so "nothing
-        // raised this frame" is an EMPTY overlay tier rather than an unset
-        // boundary that would read as "all of it".
         p.list.begin_overlay();
         for i in 0..self.tree.len() as u32 {
             let inst = self.tree.get(i);
-            // A raised subtree's ROOT only (a raised parent paints its
-            // children itself), and never a tooltip's interior — tooltips
-            // keep their own pass below so they stay topmost.
             let parent_raised = inst
                 .parent
                 .is_some_and(|par| self.solved.raised[par as usize]);
@@ -220,7 +171,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// Resolve instance `i`'s interaction state for paint.
     fn here(&self, i: u32, row: Option<FaceState>) -> Here<'a> {
         let tree: &'a InstTree<'a> = self.tree;
         let inst = tree.get(i);
@@ -297,10 +247,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// Children in arena order; list stamps carry their row face state.
-    /// Tooltip and `overlay: true` children are skipped here and painted by
-    /// the overlay pass — unless THIS node is already painting in that pass,
-    /// in which case its raised children belong to it.
     fn children(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let inst = n.inst;
         let is_list = matches!(inst.node.kind, NodeKind::List { .. });
@@ -328,7 +274,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// Scrollbar chrome over a vertical scroll node's children.
     fn scrollbar(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let inst = n.inst;
         let content = self.solved.scroll_content[n.i as usize].unwrap_or((0, 0));
@@ -364,9 +309,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    // ---- shared drawing -------------------------------------------------------
-
-    /// Where a theme face's pixels live.
     pub(super) fn face_src(&self, face: &PartFace) -> SpriteSrc {
         SpriteSrc {
             tex: TexId::ThemePage(face.page),
@@ -375,8 +317,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// A theme face 9-sliced over `rect` (plain stretch when it has no
-    /// slice insets).
     pub(super) fn draw_face(
         &self,
         p: &mut Painter<'_>,
@@ -387,7 +327,6 @@ impl<'a> PaintCtx<'a> {
         self.draw_face_styled(p, face, rect, PaintStyle::plain(clip));
     }
 
-    /// [`Self::draw_face`] with a multiply tint.
     pub(super) fn draw_face_styled(
         &self,
         p: &mut Painter<'_>,
@@ -399,7 +338,6 @@ impl<'a> PaintCtx<'a> {
         p.sprite(&self.face_src(face), rect, fit, style);
     }
 
-    /// A theme face stretched over `rect` (icons, gauge fills, handles).
     pub(super) fn draw_sprite(
         &self,
         p: &mut Painter<'_>,
@@ -410,14 +348,11 @@ impl<'a> PaintCtx<'a> {
         p.sprite(&self.face_src(face), rect, Fit::Stretch, style);
     }
 
-    /// Part `key`'s face for `state`, if the theme has the part.
     pub(super) fn face_of(&self, key: &str, state: FaceState) -> Option<&'a PartFace> {
         let theme: &'a Theme = self.theme;
         theme.part(key).and_then(|part| part.face(state))
     }
 
-    /// An icon by name: a theme part, else a document image (a `.png` beside
-    /// the document, or an image the host published under that name).
     pub(super) fn icon(&self, name: &str) -> Option<Icon<'a>> {
         let theme: &'a Theme = self.theme;
         if let Some(part) = theme.part(name) {
@@ -439,8 +374,6 @@ impl<'a> PaintCtx<'a> {
         })
     }
 
-    /// Draw a resolved icon over `at`; document art dims with a disabled
-    /// widget.
     pub(super) fn draw_icon(
         &self,
         p: &mut Painter<'_>,
@@ -462,13 +395,10 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// A document image by name: its texture and size.
     pub(super) fn doc_image(&self, name: Option<&str>) -> Option<(u16, (u32, u32))> {
         name.and_then(|n| self.images.resolve(n))
     }
 
-    /// The label colour of a part: disabled text when disabled, else the
-    /// part's `label_color`, else plain text.
     pub(super) fn label_color(&self, part: Option<&Part>, enabled: bool) -> [f32; 4] {
         if !enabled {
             return self.theme.color(palette::TEXT_DISABLED);

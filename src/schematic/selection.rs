@@ -4,7 +4,6 @@ mod surface;
 pub use region::SelectionBox;
 pub use surface::{FaceRect, SelectionFace, SelectionSurface};
 
-/// Disjoint boxes describing a union, including holes and disconnected islands.
 #[derive(Default)]
 pub struct Selection {
     regions: Vec<SelectionBox>,

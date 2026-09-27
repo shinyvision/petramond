@@ -1,6 +1,3 @@
-//! Bed behaviour on the tick: sleeping (spawn set, time skip, wake beside the
-//! bed), cancelling, and death respawn — at the bed or the surface fallback.
-
 use super::common::{game_on_empty_chunk, hit};
 use petramond::events::tick::TickEvents;
 use petramond::events::DamageSource;
@@ -11,7 +8,6 @@ use petramond_world::block::Block;
 
 const CLOCK_KEY: &str = "petramond:clock";
 
-/// A game with a flat stone floor at y=63 and a bed at (7, 64, 7).
 fn game_with_bed() -> (super::common::TestGame, IVec3) {
     let mut game = game_on_empty_chunk();
     for x in 0..16 {
@@ -33,8 +29,6 @@ fn interact_with_bed(game: &mut super::common::TestGame, base: IVec3) -> TickEve
     events
 }
 
-/// Publish the night flag the sleep gate reads (`petramond:is_night`); the tests
-/// drive tick steps directly, so the day/night system never overwrites it.
 fn make_night(game: &mut super::common::TestGame) {
     game.server_world_mut()
         .world_kv_set("petramond:is_night".into(), vec![1]);
@@ -77,8 +71,6 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
         game.session().replication().request_open_sleep,
         "asks the app for the sleep overlay"
     );
-    // `sleep_progress01` reads the replicated self view; stage-driven tests
-    // sync it explicitly (the frame pump does this in play).
     game.sync_self_view_for_test();
     assert_eq!(game.sleep_progress01(), Some(0.0), "sleep starts at zero");
     assert_eq!(
@@ -86,9 +78,6 @@ fn interacting_with_a_bed_at_night_sets_the_spawn_and_starts_the_sleep() {
         PITCH_LIMIT,
         "sleep starts looking up"
     );
-    // The camera mirror is client-side, applied off the replicated sleep-open
-    // one-shot after the fixed ticks (`Game::tick` calls this every frame).
-    // Stage-driven test: adopt the tucked look, then feed the one-shot.
     game.local.player.pitch = game.server_player().pitch;
     game.local.player.yaw = game.server_player().yaw;
     game.sync_sleep_camera_on_open(&petramond::net::protocol::SelfEvents {
@@ -146,7 +135,6 @@ fn a_mounted_player_sets_spawn_but_cannot_start_sleeping() {
 #[test]
 fn daytime_bed_interaction_sets_the_spawn_but_never_sleeps() {
     let (mut game, base) = game_with_bed();
-    // Fresh world = early morning: it is day, so no night flag is set.
     let events = interact_with_bed(&mut game, base);
 
     assert!(
@@ -176,8 +164,6 @@ fn completing_a_sleep_skips_to_morning_and_wakes_beside_the_bed() {
     for _ in 0..SLEEP_TICKS {
         let mut events = TickEvents::default();
         game.sim_mut().tick_bed_and_respawn(0, &mut events);
-        // Completion is cross-player and resolves once per tick after every
-        // session advanced, exactly like the stage driver does.
         game.sim_mut().resolve_sleep_completion(&mut events);
         ended = events.player_at(0).sleep_ended;
     }
@@ -242,7 +228,6 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
         "an interrupted sleep skips no time"
     );
     assert_eq!(game.server_player().health(), MAX_HEALTH - 2);
-    // Woken beside the bed, ready to face the attacker.
     let feet = game.server_player().pos;
     assert!(
         (feet.x.floor() as i32, feet.z.floor() as i32) != (base.x, base.z),
@@ -254,8 +239,6 @@ fn damage_while_sleeping_cancels_the_sleep_immediately() {
 fn keep_inventory_rule_skips_the_death_spill() {
     use petramond_world::item::{ItemStack, ItemType};
 
-    // Default rule: death spills every stack as item entities and empties
-    // the inventory (the classic corpse pile).
     let (mut game, _) = game_with_bed();
     game.server_player_mut()
         .inventory
@@ -270,7 +253,6 @@ fn keep_inventory_rule_skips_the_death_spill() {
         "spilled slots are empty"
     );
 
-    // Keep-inventory ON: no corpse pile, the stacks stay where they were.
     let (mut game, _) = game_with_bed();
     game.server_world_mut().set_keep_inventory(true);
     game.server_player_mut()
@@ -352,8 +334,6 @@ fn broken_bed_clears_the_spawn_and_respawn_falls_back_to_the_surface() {
     game.sim_mut()
         .tick_bed_and_respawn(0, &mut TickEvents::default());
 
-    // The break path resolves the spawn clear before removal (breaking.rs);
-    // this drives the same hook + removal pair it uses.
     game.sim_mut().clear_bed_spawn_at(base);
     game.server_world_mut().remove_compound(base);
     assert!(
@@ -368,8 +348,6 @@ fn broken_bed_clears_the_spawn_and_respawn_falls_back_to_the_surface() {
 
     assert!(events.player_at(0).respawned);
     assert_eq!(game.server_player().health(), MAX_HEALTH);
-    // The fallback is the fresh-world pick: a random dry-land column within
-    // 500 blocks of the origin (plus the block-centre offset).
     let feet = game.server_player().pos;
     let dist_sq = feet.x * feet.x + feet.z * feet.z;
     assert!(

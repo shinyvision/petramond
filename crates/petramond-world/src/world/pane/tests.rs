@@ -13,8 +13,6 @@ fn world() -> TestWorld {
 fn pane_connects_to_full_cubes_and_panes_but_not_tagged_irregulars() {
     let mut w = world();
     let p = IVec3::new(8, 64, 8);
-    // The probe shape is REAL: masks are refined per-cell state now, so
-    // the cell must hold the block whose state the cascade maintains.
     assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
     assert_eq!(w.data.pane_mask_at(p), 0, "isolated pane is a bare post");
 
@@ -38,10 +36,7 @@ fn pane_connects_to_full_cubes_and_panes_but_not_tagged_irregulars() {
 fn pane_connects_to_a_stair_back_but_not_its_open_side() {
     let mut w = world();
     let p = IVec3::new(8, 64, 8);
-    // The probe shape is REAL: masks are refined per-cell state now, so
-    // the cell must hold the block whose state the cascade maintains.
     assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
-    // Stair east of the pane, facing east: its flat high/back side faces the pane.
     assert!(w.place_stair(
         IVec3::new(9, 64, 8),
         Block::OakStairs,
@@ -49,7 +44,6 @@ fn pane_connects_to_a_stair_back_but_not_its_open_side() {
     ));
     assert_eq!(w.data.pane_mask_at(p), crate::pane::EAST);
 
-    // Stair west of the pane, also facing east: its open side faces the pane.
     assert!(w.place_stair(
         IVec3::new(7, 64, 8),
         Block::OakStairs,
@@ -62,8 +56,6 @@ fn pane_connects_to_a_stair_back_but_not_its_open_side() {
 fn pane_connects_to_a_full_slab_stack_but_not_a_single_slab() {
     let mut w = world();
     let p = IVec3::new(8, 64, 8);
-    // The probe shape is REAL: masks are refined per-cell state now, so
-    // the cell must hold the block whose state the cascade maintains.
     assert!(w.set_block_world(p.x, p.y, p.z, Block::GlassPane));
     let n = IVec3::new(8, 64, 7);
     let slot = |index| crate::slab::SlabSlot {

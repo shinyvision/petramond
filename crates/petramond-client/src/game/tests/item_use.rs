@@ -12,8 +12,6 @@ fn holding(item: ItemType) -> Inventory {
     inv
 }
 
-/// Aim the player straight down with the eye two blocks above the top face of
-/// `cell` (bucket rays cast from the player's eye along the player's look).
 fn aim_down_at(game: &mut super::common::TestGame, cell: IVec3) {
     set_player_eye(
         game,
@@ -26,7 +24,6 @@ fn aim_down_at(game: &mut super::common::TestGame, cell: IVec3) {
     game.server_player_mut().pitch = -std::f32::consts::FRAC_PI_2;
 }
 
-/// Place the player so their EYE sits exactly at `eye`.
 fn set_player_eye(game: &mut super::common::TestGame, eye: Vec3) {
     game.server_player_mut().pos = WorldPos::new(
         f64::from(eye.x),
@@ -42,8 +39,6 @@ fn right_click(game: &mut super::common::TestGame) -> TickEvents {
     events
 }
 
-/// Latch a use click targeting the mob at `index`, as an
-/// `Action(UseClick { mob })` message does — carrying the STABLE id.
 fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickEvents {
     let id = game.server_world().mobs().instances()[index].id();
     super::common::aim_server_at_mob(game, index);
@@ -53,10 +48,6 @@ fn right_click_at_mob(game: &mut super::common::TestGame, index: usize) -> TickE
     events
 }
 
-/// A stone shelf at `y` so poured water can spread a flowing ring on it. Wide
-/// enough (and fully inside the one loaded test chunk) that no shelf edge is
-/// within the flow's slope-search range of [`SHELF_CENTER`]: water on it spreads
-/// symmetrically instead of chasing the nearest drop-off.
 fn stone_shelf(game: &mut super::common::TestGame, y: i32) {
     for x in 2..=14 {
         for z in 2..=14 {
@@ -66,10 +57,8 @@ fn stone_shelf(game: &mut super::common::TestGame, y: i32) {
     }
 }
 
-/// Where shelf tests put their water source: the middle of [`stone_shelf`].
 const SHELF_CENTER: IVec3 = IVec3::new(8, 78, 8);
 
-/// Run enough fixed world ticks for at least one water flow step.
 fn run_water_ticks(game: &mut super::common::TestGame, n: u32) {
     for _ in 0..n {
         game.server_world_tick();
@@ -81,9 +70,6 @@ fn filling_the_bucket_scoops_the_source_and_swaps_the_held_item() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
-    // A still source right under the eye. The normal look ray sees through
-    // water (nothing solid below in the empty chunk), so this exercises the
-    // bucket's own water-stopping ray.
     let p = IVec3::new(0, 78, 0);
     assert!(game
         .server_world_mut()
@@ -113,10 +99,6 @@ fn filling_while_aiming_at_flowing_water_does_nothing() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
-    // A source spread into a flowing ring on a stone shelf. Flowing water is
-    // TRANSPARENT to the fill ray: aiming straight down at a ring cell reads
-    // through it to the shelf beneath, so nothing is picked up — the fill never
-    // acts on flow, and never searches the body for a source.
     stone_shelf(&mut game, 77);
     let src = SHELF_CENTER;
     game.server_world_mut()
@@ -156,8 +138,8 @@ fn fill_ray_reads_through_flowing_water_to_the_source_behind_it() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
-    // The bug this pins: a spread sheet or thin film renders exactly like still
-    // water, so if it STOPPED the fill ray it would invisibly shadow the source
+    // A spread sheet or thin film renders exactly like still water, so if it
+    // stopped the fill ray it would invisibly shadow the source
     // the player is aiming at. Aim at the source through its own flowing ring
     // at a shallow angle — the ray must pass the ring cells and scoop the source.
     stone_shelf(&mut game, 77);
@@ -201,7 +183,6 @@ fn filling_needs_a_source_within_reach() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
-    // Water well below REACH (eye ~9 blocks above the surface).
     let p = IVec3::new(0, 70, 0);
     assert!(game
         .server_world_mut()
@@ -265,8 +246,6 @@ fn pouring_onto_flowing_water_firms_it_into_a_source() {
     let flow = src + IVec3::X;
     assert!(!game.server_world().is_water_source_world(flow));
 
-    // The pour ray stops at the water surface: the flowing cell itself is what
-    // receives the source — not the shelf beneath it.
     aim_down_at(&mut game, flow);
     let events = right_click(&mut game);
 
@@ -289,8 +268,6 @@ fn pouring_onto_a_source_still_empties_the_bucket() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
-    // Pouring into already-still water changes nothing in the world, but the
-    // action stays predictable: on water, the bucket always empties.
     let p = IVec3::new(0, 78, 0);
     game.server_world_mut()
         .set_block_world(p.x, p.y, p.z, Block::Water);
@@ -311,7 +288,6 @@ fn pouring_with_nothing_in_reach_keeps_the_water() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WaterBucket);
 
-    // Nothing but air below the eye: the pour ray finds no cell to fill.
     set_player_eye(&mut game, Vec3::new(0.5, 80.0, 0.5));
     game.server_player_mut().pitch = -std::f32::consts::FRAC_PI_2;
 
@@ -360,7 +336,6 @@ fn shearing_the_targeted_sheep_drops_wool_and_strips_the_coat() {
         wool[0].stack.count
     );
 
-    // A shorn sheep refuses a second shear until the coat regrows.
     let events = right_click_at_mob(&mut game, 0);
     assert!(
         !events.player_at(0).used_item,
@@ -386,9 +361,6 @@ fn shearing_needs_the_shears_in_hand() {
     );
 }
 
-/// A walled two-deep pool of `fluid` (still sources) on a stone floor: the
-/// surface layer at [`POOL_TOP`], a second layer beneath it. Pouring the
-/// OTHER fluid at it must act on the surface cell, never inside the pool.
 fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
     for x in 4..=12 {
         for z in 4..=12 {
@@ -403,7 +375,6 @@ fn walled_pool(game: &mut super::common::TestGame, fluid: Block) {
     }
 }
 
-/// The surface cell over the middle of [`walled_pool`].
 const POOL_TOP: IVec3 = IVec3::new(8, 66, 8);
 
 fn block_at(game: &super::common::TestGame, p: IVec3) -> Block {
@@ -415,8 +386,6 @@ fn filling_the_empty_bucket_from_a_lava_source_yields_the_lava_bucket() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().inventory = holding(ItemType::WoodenBucket);
 
-    // The empty bucket takes either fluid; the result item follows the
-    // fluid actually scooped.
     let p = IVec3::new(0, 78, 0);
     assert!(game
         .server_world_mut()
@@ -447,8 +416,6 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
 
     let events = right_click(&mut game);
 
-    // The pour ray stops at the water surface: the surface cell is what the
-    // lava swaps into, the pond beneath it is untouched.
     assert!(
         events.player_at(0).used_item,
         "pouring onto water must work"
@@ -467,7 +434,6 @@ fn pouring_lava_at_a_pond_surface_acts_at_the_surface() {
         ItemType::WoodenBucket
     );
 
-    // Contact resolves in the placement's block-update batch.
     run_water_ticks(&mut game, 1);
     assert_eq!(
         block_at(&game, POOL_TOP),
@@ -524,12 +490,8 @@ fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
     );
 }
 
-/// One bucket click evaluated on BOTH mirrors from the same geometry: the
-/// cells `stage` writes land in the server world and the client replica
-/// alike, the server eye and the client camera sit at the same spot looking
-/// straight down at `aim`, and the client's predicted verdict (the shared
-/// consumer walk against the replica) must name a claim exactly when the
-/// server's authoritative click reports an item use.
+/// Server and client both get this bucket click, straight down onto `aim`. If the server uses
+/// the item, the client should have predicted it, and if not, not.
 fn bucket_click_parity(item: ItemType, aim: IVec3, stage: &[(IVec3, Block)]) -> bool {
     let mut game = game_on_empty_chunk();
     game.game.replica.world.insert_chunk_for_test(

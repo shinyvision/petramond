@@ -1,28 +1,7 @@
-//! The engine's WGSL module system: a line `#import <module>` in any shader
-//! source — engine or pack — is replaced by that module's text, once per
-//! composed source however many pieces import it.
-//!
-//! Every module is GENERATED from the Rust definition it mirrors, so a shader
-//! can no longer carry a stale hand copy:
-//!
-//! - `petramond::frame` — the frame [`Uniforms`](crate::uniforms::Uniforms)
-//!   struct and `PETRAMOND_FRAME_ABI`, from `uniforms::UNIFORM_FIELDS`;
-//! - `petramond::shader_params` — the pack shaders' named parameter slots;
-//! - `petramond::vertex` — the packed vertex words' lane decoders, UV modes,
-//!   normal codes, block-light and transition decodes, from
-//!   `petramond_mesh::vertex`;
-//! - `petramond::uv_rects` — the tile uv-rect table binding.
-//!
-//! Pack sky and environment shaders bind the same frame buffer, so for them
-//! this is the ABI: importing `petramond::frame` instead of copying the struct
-//! keeps a pack correct when a field is added.
-
 use std::borrow::Cow;
 
-/// An `#import` naming no module this engine provides.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImportError {
-    /// 1-based line of the import in the source that spelled it.
     pub line: usize,
     pub module: String,
 }
@@ -41,7 +20,6 @@ impl std::fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
-/// Every importable module, by the name a shader spells.
 const MODULES: [&str; 4] = [
     "petramond::frame",
     "petramond::shader_params",
@@ -59,7 +37,6 @@ fn module_source(name: &str) -> Option<String> {
     })
 }
 
-/// The module a line imports, if it is an import line.
 fn import_of(line: &str) -> Option<&str> {
     line.trim_start()
         .strip_prefix("#import")
@@ -67,8 +44,6 @@ fn import_of(line: &str) -> Option<&str> {
         .map(str::trim)
 }
 
-/// Resolve every `#import` in `source`. A source without imports comes back
-/// borrowed, untouched.
 pub(crate) fn compose(source: &str) -> Result<Cow<'_, str>, ImportError> {
     if !source.lines().any(|line| import_of(line).is_some()) {
         return Ok(Cow::Borrowed(source));
@@ -98,7 +73,6 @@ fn expand<'a>(
             module: module.to_owned(),
         })?;
         included.push(module);
-        // Generated modules are leaves: none imports another.
         out.push_str(&text);
     }
     Ok(())

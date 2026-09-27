@@ -1,15 +1,8 @@
-//! The bbmodel block: geometry and collision baked from the model, per-cell oriented.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A bbmodel block; geometry/collision baked from the model, oriented per cell.
 pub struct ModelFamily;
 
 impl ShapeSim for ModelFamily {
-    /// Every footprint cell, each holding its offset from the model's base.
     fn compound_members(
         &self,
         p: &ShapeParams,
@@ -75,8 +68,6 @@ impl ShapeRender for ModelFamily {
         p: &ShapeParams,
         _block: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        // The MODEL's box, independent of collision — a walk-through model
-        // block is still selectable. Position-less: the footprint-origin cell.
         let kind = p.model_kind().expect("model family carries a model kind");
         crate::block_model::selection_aabb(kind, [0, 0, 0])
     }
@@ -86,8 +77,6 @@ impl ShapeRender for ModelFamily {
     }
 }
 
-/// Whether a placement of this model takes its facing from the placer: a
-/// centred model and a lone undirected cell always stand the default way.
 fn turns_with_the_placer(block: Block, kind: crate::block_model::BlockModelKind) -> bool {
     !matches!(
         crate::block_model::def(kind).orientation,
@@ -95,10 +84,6 @@ fn turns_with_the_placer(block: Block, kind: crate::block_model::BlockModelKind)
     ) && (block.directional_view() || crate::block_model::instance(kind).cells.len() > 1)
 }
 
-/// The pose construction builds a recorded model in. One that turns with its
-/// placer is built as recorded. One that never turns was turned by something
-/// other than a click (a design laid down rotated): it is built the default
-/// way over the same cells where they allow it, which is all a click can do.
 fn clickable_pose(
     block: Block,
     kind: crate::block_model::BlockModelKind,
@@ -212,11 +197,6 @@ impl ShapePlacement for ModelFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A bbmodel block places its WHOLE footprint: every occupied cell must
-        // be loaded + replaceable AND clear of blocking bodies, or the
-        // placement fails as a unit. Multi-cell / directionalView models orient
-        // from the player's facing; a `centered` model centres its footprint on
-        // the clicked cell with the default facing.
         let p = inputs.place_pos;
         let kind = block
             .model_kind()
@@ -240,11 +220,6 @@ impl ShapePlacement for ModelFamily {
         } else {
             p
         };
-        // The row's own substrate/support declaration (`support`, `roots_on`,
-        // `roots_face`) gates a model exactly as it gates a single cell — at
-        // the anchor, the cell the row's support direction is read from. A
-        // rail declaring `roots_face: solid_face` must refuse open air here,
-        // or the fragile update shatters it a tick later and eats the item.
         if !w.placement_support_ok(block, base) {
             return PlacementOutcome::Refused;
         }

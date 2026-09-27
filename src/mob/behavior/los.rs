@@ -1,25 +1,13 @@
-//! Line of sight over WORLD COLLISION: a ray is clear when no collision box lies
-//! between the endpoints.
-//!
-//! Collision (not visual opacity) is the deliberate sight predicate: leaves and
-//! any future glass-like block collide and therefore block sight, while
-//! non-colliding decorations (torches, flowers) never do. Both the melee strike
-//! gate and chase engagement share this test, so "can start hunting" and "can
-//! hit" agree on what a mob sees through.
-
 use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
 const LOS_EPS: f32 = 0.001;
 
-/// Whether the straight line `from → to` crosses no world collision box.
 pub(super) fn line_clear(world: &ServerWorld, from: WorldPos, to: WorldPos) -> bool {
     line_clear_skipping(world, from, to, &[])
 }
 
-/// [`line_clear`], ignoring the boxes of the `skip` cells — the cells an
-/// action is aimed at, which may stand in its own way.
 pub(crate) fn line_clear_skipping(
     world: &ServerWorld,
     from: WorldPos,
@@ -91,7 +79,6 @@ fn cell_hits_collision(
     max_t: f32,
     cell: IVec3,
 ) -> bool {
-    // In the eye's frame: the cell is within the ray's reach of it.
     let base = WorldPos::block_min(cell) - eye;
     world
         .data()

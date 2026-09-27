@@ -1,6 +1,3 @@
-//! One painter per widget kind. Each draws only the instance itself; the
-//! walk in the parent module paints children and scrollbar chrome after it.
-
 use super::{frame_src, mask, Here, Icon, PaintCtx, SceneElement, SceneView};
 use crate::doc::{GaugeMode, ImageFit, TabSpec};
 use crate::layout::{grid_cell, RectI};
@@ -8,12 +5,9 @@ use crate::paint::{Fit, PaintStyle, Painter, SpriteSrc, TexId};
 use crate::theme::{palette, FaceState};
 use crate::widget;
 
-/// Gap between an icon and the label beside it, logical px.
 const ICON_GAP: i32 = 4;
 
 impl<'a> PaintCtx<'a> {
-    /// A layout container: its part's face (a list stamp's row face) as
-    /// chrome behind the children.
     pub(super) fn container(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let state = n.row.unwrap_or(FaceState::Default);
         if let Some(face) = n.part.and_then(|part| part.face(state)) {
@@ -32,8 +26,6 @@ impl<'a> PaintCtx<'a> {
     ) {
         let inst = n.inst;
         let text = inst.text.as_deref().unwrap_or("");
-        // A bound palette entry outranks the style — the colour IS state —
-        // but never the disabled face.
         let mut color = match inst.palette.as_deref() {
             Some(key) if inst.enabled => self.theme.color(key),
             _ => self.label_color(n.part, inst.enabled),
@@ -106,8 +98,6 @@ impl<'a> PaintCtx<'a> {
         let inst = n.inst;
         let (rect, clip) = (n.rect, n.clip);
         let selected = n.row == Some(FaceState::Selected);
-        // An image-backed button draws its document image instead of the
-        // theme face; state affordance is a plain multiply tint.
         if let Some((tex, size)) = self.doc_image(inst.image_name()) {
             let src = SpriteSrc {
                 tex: TexId::DocImage(tex),
@@ -152,9 +142,6 @@ impl<'a> PaintCtx<'a> {
         let icon = inst.icon_name().and_then(|name| self.icon(name));
         let text_x = self.icon_and_label_block(p, shifted, icon, inst.enabled, text, clip);
         if !text.is_empty() {
-            // Centred while the block fits; once it does not, the run starts
-            // at the padding edge and ellipsizes into the face instead of
-            // painting out of the button.
             let pad = self.theme.metrics.button_pad;
             let x = text_x.max(rect.x + pad);
             let line_h = self.theme.ui_font().line_h();
@@ -168,8 +155,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// Draw `icon` of an icon + label block centred in `cell`, returning
-    /// where the label starts. Buttons and tabs share it.
     fn icon_and_label_block(
         &self,
         p: &mut Painter<'_>,
@@ -279,8 +264,6 @@ impl<'a> PaintCtx<'a> {
         } else {
             FaceState::Default
         };
-        // A bound palette entry tints the field and colours its text, but
-        // never the disabled face.
         let bound_color = inst
             .palette
             .as_deref()
@@ -331,8 +314,6 @@ impl<'a> PaintCtx<'a> {
             if let Some(face) = n.part.and_then(|p| p.face(FaceState::Default)) {
                 self.draw_face(p, face, cell, n.clip);
             }
-            // Overlay faces: the bound `selected` cell (hotbar active slot)
-            // and the hovered cell.
             let overlay = if n.inst.selected == Some(c as i32) {
                 n.part.and_then(|p| {
                     p.face_if(FaceState::Selected)
@@ -403,7 +384,6 @@ impl<'a> PaintCtx<'a> {
             if let Some(face) = n.part.and_then(|p| p.face(state)) {
                 self.draw_face(p, face, cell, n.clip);
             }
-            // Icon + label centred as one block, like leaf buttons.
             let text = tab.label.as_deref().unwrap_or("");
             let icon = tab.icon.as_deref().and_then(|name| self.icon(name));
             let x = self.icon_and_label_block(p, cell, icon, inst.enabled, text, n.clip);
@@ -417,7 +397,6 @@ impl<'a> PaintCtx<'a> {
 
     pub(super) fn badge(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let rect = n.rect;
-        // A bound palette entry tints the chip (never a disabled one).
         let color = match n.inst.palette.as_deref() {
             Some(key) if n.inst.enabled => self.theme.color(key),
             _ => [1.0; 4],
@@ -433,8 +412,6 @@ impl<'a> PaintCtx<'a> {
             let font = self.theme.ui_font();
             let tw = font.width(text);
             let line = RectI {
-                // Centred while it fits; once it does not, the run starts at
-                // the edge and ellipsizes into the chip.
                 x: rect.x + (rect.w - tw).max(0) / 2,
                 y: rect.y + (rect.h - font.line_h()) / 2,
                 w: rect.w - (rect.w - tw).max(0) / 2,
@@ -473,8 +450,6 @@ impl<'a> PaintCtx<'a> {
             tx += iw + ICON_GAP;
         }
         if let Some(text) = inst.text.as_deref() {
-            // Wrap to the frame's interior; centre the wrapped block
-            // vertically (single lines land where they always did).
             let font = self.theme.ui_font();
             let text_w = (rect.x + rect.w - insets[2] - tx).max(font.max_advance());
             let (_, block_h) = font.measure(text, Some(text_w));
@@ -489,8 +464,6 @@ impl<'a> PaintCtx<'a> {
         }
     }
 
-    /// A `canvas` node: the host scene its `scene` binding names, one scene
-    /// unit per logical pixel, everything clipped to the canvas.
     pub(super) fn canvas(&self, n: &Here<'a>, p: &mut Painter<'_>) {
         let Some(scene) = n.inst.scene.as_deref().and_then(|s| self.images.scene(s)) else {
             return;

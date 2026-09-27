@@ -1,6 +1,3 @@
-//! Entity calls: mob spawn/query/damage/despawn, keyed particle emitters,
-//! and deterministic dropped-item spawns.
-
 mod intents;
 
 use mod_api::{
@@ -19,8 +16,6 @@ use super::guards::{
 };
 use super::intern_mod_id;
 
-/// Maximum horizontal speed accepted from `MobDrive`, derived from the
-/// collision resolver's bounded external sweep and the fixed simulation tick.
 const MAX_MOB_DRIVE_SPEED: f32 = MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
 
 fn anim_name_guard(call: &str, anim: &str) -> Result<(), HostRet> {
@@ -44,9 +39,6 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     }
 }
 
-/// The ABI snapshot of a live mob at `position` in this tick's listing (its
-/// intra-tick join key — see [`Mobs::position_of`](crate::mob::Mobs::position_of))
-/// — the one construction shared by `MobInfo`, `MobsInRadius` and `MobsWithTag`.
 pub(super) fn mob_snapshot(position: usize, m: &crate::mob::Instance) -> MobSnapshot {
     let size = crate::mob::def(m.kind).size;
     MobSnapshot {
@@ -69,12 +61,6 @@ pub(super) fn mob_snapshot(position: usize, m: &crate::mob::Instance) -> MobSnap
     }
 }
 
-/// The damage source a call's named `attacker` resolves to — the ONE rule
-/// `DamageMob` and `DamagePlayer` share. A player attacker must be a
-/// connected session (a mod bug otherwise: the id came from the roster or
-/// an event payload); a mob attacker no longer alive degrades to the mod's
-/// own damage, since the strike still happened and there is simply nobody
-/// left to remember.
 pub(super) fn attack_source(
     ctx: &SimCtx<'_>,
     mod_id: &'static str,
@@ -99,7 +85,6 @@ pub(super) fn attack_source(
     })
 }
 
-/// One item entity as the ABI snapshots it.
 pub(super) fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
     use crate::entity::Motion;
     let (owner, motion) = match it.motion {
@@ -122,7 +107,6 @@ pub(super) fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
     }
 }
 
-/// Entity calls (mob spawn/query/hurt/despawn, item drops).
 pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
     match call {
         EntityCall::SpawnMob {
@@ -337,8 +321,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             }
             HostRet::Bool(ctx.world.mobs_mut().remove(mob_id))
         }),
-        // Presentation-only mob state (no bus funnel), so unlike DamageMob it
-        // applies immediately instead of queueing a DeferredAction.
         EntityCall::MobEmitterSet {
             mob_id,
             key,
@@ -349,7 +331,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
             }
             HostRet::Bool(ctx.world.mobs_mut().set_mob_emitter(mob_id, &key, active))
         }),
-        // The animation sibling of MobEmitterSet.
         EntityCall::MobAnimSet {
             mob_id,
             anim,
@@ -409,8 +390,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 )
             })
         }
-        // Kinematic drive intent for this tick (see `Instance::set_drive`);
-        // immediate like every presentation/locomotion primitive.
         EntityCall::MobDrive {
             mob_id,
             horizontal,
@@ -456,8 +435,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 ))
             })
         }
-        // Kinematic placement for this tick (see `Instance::set_kinematic`):
-        // the mod authored the pose, the engine presents it.
         EntityCall::MobKinematic {
             mob_id,
             pos,
@@ -512,7 +489,7 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 return HostRet::invalid("PlayerPoseSet: non-finite yaw".into());
             }
             if pose == 0 {
-                return HostRet::Bool(false); // reserved "no pose" value
+                return HostRet::Bool(false);
             }
             sim_query(move |ctx| {
                 HostRet::Bool(ctx.world.try_mount_anchor(
@@ -710,9 +687,6 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
     }
 }
 
-/// Spawn `count` of `item` as dropped entities at `pos`, splitting oversized
-/// counts into max-stack-size drops. Pop seeds derive from (tick, pos, i) so
-/// the spawn is deterministic without any Game-side counter.
 fn spawn_item_stacks(
     ctx: &mut SimCtx<'_>,
     item: ItemType,
@@ -741,8 +715,6 @@ fn spawn_item_stacks(
     }
 }
 
-/// Deterministic per-drop pop seed: a SplitMix64 finalizer over the tick, the
-/// spawn position bits, and the in-call index.
 fn drop_seed(tick: u64, pos: petramond_math::world_pos::WorldPos, i: u32) -> u32 {
     let mut z = tick
         ^ pos.x.to_bits().rotate_left(32)
@@ -754,10 +726,6 @@ fn drop_seed(tick: u64, pos: petramond_math::world_pos::WorldPos, i: u32) -> u32
     (z ^ (z >> 31)) as u32
 }
 
-/// The inventory half of a give: fill `player`'s inventory, returning what
-/// did not fit plus where its overflow should drop (the player's body). Split
-/// from the drop half so the give can run it inside the roster's player
-/// borrow and spawn the drops outside it.
 fn fill_inventory(
     player: &mut crate::player::Player,
     item: ItemType,
@@ -779,7 +747,6 @@ fn fill_inventory(
     (leftovers, player.body_center())
 }
 
-/// The world half of a give: drop what the inventory refused, at `at`.
 fn drop_leftovers(
     world: &mut crate::world::ServerWorld,
     at: petramond_math::world_pos::WorldPos,
@@ -797,9 +764,6 @@ fn drop_leftovers(
     }
 }
 
-/// Give session `player` `count` of `item` through the normal inventory
-/// fill; whatever does not fit drops at the player's feet like any other
-/// overflow. `false` when the id resolves to no connected player.
 pub(super) fn give_item_to(
     ctx: &mut SimCtx<'_>,
     player: crate::player::PlayerId,
@@ -1139,10 +1103,6 @@ mod tests {
         });
     }
 
-    /// The one dead-mob policy (`live_mob`): a ragdolling corpse is GONE to
-    /// every id-addressed call — reads answer `None`/`Bytes(None)` and writes
-    /// answer `false`, uniformly, so state can never be written to a mob no
-    /// read can see.
     #[test]
     fn a_dead_mob_is_gone_to_every_id_addressed_call() {
         let mut data = ModStoreData::new("alpha", 1);

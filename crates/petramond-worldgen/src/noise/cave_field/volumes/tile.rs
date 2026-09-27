@@ -183,14 +183,11 @@ pub(super) fn build_tile(field: &CaveField, tile: [i32; 3]) -> Tile {
 /// risers stay crisp.
 const STEP: usize = 4;
 const FINE_STEP: usize = 2;
-/// A corner no member reaches: far enough below zero that interpolation
-/// towards it never turns positive within a step.
 const NONE: f64 = -1.0e9;
 
-/// Sample every member's cut margin at the draft's lattice corners, keep
-/// the union and its first owner per corner, and fill the cells where the
-/// interpolated margin is positive. The cut's boundary is smooth at the
-/// lattice scale by construction, the way the cave density's is.
+/// Sample each member's cut margin at the lattice corners, keep the union and first owner per
+/// corner, fill cells where the interpolated margin is positive. Boundary comes out smooth at
+/// lattice scale, same as cave density.
 fn carve(draft: &mut Draft, plans: &[Plan<'static>], surfaces: &[i32], seed: u32) {
     let step_y = if plans
         .iter()
@@ -370,8 +367,6 @@ fn shift(pos: [i32; 3], delta: [i32; 3]) -> [i32; 3] {
     std::array::from_fn(|a| pos[a] + delta[a])
 }
 
-/// Boundary rules: a filled neighbour that qualifies is replaced now; a
-/// terrain neighbour gets a seal the walk applies once it knows the block.
 fn boundaries(draft: &mut Draft, plans: &[Plan<'static>], seals: &mut Vec<(usize, Seal)>) {
     let mut fills = Vec::new();
     for (i, source) in draft.cells.iter().enumerate() {
@@ -421,8 +416,6 @@ fn boundaries(draft: &mut Draft, plans: &[Plan<'static>], seals: &mut Vec<(usize
     }
 }
 
-/// Course rules: every cell a course would lay, remembered with its anchor;
-/// the walk lays it once it knows the anchor is rock the course can sit on.
 fn course_cells(
     draft: &Draft,
     plans: &[Plan<'static>],
@@ -444,8 +437,6 @@ fn course_cells(
             let Some(a) = draft.index(anchor) else {
                 continue;
             };
-            // An anchor the field filled itself is settled here; terrain
-            // anchors are the walk's to judge.
             if let Cell::Fill(filled) = draft.cells[a].cell {
                 if !Block::from_id(filled.block).is_solid() || rule.avoid.contains(&filled.block) {
                     continue;
@@ -551,7 +542,6 @@ fn finish(
             .all(|a| (origin[a]..origin[a] + 16).contains(&p[a]))
             .then(|| column_key(p[0], p[1], p[2]))
     };
-    // Later writes win, as they did when every rule wrote the draft directly.
     let mut seals: Vec<Seal> = seals
         .into_iter()
         .rev()

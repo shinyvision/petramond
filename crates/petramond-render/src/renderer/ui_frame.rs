@@ -1,17 +1,6 @@
-//! Per-frame UI geometry build + upload for [`Renderer`].
-//!
-//! Runs `build_ui` into the reusable `UiBuild` scratch and uploads each quad
-//! group (solid counts, hearts, per-slot icon quads) to its own buffer range
-//! so the UI pass binds the right texture per group. Screen chrome is not
-//! built here — the GUI-document draw list (`doc_ui`) owns it.
-
 use super::*;
 
 impl Renderer {
-    /// Validate and prepare both UI layers as one viewport-stamped
-    /// transaction: the scene's at the frame's size, the window's at the
-    /// window's. A resize-stale document rejects the whole packet before any
-    /// layer state is cleared or uploaded.
     pub fn prepare_ui_frame(&mut self, frame: UiLayers<'_>) -> bool {
         if !frame.scene.matches_viewport(self.scene_ui_viewport())
             || !frame.window.matches_viewport(self.window_ui_viewport())
@@ -61,15 +50,6 @@ impl UiLayer {
         self.prepared_viewport = frame.viewport;
     }
 
-    /// Build + upload this frame's game-owned UI geometry from the [`UiBuild`]
-    /// that [`build_ui`] fills:
-    /// - `ui_solid_vbuf`: stack counts `[0, counts)`, then drag counts — all
-    ///   solid-color, drawn with the icon-atlas bind (the solid sentinel skips
-    ///   the sampler).
-    /// - each `hud_layers` entry (vignette, hearts, effects, …): its `UiBuild`
-    ///   vec to its own buffer.
-    /// - `icon_quad_vbuf`: one textured quad per filled slot sampling the item's
-    ///   pre-baked icon-atlas cell — normal icons then cursor-held icons.
     #[allow(clippy::too_many_arguments)]
     fn build_frame(
         &mut self,
@@ -90,10 +70,6 @@ impl UiLayer {
 
         build_ui(content, screen, scale, slots, hooks, &mut self.build);
 
-        // Solid quads packed into one buffer in draw order: normal stack
-        // counts, the tooltip's counts (after the overlay chrome), then the
-        // cursor-held count (drawn after the cursor icon). One upload, the
-        // buffer grown to fit.
         let counts = &self.build.counts;
         let overlay_counts = &self.build.overlay_counts;
         let drag_counts = &self.build.drag_counts;
@@ -117,7 +93,6 @@ impl UiLayer {
         }
         self.solid_verts = solid;
 
-        // HUD chrome layers: each layer's UiBuild vec to its own buffer.
         for layer in &mut self.hud_layers {
             layer.vertex_count = 0;
             let verts = (layer.source)(&self.build);
@@ -134,11 +109,6 @@ impl UiLayer {
             }
         }
 
-        // Per-slot item icons: resolve each recorded `(item, slot rect)` to the item's
-        // pre-baked icon-atlas cell and emit a textured quad (6 verts) — slot rect →
-        // NDC, cell rect → uv, white tint (so the quad samples the atlas, not the solid
-        // sentinel). Normal icons draw in the UI pass; cursor-held icons are appended
-        // to the same buffer but drawn later, after normal stack-count overlays.
         let mut verts = std::mem::take(&mut self.icon_quad_verts);
         verts.clear();
         if screen.0 != 0 && screen.1 != 0 {

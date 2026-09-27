@@ -80,8 +80,6 @@ struct SectionBuilder {
     cells: BTreeMap<u16, u16>,
 }
 
-/// Sparse positions and interned records; neither holes nor repeated block data
-/// consume full cell snapshots while capturing a structure.
 #[derive(Default)]
 pub struct SchematicBuilder {
     sections: BTreeMap<[i32; 3], SectionBuilder>,
@@ -125,7 +123,6 @@ impl SchematicBuilder {
                 let mut palette: Vec<_> = builder.palette.into_iter().collect();
                 palette.sort_unstable_by_key(|(_, index)| *index);
                 let mut palette: Vec<_> = palette.into_iter().map(|(data, _)| Some(data)).collect();
-                // First occurrence in voxel order makes the file independent of selection order.
                 let mut remap = vec![None; palette.len()];
                 let mut canonical = Vec::new();
                 let cells = builder

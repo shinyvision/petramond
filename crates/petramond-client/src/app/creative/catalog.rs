@@ -1,12 +1,7 @@
-//! The filtered item catalog, recomputed only when the search text or the
-//! item registry changes — never per frame.
-
 use petramond_ui::{UiMap, UiValue};
 use petramond_world::item::ItemType;
 use std::sync::Arc;
 
-/// The registry a view was built from: a reinstalled registry is a new
-/// static table.
 type RegistryIdentity = (usize, usize);
 
 #[derive(Default)]
@@ -17,7 +12,6 @@ pub(super) struct Catalog {
 }
 
 impl Catalog {
-    /// The visible items matching `query`, and their list rows.
     pub(super) fn view(&mut self, query: &str) -> (Arc<[ItemType]>, Arc<Vec<UiMap>>) {
         let registry = ItemType::all();
         let identity = (registry.as_ptr() as usize, registry.len());
@@ -53,7 +47,6 @@ fn matching(registry: &[ItemType], query: &str) -> Vec<ItemType> {
                     || i.name().to_lowercase().contains(&query))
         })
         .collect();
-    // World tools lead the catalog.
     items.sort_by_key(|i| i.world_tool().is_none());
     items
 }

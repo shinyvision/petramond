@@ -25,62 +25,42 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Mutex;
 
-/// Glyphs whose ink defines the TEXT BODY — the band a caret or a selection
-/// should cover. Deliberately excludes accented capitals, whose headroom the
-/// line box reserves but ordinary text leaves empty.
 const BODY_TOP_SAMPLE: &str = "MHTbdkl";
 const BODY_BOTTOM_SAMPLE: &str = "gjpqy";
 
-/// One face of a fallback chain: a TrueType/OpenType file at the pixel size
-/// it was designed for.
 #[derive(Clone, Copy, Debug)]
 pub struct FaceSource<'a> {
     pub bytes: &'a [u8],
-    /// Pixels per EM. Away from its design size a pixel font stops being a
-    /// pixel font, so this is authored, never guessed.
     pub px: f32,
-    /// Inclusive codepoint ranges to take from this face; empty takes every
-    /// codepoint the face maps.
     pub ranges: &'a [[u32; 2]],
 }
 
-/// One glyph: a tight 1-bit bitmap, where it sits against the pen and the
-/// line top, how far the pen moves after it, and its atlas rect.
 #[derive(Clone, Debug)]
 pub struct Glyph {
-    /// Row-major, `w * h`, `true` = ink.
     bitmap: Vec<bool>,
-    /// Bitmap rect relative to (pen x, line top): `[dx, dy, w, h]`.
     bounds: [i32; 4],
     advance: i32,
     atlas: [u32; 4],
 }
 
 impl Glyph {
-    /// Pen advance in font-pixels.
     pub fn advance(&self) -> i32 {
         self.advance
     }
 
-    /// The bitmap's rect relative to the pen x and the line top, as
-    /// `[dx, dy, w, h]` (zero-sized for blank glyphs such as a space; `dy`
-    /// may be negative for ink above the line box).
     pub fn bounds(&self) -> [i32; 4] {
         self.bounds
     }
 
-    /// The glyph's atlas pixel rect `[x, y, w, h]`.
     pub fn atlas_rect(&self) -> [u32; 4] {
         self.atlas
     }
 
-    /// Whether bitmap pixel `(x, y)` (bitmap-local) is ink.
     pub fn lit(&self, x: i32, y: i32) -> bool {
         let [_, _, w, h] = self.bounds;
         (0..w).contains(&x) && (0..h).contains(&y) && self.bitmap[(y * w + x) as usize]
     }
 
-    /// Every ink pixel relative to (pen x, line top).
     pub fn ink(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
         let [dx, dy, w, _] = self.bounds;
         self.bitmap
@@ -94,7 +74,6 @@ impl Glyph {
 #[derive(Debug)]
 pub enum FontError {
     Parse(String),
-    /// The file parsed but produced no usable glyphs at that size.
     Empty,
 }
 
@@ -107,7 +86,6 @@ impl std::fmt::Display for FontError {
     }
 }
 
-/// A rasterized font: per-glyph bitmaps and advances over one line box.
 #[derive(Debug)]
 pub struct Font {
     line_h: i32,
@@ -115,12 +93,9 @@ pub struct Font {
     max_advance: i32,
     body: (i32, i32),
     glyphs: GlyphSet,
-    /// Memoised wraps: layout measures a wrapped label and paint wraps it
-    /// again, every frame — both now read one shaping.
     wraps: Mutex<WrapCache>,
 }
 
-/// Wrapped text by (max width, string): its line ranges and wrapped size.
 #[derive(Debug, Default)]
 struct WrapCache {
     by_width: HashMap<i32, HashMap<String, Wrapped>>,
@@ -133,12 +108,9 @@ struct Wrapped {
     size: (i32, i32),
 }
 
-/// Distinct wraps held before the cache starts over — far more than any
-/// screen shows, small enough that churning text cannot grow it unbounded.
 const WRAP_CACHE_CAP: usize = 4096;
 
 impl Font {
-    /// The built-in 5×7 ASCII table — the fallback when no font file loads.
     pub fn builtin() -> Font {
         let metrics = raster::builtin_metrics();
         let covered = raster::builtin_chars(true)
@@ -149,8 +121,6 @@ impl Font {
             .expect("the built-in table always assembles")
     }
 
-    /// Load one TrueType/OpenType face at `px` pixels per EM, closed by the
-    /// built-in table.
     pub fn from_ttf(bytes: &[u8], px: f32) -> Result<Font, FontError> {
         Font::from_faces(&[FaceSource {
             bytes,
@@ -159,8 +129,6 @@ impl Font {
         }])
     }
 
-    /// A fallback chain: the first face sets the line box, each later face
-    /// fills missing codepoints, and the built-in table closes the chain.
     pub fn from_faces(faces: &[FaceSource<'_>]) -> Result<Font, FontError> {
         let mut sources = Vec::new();
         let mut covered = Vec::new();
@@ -233,35 +201,23 @@ impl Font {
         })
     }
 
-    /// Height of one line box — what a single-line label measures.
     pub fn line_h(&self) -> i32 {
         self.line_h
     }
 
-    /// Baseline-to-baseline distance for wrapped text.
     pub fn line_advance(&self) -> i32 {
         self.line_advance
     }
 
-    /// The widest pen advance in the font.
-    ///
-    /// Use it wherever a character COUNT has to be derived from a width
-    /// without knowing the characters — it is the only bound that cannot
-    /// overflow the box (and is exact for a monospace face).
     pub fn max_advance(&self) -> i32 {
         self.max_advance
     }
 
-    /// The text BODY as `(top row within the line box, height)`: ascender top
-    /// to descender bottom, excluding the headroom reserved for accented
-    /// capitals. A caret or a selection sized to the whole line towers over
-    /// ordinary text, because that headroom is nearly always empty.
     pub fn body_span(&self) -> (i32, i32) {
         let (top, bottom) = self.body;
         (top, (bottom - top).max(1))
     }
 
-    /// How many codepoints resolve to a real glyph (fallback excluded).
     pub fn glyph_count(&self) -> usize {
         self.glyphs.count()
     }
@@ -270,29 +226,23 @@ impl Font {
         self.glyphs.glyph(ch)
     }
 
-    /// Whether `ch` has its own glyph (false = it draws the fallback).
     pub fn has_glyph(&self, ch: char) -> bool {
         self.glyphs.has(ch)
     }
 
-    /// The pen advance of `ch`, without rasterizing its bitmap.
     pub fn advance(&self, ch: char) -> i32 {
         self.glyphs.advance(ch)
     }
 
-    /// Width of `s` on one line, in font-pixels.
     pub fn width(&self, s: &str) -> i32 {
         s.chars().map(|ch| self.advance(ch)).sum()
     }
 
-    /// Width of the first `byte_end` bytes of `s` — the caret x for an index.
     pub fn prefix_width(&self, s: &str, byte_end: usize) -> i32 {
         let end = byte_end.min(s.len());
         self.width(&s[..floor_char_boundary(s, end)])
     }
 
-    /// The byte index whose caret position is nearest `x` font-pixels — the
-    /// inverse of [`Self::prefix_width`], for click-to-caret.
     pub fn index_at_x(&self, s: &str, x: i32) -> usize {
         let mut pen = 0;
         for (bi, ch) in s.char_indices() {
@@ -305,7 +255,6 @@ impl Font {
         s.len()
     }
 
-    /// How many leading characters of `s` fit in `max_w` font-pixels.
     pub fn fit_chars(&self, s: &str, max_w: i32) -> usize {
         let mut pen = 0;
         let mut count = 0;
@@ -320,16 +269,10 @@ impl Font {
         count
     }
 
-    /// Greedy word wrap into lines of at most `max_w` font-pixels, breaking at
-    /// spaces where possible and mid-word only when a word alone overflows;
-    /// a `\n` always ends its line. Returns byte ranges into `s`, newlines
-    /// left out; never empty (empty text = one empty line).
     pub fn wrap(&self, s: &str, max_w: i32) -> Vec<Range<usize>> {
         self.with_wrapped(s, max_w, |w| w.lines.clone())
     }
 
-    /// Run `f` over the memoised wrap of `s` at `max_w`, shaping it first
-    /// on a miss.
     fn with_wrapped<R>(&self, s: &str, max_w: i32, f: impl FnOnce(&Wrapped) -> R) -> R {
         if let Ok(cache) = self.wraps.lock() {
             if let Some(hit) = cache.by_width.get(&max_w).and_then(|m| m.get(s)) {
@@ -377,11 +320,6 @@ impl Font {
                 continue;
             }
             let advance = self.advance(ch);
-            // Only a non-space can force a break: a trailing space that
-            // overflows is swallowed by the break anyway, and checking it
-            // would wrap a line that actually fits. A single character wider
-            // than the line still has to go somewhere, so only break when
-            // something is already on the line.
             if ch != ' ' && line_w + advance > max_w && bi > line_start {
                 let break_at = match last_space {
                     Some(sp) if sp >= line_start => {
@@ -406,7 +344,6 @@ impl Font {
         lines
     }
 
-    /// Size of `s` in font-pixels; `max_w` `None` = a single line.
     pub fn measure(&self, s: &str, max_w: Option<i32>) -> (i32, i32) {
         match max_w {
             None => (self.width(s), self.line_h),
@@ -414,30 +351,24 @@ impl Font {
         }
     }
 
-    /// Whether pixel `(x, y)` relative to (pen x, line top) is ink in `ch`.
     pub fn glyph_cell(&self, ch: char, x: i32, y: i32) -> bool {
         let glyph = self.glyph(ch);
         let [dx, dy, ..] = glyph.bounds;
         glyph.lit(x - dx, y - dy)
     }
 
-    // ---- atlas ---------------------------------------------------------
-
     pub fn atlas_size(&self) -> (u32, u32) {
         self.glyphs.atlas_size()
     }
 
-    /// Increases when a newly used glyph adds pixels to the atlas.
     pub fn atlas_revision(&self) -> u64 {
         self.glyphs.revision()
     }
 
-    /// The atlas pixel rect `[x, y, w, h]` of `ch`'s glyph bitmap.
     pub fn atlas_rect(&self, ch: char) -> [u32; 4] {
         self.glyph(ch).atlas
     }
 
-    /// The atlas as tightly-packed RGBA (white glyphs on transparent).
     pub fn build_atlas(&self) -> (Vec<u8>, (u32, u32)) {
         let (w, h) = self.glyphs.atlas_size();
         let mut rgba = vec![0u8; (w * h * 4) as usize];
@@ -453,7 +384,6 @@ impl Font {
     }
 }
 
-/// A raw glyph's ink as a tight bitmap placed against the line's baseline.
 fn place(raw: &RawGlyph, baseline: i32) -> Glyph {
     let (Some(x0), Some(y0)) = (
         raw.ink.iter().map(|(x, _)| *x).min(),
@@ -481,8 +411,6 @@ fn place(raw: &RawGlyph, baseline: i32) -> Glyph {
     }
 }
 
-/// A hollow box over the text body, drawn for unknown codepoints when the
-/// chain has no U+FFFD.
 fn hollow_box(advance: i32, body: (i32, i32)) -> Glyph {
     let w = (advance - 1).max(2);
     let h = (body.1 - body.0).max(2);
@@ -497,7 +425,6 @@ fn hollow_box(advance: i32, body: (i32, i32)) -> Glyph {
     }
 }
 
-/// `str::floor_char_boundary` is unstable; this is the same rule.
 fn floor_char_boundary(s: &str, index: usize) -> usize {
     let mut i = index.min(s.len());
     while i > 0 && !s.is_char_boundary(i) {

@@ -5,8 +5,6 @@ use petramond_world::block::Block;
 use petramond_world::block_state::{LogAxis, SlabSplit, SlabState, StairState};
 use petramond_world::item::{ItemStack, ItemType};
 
-/// These tests state facts about the FORMAT, so every record maps through
-/// the identity palette rather than any world's.
 fn encode_snapshot(s: &SectionSnapshot) -> Vec<u8> {
     super::encode_snapshot(s, &palette::Palette::identity())
 }
@@ -23,9 +21,6 @@ fn sec(cx: i32, cy: i32, cz: i32) -> Section {
     Section::new(cx, cy, cz)
 }
 
-/// Light persistence contract: clean baked light roundtrips byte-exact
-/// and loads CLEAN (no re-bake); never-baked or stale (dirty) light is
-/// withheld from the record so a reload re-bakes it.
 #[test]
 fn baked_light_persists_only_when_clean_and_roundtrips() {
     use std::sync::Arc;
@@ -33,7 +28,6 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
     let mut s = sec(0, 4, 0);
     s.set_block(1, 2, 3, Block::Stone);
 
-    // Never baked: no cubes in the record, loads dirty.
     let rec = encode_snapshot(&SectionSnapshot::from_section(&s));
     let (back, ..) = decode_section(SectionPos::new(0, 4, 0), &rec).expect("decodes");
     assert!(!back.has_baked_light(), "no light was persisted");
@@ -42,10 +36,7 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
         "absent persisted light means bake on load"
     );
 
-    // Clean baked light: roundtrips byte-exact, loads clean.
     let sky: Vec<u8> = (0..SECTION_VOLUME).map(|i| (i % 16) as u8).collect();
-    // A COLOURED cell, so the record must carry all three channels through
-    // the widened blob rather than a luminance.
     let mut bl = vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME];
     bl[100] = petramond_world::light::LightRgb::new(9, 2, 30);
     s.set_skylight(Arc::from(sky.clone().into_boxed_slice()));
@@ -65,7 +56,6 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
         &bl[..]
     );
 
-    // A post-bake edit re-dirties the light: stale cubes must NOT persist.
     s.set_block(2, 2, 2, Block::Dirt);
     let snap = SectionSnapshot::from_section(&s);
     assert!(
@@ -76,7 +66,6 @@ fn baked_light_persists_only_when_clean_and_roundtrips() {
 
 #[test]
 fn section_record_roundtrips() {
-    // A section spans world Y [cy*16 .. cy*16+16); negative cy is in range.
     let mut s = sec(-3, -2, 7);
     s.set_block(1, 4, 2, Block::Stone);
     s.set_block(0, 10, 0, Block::Grass);
@@ -192,10 +181,6 @@ fn section_record_roundtrips_furnaces() {
 
 #[test]
 fn foreign_state_bytes_never_decode_through_another_blocks_reader() {
-    // The unified store's ownership gate: state bytes written for one block
-    // kind must never decode through a different kind's typed reader — a
-    // stray facing byte on a ladder cell (which keeps facing as block
-    // identity) reads as the default, not as a front.
     let mut s = sec(0, 4, 0);
     s.set_block(3, 3, 3, Block::Ladder);
     s.insert_entity_facing(3, 3, 3, petramond_math::facing::Facing::East);
@@ -275,14 +260,11 @@ fn section_record_roundtrips_torches() {
         TorchPlacement::Floor,
         "floor mount persists"
     );
-    // A cell with no torch reads the Floor default.
     assert_eq!(back.torch_placement(0, 0, 0), TorchPlacement::Floor);
 }
 
 #[test]
 fn section_record_roundtrips_model_cells() {
-    // A placed multi-block records authored footprint offsets and per-cell facing;
-    // both must survive a save/load so the block reloads as one object.
     let mut s = sec(2, 4, 3);
     s.set_block(5, 0, 5, Block::FurnitureWorkbench);
     s.set_block(6, 0, 5, Block::FurnitureWorkbench);
@@ -307,14 +289,11 @@ fn section_record_roundtrips_model_cells() {
         Facing::East,
         "origin facing persists"
     );
-    // The origin cell stores no offset and reads the [0,0,0] default.
     assert_eq!(back.model_offset(5, 0, 5), [0, 0, 0]);
 }
 
 #[test]
 fn section_record_roundtrips_doors() {
-    // A placed door's facing + open + which-half state must reload exactly. State is
-    // set AFTER the block.
     use petramond_math::facing::Facing;
     use petramond_world::door::DoorState;
     let mut s = sec(3, 4, 7);
@@ -359,7 +338,6 @@ fn section_record_roundtrips_doors() {
         Some(true),
         "the upper half persists its top bit"
     );
-    // A non-door cell carries no door state.
     assert_eq!(back.door_state(0, 0, 0), None);
 }
 
@@ -447,9 +425,6 @@ fn section_record_roundtrips_cell_kv() {
     assert_eq!(back.cell_kv_get(9, 9, 9, "farm:moisture"), None);
 }
 
-/// The preservation contract: a record carrying cell KV nobody reads
-/// (the owning mod is absent) must survive a load → save cycle BYTE-EXACT —
-/// unknown keys are never dropped and the encoding is deterministic.
 #[test]
 fn cell_kv_is_preserved_byte_exact_through_load_and_save() {
     let mut s = sec(0, 4, 0);
@@ -464,9 +439,6 @@ fn cell_kv_is_preserved_byte_exact_through_load_and_save() {
     assert_eq!(blob1, blob2, "an untouched record re-encodes byte-exact");
 }
 
-/// The stale-record guard: once the last entry is removed the has-cell-kv
-/// flag clears, so a re-saved record is indistinguishable from one that
-/// never carried KV — nothing lingers to resurrect.
 #[test]
 fn emptied_cell_kv_clears_its_record_flag() {
     let clean = {
@@ -514,9 +486,6 @@ fn corrupt_blob_is_a_typed_error() {
     ));
 }
 
-/// The record's block cube must carry ids that do not fit a byte, at both
-/// index widths, through the full-width identity palette: the shipped
-/// registry has no id this high to reach it with.
 #[test]
 fn the_record_block_cube_carries_ids_past_one_byte() {
     let pal = crate::save::palette::Palette::identity();
@@ -534,23 +503,16 @@ fn the_record_block_cube_carries_ids_past_one_byte() {
         assert!(unknown.is_empty(), "the identity palette resolves every id");
     };
 
-    // Narrow index (≤ 256 distinct) with high ids in the palette.
     let mut ids = vec![3u16; SECTION_VOLUME];
     ids[0] = 300;
     ids[1] = 4095;
     ids[2] = 255;
     roundtrip(&ids);
 
-    // Past the narrow index: every cell distinct, so the wide arm runs.
     let wide: Vec<u16> = (0..SECTION_VOLUME).map(|i| (i % 600) as u16).collect();
     roundtrip(&wide);
 }
 
-/// The item slot's disk id must be TWO bytes, or an item registered past 255
-/// would decode as a different item. The width is asserted on the encoded
-/// record (`u16` id + `u8` count + `u16` blob length) rather than by feeding
-/// in a high id, because the id crosses the save palette — which pins only
-/// ids the registry actually has.
 #[test]
 fn an_item_slot_stores_a_two_byte_id() {
     use crate::save::wire::{from_bytes, to_bytes};
@@ -568,9 +530,6 @@ fn an_item_slot_stores_a_two_byte_id() {
     assert_eq!((back.item, back.count), (ItemType::Stone, 5));
 }
 
-/// A section holding an id past one byte must survive the whole record — the
-/// cube, and a slab cell state's id-masked layer bytes, which are the only
-/// bytes the codec ever reinterprets.
 #[test]
 fn a_high_id_survives_the_whole_section_record() {
     const HIGH_A: u16 = 300;
@@ -589,8 +548,6 @@ fn a_high_id_survives_the_whole_section_record() {
         petramond_world::block::ShapeState::with_ids(&[0b0111, a_lo, a_hi, b_lo, b_hi], 0b0_1010),
     );
 
-    // The full-width identity palette, for the same reason as the cube test
-    // above: a real save palette only pins ids the registry actually has.
     let pal = crate::save::palette::Palette::identity();
     let snap = SectionSnapshot::from_section(&s);
     let rec = super::encode_snapshot(&snap, &pal);
@@ -614,9 +571,6 @@ fn a_high_id_survives_the_whole_section_record() {
     assert_eq!(state.byte(0), 0b0111, "non-id state bytes are untouched");
 }
 
-/// One logical section, its sparse state written cell by cell in `order`:
-/// a stair state and mod KV on every cell, plus a furnace and its slots on
-/// every fifth.
 fn section_filled_in_order(order: impl IntoIterator<Item = usize>) -> Section {
     use petramond_world::block_state::StairHalf;
     const FACINGS: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
@@ -640,15 +594,11 @@ fn section_filled_in_order(order: impl IntoIterator<Item = usize>) -> Section {
     s
 }
 
-/// The section's sparse maps iterate in cell order, not insertion or hash
-/// order: the same logical section built in different orders encodes to
-/// identical record bytes, and so does its load-and-resave.
 #[test]
 fn sparse_state_encodes_identically_whatever_the_insertion_order() {
     const CELLS: usize = 48;
     let forward = section_filled_in_order(0..CELLS);
     let reverse = section_filled_in_order((0..CELLS).rev());
-    // 29 is coprime with 48, so this visits every cell in a scattered order.
     let scattered = section_filled_in_order((0..CELLS).map(|i| (i * 29) % CELLS));
     assert_eq!(forward.cell_states().len(), CELLS);
     assert_eq!(forward.furnaces().len(), CELLS.div_ceil(5));
@@ -671,9 +621,6 @@ fn sparse_state_encodes_identically_whatever_the_insertion_order() {
     );
 }
 
-/// A palette whose disk id 1 names a block and an item this build does not
-/// have — a world last saved with a mod that is gone now. Every other name
-/// is appended behind them.
 fn palette_missing_a_mod(tag: &str) -> palette::Palette {
     let dir = std::env::temp_dir().join(format!("petramond-codec-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -688,11 +635,6 @@ fn palette_missing_a_mod(tag: &str) -> palette::Palette {
     pal
 }
 
-/// Records written while a mod was present, loaded without it (disk id 1
-/// unresolvable), saved, and loaded with the mod back: its blocks — with
-/// their cell state — return where they were, the record written without
-/// the mod is the very record written with it, and building over a kept
-/// block replaces it.
 #[test]
 fn a_block_whose_mod_is_gone_is_kept_and_returns_with_its_mod() {
     let with_mod = palette::Palette::identity();
@@ -750,9 +692,6 @@ fn a_block_whose_mod_is_gone_is_kept_and_returns_with_its_mod() {
     );
 }
 
-/// Light baked with a block that now reads as air is wrong for the air, and
-/// light baked around the stand-in air would be wrong once the block is
-/// back: both re-bake.
 #[test]
 fn light_never_persists_across_a_kept_block() {
     use std::sync::Arc;
@@ -778,8 +717,6 @@ fn light_never_persists_across_a_kept_block() {
     );
 }
 
-/// A chest item whose mod is gone loads as an empty slot and goes back into
-/// that slot on save.
 #[test]
 fn a_container_item_whose_mod_is_gone_is_kept_in_its_slot() {
     let with_mod = palette::Palette::identity();
@@ -811,8 +748,6 @@ fn a_container_item_whose_mod_is_gone_is_kept_in_its_slot() {
     assert_eq!(back.container_at(4, 4, 4).expect("container"), &chest);
 }
 
-/// Mobs kept from a load ride the snapshot back into the record, beside the
-/// live ones.
 #[test]
 fn kept_mobs_are_written_back_with_the_section() {
     let pos = SectionPos::new(0, 4, 0);

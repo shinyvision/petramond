@@ -1,13 +1,7 @@
-//! `builder:worker`: the golem's steering node. It holds no state and makes
-//! no calls — it turns the goal, hold, facing and gaze the job leaves in the
-//! golem's tags into this tick's decision.
-
 use crate::host::prelude::*;
 
 use crate::worker::{EYE_HEIGHT as EYE, FACE_TAG, GOAL_TAG, HOLD_TAG, LOOK_TAG, PROJECT_TAG};
 
-/// How far the neck turns and tilts: down far enough to see the block under
-/// its own feet.
 const NECK_YAW: f32 = 1.3;
 const NECK_PITCH: f32 = 1.55;
 
@@ -38,8 +32,6 @@ pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     })
 }
 
-/// The head's turn and tilt toward `point`, relative to the body. Past what
-/// the neck turns the head leads as far as it goes while the body comes round.
 fn gaze(ctx: &AiNodeCtx, point: [f64; 3]) -> [f32; 2] {
     let to = [
         point[0] - ctx.pos[0],

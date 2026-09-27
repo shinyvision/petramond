@@ -1,6 +1,3 @@
-//! The event half of a graph document: rules turn events into montages,
-//! gates stand rules down, markers turn clip markers into events.
-
 use rustc_hash::FxHashMap;
 use serde_json::Value;
 
@@ -39,18 +36,15 @@ const PLAY_ONLY_KEYS: &[&str] = &[
 ];
 const GATE_KEYS: &[&str] = &["id", "on", "slot", "when"];
 
-/// One gate as compiled: the events and slots it names, and its formula.
 pub(super) struct GateDef {
     pub events: Vec<EventId>,
     pub slots: Vec<SlotId>,
     pub when: ExprId,
 }
 
-/// The per-clip marker events for [`Graph::marker_events`](crate::graph::Graph).
 pub(super) type MarkerEvents = Vec<[Box<[Option<EventId>]>; 2]>;
 
 impl Compiler<'_> {
-    /// `markers`: `{ marker name: event }`, resolved into every clip's markers.
     pub(super) fn markers(&self, value: Option<&Value>) -> Result<MarkerEvents, String> {
         let Some(value) = value else {
             return Ok(Vec::new());
@@ -86,7 +80,6 @@ impl Compiler<'_> {
             .collect())
     }
 
-    /// `gates`: `[{ "on": event(s), "slot": slot(s)?, "when": formula }]`.
     pub(super) fn gates(&mut self, value: Option<&Value>) -> Result<(), String> {
         let Some(value) = value else {
             return Ok(());
@@ -336,8 +329,6 @@ impl Compiler<'_> {
         Ok(SegmentDef { clip, until, rate })
     }
 
-    /// A segment's clip: a plain name, or a template naming one declared
-    /// param in braces, resolved now into every clip its values can name.
     fn clip_ref(&mut self, name: &str, path: &str) -> Result<ClipRef, String> {
         let Some(open) = name.find('{') else {
             return Ok(ClipRef::Fixed(self.clip(name, path)?));
@@ -376,7 +367,6 @@ impl Compiler<'_> {
     }
 }
 
-/// A name or a list of names.
 fn one_or_many<'a>(value: Option<&'a Value>, path: &str) -> Result<Vec<&'a str>, String> {
     match value {
         Some(Value::String(name)) => Ok(vec![name]),

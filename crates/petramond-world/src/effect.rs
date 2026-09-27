@@ -1,35 +1,13 @@
-//! Player status effects: the effect registry and the timed active state.
-//!
-//! An effect is a data row in `assets/effects.json` (a layered catalog like
-//! `sounds.json`): engine effects own the low ids in the frozen const order
-//! below; a mod pack ADDS an effect with a namespaced (`mod_id:name`) key,
-//! which registers a fresh id in load order (see [`crate::registry`]).
-//!
-//! A row's `behavior` names what the engine does while the effect is active
-//! (`"regen"` heals on an interval; `"none"` is a pure marker a mod's own tick
-//! system can query through the `EffectsActive` host call). The ACTIVE state —
-//! which effects the player currently has and for how many more ticks — lives
-//! on `crate::player::Player` and is stepped once per game tick by
-//! `Game::tick_effects` (`src/game/health.rs`), never in per-frame code.
-//! Persistence is by registry NAME in `players/<name>.dat` (ids are
-//! session-scoped).
-
 use serde::Deserialize;
 
-/// A status effect kind, identified by its opaque runtime id (the row index in
-/// the loaded table). Engine effects own the low ids in the frozen const order
-/// below; pack effects register after them.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Effect(pub u8);
 
 #[allow(non_upper_case_globals)]
 impl Effect {
-    /// Health regeneration: heals on a fixed tick interval while active.
     pub const Regeneration: Effect = Effect(0);
 }
 
-/// Engine effect names in frozen id order (`ENGINE_EFFECT_NAMES[id]` names
-/// `Effect(id)`); the completeness oracle `effects.json` is validated against.
 const ENGINE_EFFECT_NAMES: &[&str] = &["petramond:regeneration"];
 
 impl std::fmt::Debug for Effect {
@@ -42,43 +20,24 @@ impl std::fmt::Debug for Effect {
 }
 
 impl Effect {
-    /// This effect's definition row.
     #[inline]
     pub fn def(self) -> &'static EffectDef {
         &defs()[self.0 as usize]
     }
 
-    /// Every registered effect (engine + packs), id-ordered.
     pub fn all() -> impl Iterator<Item = Effect> {
         (0..defs().len()).map(|id| Effect(id as u8))
     }
 }
 
-/// What the engine does while an effect is active. Pack-registered effects may
-/// use `none` and drive their consequences from their own WASM tick system.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum EffectBehavior {
-    /// A pure marker: the engine only counts the duration down.
     None,
-    /// Heal `amount` half-hearts every `interval` ticks while active.
-    /// Boundaries are anchored at EXPIRY (a heal fires whenever `remaining %
-    /// interval == 0`, including the expiry tick itself), so the first heal
-    /// lands `interval` ticks after application exactly when the granted
-    /// duration is a multiple of `interval` — grant such durations.
     Regen { interval: u32, amount: i32 },
-    /// Scale the player's LAND speed by `scale` while active. It multiplies
-    /// the speed the movement code already selected, so walk, sprint and
-    /// sneak all move together and no mode gets its own tuning knob; water,
-    /// climbing and spectator flight have their own speeds and are untouched.
-    /// Concurrent scaling effects MULTIPLY (a haste and a mire compose), so
-    /// `scale` below 1 is slowness for free — this is the generic movement
-    /// knob, not one named effect.
     Speed { scale: f32 },
 }
 
 impl EffectBehavior {
-    /// This behavior's contribution to the land-speed multiplier — 1 for
-    /// everything that is not a [`EffectBehavior::Speed`].
     #[inline]
     pub fn speed_scale(self) -> f32 {
         match self {
@@ -88,32 +47,21 @@ impl EffectBehavior {
     }
 }
 
-/// One row of the effect table.
 pub struct EffectDef {
     pub effect: Effect,
-    /// The row's registry name (`"petramond:regeneration"`, `"mod_id:haste"`) — the
-    /// key host calls and `level.dat` persistence resolve through [`by_name`].
     pub name: &'static str,
-    /// Human-readable display name — authored row data reserved for a future
-    /// HUD tooltip; nothing reads it yet (the icon row is icons-only).
     #[allow(dead_code)]
     pub display: &'static str,
-    /// HUD icon, as an asset-relative PNG path resolved through
-    /// [`crate::assets`] (pack rows resolve inside their own pack). Expected
-    /// 16×16, filling the HUD frame cell; smaller icons composite centered,
-    /// oversize icons are nearest-resized.
     pub icon: &'static str,
     pub behavior: EffectBehavior,
 }
 
-/// One timed effect on the player: the kind plus its remaining game ticks.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ActiveEffect {
     pub effect: Effect,
     pub remaining: u32,
 }
 
-/// One effect row as written in `effects.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawEffectDef {
@@ -123,11 +71,6 @@ struct RawEffectDef {
     behavior: RawBehavior,
 }
 
-/// A row's `behavior` as written: `"none"`, `{"regen": {"interval": ..,
-/// "amount": ..}}`, or `{"speed": {"scale": ..}}`. The enum shape gives every
-/// behavior its own required params (a missing or misspelled one is a serde
-/// error) — adding a behavior is one variant here + one arm in
-/// [`RawBehavior::resolve`].
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum RawBehavior {
@@ -136,13 +79,9 @@ enum RawBehavior {
     Speed { scale: f32 },
 }
 
-/// Widest land-speed scale a row may ask for. Generous enough for any pack's
-/// haste, low enough that a typo'd row cannot fling the player past the
-/// terrain streamer's keep-up speed.
 const SPEED_SCALE_MAX: f32 = 5.0;
 
 impl RawBehavior {
-    /// Range-check and convert to the runtime enum.
     fn resolve(&self, effect: &str) -> Result<EffectBehavior, String> {
         match *self {
             RawBehavior::None => Ok(EffectBehavior::None),
@@ -171,19 +110,14 @@ struct RawFile {
     effects: Vec<RawEffectDef>,
 }
 
-/// The runtime [`Effect`] registered under `name` (engine `petramond:*` and pack
-/// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub fn by_name(name: &str) -> Option<Effect> {
     catalog().id(name).map(|id| Effect(id as u8))
 }
 
-/// The current registry's effect table, id-ordered (`defs()[effect.0]`). A
-/// missing or inconsistent `effects.json` fails the registry build.
 pub fn defs() -> &'static [EffectDef] {
     catalog().rows()
 }
 
-/// The effect catalog stage of every content registry.
 pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<EffectDef>> =
     crate::content::Slot::new(crate::content::stage::EFFECTS, &[], load);
 
@@ -251,26 +185,21 @@ mod tests {
 
     #[test]
     fn behavior_params_are_validated() {
-        // Behavior params ride the behavior object — a stray row-level param
-        // is an unknown field, rejected loudly.
         assert!(table(
             r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": "none", "interval": 5}]}"#
         )
         .is_err());
-        // Regen must carry both params (the enum shape requires them)...
         assert!(table(
             r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": {"regen": {"interval": 100}}}]}"#
         )
         .is_err());
-        // ...and they must be positive.
         assert!(table(
             r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": {"regen": {"interval": 0, "amount": 1}}}]}"#
         )
         .is_err());
-        // Unknown behavior names are load errors, not silent markers.
         assert!(table(
             r#"{"effects": [{"effect": "petramond:regeneration", "display": "R",
                 "icon": "i.png", "behavior": "sparkle"}]}"#

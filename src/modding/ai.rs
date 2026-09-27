@@ -1,31 +1,3 @@
-//! Scripted (WASM) mob-AI node dispatch — the session registry
-//! `mob::behavior::wasm`'s nodes resolve through.
-//!
-//! Mirrors `gen::install` in spirit but stays THREAD-LOCAL: mob AI runs only
-//! on the SIM thread (the deterministic game tick — the server
-//! thread). Keeping the registry per-thread (instead of a
-//! process-wide map) preserves test isolation: parallel test sessions each
-//! install into their own thread. The server thread re-installs the session's
-//! map on startup via `ModHost::install_thread_ai_nodes`. A dispatch from
-//! a thread without an install simply finds no registration and decides
-//! nothing.
-//!
-//! Dispatch is BATCHED: the mob manager gathers every scripted node's
-//! request across the live population in one serial phase of its tick and
-//! hands them to [`dispatch_batch`], which makes ONE guest call per node key
-//! ([`GuestCall::AiNodeBatch`]) with every mob's context, in live-set order.
-//! The contexts are serialized straight from the mobs ([`AiNodeCtxRef`]): a
-//! mob's tag map rides its shared handle, so no tag string is copied on the
-//! host. A guest predating the batch call (before ABI 2.1) declines it once and is
-//! served one [`GuestCall::AiNode`] per mob from then on.
-//!
-//! Dispatch is DETACHED — no simulation scope is published — because it runs
-//! mid-mob-tick, where the world is immutably borrowed. Sim host calls made
-//! by the guest error (decision-only contract, see `GuestCall::AiNode`); the
-//! core calls work, `CurrentTick` included: the dispatcher publishes the
-//! tick it snapshotted into `AiNodeCtx` ([`detached_tick`]) so the tick
-//! clock never needs the sim scope here.
-
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -46,35 +18,21 @@ pub(super) struct AiNodeRegistration {
 thread_local! {
     static INSTALLED: RefCell<HashMap<String, AiNodeRegistration>> =
         RefCell::new(HashMap::new());
-    /// The game tick of the in-flight detached AI dispatch — what
-    /// `CoreCall::CurrentTick` reads when no sim scope is active.
     static DETACHED_TICK: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
-/// Install the session's node map on THIS thread (empty or not — installing
-/// always is what evicts a previous session's registrations). Called from
-/// `ModHost::initialize` on the constructing thread and again by the server
-/// thread at startup (`ModHost::install_thread_ai_nodes`).
 pub(super) fn install(map: HashMap<String, AiNodeRegistration>) {
     INSTALLED.with(|cell| *cell.borrow_mut() = map);
 }
 
-/// Whether `key` has a live registration on this thread — the pre-gather
-/// gate that lets an unclaimed scripted node (mod disabled, mid-load) skip
-/// building its request entirely.
 pub fn is_claimed(key: &str) -> bool {
     INSTALLED.with(|cell| cell.borrow().contains_key(key))
 }
 
-/// The tick published for the current detached AI dispatch, if one is in
-/// flight on this thread. Read by the `CurrentTick` host-call handler as its
-/// scope-free fallback.
 pub fn detached_tick() -> Option<u64> {
     DETACHED_TICK.with(Cell::get)
 }
 
-/// Publish `tick` as this thread's detached-dispatch tick for the duration of
-/// `f` — wrapped around every guest AI call by [`dispatch_batch`].
 pub fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
     DETACHED_TICK.with(|t| t.set(Some(tick)));
     let out = f();
@@ -82,9 +40,6 @@ pub fn with_detached_tick<T>(tick: u64, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// One mob's request to one scripted node this tick: the node's key and the
-/// mob's [`AiNodeCtx`] contents, already in ABI vocabulary — except the tag
-/// map, which stays the mob's own shared handle until it is serialized.
 #[derive(Clone, Debug)]
 pub struct AiNodeRequest {
     pub key: &'static str,
@@ -104,8 +59,6 @@ pub struct AiNodeRequest {
 }
 
 impl AiNodeRequest {
-    /// The owned context for the per-mob fallback (a guest older than ABI 2.1) — the
-    /// one place a request's tags are copied.
     fn to_ctx(&self, tick: u64) -> AiNodeCtx {
         AiNodeCtx {
             mob_id: self.mob_id,
@@ -130,9 +83,6 @@ impl AiNodeRequest {
     }
 }
 
-/// A request viewed as the [`AiNodeCtx`] it stands for: serializes to exactly
-/// the bytes the owned context would (postcard encodes struct fields
-/// positionally and enum variants by index), borrowing the tag map.
 #[derive(Debug)]
 pub struct AiNodeCtxRef<'a> {
     request: &'a AiNodeRequest,
@@ -161,7 +111,6 @@ impl Serialize for AiNodeCtxRef<'_> {
     }
 }
 
-/// A tag map serialized as the ABI's `Vec<(String, mod_api::MobTagValue)>`.
 struct AbiTags<'a>(&'a BTreeMap<String, MobTagValue>);
 
 impl Serialize for AbiTags<'_> {
@@ -170,8 +119,6 @@ impl Serialize for AbiTags<'_> {
     }
 }
 
-/// One engine tag value serialized as the ABI's `mod_api::MobTagValue`
-/// (same variant order: `Bool`, `I64`, `F64`, `Str`).
 struct AbiTag<'a>(&'a MobTagValue);
 
 impl Serialize for AbiTag<'_> {
@@ -191,11 +138,8 @@ impl Serialize for AbiTag<'_> {
     }
 }
 
-/// Declaration index of [`GuestCall::AiNodeBatch`] — pinned against the owned
-/// encoding by this module's tests.
 const AI_NODE_BATCH_VARIANT: u32 = 17;
 
-/// A batch of borrowed contexts serialized as [`GuestCall::AiNodeBatch`].
 #[derive(Debug)]
 struct AiNodeBatchRef<'a> {
     callback_id: u32,
@@ -216,7 +160,6 @@ impl Serialize for AiNodeBatchRef<'_> {
     }
 }
 
-/// The call kind a batch encodes as, for the instance's declined-call memory.
 fn batch_kind() -> std::mem::Discriminant<GuestCall> {
     std::mem::discriminant(&GuestCall::AiNodeBatch {
         callback_id: 0,
@@ -224,11 +167,6 @@ fn batch_kind() -> std::mem::Discriminant<GuestCall> {
     })
 }
 
-/// One decision per request, in request order: every key's requests go to
-/// its node in ONE guest call, keys in order of first appearance. `None` =
-/// no opinion — an unclaimed key (mod never claimed it, disabled, or
-/// mid-load), a disabled mod, or a node that answered nothing for that mob;
-/// exactly like an engine node returning defaults.
 pub fn dispatch_batch(tick: u64, requests: &[AiNodeRequest]) -> Vec<Option<AiNodeDecision>> {
     let mut out = vec![None; requests.len()];
     let mut keys: Vec<&'static str> = Vec::new();
@@ -255,7 +193,6 @@ pub fn dispatch_batch(tick: u64, requests: &[AiNodeRequest]) -> Vec<Option<AiNod
     out
 }
 
-/// One node's replies for `members` (indices into `requests`), in order.
 fn dispatch_node(
     reg: &AiNodeRegistration,
     tick: u64,
@@ -287,7 +224,6 @@ fn dispatch_node(
             None if instance.disabled() || !instance.declines(batch_kind()) => {
                 return vec![None; members.len()];
             }
-            // Declined just now: an older guest — serve it per mob below.
             None => {}
         }
     }
@@ -336,8 +272,6 @@ mod tests {
         }
     }
 
-    /// The borrowed batch must be byte-for-byte the owned `AiNodeBatch` —
-    /// the guest decodes the ordinary ABI type from it.
     #[test]
     fn a_borrowed_batch_encodes_exactly_like_the_owned_call() {
         let requests = [

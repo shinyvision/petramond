@@ -1,26 +1,3 @@
-//! Guest-side SDK for petramond mods.
-//!
-//! A mod implements [`Mod`], calls [`register_mod!`], and builds with plain
-//! `cargo build --target wasm32-unknown-unknown` (see `mods-src/`). The SDK
-//! owns the raw ABI — the `mod_alloc`/`mod_free`/`mod_dispatch` exports, the
-//! ABI version handshake (see [`host_supports`]), the `host_dispatch` import,
-//! postcard framing, pointer packing — so mod code
-//! only ever sees `mod-api` types (re-exported here) and the safe wrappers
-//! ([`log`], [`current_tick`], [`rng_u64`], [`register_tick_system`],
-//! [`register_event_handler`]).
-//!
-//! Prefer registering closures over hand-numbered ids: implement
-//! [`TypedMod`] beside [`Mod`] and export with [`register_typed_mod!`] —
-//! [`Handlers`] allocates the ids and routes each dispatch to its closure.
-//! Native tests run a mod's logic against [`testing::MockHost`], a per-test
-//! fake world installed on the test's own thread.
-//!
-//! Determinism contract: mod code runs only inside
-//! `mod_init`, tick systems, and event handlers; randomness only through
-//! [`rng_u64`]'s seeded host streams; no clock, no filesystem, no entropy.
-//! A panic aborts the guest (the host logs it, disables the mod for the
-//! session, and keeps ticking).
-
 pub use mod_api::*;
 
 mod abi;
@@ -125,77 +102,34 @@ pub use worldgen::*;
 /// sim-scoped call (world/entity/player/KV/env) returns an error there — and
 /// the SDK wrappers turn that into a panic that disables the instance.
 pub trait Mod: Default {
-    /// Host capabilities this mod cannot run without. The engine refuses to
-    /// load it — with the missing capabilities named — where any is absent,
-    /// instead of the mod failing on its first unsupported call. Optional
-    /// features are better probed at runtime with [`host_supports`].
     const REQUIRES: Capabilities = Capabilities::NONE;
 
-    /// The registration window: call [`register_tick_system`] /
-    /// [`register_event_handler`] / [`register_worldgen_feature`] /
-    /// [`register_stage_replacement`] / [`register_generator`] here (they are
-    /// rejected anywhere else).
     fn init(&mut self);
 
-    /// A tick system registered under `system_id` is due. Runs once per game
-    /// tick (20/s) at its registered stage attachment.
     fn tick_system(&mut self, _system_id: u32) {}
 
-    /// An event the mod registered for. For pre events the payload is echoed
-    /// back mutated — the engine applies the taxonomy's mutable fields (e.g.
-    /// damage `amount`) — and the returned [`Outcome`] can cancel; the first
-    /// Cancel ends the dispatch, so a pre handler that runs always sees a
-    /// LIVE event (never one another handler already consumed — safe to
-    /// `consume_held`/`set_block` without a cancelled check). Post events
-    /// are observe-only (the outcome is ignored).
     fn handle_event(&mut self, _handler_id: u32, _payload: &mut EventPayload) -> Outcome {
         Outcome::Continue
     }
 
-    /// A worldgen feature registered under `feature_id`, dispatched once per
-    /// generated 16³ section. Return block writes and template placements in
-    /// world coordinates; the engine clips both to the dispatched section. MUST be a
-    /// pure function of `ctx` — see [`GenCtx`] for the full seam/determinism
-    /// contract and the helpers that get it right by default.
     fn gen_feature(&mut self, _feature_id: u32, _ctx: &GenCtx) -> GenOutput {
         GenOutput::default()
     }
 
-    /// A registered `Climate` stage replacement: return the 256-entry column
-    /// biome map (`z*16 + x`; `ctx.biomes()` carries the engine's proposal).
-    /// Anything but exactly 256 valid biome ids disables the mod and the
-    /// engine's climate runs instead.
     fn gen_climate(&mut self, _callback_id: u32, _ctx: &GenCtx) -> Vec<u8> {
         Vec::new()
     }
 
-    /// A registered `Terrain` stage replacement: return the section's complete
-    /// 4096-block fill (layout `y*256 + z*16 + x`). Anything but exactly 4096
-    /// registered block ids disables the mod and the engine terrain runs
-    /// instead.
     fn gen_terrain(&mut self, _callback_id: u32, _ctx: &GenCtx) -> Vec<u16> {
         Vec::new()
     }
 
-    /// A registered `Underground`/`Vegetation`/`Trees` stage replacement:
-    /// like [`Mod::gen_feature`], but the generation plan runs INSTEAD of the
-    /// engine stage.
     fn gen_stage(&mut self, _callback_id: u32, _stage: WorldgenStage, _ctx: &GenCtx) -> GenOutput {
         GenOutput::default()
     }
 
-    /// A button of this mod's own GUI was clicked (dispatched on the tick, in
-    /// click order). `kind_key` is the GUI's registered kind, `widget_id` the
-    /// manifest button id, and `at` the block or mob the GUI session is
-    /// anchored on (`None` for an unanchored [`gui_open`]). Typical handling: update the
-    /// session's state map via [`gui_state_set`] so the GUI's `label` /
-    /// `rotimage` widgets redraw.
     fn gui_click(&mut self, _kind_key: &str, _widget_id: &str, _at: Option<ContainerAddress>) {}
 
-    /// Core is asking whether this candidate should spawn one of this mod's
-    /// hostile species. Return a mob registry key to request a spawn, or `None`
-    /// to let core keep searching. Core still validates category, caps, and
-    /// physical body fit before spawning.
     fn hostile_spawn_candidate(
         &mut self,
         _callback_id: u32,
@@ -204,64 +138,33 @@ pub trait Mod: Default {
         None
     }
 
-    /// A behavior hook fired on a block whose row's `behavior` key this mod
-    /// registered via [`register_block_behavior`]. Dispatched on the game
-    /// tick right after the world's own scheduled/random ticks; edit the
-    /// world through the sim host calls ([`set_block`], [`schedule_tick`], …).
     fn block_hook(&mut self, _callback_id: u32, _kind: BlockHookKind, _pos: [i32; 3]) {}
 
-    /// One AI decision for one mob this tick, for a brain-row `node` key this
-    /// mod registered via [`register_ai_node`]. DECISION-ONLY: the dispatch
-    /// runs mid-mob-tick with no simulation scope, so sim host calls (world
-    /// edits, spawns, player state) error here; the core calls —
-    /// [`current_tick`], [`rng_u64`], [`log`] — work, and `ctx.tick` already
-    /// carries the tick without a host call. Facts beyond the baseline reach
-    /// `ctx` only when the brain row declares them (`"inputs"` — see
-    /// [`AiNodeCtx`]). Return `None` (or default fields) for "no opinion";
-    /// the engine settles every [`DecisionChannel`] by the brain row's
-    /// priority — a scripted node fills and holds exactly the channels an
-    /// engine node can ([`AiNodeDecision::claims`] holds a channel EMPTY
-    /// against lower nodes, e.g. `Attack` while fleeing).
+    /// One AI decision per mob per tick, for the node key registered via [`register_ai_node`].
+    /// Decision only. Runs mid-mob-tick with no sim scope, so world edits, spawns and player state
+    /// error here. [`current_tick`], [`rng_u64`] and [`log`] still work, and `ctx.tick` is already
+    /// set. Extra fields only land in `ctx` if the brain row lists them under `"inputs"` (see
+    /// [`AiNodeCtx`]). Return `None`, or leave fields default, for no opinion. The engine picks a
+    /// winner per [`DecisionChannel`] by brain row priority. [`AiNodeDecision::claims`] holds a
+    /// channel empty against lower nodes, e.g. `Attack` while fleeing.
     fn ai_node(&mut self, _callback_id: u32, _ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
         None
     }
 
-    /// Presentation-only client frame. This runs in a separate module
-    /// instance from the deterministic server/worldgen instances.
     fn client_frame(&mut self, _frame: &ClientFrameData) {}
 
-    /// A registered client key changed state. The host edge-filters physical
-    /// events, so one press and one release arrive per gesture.
     fn client_key(&mut self, _action_id: u32, _pressed: bool) {}
 
-    /// Event from one of this module's client GUI documents.
     fn client_ui(&mut self, _kind_key: &str, _event: &ClientUiEvent) {}
 
-    /// Pointer event over this module's open physical-pixel canvas.
     fn client_canvas(&mut self, _canvas_key: &str, _event: &ClientCanvasEvent) {}
 
-    /// Mouse-wheel travel over this module's open physical-pixel canvas.
-    /// `x`/`y` are canvas-local logical pixels, `delta` is in wheel notches
-    /// (positive = scrolled up / away from the user), coalesced to at most
-    /// one call per app frame.
     fn client_canvas_scroll(&mut self, _canvas_key: &str, _x: f32, _y: f32, _delta: f32) {}
 
-    /// Bake the DETERMINISTIC sim geometry — collision boxes + a light aperture —
-    /// for a batch of one custom shape kind's cells in a section. Return one
-    /// [`BakedSimCell`] per input cell, in order; each MUST be a pure function of
-    /// that cell's [`CellInput`] (the reply is cross-checked server↔replica for
-    /// prediction). The default returns EMPTY, which means "no bake, use the
-    /// static fallback" — override to supply geometry. (An empty reply is the
-    /// fallback; only a wrong-but-nonzero length is a protocol break.)
     fn bake_shape_sim(&mut self, _shape_kind: u16, _cells: &[CellInput]) -> Vec<BakedSimCell> {
         Vec::new()
     }
 
-    /// Bake the client RENDER geometry — the drawn boxes — for a batch of one
-    /// custom shape kind's cells in a section. Return one [`BakedRenderCell`] per
-    /// input cell, in order. No determinism requirement (client presentation).
-    /// The default returns EMPTY (fallback to the cube render), like
-    /// [`Mod::bake_shape_sim`].
     fn bake_shape_render(
         &mut self,
         _shape_kind: u16,
@@ -270,23 +173,19 @@ pub trait Mod: Default {
         Vec::new()
     }
 
-    /// Bake one block's item geometry (icon / dropped / in-hand), once at load.
-    /// Empty = the plain cube fallback.
     fn bake_shape_item(&mut self, _shape_kind: u16, _block: BlockId) -> BakedItemGeometry {
         BakedItemGeometry { boxes: Vec::new() }
     }
 
-    /// Compute a custom shape's placement plan for one click (read the world
-    /// through the ordinary [`get_block`] host calls; mutating host calls error
-    /// during this dispatch). Placement is SINGLE-CELL and stateless: the host
-    /// accepts a plan writing exactly one cell near the click. Runs on the
-    /// server AND on the client instance (the place ghost), so it must be a
-    /// pure function of `inputs` and world reads — the two sides compute the
-    /// same write and the delta confirms the ghost. The default accepts the
-    /// click cell; override to refuse or to orient — a directional shape picks
-    /// its sibling row from `inputs.normal` and returns it in
-    /// [`ShapePlacementResult::block`] (orientation as block identity; the host
-    /// writes only a row sharing this shape kind).
+    /// Computes a custom shape's placement for one click. Reads world via [`get_block`], and any
+    /// mutating host call errors here. Placement is single-cell and stateless.
+    ///
+    /// Runs on the server and on the client for the place ghost, so it must be a pure function of
+    /// `inputs` and world reads. Then both sides compute the same write.
+    ///
+    /// Default accepts the click cell. Override to refuse, or to orient: a directional shape picks
+    /// its sibling row off `inputs.normal` and returns it via [`ShapePlacementResult::block`]. The
+    /// host only ever writes a row of this shape kind.
     fn shape_placement_plan(
         &mut self,
         _shape_kind: u16,
@@ -302,19 +201,6 @@ pub trait Mod: Default {
     }
 }
 
-/// Define the raw wasm exports for a [`Mod`] implementation. Exactly one call
-/// per mod crate:
-///
-/// ```ignore
-/// #[derive(Default)]
-/// struct MyMod;
-/// impl mod_sdk::Mod for MyMod { /* ... */ }
-/// mod_sdk::register_mod!(MyMod);
-/// ```
-///
-/// Besides the dispatch glue it exports the ABI handshake: `mod_abi_version`
-/// (the SDK's [`ABI_VERSION`]) and `mod_abi_requires` ([`Mod::REQUIRES`]),
-/// which the engine checks before `mod_init` runs.
 #[macro_export]
 macro_rules! register_mod {
     ($ty:ty) => {

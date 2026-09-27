@@ -1,91 +1,58 @@
-//! combat — the shield, the bow, and the tools' hands.
+//! combat: shield, bow, and the tools' hands.
 //!
-//! A shield, crafted at the pack's weapons workbench (4 planks + 4 iron
-//! ingots), raised by holding the use button. While it is up, monster melee
-//! and arrows coming at your FRONT are stopped, the body moves at half
-//! speed, and the hands are barred from attacking, mining and interacting.
-//! A hit it absorbs knocks it aside for [`IMPACT_TICKS`], during which the
-//! next attacker gets through.
+//! Shield: made at the pack's weapons workbench from 4 planks + 4 iron ingots. Hold use to raise
+//! it. While it's up, monster melee and arrows from the front are stopped, you move at half
+//! speed, and you can't attack, mine or interact. A hit it absorbs knocks it aside for
+//! [`IMPACT_TICKS`], and the next attacker gets through.
 //!
-//! ## The tools' swings (the body seams' second tenant)
+//! ## Tool swings (second tenant of the body seams)
 //!
-//! The pack also owns the MAIN hand while it works a pickaxe, an axe or a
-//! sword: the swing law in [`swing`] claims the engine's player clips for
-//! the hand — one first-person and one body clip per swing, scrubbed on the
-//! pack's own clock — claims the hand's swing so the engine's vanilla punch
-//! stands down, and releases both the moment no tool is held. Quick
-//! consecutive ATTACKS chain through the family's combo (each follow-up plays
-//! the next clip); mining loops the family's work clip. Same shape as the
-//! guard — one pure law in [`swing`], its clock run by the server tick system
-//! for every body and by the client frame hook for the local player, a round
-//! trip earlier.
+//! The pack owns the main hand while a pickaxe, axe or sword is out. [`swing`] claims the
+//! engine's player clips, one first-person and one body clip per swing, and runs them on its own
+//! clock. The vanilla punch stands down until no tool is held. Quick attacks chain through the
+//! family's combo and mining loops the work clip. Like the guard, the law is ticked by the server
+//! for every body and by the client frame hook a round trip earlier for the local player.
 //!
-//! While a claimed tool paces a body, the pack owns the ATTACK RATE
-//! outright: the engine cooldown is claimed to zero
-//! (`set_player_attribute`) and the in-flight arc bars the next attack (a
-//! denial) until its recovery, so the animation and the pace are one clock
-//! that cannot disagree. On a species carrying [`PACED_COMBO_DATA`] a paced
-//! hit also drops the engine i-frame from the damage pipeline (`mob_damage_pre` edits the
-//! feedback components): the swing clock already limits hits to one per
-//! arc, so chained combos land exactly as they read.
+//! A paced tool owns the attack rate. The engine cooldown is pinned to zero and the swing in
+//! flight denies the next attack until its recovery, so animation and pace are one clock. On a
+//! [`PACED_COMBO_DATA`] species the engine i-frame is dropped too, since the swing clock already
+//! allows one hit per arc.
 //!
 //! ## The bow
 //!
-//! A bow in the main hand takes the use press and DRAWS while it is held
-//! (the law in [`bow`]): the row's ticks to full, shown through the pull
-//! frames on the generic held-DISPLAY seam, the body playing its draw, the
-//! body slowed and its hands committed. Letting go takes one
-//! arrow from the pack and LAUNCHES it through the engine's flying-item
-//! primitive; the `projectile_hit` handler here lands the strike on what
-//! it arrives at, harder the faster it arrived — or into a raised shield
-//! it arrives at from the front, which stops it — and spends the arrow in
-//! the wound; an arrow that met a block keeps the engine's own fate,
-//! lodged there to be pulled out again.
+//! Holding use with a bow draws it ([`bow`]), with pull frames on the generic held-display seam.
+//! Letting go launches one arrow through the engine's flying-item primitive. `projectile_hit`
+//! lands the strike, harder the faster it arrived, unless a raised shield faces it. The arrow is
+//! spent in the wound; one that hits a block lodges there to be pulled out later.
 //!
 //! ## The rules are a list
 //!
-//! Every use-press rule (the bow, the guard, the next one) is one
-//! [`claims::Rule`] in ONE ordered list — precedence is list order. The
-//! raise handler asks the list who takes a press; the tick, the frame and
-//! the damage handlers fold the rules' claims over it ([`claims::compose`]),
-//! and [`body::run`] writes each seam once. Adding a rule is one entry.
+//! Every use-press rule (bow, guard, whatever comes next) is one [`claims::Rule`] in a single
+//! ordered list, and list order is precedence. Handlers fold the claims through
+//! [`claims::compose`], and [`body::run`] writes each seam once.
 //!
-//! ## The tools land their own hits
+//! ## Tools land their own hits
 //!
-//! A paced tool whose attack clips mark their IMPACT takes the player's
-//! primary press outright (`attack_attempt` claimed — the engine's
-//! crosshair melee stands down for it), and the hit lands when the swing's
-//! impact plays: the strike law in [`strike`] judges, from where the
-//! attacker is looking at that instant, every body the family's window
-//! reaches — closer and more dead-on lands harder, an axe sweeps every body
-//! in its arc, a pickaxe plunges into one — and lands the verdicts through
-//! the engine's funnel with the player named as the attacker. A press at a
-//! block is mining's and is left alone.
+//! A paced tool whose clips mark their impact claims `attack_attempt`, so the engine's crosshair
+//! melee stands down and the hit lands when the impact plays. [`strike`] judges every body in the
+//! family's window from where the attacker is looking right then: closer and more dead-on hits
+//! harder, an axe sweeps its arc, a pickaxe plunges into one target. A press at a block is left
+//! to mining.
 //!
-//! The pack is laws, a merger, and this wiring: the guard law lives in
-//! [`guard`], the bow's in [`bow`], the swing law in [`swing`] over the
-//! family rows in [`families`], the strike law in [`strike`], and
-//! [`body`] merges every claim into ONE write per body seam. This file only routes:
+//! Wiring: guard in [`guard`], bow in [`bow`], swing in [`swing`] over the rows in [`families`],
+//! strike in [`strike`], and [`body`] merges the claims. This file only routes:
 //!
-//! - The **server** tick system runs every player's body per tick, and
-//!   lands the strike of any swing whose impact played this tick.
-//! - The **client** frame hook runs the local player a round trip
-//!   earlier. Both halves, never one: a raised shield that gets to the
-//!   screen before the arm holding it is the shield detached from its own
-//!   fist, and a swing that plays in first person only is a fist holding a
-//!   still tool.
-//! - **Blocking** re-runs the rules against the victim's live snapshot and
-//!   cancels a frontal `MobAttack` hit (`player_damage_pre`) or drops a
-//!   frontal arrow (`projectile_hit`). Falls, PvP melee and other mods'
-//!   damage pass, and a cancelled hit applies no knockback either.
+//! - The server tick runs every player's body and lands any swing whose impact played.
+//! - The client frame hook runs the local player a round trip earlier. We need both, or the
+//!   shield shows up before the arm holding it and first-person swings hold a still tool.
+//! - Blocking re-runs the rules against the victim's live snapshot and cancels a frontal
+//!   `MobAttack` hit or drops a frontal arrow. Falls, PvP melee and other mods' damage pass.
 //!
-//! ## The recoil clock is server state, and the client is TOLD
+//! ## The recoil clock is server state, and the client is told
 //!
-//! Everything else here derives from local input, which is why it predicts
-//! for free. A hit landing does not: nothing the client can see implies it.
-//! So the server owns the window and sends the EDGE through `emit_event_to`,
-//! and each side runs the same envelope off its own clock — ticks on the
-//! server, frame seconds on the client.
+//! Everything else here comes from local input and predicts for free. A landed hit doesn't, since
+//! nothing the client sees implies it. The server owns the window and sends the edge through
+//! `emit_event_to`; each side runs the same envelope off its own clock.
 //!
 //! [`IMPACT_TICKS`]: guard::IMPACT_TICKS
 
@@ -116,38 +83,20 @@ const COMBO_HANDLER: u32 = 4;
 const ATTACK_HANDLER: u32 = 5;
 const PROJECTILE_HANDLER: u32 = 6;
 
-/// The cue the server sends the wielder's client when their shield takes a
-/// hit. No payload: the client already knows the rule, and the only thing it
-/// could not know is that this instant happened.
 const IMPACT_EVENT: &str = "combat:shield_impact";
 
 #[derive(Default)]
 struct Combat {
-    /// The pack's use-press rules in precedence order: the bow (a bow in
-    /// the MAIN hand draws over a shield carried in the off hand), then the
-    /// guard. A rule whose rows this build lacks is simply not in the list.
     rules: Vec<Box<dyn Rule>>,
-    /// The bow's rows, shared with its rule: the arrow half of the law
-    /// (what a hit is, what it does) is the projectile handler's, not a
-    /// body rule's.
     bow: Option<Rc<bow::Rows>>,
-    /// The tool table.
     tools: Tools,
-    /// The species carrying [`PACED_COMBO_DATA`] in this build's registry,
-    /// resolved once at init — one crossing, whoever declared them.
     combo_mobs: Vec<MobId>,
-    /// This instance is the server: it acts on edges and makes the
-    /// simulation claims; a client only shows.
     authority: bool,
-    /// SERVER: one set of clocks per body, pruned against the roster each
-    /// tick, so a leaver's slot dies with their session.
     clocks: HashMap<PlayerId, BodyClocks>,
-    /// CLIENT: the same clocks, local player only.
     local: BodyClocks,
 }
 
 impl Combat {
-    /// The clocks stepping `player`'s body on this instance.
     fn clocks_of(&mut self, player: PlayerId) -> &mut BodyClocks {
         if self.authority {
             self.clocks.entry(player).or_default()
@@ -156,10 +105,6 @@ impl Combat {
         }
     }
 
-    /// SERVER: does `victim`'s guard stop a hit arriving from `origin`? The
-    /// rules re-run on their live snapshot decide — no cached flag to go
-    /// stale or hit the wrong body. A block is heard, knocks the shield
-    /// aside, and tells the wielder's client so.
     fn block(
         &mut self,
         victim: PlayerId,
@@ -170,19 +115,13 @@ impl Combat {
         if !claims::compose(&self.rules, state, clocks).covers(state, origin) {
             return false;
         }
-        // Spatial: a block is something bystanders hear too.
         emit_sound(BLOCK_SOUND, Some(state.pos));
         clocks.recoil.start();
-        // Only the wielder needs telling: every other screen picks the recoil
-        // up from the replicated pose the tick system publishes anyway.
         emit_event_to(victim, IMPACT_EVENT, &[]);
         true
     }
 
-    /// The blocking half of `player_damage_pre`: cancel a frontal monster
-    /// strike, and knock the shield aside for doing it.
     fn on_damage(&mut self, payload: &EventPayload) -> Outcome {
-        // Falls, PvP and other mods' damage are not the shield's job.
         let EventPayload::PlayerDamagePre {
             source: DamageSource::MobAttack { .. },
             origin,
@@ -191,7 +130,6 @@ impl Combat {
         else {
             return Outcome::Continue;
         };
-        // The dispatch names its victim.
         let state = player_state();
         let Some(me) = state.id else {
             return Outcome::Continue;
@@ -203,15 +141,15 @@ impl Combat {
         }
     }
 
-    /// SERVER: an arrow of this pack's arrived somewhere. A BODY takes the
-    /// strike — damage by arrival speed off the arrow row's own rungs, the
-    /// archer named as the attacker so knockback, retaliation and every
-    /// `mob_damage_pre` handler see a real hit — and the arrow's fate
-    /// becomes `Consume`, spent in the wound; a PLAYER whose raised guard
-    /// faces the flight stops it instead, and it drops at their feet. A
-    /// BLOCK keeps the engine's fate: the row says it sticks, so it lodges
-    /// there. Always `Continue`: another pack's rule (a poison on the
-    /// arrow's data) may still act on the same hit.
+    /// SERVER: an arrow from this pack landed somewhere.
+    ///
+    /// Hits a body: damage scales with arrival speed off the arrow row's rungs, archer named as
+    /// attacker so knockback/retaliation/`mob_damage_pre` see a real hit, arrow fate becomes
+    /// `Consume`.
+    /// Hits a player with guard raised toward the flight: stopped, drops at their feet instead.
+    /// Hits a block: keeps engine fate, sticks if the row says so.
+    /// Always returns `Continue`, since another rule (poison on the arrow, say) might still act on
+    /// this hit.
     fn on_projectile_hit(&mut self, payload: &mut EventPayload) -> Outcome {
         let EventPayload::ProjectileHit {
             entity,
@@ -227,8 +165,6 @@ impl Combat {
         let Some(rows) = self.bow.clone() else {
             return Outcome::Continue;
         };
-        // The entity is live for the whole dispatch: its stack says whether
-        // this is one of the pack's arrows, and which.
         let Some(item) = item_entity(*entity) else {
             return Outcome::Continue;
         };
@@ -243,8 +179,6 @@ impl Combat {
                 *fate = ProjectileFate::Consume;
             }
             ProjectileTarget::Player(victim) => {
-                // The arrow came from back along its flight: that is the
-                // direction the guard has to be facing.
                 let came_from = [
                     pos[0] - f64::from(vel[0]),
                     pos[1] - f64::from(vel[1]),
@@ -266,12 +200,6 @@ impl Combat {
         Outcome::Continue
     }
 
-    /// The press half of the strike: a primary press by a hand holding a
-    /// tool that LANDS its own hits is this pack's — claimed here, so the
-    /// engine's crosshair melee stands down, and landed by the tick system
-    /// when the swing's impact plays. A press at a block is mining's; an
-    /// unpaced hand (fists, another pack's weapon, a tool whose attack
-    /// clips mark no impact) keeps the engine's hit on the click.
     fn on_attack_attempt(&self, payload: &EventPayload) -> Outcome {
         let EventPayload::AttackAttempt { block, player, .. } = payload else {
             return Outcome::Continue;
@@ -279,8 +207,6 @@ impl Combat {
         if block.is_some() {
             return Outcome::Continue;
         }
-        // The dispatch names the presser; their live snapshot says what
-        // the hand holds.
         let state = player_state();
         if state.id != Some(*player) || !self.tools.lands(state.held) {
             return Outcome::Continue;
@@ -288,12 +214,6 @@ impl Combat {
         Outcome::Cancel
     }
 
-    /// The combo half of `mob_damage_pre`: a PACED attacker's hit on a
-    /// [`PACED_COMBO_DATA`] species drops the `Immunity` component from its
-    /// feedback pipeline, so the hit neither respects nor grants the engine
-    /// i-frame window — the attacker's swing clock is already the rate
-    /// limit. Everything else about the hit (health, flash, knockback,
-    /// sound) plays exactly as the species authored it.
     fn on_mob_damage(&self, payload: &mut EventPayload) -> Outcome {
         let EventPayload::MobDamagePre {
             kind,
@@ -323,10 +243,6 @@ impl Combat {
         Outcome::Continue
     }
 
-    /// The press nothing else wanted: the first rule in the list that takes
-    /// it holds the gesture until the button comes up, and is remembered as
-    /// its owner on this instance's clocks. Taking it is not an interaction,
-    /// so nothing jabs; `Cancel` only stops later handlers seeing it.
     fn on_raise(&mut self) -> Outcome {
         let state = player_state();
         let Some(me) = state.id else {
@@ -343,8 +259,6 @@ impl Combat {
 
 impl Mod for Combat {
     fn init(&mut self) {
-        // Registry-only, and legal on every instance (server, worldgen,
-        // client) — the client half needs the rows just as much.
         self.tools = Tools::resolve();
         self.combo_mobs = mobs_with_data(PACED_COMBO_DATA)
             .into_iter()
@@ -364,9 +278,6 @@ impl Mod for Combat {
         match runtime_side() {
             RuntimeSide::Server => {
                 self.authority = true;
-                // The tick's earliest seam, so a guard raised this tick is up
-                // before the Mobs stage swings at it — and the swings'
-                // answers publish within the same pass.
                 register_tick_system(Stage::Mining, AttachSide::Before, 0, BODY_SYSTEM);
                 register_event_handler(EventKind::PlayerDamagePre, 0, DAMAGE_HANDLER);
                 register_event_handler(EventKind::UseUnclaimed, 0, RAISE_HANDLER);
@@ -375,22 +286,15 @@ impl Mod for Combat {
                 register_event_handler(EventKind::ProjectileHit, 0, PROJECTILE_HANDLER);
             }
             RuntimeSide::Client => {
-                // The one thing a client cannot derive from the input it sees.
                 register_event_handler(EventKind::ModEvent, 0, IMPACT_HANDLER);
-                // ...and the one it can: the same raise, a round trip earlier.
                 register_event_handler(EventKind::UseUnclaimed, 0, RAISE_HANDLER);
             }
             RuntimeSide::Worldgen => {}
         }
     }
 
-    /// Run every player's body, and land the strike of any swing whose
-    /// impact played this tick. Idempotent every tick — no edge to miss; a
-    /// released claim is just the neutral write.
     fn tick_system(&mut self, system: u32) {
         debug_assert_eq!(system, BODY_SYSTEM);
-        // The roster is the snapshot of truth: prune the clocks of anyone
-        // gone, then one lookup per body.
         let roster = players();
         self.clocks
             .retain(|id, _| roster.iter().any(|entry| entry.id == *id));
@@ -418,9 +322,6 @@ impl Mod for Combat {
             PROJECTILE_HANDLER => self.on_projectile_hit(payload),
             DAMAGE_HANDLER => self.on_damage(payload),
             RAISE_HANDLER => self.on_raise(),
-            // The wielder's client hearing that its shield just took a hit.
-            // Starting the clock is the whole handler; what the recoil looks
-            // like is the shared rule's business on both sides.
             IMPACT_HANDLER => {
                 if matches!(payload, EventPayload::ModEvent { key, .. } if key == IMPACT_EVENT) {
                     self.local.recoil.start();
@@ -431,11 +332,6 @@ impl Mod for Combat {
         }
     }
 
-    /// The PREDICTED half: the same rules, the same snapshot, one round trip
-    /// earlier. Presentation only — a speed scale a batch late is
-    /// imperceptible next to a shield that visibly lags the button, and a
-    /// swing whose curve lags the click feels mushy on both sides of a
-    /// strike.
     fn client_frame(&mut self, frame: &ClientFrameData) {
         let state = player_state();
         let Some(me) = state.id else {

@@ -1,6 +1,3 @@
-//! Grass cover: a grass block dies back to dirt when a solid block smothers it from
-//! above or water floods it.
-
 use super::BehaviorWorld;
 use crate::block::{Block, BlockTag};
 use crate::mathh::IVec3;
@@ -8,16 +5,6 @@ use crate::world::data::WorldData;
 
 use super::BlockBehavior;
 
-/// Grass. On a random tick it dies back to [`Block::Dirt`] when the cell directly
-/// above [`smothered`]s it OR [`submerged`]s it — grass survives under neither a
-/// placed solid block (though it tolerates leaves and other
-/// [`BlockTag::NO_GRASS_DECAY`] cover) nor water. The exact inverse of
-/// [`Dirt`](super::dirt::Dirt)'s spread (which refuses to green such a cell), so a
-/// surface settles into a stable state: grass only where its top is open or
-/// canopied and dry, dirt under solid cover or water. The death is a DECAY — a
-/// random-tick cadence like leaf decay, deliberately gradual, never an instant
-/// verdict at the covering update (a solid placed overhead greens nothing and
-/// the grass under it fades out on the same ambience cadence that spread runs on).
 pub struct Grass;
 
 impl BlockBehavior for Grass {
@@ -30,38 +17,20 @@ impl BlockBehavior for Grass {
     }
 
     fn random_tick(&self, world: &mut dyn BehaviorWorld, pos: IVec3) {
-        // Grass dies back to dirt when a solid cover smothers it or water drowns it —
-        // neither leaves it a top it can live under.
         if smothered(world.data(), pos) || submerged(world.data(), pos) {
-            // Runs the usual block + light + mesh updates; the cell stays
-            // random-tickable (dirt ticks too), so the counter is unchanged.
             world.set_block_world(pos.x, pos.y, pos.z, Block::Dirt);
         }
     }
 }
 
-/// The grass singleton a row points at (`behavior: &behavior::GRASS`).
 pub static GRASS: Grass = Grass;
 
-/// Whether the cell directly above `pos` smothers grass: a solid cover that does
-/// NOT carry [`BlockTag::NO_GRASS_DECAY`]. This is the condition that kills grass, and
-/// (read the other way) the cover that stops dirt greening over — both behaviours
-/// share it so the spread and the death agree on one rule. Leaves and other
-/// `NoGrassDecay` blocks are solid yet let grass live, so they never smother. An
-/// unloaded or out-of-column cell above counts as not smothering: open sky over a
-/// top-of-world block, and never a state change on missing information.
 pub(super) fn smothered(world: &WorldData, pos: IVec3) -> bool {
     world
         .block_if_loaded(pos.x, pos.y + 1, pos.z)
         .is_some_and(|b| b.is_solid() && !b.has_tag(BlockTag::NO_GRASS_DECAY))
 }
 
-/// Whether the cell directly above `pos` holds fluid — grass drowns and dies back to
-/// dirt when flooded, and (read the other way) dirt will not green under fluid.
-/// Shared with [`Dirt`](super::dirt::Dirt) so a submerged column never re-greens:
-/// worldgen already lays dirt below the waterline, and this keeps the spread from
-/// creeping grass back down a flooded slope. An unloaded or out-of-column cell above
-/// counts as dry — open sky, never a state change on missing information.
 pub(super) fn submerged(world: &WorldData, pos: IVec3) -> bool {
     world
         .block_if_loaded(pos.x, pos.y + 1, pos.z)

@@ -1,20 +1,12 @@
-//! Every pack id this mod names, declared once and checked against the
-//! shipped pack data by the test below.
-
 use crate::rail::{Axis, Corner, Dir, Form};
 
 mod_sdk::pack_keys! {
-    /// The boat: the item that launches it and the hull mob it becomes.
     pub BOAT_ITEM: Item = "vehicles:boat";
     pub BOAT_MOB: Mob = "vehicles:boat";
-    /// The minecart: the item that places it and the cart mob it becomes.
     pub MINECART_ITEM: Item = "vehicles:minecart";
     pub MINECART_MOB: Mob = "vehicles:minecart";
-    /// Spawn tag on the cart row: what the tick enumerates.
     pub CART_TAG: MobTag = "vehicles:cart";
-    /// The rolling loop's `sounds.json` row.
     pub ROLL_SOUND: Sound = "vehicles:minecart_roll";
-    /// Engine water, the only surface a boat launches on.
     pub WATER: Block = "petramond:water";
 
     RAIL_NS: Block = "vehicles:rail_ns";
@@ -35,9 +27,6 @@ mod_sdk::pack_keys! {
     BOOSTER_SLOPE_W: Block = "vehicles:booster_rail_slope_w";
 }
 
-/// Every rail row: its form, whether it is the booster twin, and its row
-/// name. Boosters come in the straight and sloped forms only — a booster
-/// never curves.
 pub const RAIL_ROWS: [(Form, bool, &str); 16] = [
     (Form::Straight(Axis::NS), false, RAIL_NS),
     (Form::Straight(Axis::EW), false, RAIL_EW),

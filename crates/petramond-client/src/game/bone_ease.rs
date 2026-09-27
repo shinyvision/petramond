@@ -12,29 +12,24 @@ use petramond_render::POSE_EASE_RATE;
 
 use crate::animation::BoneOffset;
 
-/// The eased bone offsets of ONE body.
 #[derive(Default)]
 pub struct BoneEase {
     current: Vec<BoneOffset>,
 }
 
 impl BoneEase {
-    /// The eased offsets as of the last [`advance`](Self::advance) — what the
-    /// presentation gather copies into this frame's arena.
     pub fn current(&self) -> &[BoneOffset] {
         &self.current
     }
 
-    /// Advance toward `target` by `dt` and return what to draw this frame.
+    /// Advance toward `target` by `dt`, return what to draw this frame.
     ///
-    /// Offsets are matched by BONE, never by position: an offset arriving or
-    /// leaving must not drag its neighbour through an interpolation between two
-    /// unrelated joints, which would swing an arm through the body on the way
-    /// to a head tilt. A released offset eases back to the rig's own pose
-    /// before its bone is dropped, so straightening is as smooth as bending.
+    /// Match offsets by bone, not position. Otherwise an offset arriving or leaving would
+    /// interpolate between two unrelated joints and swing an arm through the body on the way to a
+    /// head tilt. A released offset eases back to the rig's own pose before its bone is dropped, so
+    /// straightening looks as smooth as bending.
     ///
-    /// The buffer is reused — no allocation once a body has settled into the
-    /// set of bones it wears.
+    /// Buffer is reused, no allocation once a body settles into its set of bones.
     pub fn advance(&mut self, target: &[BoneOffset], dt: f32) -> &[BoneOffset] {
         let t = 1.0 - (-POSE_EASE_RATE * dt.max(0.0)).exp();
         let ease = |cur: &mut BoneOffset, want: &BoneOffset| {
@@ -43,30 +38,22 @@ impl BoneEase {
                 cur.translation[i] += (want.translation[i] - cur.translation[i]) * t;
             }
         };
-        self.current.retain_mut(|cur| {
-            match target.iter().find(|w| w.bone == cur.bone) {
-                // Still published, same kind of offset: chase it.
+        self.current
+            .retain_mut(|cur| match target.iter().find(|w| w.bone == cur.bone) {
                 Some(want) if want.hold == cur.hold => {
                     ease(cur, want);
                     true
                 }
-                // A nudge became a STANCE (or the reverse). The two mean
-                // different things about the same joint, so there is nothing
-                // meaningful between them — restart at the rig's own pose.
                 Some(want) => {
                     *cur = neutral(want);
                     true
                 }
-                // Released: ease back to the rig's pose, then let the bone go.
                 None => {
                     let rest = neutral(cur);
                     ease(cur, &rest);
                     !settled(cur)
                 }
-            }
-        });
-        // A bone this body is not already easing starts at the rig's own pose,
-        // so it eases IN rather than appearing bent on its first frame.
+            });
         for want in target {
             if !self.current.iter().any(|c| c.bone == want.bone) {
                 self.current.push(neutral(want));
@@ -76,7 +63,6 @@ impl BoneEase {
     }
 }
 
-/// `offset`'s bone with no offset on it at all.
 fn neutral(offset: &BoneOffset) -> BoneOffset {
     BoneOffset {
         rotation: [0.0; 3],
@@ -85,8 +71,6 @@ fn neutral(offset: &BoneOffset) -> BoneOffset {
     }
 }
 
-/// Close enough to the rig's own pose that the offset can be dropped —
-/// a tenth of a degree and a hundredth of a pixel are both invisible.
 fn settled(offset: &BoneOffset) -> bool {
     offset.rotation.iter().all(|c| c.abs() < 0.1)
         && offset.translation.iter().all(|c| c.abs() < 0.01)
@@ -108,10 +92,6 @@ mod tests {
             .collect()
     }
 
-    /// An offset eases IN from the rig's own pose and back OUT to it, and a
-    /// released bone eventually leaves the set — so a mod that stops bending
-    /// an arm leaves the body standing normally rather than holding a
-    /// vanishingly small bend forever.
     #[test]
     fn an_offset_eases_in_and_releases_when_it_is_dropped() {
         let mut ease = BoneEase::default();
@@ -138,10 +118,6 @@ mod tests {
         );
     }
 
-    /// Offsets are matched by BONE, not by position. A set that grows or
-    /// shrinks must leave the bones it still holds exactly where they were —
-    /// interpolating a settled shoulder bend toward a head tilt because the
-    /// list shifted under it would swing the arm through the body.
     #[test]
     fn a_changed_set_leaves_the_bones_it_still_holds_alone() {
         let mut ease = BoneEase::default();
@@ -152,7 +128,6 @@ mod tests {
         let settled = ease.advance(&shoulder, 1.0 / 60.0)[0].rotation[0];
         assert!(settled < -30.0);
 
-        // The head arrives IN FRONT of the shoulder in the published order.
         let both = offsets(&[(7, -40.0), (3, -40.0)]);
         let now = ease.advance(&both, 1.0 / 60.0);
         let head = now.iter().find(|b| b.bone == 7).expect("the new bone");
@@ -165,9 +140,6 @@ mod tests {
         );
     }
 
-    /// A nudge and a STANCE mean different things about one joint, so a bone
-    /// that switches between them restarts rather than interpolating between
-    /// two incompatible readings of the same numbers.
     #[test]
     fn a_bone_that_switches_between_composing_and_holding_restarts() {
         let mut ease = BoneEase::default();

@@ -1,12 +1,10 @@
-//! Getting unstuck. A golem on the ground that no route leads home from makes
-//! its own way out, as a player would. Back onto its own pillar and down it if
-//! one stands nearby; otherwise one search weighs every way out by what it
-//! costs: walking; opening a shut door; digging, by how long the block takes
-//! with the tools carried and dearer for the design's own blocks (they go back
-//! up afterwards); dropping, dearer by the damage the fall does and never a
-//! deadly one; mining down; and, only where nothing else gets out, pillaring
-//! up. A golem that finds no way out, or makes no headway along one, sinks into
-//! the ground and rises again at home, carrying what it carried.
+//! Getting unstuck. A golem on the ground with no route home makes its own way out, as a player
+//! would. If one of its own pillars stands nearby it climbs back on and goes down it. Otherwise a
+//! single search weighs every way out by cost: walking, opening a shut door, digging (by how long
+//! the block takes, dearer for the design's own blocks since they go back up), dropping (dearer by
+//! fall damage, never a deadly one), mining down, and pillaring up only where nothing else works. A
+//! golem that finds no way out, or makes no headway, sinks into the ground and rises at home,
+//! carrying what it carried.
 
 use crate::host::prelude::*;
 
@@ -27,30 +25,23 @@ use crate::fx::{HashMap, HashSet};
 use crate::geometry::{feet_of, manhattan, offset};
 use crate::project::{Project, Projects};
 use crate::worker::Job;
-/// A golem getting out of somewhere.
 #[derive(Clone, Debug, Default)]
 pub struct Stuck {
     at: [i32; 3],
     since: u64,
     plans: u32,
-    /// Plans made getting out since it began, wherever they were made.
     total: u32,
-    /// The top of the golem's own pillar it walked to, to climb down.
     pillar: Option<[i32; 3]>,
-    /// Doors toggled as the way out, and how often.
     doors: Vec<([i32; 3], u8)>,
-    /// Walks out that did not get there, by where they left from.
     failed: Vec<([i32; 3], [i32; 3])>,
 }
 
 impl Stuck {
-    /// A block dug on the way out: headway, however long the digging took.
     pub fn dug(&mut self, now: u64) {
         self.since = now;
         self.plans = 0;
     }
 
-    /// A walk out from `from` never reached `to`: that way is not walked.
     pub fn walk_failed(&mut self, from: [i32; 3], to: [i32; 3]) {
         if !self.failed.contains(&(from, to)) {
             self.failed.push((from, to));
@@ -65,15 +56,12 @@ impl Stuck {
     }
 }
 
-/// What looking for a way out found.
 enum Lookout {
     Way(Way),
     NoWay,
-    /// Part of the ground around is still loading: nothing about it is known.
     Loading,
 }
 
-/// The next step out for a golem no route leads home from.
 pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> Step {
     let stuck = job.crew.rescue.stuck.get_or_insert_with(Stuck::default);
     if stuck.at != body.cell || stuck.since == 0 {
@@ -94,9 +82,6 @@ pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> S
         );
         return relocate(job);
     }
-    // On the top of its own pillar: down it. Other scaffolding underfoot is
-    // left alone while getting out, since one laid to rise out of a hole is no
-    // pillar.
     if stuck.pillar == Some(body.cell) {
         if let Some(pillar) = super::pillar::recover(ctx, project, body) {
             job.crew.rescue.stuck = None;
@@ -145,8 +130,6 @@ pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> S
     let health = mob_info(body.id).map_or(1.0, |m| m.health);
     let way = match way_out(ctx, job, project, body, &here, &home, health, &stuck) {
         Lookout::Way(way) => way,
-        // A way judged with part of the ground unknown is a guess: a door not
-        // in yet left digging the floor as the only way out.
         Lookout::Loading => {
             if let Some(stuck) = job.crew.rescue.stuck.as_mut() {
                 stuck.since = ctx.now;
@@ -178,8 +161,6 @@ pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> S
         };
     }
     if let Some(door) = way.door {
-        // A door already standing open lets the golem through: only a shut
-        // one is toggled.
         let through = match way.step {
             Move::Walk(to) | Move::Drop(to) => route::probe(ctx, body.cell, to, Vec::new()),
             Move::Rise | Move::Sink => Some(Route::Closed),
@@ -209,12 +190,10 @@ pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> S
             from: body.cell,
             since: ctx.now,
         },
-        // Dug out already and still standing: the next plan looks again.
         Move::Sink => Step::Plan,
     }
 }
 
-/// Sink into the ground here and rise again at home.
 pub fn relocate(job: &mut Job) -> Step {
     job.crew.rescue.stuck = None;
     Step::Relocate { t: 0, leg: 0 }
@@ -241,8 +220,6 @@ fn way_out(
         Some(grid) => grid,
         None => return Lookout::Loading,
     };
-    // A door toggled as the way out often enough without freeing the golem is
-    // a wall like any other.
     for (door, tries) in &stuck.doors {
         if *tries >= DOOR_TRIES {
             for half in [*door, offset(*door, [0, 1, 0])] {
@@ -252,8 +229,6 @@ fn way_out(
             }
         }
     }
-    // A staircase, a door or a way dug through first: a scaffold to rise on
-    // only where nothing else gets out.
     match search(&grid, here, home, health, &stuck.failed, false, true)
         .or_else(|| search(&grid, here, home, health, &stuck.failed, true, true))
     {
@@ -262,9 +237,6 @@ fn way_out(
     }
 }
 
-/// What every cell of a box is to a golem moving through it: open, a floor,
-/// a door, and what digging it costs with the tools it carries. `None` while
-/// any of the ground is still loading — nothing about it is known then.
 pub fn site_settled(ctx: &mut Ctx, job: &mut Job) -> bool {
     let (min, max) = ctx.site;
     let steps = |lo: i32, hi: i32| (lo..=hi).step_by(16).chain(std::iter::once(hi));
@@ -286,8 +258,6 @@ pub fn site_settled(ctx: &mut Ctx, job: &mut Job) -> bool {
     }
 }
 
-/// The cheapest way through `grid` from where the golem walks to ground that
-/// walks home, rising on scaffolds or not.
 pub fn rise(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -340,9 +310,6 @@ pub fn rise(
     Step::Rise { from, since }
 }
 
-/// The top of one of the golem's own scaffold pillars nearby, standing on
-/// something all the way down, that it walks onto from here. `None` = no
-/// route budget this tick.
 pub fn pillar_back(ctx: &mut Ctx, project: &Project, body: &Body) -> Option<Option<[i32; 3]>> {
     let mut tops: Vec<[i32; 3]> = project
         .scaffolds
@@ -357,7 +324,6 @@ pub fn pillar_back(ctx: &mut Ctx, project: &Project, body: &Body) -> Option<Opti
         while project.scaffolds.contains(&[top[0], base - 1, top[2]]) {
             base -= 1;
         }
-        // A column of at least two, on something: a lone step is no pillar.
         if top[1] - base < 2 || !open(ctx, top) || open(ctx, [top[0], base - 1, top[2]]) {
             continue;
         }
@@ -368,8 +334,6 @@ pub fn pillar_back(ctx: &mut Ctx, project: &Project, body: &Body) -> Option<Opti
     Some(None)
 }
 
-/// The hop itself: one launch toward the landing, steered over it through
-/// the rise as a player steers a jump; the fall carries it down.
 pub fn hop(job: &mut Job, body: &Body, to: [i32; 3], since: u64, now: u64) -> Step {
     job.crew.presence.set_hold(body.id, true);
     let centre = feet_of(to);
@@ -388,7 +352,6 @@ pub fn hop(job: &mut Job, body: &Body, to: [i32; 3], since: u64, now: u64) -> St
     Step::Hop { to, since }
 }
 
-/// Whether the golem stands somewhere no route leads home from.
 pub fn stranded(ctx: &mut Ctx, hubs: Hubs, body: &Body) -> bool {
     matches!(route::out(ctx, hubs, body.cell, &[]), Some(Route::Closed))
 }

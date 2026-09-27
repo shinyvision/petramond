@@ -1,16 +1,6 @@
-//! Column scans: every requested height of one column evaluated together.
-//!
-//! A cell-by-cell evaluation re-dispatches every operator per cell. A scan
-//! keeps one lane per height, so each operator runs once over a short vector,
-//! and a sampling operator asked the same question on consecutive cells (a
-//! noise sampled at a banded height, a column-constant seed) answers once.
-//! The arithmetic per lane is exactly the point evaluation's, in the same
-//! order, so a scan and a point never disagree on a cell.
-
 use super::{apply, Formula, HeightTable, Inputs, Node, Noises, Op};
 use std::sync::Arc;
 
-/// Reusable scratch for scanning one formula's columns.
 pub struct Scan<'a> {
     formula: &'a Formula,
     seed: u32,
@@ -18,7 +8,6 @@ pub struct Scan<'a> {
     values: Vec<f64>,
     table: Option<Arc<HeightTable>>,
     rows: Vec<usize>,
-    /// Register file of the lattice pass of [`Self::run_lattice`].
     corners: Vec<f64>,
 }
 
@@ -38,7 +27,6 @@ impl Formula {
     }
 }
 
-/// The table rows of every height in `ys`, when the table covers them all.
 pub(super) fn table_rows(
     table: Option<&Arc<HeightTable>>,
     ys: &[f64],
@@ -57,8 +45,6 @@ pub(super) fn table_rows(
     true
 }
 
-/// Lay a tabulated node out per lane — only when something else reads it —
-/// and say whether the node was tabulated at all.
 #[inline]
 pub(super) fn tabulated_op(
     formula: &Formula,
@@ -81,15 +67,10 @@ pub(super) fn tabulated_op(
 }
 
 impl Scan<'_> {
-    /// The outputs at each height of `ys` in one column.
     pub fn run<const N: usize>(&mut self, inputs: Inputs, ys: &[f64], out: &mut Vec<[f64; N]>) {
         self.run_with(inputs, ys, None, out);
     }
 
-    /// [`Self::run`] with every height-dependent sampling operator sampled
-    /// at heights `step` apart and interpolated between them: a noise wider
-    /// than the step reads the same for a fraction of the samples. `ys`
-    /// must ascend.
     pub fn run_lattice<const N: usize>(
         &mut self,
         inputs: Inputs,
@@ -213,8 +194,6 @@ impl Scan<'_> {
     }
 }
 
-/// Grow the register file without clearing it: every used node is written
-/// over all its lanes before anything reads it, so stale lanes are never seen.
 #[inline]
 pub(super) fn reserve(values: &mut Vec<f64>, len: usize) {
     if values.len() < len {
@@ -222,8 +201,6 @@ pub(super) fn reserve(values: &mut Vec<f64>, len: usize) {
     }
 }
 
-/// A height-independent node: one value, laid out per lane only when a
-/// height-dependent node reads it.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn column_op(
@@ -248,7 +225,6 @@ pub(super) fn column_op(
     }
 }
 
-/// A height-dependent node over every lane.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub(super) fn vertical_op(
@@ -283,8 +259,6 @@ pub(super) fn vertical_op(
             }
         }
         op => {
-            // Arguments always precede their node, so the node's lanes and
-            // its arguments' lanes are disjoint halves of the register file.
             let (args, out) = values.split_at_mut(base);
             let out = &mut out[..lanes];
             let lane = |i: usize| &args[node.args[i] * lanes..node.args[i] * lanes + lanes];

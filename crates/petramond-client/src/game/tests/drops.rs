@@ -30,10 +30,6 @@ fn spawn_drops_dirt_yields_one_drop() {
     assert!((d.pos.z - 4.5).abs() < 1e-5);
 }
 
-/// The natural-break drop gate: a sim-destroyed block yields what a BARE-HAND
-/// break would. A tool-gated fragile block (the snow layer's shovel-only
-/// snowball) therefore shatters empty when undermined, while a hand-harvestable
-/// fragile block (a poppy) still yields itself.
 #[test]
 fn an_undermined_snow_layer_shatters_without_a_drop() {
     use super::common::game_on_empty_chunk;
@@ -42,14 +38,11 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
     let mut game = game_on_empty_chunk();
     let cases = [(Block::SnowLayer, 0usize), (Block::Poppy, 1usize)];
     for (i, (block, expected_drops)) in cases.into_iter().enumerate() {
-        // Keep both sites ≥ SIM_READ_REACH cells from the lone chunk's borders,
-        // or the streaming-finality guard drops the dispatched break.
         let ground = IVec3::new(7 + 2 * i as i32, 64, 8);
         let cell = ground + IVec3::new(0, 1, 0);
         let w = game.server_world_mut();
         w.set_block_world(ground.x, ground.y, ground.z, Block::Grass);
         w.set_block_world(cell.x, cell.y, cell.z, block);
-        // Undermine it: the fragile block breaks at the undermining update.
         w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
         let mut feed = TickEvents::default();
         for _ in 0..3 {
@@ -80,7 +73,7 @@ fn dropped_item_is_picked_up_near_player() {
     let before = count_item(&game.server_player().inventory, item);
     let centre = game.server_player().body_center();
     let mut drop = DroppedItem::new(centre, ItemStack::new(item, 1), 1);
-    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
+    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
     game.server_world_mut().tick_item_lifetime();
     game.sim_mut().item_pickup_tick(0);
@@ -92,8 +85,6 @@ fn dropped_item_is_picked_up_near_player() {
 #[test]
 fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
     let mut game = game();
-    // Room for exactly one more dirt: 63 dirt in one slot, every other slot
-    // full of a different item.
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Dirt, 63));
     for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
@@ -106,8 +97,6 @@ fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
     drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
 
-    // One tick plans the partial pickup and absorbs the requested split because
-    // the stack is already inside the pickup radius.
     game.server_world_mut().tick_item_lifetime();
     game.sim_mut().item_pickup_tick(0);
 
@@ -132,8 +121,6 @@ fn partial_pickup_takes_what_fits_and_leaves_the_rest() {
 #[test]
 fn pickup_planning_reserves_capacity_before_magnetizing() {
     let mut game = game();
-    // Room for exactly one dirt, but two dirt drops are inside the attract
-    // radius. Planning should request only one of them.
     let mut inv = Inventory::new();
     inv.add(ItemStack::new(ItemType::Dirt, 63));
     for _ in 0..(petramond_world::inventory::TOTAL_SLOTS - 1) {
@@ -180,7 +167,6 @@ fn fresh_dropped_item_waits_out_pickup_delay() {
     let mut game = game();
     let item = petramond_world::item::ItemType::Poppy;
     let centre = game.server_player().body_center();
-    // ticks_lived 0: sitting right on the player but still inside the delay.
     game.server_world_mut()
         .spawn_item(DroppedItem::new(centre, ItemStack::new(item, 1), 1));
     game.server_world_mut().tick_item_lifetime();
@@ -190,7 +176,6 @@ fn fresh_dropped_item_waits_out_pickup_delay() {
         1,
         "delay blocks immediate pickup"
     );
-    // Each tick ages it by one; once past the delay it is collected.
     for _ in 0..ITEM_PICKUP_DELAY_TICKS {
         game.server_world_mut().tick_item_lifetime();
         game.sim_mut().item_pickup_tick(0);
@@ -206,7 +191,7 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
     let chest = game.server_player().body_center();
     let start = chest + Vec3::new(0.0, petramond::entity::ATTRACT_RADIUS - 0.1, 0.0);
     let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
-    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // skip the delay so the magnet engages now
+    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
     let d0 = (game.server_world().item_entities()[0].pos - chest).length();
     game.server_world_mut().tick_item_lifetime();
@@ -229,8 +214,6 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
         let d1 = (game.server_world().item_entities()[0].pos - chest).length();
         assert!(d1 < d0);
     }
-    // Item physics + pickup both run on the fixed tick now: the magnet flies it in,
-    // and the pickup absorbs it once it's in range.
     for _ in 0..60 {
         if game.server_world().item_entities().is_empty() {
             break;
@@ -257,11 +240,10 @@ fn dropped_item_magnets_toward_player_then_absorbs() {
 #[test]
 fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
     let mut game = game();
-    game.server_player_mut().inventory = filled_inventory(); // a stack of Dirt
+    game.server_player_mut().inventory = filled_inventory();
     game.server_player_mut().inventory.set_active(0);
     let before = count_item(&game.server_player().inventory, ItemType::Dirt);
 
-    // Q-drop queues intent only; inventory and world stay unchanged until the tick.
     game.drop_selected_item(false);
     assert_eq!(
         count_item(&game.server_player().inventory, ItemType::Dirt),
@@ -273,7 +255,6 @@ fn a_dropped_item_enters_the_world_on_the_tick_not_the_frame() {
         "the drop hasn't entered the world until a tick runs"
     );
 
-    // The tick removes the item and materialises the drop as a world entity.
     let events = apply_drop_actions(&mut game);
     assert!(events.player_at(0).threw_item);
     assert_eq!(
@@ -296,7 +277,7 @@ fn dropped_item_beyond_one_block_is_not_magnet_picked_up() {
     let start = chest + Vec3::new(petramond::entity::ATTRACT_RADIUS + 0.05, 0.0, 0.0);
     let mut drop = DroppedItem::new(start, ItemStack::new(item, 1), 1);
     drop.vel = Vec3::ZERO;
-    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible for pickup, so only range gates it
+    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
 
     for _ in 0..60 {
@@ -327,7 +308,7 @@ fn distant_dropped_item_is_not_picked_up() {
         ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
         2,
     );
-    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // eligible, but far out of range
+    drop.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     game.server_world_mut().spawn_item(drop);
     game.server_world_mut().tick_item_lifetime();
     game.sim_mut().item_pickup_tick(0);
@@ -343,7 +324,6 @@ fn stale_dropped_item_despawns_on_the_lifetime_tick() {
         ItemStack::new(petramond_world::item::ItemType::Dirt, 1),
         3,
     );
-    // One tick short of the lifetime limit: the next fixed tick ages it out.
     item.ticks_lived = ITEM_LIFETIME_TICKS - 1;
     game.server_world_mut().spawn_item(item);
     game.server_world_mut().tick_item_lifetime();
@@ -351,10 +331,6 @@ fn stale_dropped_item_despawns_on_the_lifetime_tick() {
     assert!(game.server_world().item_entities().is_empty());
 }
 
-/// Cursor throws and hotbar drops: each case queues one intent, checks the
-/// source stack stays untouched until the tick, then asserts what the tick
-/// spawned and what remained at the source. The queued-throw-survives-menu-
-/// close variants add ordering assertions and keep their own tests.
 #[test]
 fn cursor_throw_and_drop_selected_cases() {
     #[derive(Clone, Copy)]
@@ -364,15 +340,10 @@ fn cursor_throw_and_drop_selected_cases() {
     }
     struct Case {
         label: &'static str,
-        /// Whether the source holds a stack of `STACK` dirt (false = empty).
         held: bool,
         source: Source,
-        /// Throw/drop the whole stack (true) or a single item (false).
         all: bool,
-        /// `Some(count)`: exactly one fresh drop of that size spawns on the
-        /// tick. `None`: the action is a no-op, nothing spawns.
         dropped: Option<u8>,
-        /// What the source holds after the tick (`None` = emptied).
         remainder: Option<u8>,
     }
     const STACK: u8 = 12;
@@ -630,7 +601,6 @@ fn queued_q_drop_uses_the_action_time_hotbar_slot() {
 
 #[test]
 fn applying_a_real_throw_arms_the_hand_throw_jab() {
-    // The Q drop throws from the active hotbar slot.
     {
         let mut game = game();
         game.server_player_mut().inventory = filled_inventory();
@@ -642,11 +612,10 @@ fn applying_a_real_throw_arms_the_hand_throw_jab() {
             "Q drop should flick the hand forward"
         );
     }
-    // Both inventory drag-outs throw from the cursor-held stack.
     for amount in [ThrowAmount::All, ThrowAmount::One] {
         let mut game = game();
         game.server_player_mut().inventory = filled_inventory();
-        game.server_player_mut().inventory.click_slot(0); // pick the stack onto the cursor
+        game.server_player_mut().inventory.click_slot(0);
         game.throw_cursor(amount);
         let events = apply_drop_actions(&mut game);
         assert!(
@@ -660,7 +629,6 @@ fn applying_a_real_throw_arms_the_hand_throw_jab() {
 fn a_noop_throw_does_not_arm_the_throw_jab() {
     let mut game = game();
     game.server_player_mut().inventory = petramond_world::inventory::Inventory::new();
-    // Nothing in hand or on the cursor: every throw path is a no-op.
     for _ in 0..64 {
         game.server_player_mut().inventory.decrement_selected();
     }
@@ -682,7 +650,6 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
     game.sync_self_view_for_test();
     game.drop_selected_item(false);
 
-    // The hand animation is CLIENT-OWNED: it fires on the click frame...
     let events = game.tick(1.0 / 60.0, &GameInput::default());
     assert!(
         events.threw_item,
@@ -693,8 +660,6 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
         "a frame with no fixed tick must not mutate the inventory"
     );
 
-    // ...and the tick that APPLIES the drop server-side does not replay it
-    // (the server never echoes self-initiated one-shots).
     let applied = game.tick(TICK_DT, &GameInput::default());
     assert!(
         !applied.threw_item,
@@ -704,10 +669,6 @@ fn throw_animates_once_at_the_click_and_is_never_echoed_back() {
     assert!(!next.threw_item, "the throw event is one-shot");
 }
 
-/// The multiplayer pickup contract: reservations are per-requester, so two
-/// players each vacuum THEIR OWN adjacent drop within one tick's session
-/// sweep — the second session's planner pass can no longer steal or reset the
-/// first's marks.
 #[test]
 fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     let mut game = game();
@@ -725,7 +686,6 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
         game.server_world_mut().spawn_item(drop);
     }
 
-    // One tick's Pickup stage: each session plans + collects in id order.
     game.server_world_mut().tick_item_lifetime();
     for s in [0, other] {
         assert!(game.sim_mut().item_pickup_tick(s), "session {s} collects");
@@ -744,8 +704,6 @@ fn two_players_each_collect_their_own_adjacent_drop_in_one_tick() {
     }
 }
 
-/// A single drop reachable by two players goes to exactly ONE of them —
-/// first come in session order — never duplicated, never lost.
 #[test]
 fn a_single_drop_between_two_players_goes_to_exactly_one() {
     let mut game = game();
@@ -756,7 +714,6 @@ fn a_single_drop_between_two_players_goes_to_exactly_one() {
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
             1.0, 64.0, 0.5,
         )));
-    // Midway between the two body centres: within the absorb radius of both.
     let mid = game
         .server_player()
         .body_center()

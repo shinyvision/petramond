@@ -47,7 +47,6 @@ fn store_pairs_batches_skips_own_id_and_drops_absent_ids() {
     let p1 = WorldPos::new(1.0, 70.0, 1.0);
     let p2 = WorldPos::new(2.0, 70.0, 1.0);
 
-    // Own id (0) skipped entirely; fresh ids start prev == curr.
     apply(&mut store, &[row(0, p1), row(1, p1), row(2, p1)]);
     assert_eq!(store.len(), 2, "the recipient's own row is never stored");
     let fresh = store.iter().next().expect("id 1 stored");
@@ -64,7 +63,6 @@ fn store_pairs_batches_skips_own_id_and_drops_absent_ids() {
         "previous batch became the prev row"
     );
     assert_eq!(paired.curr.transform.pos, p2);
-    // Midpoint interpolation over the pair.
     let (mid, _, _) = interpolate(&paired.prev, &paired.curr, 0.5);
     assert_eq!(mid, WorldPos::new(1.5, 70.0, 1.0));
 }
@@ -101,9 +99,6 @@ fn snap_rows_skip_interpolation() {
     assert_eq!(pos, far, "no frame lerps across the teleport");
 }
 
-/// A fired graph event — the engine's own break resolved on the body rig,
-/// exactly as the server emits it — reaches the remote body's animator
-/// inputs once, through the same lane a mod's fire rides, and never twice.
 #[test]
 fn a_fired_action_reaches_the_body_animator_exactly_once() {
     use petramond::player::one_shot::{self, OneShot};
@@ -114,7 +109,6 @@ fn a_fired_action_reaches_the_body_animator_exactly_once() {
     let event = one_shot::resolve(body, Hand::Main, OneShot::Break).expect("break event");
     let action = PlayerActionKind::Animator { rig: body, event };
     let mut store = RemotePlayers::default();
-    // Two batches in one window both carry the row: one edge this frame.
     store.apply_snapshot(
         &[row(1, WorldPos::ZERO)],
         &[(PlayerId(1), action), (PlayerId(1), action)],
@@ -124,7 +118,6 @@ fn a_fired_action_reaches_the_body_animator_exactly_once() {
     let events = |store: &RemotePlayers| store.iter().next().unwrap().events.clone();
     assert_eq!(events(&store), vec![(body, event)], "one edge per frame");
 
-    // The latch is consumed: the next frame carries no second break.
     store.advance(1.0 / 60.0, 1.0, |_| MovementMedium::Land);
     assert!(events(&store).is_empty(), "one edge, no re-trigger");
 }
@@ -151,8 +144,6 @@ fn presented(
     out.iter().map(|p| p.progress().unwrap()).collect()
 }
 
-/// A scrub the rows show climbing is drawn where it is NOW, not where the
-/// tick-old row left it: carried forward by the step the last two rows took.
 #[test]
 fn a_climbing_scrub_is_carried_forward_by_the_step_the_last_two_rows_took() {
     let prev = [scrub(0, 1, 0.9), scrub(1, 1, 0.2)];

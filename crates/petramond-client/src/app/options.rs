@@ -1,10 +1,3 @@
-//! Options state and raw-input resolution: the rebindable-controls engine's
-//! app seam (raw key/mouse/scroll → [`Control`] edges through the player's
-//! [`BindingSet`]), remap capture for the Options → Controls screen, and the
-//! apply/persist paths for every Options value (volumes, particles, view
-//! distance). Screen controllers live in `shell_docs/options*.rs`; this file
-//! owns the behavior they call into.
-
 use super::{App, AppScreen};
 use petramond_input::controls::{
     fixed_control_from_key_code, is_modifier_key, ActionOut, BindMods, Binding, BoundInput,
@@ -14,14 +7,7 @@ use petramond_input::keycode::{KeyCode, MouseButton};
 use petramond_world::gui_state::PointerButton;
 
 impl App {
-    /// Resolve a raw keyboard event through the binding table (fixed fallback
-    /// keys when nothing matched). Returns `false` only for an unconsumed
-    /// CloseScreen press — the host's quit signal, exactly like the old
-    /// hardcoded translation.
     pub fn handle_raw_key(&mut self, code: KeyCode, down: bool) -> bool {
-        // Text entry owns key presses while focused. Releases still flow
-        // through the binding engine so an action held before focus cannot
-        // stick; Escape remains the explicit close-screen control.
         if down && self.ui.text_input_focused() && code != KeyCode::Escape {
             return true;
         }
@@ -38,10 +24,6 @@ impl App {
         consumed || !(matches!(control, Control::CloseScreen) && down)
     }
 
-    /// Resolve a raw mouse-button event: capture for remap, bindings in
-    /// gameplay, the classic Primary/Secondary UI routing everywhere else.
-    /// Releases ALWAYS run through the binding engine so a held bound action
-    /// can never stick across a screen change.
     pub fn handle_raw_mouse(&mut self, button: MouseButton, down: bool) {
         if self.options.remap().is_some() && self.remap_capture_mouse(button, down) {
             return;
@@ -55,8 +37,6 @@ impl App {
                 return;
             }
         }
-        // Menus/chat/canvas: the physical left/right buttons drive the UI,
-        // whatever the bindings say.
         let pointer_button = match button {
             MouseButton::Left => Some(PointerButton::Primary),
             MouseButton::Right => Some(PointerButton::Secondary),
@@ -67,9 +47,6 @@ impl App {
         }
     }
 
-    /// Fire the bindings bound to whole scroll notches (positive = down).
-    /// Each notch is a full press+release pulse: hotbar next/prev by default,
-    /// any other action a player scroll-binds behaves like a tap per notch.
     pub(super) fn pulse_scroll_bindings(&mut self, notches: i32) {
         let dir = if notches > 0 {
             ScrollDir::Down
@@ -84,7 +61,6 @@ impl App {
         }
     }
 
-    /// Release every held bound action (window focus loss, session teardown).
     pub fn release_input_bindings(&mut self) {
         let mut out = Vec::new();
         self.controls.binding_engine.release_all(&mut out);
@@ -102,12 +78,6 @@ impl App {
         }
     }
 
-    /// Dispatch a mod-registered bound action to its owning client mod. A
-    /// press never reaches a mod over a focused text input, and otherwise
-    /// only where the action fires (its registered contexts, against the
-    /// screen); a release always lands so the mod's edge filter can't latch.
-    /// Where a mod key press lands now: gameplay, or the client document or
-    /// canvas on screen.
     fn key_screen(&self) -> (bool, Option<String>) {
         let screen = match self.screen {
             AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
@@ -119,9 +89,6 @@ impl App {
         (self.screen.gameplay_enabled(), screen)
     }
 
-    /// One raw input edge through the bindings. Only the actions that fire
-    /// here compete for it: a mod's chord for another screen never swallows
-    /// the plain key.
     fn resolve_input(&mut self, input: BoundInput, down: bool, out: &mut Vec<(ActionOut, bool)>) {
         let (gameplay, screen) = self.key_screen();
         let at = petramond::modding::client::keys::KeyContext {
@@ -162,10 +129,6 @@ impl App {
         self.apply_client_mod_commands();
     }
 
-    /// Rebuild the remappable-action table for the current client mods (the
-    /// session's, or the shell's): engine actions plus whatever they
-    /// registered. Held bindings release first — an action must not stay
-    /// down across the swap.
     pub(super) fn rebuild_action_table(&mut self) {
         self.release_input_bindings();
         let mut table = petramond_input::controls::ActionTable::engine();
@@ -183,8 +146,6 @@ impl App {
         self.publish_key_labels();
     }
 
-    /// Tell the client mods what each of their actions is bound to now, as
-    /// the controls screen prints it.
     pub(super) fn publish_key_labels(&mut self) {
         let table = &self.controls.action_table;
         let labels = table
@@ -201,11 +162,6 @@ impl App {
         }
     }
 
-    // --- Remap capture (Options → Controls) ---
-
-    /// The armed remap, IF the controls screen is still the one open. Any
-    /// other screen (a connection loss can swap screens underneath) disarms it
-    /// so capture never eats input elsewhere.
     fn active_remap(&mut self) -> Option<String> {
         if self.screen != AppScreen::OptionsControls {
             self.options.cancel_remap();
@@ -214,10 +170,9 @@ impl App {
         self.options.remap().map(str::to_owned)
     }
 
-    /// Capture a raw KEY for the armed remap. Consumes everything while
-    /// remapping: ESC cancels (the one unbindable key); a modifier tap binds
-    /// that modifier on its release, a modifier HOLD starts a chord; any other
-    /// key (plus held modifiers) becomes the binding.
+    /// Swallows all input while a remap is armed. ESC cancels and can't itself be bound. A modifier
+    /// tap binds that modifier on release, a hold starts a chord, and any other key becomes the
+    /// binding along with any held modifiers.
     pub fn remap_capture_key(&mut self, code: KeyCode, down: bool) -> bool {
         let Some(action) = self.active_remap() else {
             return false;
@@ -232,8 +187,6 @@ impl App {
             if down {
                 self.options.arm_mod(code);
             } else if self.options.armed_mod() == Some(code) {
-                // Tap-released with nothing else captured: bind the bare
-                // modifier (any OTHER still-held modifiers chord it).
                 self.finish_remap(
                     &action,
                     Binding {
@@ -256,23 +209,14 @@ impl App {
         true
     }
 
-    /// Capture a raw MOUSE BUTTON for the armed remap — unless the press is
-    /// over another widget of the controls document (a different action's
-    /// button, Back): those route to the UI, which switches or cancels the
-    /// remap instead of binding a click. Returns whether the event was
-    /// consumed as capture.
     fn remap_capture_mouse(&mut self, button: MouseButton, down: bool) -> bool {
         let Some(action) = self.active_remap() else {
             return false;
         };
         if !down {
-            // The release after a capture (or over a widget) is nobody's
-            // press; swallow it so the UI never sees an unmatched up.
             return true;
         }
         if self.cursor_over_interactive_widget() {
-            // Route to the UI: clicking another action's button cancels this
-            // remap and arms that one; Back cancels and leaves.
             return false;
         }
         self.finish_remap(
@@ -285,8 +229,6 @@ impl App {
         true
     }
 
-    /// Capture a SCROLL direction for the armed remap (any wheel movement
-    /// while remapping binds its direction).
     pub(super) fn remap_capture_scroll(&mut self, delta: f32) {
         let Some(action) = self.active_remap() else {
             return;
@@ -308,8 +250,6 @@ impl App {
         );
     }
 
-    /// Whether the cursor is over one of the controls document's widgets
-    /// (bind buttons / Back) — presses there are UI clicks, not capture.
     fn cursor_over_interactive_widget(&self) -> bool {
         let (x, y) = self.controls.pointer.cursor();
         self.ui.out().named.iter().any(|(key, rect)| {
@@ -321,16 +261,11 @@ impl App {
         })
     }
 
-    /// Bind the armed action, and tell the client mods what it is bound to
-    /// now.
     fn finish_remap(&mut self, action_id: &str, binding: Binding) {
         self.options.finish_remap(action_id, binding);
         self.publish_key_labels();
     }
 
-    // --- Apply: the side effects an option has outside `OptionsState` ---
-
-    /// Push the current volume settings into the audio engine (live).
     pub(super) fn apply_volumes(&mut self) {
         let settings = &self.options.settings;
         self.sound.set_volumes(
@@ -340,8 +275,6 @@ impl App {
         );
     }
 
-    /// Apply the particles mode to both presentation halves: the game-side
-    /// fleck system now, the renderer's emitter density on the next render.
     pub(super) fn apply_particles(&mut self) {
         if let Some(session) = self.session.as_mut() {
             session
@@ -351,9 +284,6 @@ impl App {
         self.options.mark_renderer_dirty();
     }
 
-    /// Apply and persist a committed view distance: replica + server
-    /// streaming through the game session, fog/cull on the next render, and
-    /// the render distance every future session start reads.
     pub(super) fn apply_view_distance(&mut self, chunks: i32) {
         let chunks = self.options.set_view_distance(chunks);
         self.render_dist = chunks;
@@ -363,12 +293,6 @@ impl App {
         self.options.persist();
     }
 
-    /// Hand the renderer every graphics setting it owns, when one changed.
-    /// The host calls this once the window's renderer exists and `App::render`
-    /// calls it every frame with the renderer in hand — the same call, so a
-    /// setting cannot be applied at creation and then forgotten. The renderer
-    /// answers with the anti-aliasing mode it can actually run; a fallback is
-    /// written back and persisted so the options readout shows what runs.
     pub(crate) fn apply_graphics(&mut self, renderer: &mut petramond_render::Renderer) {
         if !self.options.take_renderer_dirty()
             && self.options.settings.anti_aliasing == renderer.anti_aliasing()
@@ -382,9 +306,6 @@ impl App {
         }
     }
 
-    /// The host replaced a renderer whose GPU device was lost. The new one
-    /// knows no settings and holds no terrain: hand it the graphics settings
-    /// and queue every meshed column of the world for upload again.
     pub(crate) fn renderer_recreated(&mut self, renderer: &mut petramond_render::Renderer) {
         self.options.mark_renderer_dirty();
         self.apply_graphics(renderer);

@@ -1,13 +1,3 @@
-//! The frame's two UI layers.
-//!
-//! The SCENE layer is the HUD the view claims leave up: the hotbar document,
-//! hearts and effects, the hurt vignette and the passive chat log. It draws
-//! into the frame over the world, so a scene capture holds it. The WINDOW
-//! layer is everything else on screen — every menu and shell screen, a mod's
-//! document, canvas or overlays, the chat being typed — and is composited
-//! onto the window only, after the frame's capture point. Which layer a piece
-//! of UI belongs to is decided here and nowhere else.
-
 use petramond::gui::{UiSnapshot, UiViewport};
 use petramond_render::{ClientOverlayLayer, DocumentUiFrame, Renderer, UiFrame, UiLayers};
 use petramond_world::gui_state::GuiKind;
@@ -17,10 +7,6 @@ use super::session::Session;
 use super::{client_mod_ui, App};
 
 impl App {
-    /// The screen as the scene sees it. On the window a screen hides the HUD
-    /// and the aim marks it covers. A capture holds the scene the view claims
-    /// describe, so while one is armed, or a presentation presents, a screen
-    /// that is only UI reaches the window alone.
     pub(super) fn scene_screen(&self) -> AppScreen {
         let presenting = self
             .session
@@ -33,8 +19,6 @@ impl App {
         }
     }
 
-    /// Solve the HUD document into the scene layer at `viewport`, with the
-    /// passive chat log over it, or drop both when the HUD is hidden.
     pub(super) fn solve_scene_ui(&mut self, hud_visible: bool, viewport: UiViewport, now: f64) {
         self.composed_hud.clear();
         self.composed_hud_images.clear();
@@ -78,9 +62,6 @@ impl App {
         }
     }
 
-    /// Compose the window's draw list: the open screen's document and the
-    /// chat being typed, in that order. The window
-    /// document's `(kind, viewport)`, or `None` when it has nothing to draw.
     pub(super) fn compose_window_ui(
         &mut self,
         doc_kind: Option<GuiKind>,
@@ -102,8 +83,6 @@ impl App {
         }
     }
 
-    /// Hand both layers to the renderer. `window` is the window's content,
-    /// `scene` the HUD's; `false` = a layer's document is stale.
     pub(super) fn prepare_ui_layers(
         &self,
         renderer: &mut Renderer,
@@ -129,7 +108,6 @@ impl App {
         if let Some((kind, _)) = window_doc {
             window.kind = kind;
         }
-        // HUD content is the scene's, whatever else the window shows.
         window.health = None;
         window.effects.clear();
         window.hurt_flash = 0.0;

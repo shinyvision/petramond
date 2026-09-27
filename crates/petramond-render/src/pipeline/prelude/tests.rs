@@ -11,7 +11,6 @@ fn validate(label: &str, source: &str) {
     .unwrap_or_else(|e| panic!("{label} fails validation: {e:?}"));
 }
 
-/// Every engine shader source, by file name.
 fn engine_shaders() -> Vec<(String, String)> {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("shaders");
     let mut out: Vec<_> = std::fs::read_dir(&dir)
@@ -48,8 +47,6 @@ fn an_unknown_import_names_its_line_and_module() {
     assert!(err.to_string().contains("petramond::frame"), "{err}");
 }
 
-/// Concatenated pieces commonly import the same module; it must land once
-/// (WGSL rejects a redeclared struct).
 #[test]
 fn a_module_imported_twice_is_emitted_once() {
     let text = compose("#import petramond::frame\n#import petramond::frame\n").unwrap();
@@ -57,7 +54,6 @@ fn a_module_imported_twice_is_emitted_once() {
     validate("frame twice", &text);
 }
 
-/// Each generated module is valid WGSL on its own, and all of them together.
 #[test]
 fn every_module_composes_to_valid_wgsl() {
     let mut all = String::new();
@@ -69,10 +65,6 @@ fn every_module_composes_to_valid_wgsl() {
     validate("every module", &compose(&all).unwrap());
 }
 
-/// The point of the module system: no engine shader spells a generated
-/// declaration by hand. A struct copy is how a shader silently read the
-/// wrong frame field; a raw `packed >> N` is how a lane drifted from the
-/// mesher's layout.
 #[test]
 fn no_engine_shader_hand_copies_a_generated_declaration() {
     for (name, src) in engine_shaders() {
@@ -103,10 +95,6 @@ fn no_engine_shader_hand_copies_a_generated_declaration() {
     }
 }
 
-/// The engine shaders whose pipelines compose a fixed source parse and
-/// validate as composed (the terrain, particle and skinned shaders are
-/// covered with their generated tables by their own modules' tests; the GPU
-/// factory test covers the rest).
 #[test]
 fn composed_engine_shaders_validate() {
     let cel = include_str!("../../../shaders/cel.wgsl");

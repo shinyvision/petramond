@@ -1,20 +1,3 @@
-//! petramond-ui: the renderer-agnostic GUI runtime shared by the game and the
-//! GUI builder.
-//!
-//! A GUI is a [`Document`] (a tree of themed nodes with auto-layout props and
-//! state-key bindings) interpreted at runtime against a [`Theme`] kit and a
-//! host-supplied [`UiState`]. One `frame()` call solves layout, runs widget
-//! behavior over the host's input events, and emits a draw list of textured
-//! quads plus resolved widget events and named rects. The same code renders
-//! in-game (wgpu upload) and in the builder preview (software raster), so
-//! what artists see is exactly what ships.
-//!
-//! This crate never learns game types: slots are role strings, dynamic values
-//! are state keys, host-drawn regions are `hook` nodes. The one exception is
-//! [`contract`]: the engine's kind table and load-time document rules as
-//! pure data and checks, kept here so the game and the gui-builder run the
-//! same validation instead of hand-copied tables.
-
 pub mod contract;
 pub mod doc;
 pub mod input;

@@ -1,16 +1,3 @@
-//! Player bodies' animators: one per body, keyed by a stable body key, fed
-//! each frame by the body's locomotion blend and its two hands' frames, and
-//! evaluated OVER the locomotion pose so actions override and add to the
-//! walk instead of replacing it. Beside the shared body core
-//! ([`super::inputs`]) a body graph may read `walking sneak run
-//! backward strafe airborne falling landing swim seated sleeping pitch hurt`
-//! (`pitch` in degrees) and the `hurt` event (the flash rising).
-//!
-//! Every body on the roster advances every frame, posed or not: a frame whose
-//! view culls a remote, or the local body while the view is first person,
-//! still runs its inputs, claims, events and montages — only the pose waits —
-//! so nothing it did off-screen replays as a stale edge when it comes back.
-
 use std::sync::Arc;
 
 use petramond::player::rigs::{self, Presenter};
@@ -47,18 +34,14 @@ impl BodyMotion for BodyState {
     }
 }
 
-/// The local player's body key; remote bodies key by their player id.
 pub const LOCAL_BODY: u32 = u32::MAX;
 
 pub(crate) struct BodyAnimator {
     driver: BodyDriver<BodyState>,
-    /// The roster generation that last listed this body.
     listed: u64,
 }
 
 impl BodyAnimator {
-    /// Advance one posed frame, `dt` seconds after the last, over `ground`
-    /// (the body's locomotion pose).
     pub fn update(
         &mut self,
         state: &BodyState,
@@ -71,8 +54,6 @@ impl BodyAnimator {
         self.driver.animator.update_over(dt, ground);
     }
 
-    /// Advance one frame that does not pose this body. `state` is `None`
-    /// when there is no body to read (the local body in first person).
     pub fn advance(
         &mut self,
         state: Option<&BodyState>,
@@ -102,18 +83,13 @@ impl BodyAnimator {
     }
 }
 
-/// Every body's animator, kept for as long as the body stays on the roster
-/// (the remote players the frame gathered, and the local body).
 pub(crate) struct BodyAnimators {
-    /// The body rig and its graph; `None` without a registered body graph.
     graph: Option<(RigId, Arc<Graph>)>,
     bodies: FxHashMap<u32, BodyAnimator>,
     generation: u64,
 }
 
 impl BodyAnimators {
-    /// Animators over `graph`; with no graph, none exist and bodies play
-    /// their locomotion alone.
     pub fn new(graph: Option<(RigId, Arc<Graph>)>) -> Self {
         Self {
             graph,
@@ -122,7 +98,6 @@ impl BodyAnimators {
         }
     }
 
-    /// Animators over the catalog's body rig.
     pub fn shipped() -> Self {
         Self::new(
             rigs::presented(Presenter::Body)
@@ -130,8 +105,6 @@ impl BodyAnimators {
         )
     }
 
-    /// Keep the animators of the bodies on `roster`, and the local body's;
-    /// drop every other.
     pub fn retain(&mut self, roster: impl IntoIterator<Item = u32>) {
         self.generation += 1;
         for key in roster {
@@ -144,7 +117,6 @@ impl BodyAnimators {
             .retain(|key, body| *key == LOCAL_BODY || body.listed == generation);
     }
 
-    /// `key`'s animator, made on first use; `None` without a graph.
     pub fn body(&mut self, key: u32) -> Option<&mut BodyAnimator> {
         let (rig, graph) = self.graph.as_ref()?;
         Some(self.bodies.entry(key).or_insert_with(|| BodyAnimator {

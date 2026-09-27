@@ -1,6 +1,5 @@
-//! Underground vein table — a layered catalog (`assets/ores.json`): the ore
-//! veins and dirt / gravel / tuff / marble blobs the underground scatter pass
-//! places (see [`crate::feature::scatter`]).
+//! Underground vein table (`assets/ores.json`): ore veins and dirt/gravel/tuff/marble blobs placed
+//! by the underground scatter pass (see [`crate::feature::scatter`]).
 //!
 //! ```json
 //! {"ore": "petramond:diamond_ore", "block": "petramond:diamond_ore",
@@ -8,26 +7,19 @@
 //!  "y": [-64, 16], "depth_ramp": 1.0, "hosts": ["petramond:stone"]}
 //! ```
 //!
-//! A row places up to `count` veins of `block` per chunk column, their
-//! origins uniform over the world-Y band `y`, each overwriting only cells
-//! that currently hold one of its `hosts` (default: stone). `shape` is a
-//! `blob` of `~size` cells or a `grid3` single-layer 3×3 patch of
-//! `1..=max_ore` cells. `depth_ramp` accepts each rolled vein with a chance
-//! of `depth_ramp · t²`, `t` rising from 0 at the band top to 1 at its floor.
-//! Vein positions derive from the row's `salt`, never its index.
+//! Row places up to `count` veins of `block` per column, origins uniform over Y band `y`, only
+//! overwriting cells in `hosts` (default stone). `shape` is a `blob` of `~size` cells or a
+//! `grid3` 3x3 patch of `1..=max_ore` cells. Each vein is kept with chance `depth_ramp * t^2`,
+//! t from 0 at the top of the band to 1 at the bottom. Positions come from `salt`, not row index.
 //!
-//! Engine rows own the low ids in the frozen placement order below; a pack
-//! OVERRIDES an engine row to retune it or ADDS a vein under its own
-//! namespaced key, placed after the engine rows in load order — so pack ores
-//! only claim host cells the engine veins left, and never move them.
+//! Engine rows below keep fixed low ids. Packs can override an engine row to retune it, or add
+//! their own under a namespaced key, after the engine rows in load order. Pack ores only get
+//! leftover host cells and never displace engine veins.
 
 use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 use serde::Deserialize;
 
-/// Engine vein names in frozen placement order. Marble is last so it only
-/// claims stone every ore left: the ore counts are tuned and must not move
-/// because a stone flavour was added.
 const ENGINE_ORE_NAMES: &[&str] = &[
     "petramond:dirt",
     "petramond:gravel",
@@ -40,28 +32,16 @@ const ENGINE_ORE_NAMES: &[&str] = &[
     "petramond:marble",
 ];
 
-/// Widest reach a vein may have from its rolled origin: the scatter pass
-/// regenerates only the 3×3 column neighbourhood around a section, so a
-/// vein must stay inside its origin column's neighbours to be seamless.
 const MAX_VEIN_REACH: i32 = 16;
 
-/// How a vein materialises its cells around the rolled origin.
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum VeinShape {
-    /// Roughly-spherical blob of `~size` cells with per-vein radius jitter.
     Blob { size: i32 },
-    /// One horizontal 3×3 layer centred on the origin holding exactly
-    /// `1..=max_ore` ore cells (uniformly chosen among the 9 slots).
     Grid3 { max_ore: i32 },
 }
 
 impl VeinShape {
-    /// Conservative `(horizontal, vertical)` reach of one vein from its rolled
-    /// origin, in cells: every write lands within this Chebyshev box. Blob radius
-    /// is `base_r × (0.85 + 0.4·f)` with `f < 1`, so `ceil(base_r × 1.25)` bounds
-    /// `ceil(r)` (f32 multiply is monotone; an exact-integer bound still holds
-    /// because `r` is strictly below it). Grid3 writes one 3×3 layer.
     pub fn reach(self) -> (i32, i32) {
         match self {
             VeinShape::Blob { size } => {
@@ -73,14 +53,11 @@ impl VeinShape {
     }
 }
 
-/// Radius for a blob of `size` cells: `r = cbrt(3·size / 4π)` — shared by the
-/// materialiser and the reach bound so they can never drift apart.
 #[inline]
 pub fn blob_base_radius(size: i32) -> f32 {
     petramond_math::detmath::cbrtf((size as f32) * 3.0 / (4.0 * std::f32::consts::PI))
 }
 
-/// One loaded vein row.
 #[derive(Clone, Debug, PartialEq)]
 pub struct OreVein {
     pub block: Block,
@@ -89,24 +66,16 @@ pub struct OreVein {
     pub shape: VeinShape,
     pub y_min: i32,
     pub y_max: i32,
-    /// Peak acceptance chance of the depth ramp, `None` = every vein placed.
     pub depth_ramp: Option<f32>,
-    /// The blocks a vein may overwrite.
     pub hosts: &'static [Block],
 }
 
-/// The loaded vein table plus the bounds the scatter pass culls with.
 pub struct OreTable {
-    /// Every vein row, in placement order.
     pub veins: &'static [OreVein],
-    /// The widest horizontal reach over every row.
     pub max_reach: i32,
-    /// World-Y span any vein can write: the union of every row's band
-    /// widened by its vertical reach, clamped to the world.
     pub y_span: (i32, i32),
 }
 
-/// One vein row as written in `ores.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawOre {
@@ -189,7 +158,6 @@ impl OreTable {
         let high = veins.iter().map(|v| v.y_max + v.shape.reach().1).max();
         let y_span = match (low, high) {
             (Some(low), Some(high)) => (low.max(WORLD_MIN_Y), high.min(WORLD_MAX_Y)),
-            // No veins: an empty span no section overlaps.
             _ => (WORLD_MAX_Y, WORLD_MIN_Y),
         };
         Self {
@@ -223,8 +191,6 @@ fn parse_layers(texts: &[&str]) -> Result<OreTable, String> {
     Ok(OreTable::new(catalog.rows()))
 }
 
-/// The vein table stage (see [`super::content_stages`]); a missing or
-/// malformed layer fails the registry build.
 pub(crate) static TABLE: petramond_world::content::Slot<OreTable> =
     petramond_world::content::Slot::new(
         "ores.json",
@@ -236,7 +202,6 @@ fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<OreTabl
     petramond_world::registry::read_catalog(reg.packs(), "ores.json", "ore vein", parse_layers)
 }
 
-/// The current registry's vein table.
 pub fn table() -> &'static OreTable {
     TABLE.current()
 }

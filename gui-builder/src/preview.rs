@@ -1,12 +1,3 @@
-//! The live preview pipeline: run the real petramond-ui runtime over the edited
-//! document and rasterize its DrawList with the software rasterizer — the
-//! preview *is* the game's renderer, pixel for pixel.
-//!
-//! The editor repaints on every pointer motion, so everything a repaint
-//! reads is cached in [`PreviewCache`] by the document and theme revisions:
-//! the decoded sample state, one runtime with its frame cache, and the
-//! canvas hit-test rects. A repaint that changed nothing only draws.
-
 use crate::assets::AssetRoots;
 use crate::doc_edit::NodePath;
 use crate::project::Project;
@@ -19,9 +10,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-// ---- document images ----------------------------------------------------------
-
-/// What a [`DiskImages`] set was loaded for.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct ImagesKey {
     names: Vec<String>,
@@ -29,11 +17,6 @@ struct ImagesKey {
     roots: AssetRoots,
 }
 
-/// PNGs referenced by `image`/`rotimage` nodes and image-backed `button`
-/// faces, loaded from beside the project, else from the asset layers (the
-/// pack the document ships in, then the base game — where generated samples
-/// find the shipped images they reference). Missing images resolve to
-/// nothing and simply don't draw.
 pub struct DiskImages {
     names: Vec<String>,
     images: Vec<ImageData>,
@@ -60,8 +43,6 @@ impl DiskImages {
         }
     }
 
-    /// Reload if the document's image set, the project dir or the asset
-    /// roots changed.
     pub fn refresh(&mut self, doc: &Document, dir: Option<&Path>, roots: &AssetRoots) {
         let key = Self::key(doc, dir, roots);
         if key == self.key {
@@ -112,13 +93,8 @@ impl DocImages for DiskImages {
     }
 }
 
-// ---- rendering ------------------------------------------------------------------
-
-/// Background behind the GUI in the preview (stands in for the 3D world).
 pub const CLEAR: [u8; 4] = [30, 34, 40, 255];
 
-/// Render one full preview frame of `rt`'s document to RGBA at `screen`
-/// physical px. `fs` carries the runtime's frame cache between renders.
 pub fn render_rgba(
     rt: &UiRuntime,
     fs: &mut FrameState,
@@ -145,7 +121,6 @@ pub fn render_rgba(
         &mut out,
     );
     let theme = rt.theme();
-    // Built after the frame: painting rasterizes glyphs on first use.
     let font = theme.font_atlas();
     let tex = TextureSet {
         theme_pages: theme.pages(),
@@ -157,9 +132,6 @@ pub fn render_rgba(
     rgba
 }
 
-/// Render a project's preview (its own screen/scale settings), for the
-/// `--screenshot` CLI and tests. `catalog` seeds sample data for unset keys,
-/// exactly like the editor preview.
 pub fn render_project(
     project: &Project,
     theme: &Arc<Theme>,
@@ -184,9 +156,6 @@ pub fn render_project(
     (rgba, screen)
 }
 
-// ---- the editor's cache -------------------------------------------------------------
-
-/// What the canvas rects were solved for.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RectsKey {
     built: (u64, u64),
@@ -194,13 +163,8 @@ struct RectsKey {
     scale: i32,
 }
 
-/// The editor preview's work, kept across egui repaints and rebuilt only
-/// when the document or theme revision moves: the preview state, one
-/// runtime whose frame cache carries over between renders, and the canvas
-/// hit-test rects.
 #[derive(Default)]
 pub struct PreviewCache {
-    /// `(doc_rev, theme_rev)` the state and runtime were built for.
     built: Option<(u64, u64)>,
     state: UiState,
     runtime: Option<UiRuntime>,
@@ -210,12 +174,10 @@ pub struct PreviewCache {
 }
 
 impl PreviewCache {
-    /// Whether the cache predates `doc_rev`/`theme_rev`.
     pub fn is_stale(&self, doc_rev: u64, theme_rev: u64) -> bool {
         self.built != Some((doc_rev, theme_rev))
     }
 
-    /// Rebuild for a new document or theme revision.
     pub fn rebuild(
         &mut self,
         (doc_rev, theme_rev): (u64, u64),
@@ -229,13 +191,10 @@ impl PreviewCache {
         self.rects_key = None;
     }
 
-    /// The preview state of the current revision.
     pub fn state(&self) -> &UiState {
         &self.state
     }
 
-    /// The canvas rects of the current revision at `viewport`/`scale`,
-    /// solved once per change.
     pub fn rects(
         &mut self,
         images: &DiskImages,
@@ -264,7 +223,6 @@ impl PreviewCache {
         self.rects.clone()
     }
 
-    /// Render the current revision (empty until the first rebuild).
     pub fn render(
         &mut self,
         images: &DiskImages,
@@ -279,21 +237,14 @@ impl PreviewCache {
     }
 }
 
-// ---- editor-chrome geometry -------------------------------------------------------
-
-/// One document node's solved geometry for canvas hit-testing/overlays.
 pub struct RectEntry {
     pub path: NodePath,
-    /// Logical px (multiply by scale for physical).
     pub rect: RectI,
     pub type_name: &'static str,
     pub abs: bool,
     pub slot_role: Option<String>,
 }
 
-/// Solve the document exactly like the runtime does (same expand + solve
-/// math) and map every instance back to its document node path. List stamps
-/// map to their template node, so an entry's path may repeat.
 pub fn layout_rects(
     doc: &Document,
     theme: &Theme,
@@ -302,7 +253,6 @@ pub fn layout_rects(
     viewport: (i32, i32),
     gui_scale: i32,
 ) -> Vec<RectEntry> {
-    // Document node paths in pre-order: an instance's `node_id` indexes this.
     fn walk(n: &petramond_ui::Node, path: &mut NodePath, out: &mut Vec<NodePath>) {
         out.push(path.clone());
         for (i, c) in n.children.iter().enumerate() {
@@ -351,8 +301,6 @@ mod tests {
 
     #[test]
     fn project_round_trip_export_parses_and_renders() {
-        // Create → save v2 → load → export .gui.json → runtime parses,
-        // validates, and rasterizes to a plausibly non-empty image.
         let p = crate::project::Project::new("petramond:pause");
         let saved = p.to_json_pretty();
         let loaded = crate::project::Project::from_json(&saved).unwrap();
@@ -383,7 +331,6 @@ mod tests {
         let state = UiState::new();
         let images = DiskImages::empty();
         let rects = layout_rects(&p.document, &theme, &state, &images, (400, 300), 1);
-        // Root plus every child expands (no bindings hide anything).
         assert_eq!(rects.len(), 1 + p.document.root.children.len());
         assert_eq!(rects[0].path, Vec::<usize>::new());
         let storage = rects
@@ -395,8 +342,6 @@ mod tests {
         assert!(storage.rect.w > 0 && storage.rect.h > 0);
     }
 
-    /// A repaint with nothing changed reuses the state, the rects and the
-    /// runtime's solved layout; a new revision rebuilds them.
     #[test]
     fn the_editor_cache_rebuilds_only_on_a_new_revision() {
         let p = crate::project::Project::new("petramond:chest");

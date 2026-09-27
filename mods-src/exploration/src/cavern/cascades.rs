@@ -1,17 +1,11 @@
-//! Cascades in the cavern: each lattice cell's outcome settled once through
-//! the shared memo, the host crossings its pipeline pays, the giant
-//! suppression verdict, and emission.
+//! Cavern cascades. Each lattice cell settles once, through the shared memo.
 //!
-//! A cascade runs its own crossings on its own memoized per-cell pipeline,
-//! never riding the dressing's batches: rarity roll (free), biome pre-gate
-//! (one tiny crossing), coarse height scan (two batches), and only for a cell
-//! whose floor offers a real contour edge the band probe and the
-//! giant-intruder sweep. Cascades resolve from the terrain alone and are
-//! AUTHORITATIVE: no giant stands in a basin's water, shallow or deep — one in
-//! it, on it, or breaking its proof is suppressed — and the giant pass queries
-//! that decision positionally ([`giant_suppressed`]). A giant never vetoes a
-//! basin, and the ordering is real in every section because it is a
-//! positional query, not an emission-order accident.
+//! Own pipeline per cell, not the dressing's batches. Rarity roll is free, biome pre-gate costs
+//! one tiny crossing, height scan two batches. Band probe and giant-intruder sweep only happen
+//! when the floor has a real contour edge.
+//!
+//! Terrain alone decides. Giants in a basin's water, on it, or breaking its proof get
+//! suppressed; the giant pass checks [`giant_suppressed`] by position. Giants never veto basins.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -26,8 +20,6 @@ use crate::cascade;
 use crate::content::Content;
 use crate::probe::{self, Deferred, Memo, Settled};
 
-/// A cascade's terrain probes stay inside its own lattice cell. A flat grid
-/// makes both overlapping trace reads and the basin's many point lookups cheap.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ProbeCell {
     Unknown,
@@ -124,9 +116,7 @@ impl CellTerrain {
     }
 }
 
-/// `(seed, cell x, y, z)`.
 type Key = (u32, i32, i32, i32);
-/// Settled cells kept per worker; eviction changes cost, never content.
 const CAPACITY: usize = 16384;
 
 thread_local! {
@@ -134,7 +124,6 @@ thread_local! {
         RefCell::new(Settled::new(CAPACITY));
 }
 
-/// Every cascade overlapping the section at `origin` (plus its claim rows).
 pub(super) fn overlapping(
     seed: u32,
     ours: u8,
@@ -147,27 +136,12 @@ pub(super) fn overlapping(
     Ok(features)
 }
 
-/// Write the cascades — AFTER the giants and BEFORE the dressing. The write
-/// order is claims plumbing, not precedence: the basin already decided which
-/// giants STAND clear of its water and which are suppressed, and its
-/// containment flood modelled exactly the standing bodies as solid — so
-/// letting a standing giant's cells win the cell conflicts here is what keeps
-/// the world equal to the proof. Before the dressing because the reserves are
-/// what keep a flower off the water and a vine out of a fall.
 pub(super) fn emit(content: &Content, out: &mut Emitter, features: &[Rc<cascade::Feature>]) {
     for f in features {
         for &(cell, kind) in &f.writes {
             let block = match kind {
                 cascade::Kind::Water => content.water,
-                // Silt: pool beds, rimstone dams and their foundations — the
-                // solid this feature PLACES, which is half of how it seals a
-                // rim the terrain left open.
                 cascade::Kind::Silt => content.silt,
-                // The spill notch and plunge shaft, cut through a natural lip
-                // so each pool pours into the next. The one place the pack
-                // writes air, and it is a slot for water, not a room: the
-                // containment flood proved the result before anything was
-                // written.
                 cascade::Kind::Air => content.air,
             };
             out.push_over_terrain(cell, block);
@@ -178,10 +152,6 @@ pub(super) fn emit(content: &Content, out: &mut Emitter, features: &[Rc<cascade:
     }
 }
 
-/// Does a cascade suppress this giant? Cascades are TERRAIN: the basin's
-/// containment proof decides which giants stand, and a giant the proof cannot
-/// hold with is skipped — in every section, because the answer is a pure
-/// function of `(seed, cell)` through the same memo the emitter uses.
 pub(super) fn giant_suppressed(seed: u32, ours: u8, c: &Candidate) -> Result<bool, Deferred> {
     let r = c.giant.reach();
     let lo = [c.x - r, c.cell_floor_y, c.z - r];
@@ -196,15 +166,6 @@ pub(super) fn giant_suppressed(seed: u32, ours: u8, c: &Candidate) -> Result<boo
     Ok(false)
 }
 
-/// One lattice cell's cascade outcome, computed once per worker and MEMOIZED.
-///
-/// The cache is the answer to the purity tax: a cell overlaps dozens of
-/// section dispatches, and every one must know the identical outcome, but
-/// deriving it costs a site probe and — for the rare survivor — a domain
-/// probe and a containment flood. Every worker's instance derives the same
-/// outcome, so the first one to claim a cell settles it for the rest; a
-/// section arriving while that is under way is dispatched again once the
-/// cell is published.
 fn cascade_cell(
     seed: u32,
     ours: u8,
@@ -225,12 +186,11 @@ fn cascade_cell(
     Ok(out)
 }
 
-/// The uncached pipeline: rarity roll, cheap biome pre-gate, coarse height
-/// scan, contour traces, then per trace a band probe and the basin build with
-/// its containment flood — all from the TERRAIN ALONE. Only then are the
-/// giants folded in, and they ADAPT: kept clear of the water or suppressed,
-/// never a veto of the basin. Every read is positional, so every worker that
-/// computes this arrives at the same answer.
+/// Uncached path: rarity roll, cheap biome pre-gate, coarse height scan, contour traces, then band
+/// probe and basin build with containment flood per trace. Terrain only.
+///
+/// Giants added after, adapt to what's there. Stay clear of water or get suppressed, never override
+/// a basin. Reads are positional so any worker gets the same answer.
 fn compute_cascade_cell(
     seed: u32,
     ours: u8,
@@ -246,8 +206,6 @@ fn compute_cascade_cell(
     if traces.is_empty() {
         return None;
     }
-    // The anchors' own biome gate, one small crossing for all tries: a basin
-    // heads IN the mushroom cavern, not in whatever cave abuts it.
     let anchors: Vec<[i32; 3]> = traces
         .iter()
         .map(|t| [t.anchor.0, t.s0, t.anchor.1])
@@ -263,8 +221,6 @@ fn compute_cascade_cell(
         if !reads.ask(plan.iter().copied()) {
             return None;
         }
-        // The containment proof models rock and room only, so a basin
-        // meeting a fluid is not sited.
         if plan
             .iter()
             .any(|&p| reads.space(p) == Some(TerrainSpace::Fluid))
@@ -272,11 +228,6 @@ fn compute_cascade_cell(
             continue;
         }
         let terrain = |p: [i32; 3]| reads.solid(p);
-        // The cell mutex: the FIRST trace that builds owns the cell — a
-        // second accepted trace could overlap the first's footprint, which
-        // confinement exists to forbid. Rejection is the exception, not the
-        // siting strategy; the pondaudit tooling reports the reasons when
-        // they are wanted, so nothing is logged here in normal play.
         let Ok(built) = t.build(&terrain) else {
             continue;
         };
@@ -286,22 +237,15 @@ fn compute_cascade_cell(
     None
 }
 
-/// The coarse height scan of a rolled cell, read into its contour traces.
-/// `None` when the host answered short.
 fn site_traces(c: &cascade::Cell) -> Option<Vec<cascade::Trace>> {
     let mut coarse: Vec<[i32; 3]> = Vec::new();
     c.coarse_plan(|p| coarse.push(p));
-    // The scan is read back in plan order, one reply per sample row.
     let space = probe::ask(coarse, terrain_space_at)?;
     let rock: Vec<bool> = space.iter().map(|s| *s == TerrainSpace::Solid).collect();
     let free: Vec<bool> = space.iter().map(|s| *s == TerrainSpace::Air).collect();
     Some(c.traces(&rock, &free))
 }
 
-/// Every giant STANDING over the built domain, from the same resolver the
-/// emit pass uses — root, terrain fit and cap competition already settled, so
-/// the containment flood models exactly the bodies the world will hold. The
-/// basin then decides who stays out of its water.
 fn intruders_over(seed: u32, ours: u8, built: &cascade::Built) -> Vec<cascade::Intruder> {
     standing_giants_over(seed, ours, built.domain_lo, built.domain_hi)
         .into_iter()

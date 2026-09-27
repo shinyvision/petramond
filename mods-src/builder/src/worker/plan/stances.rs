@@ -1,5 +1,3 @@
-//! Work reached on foot: ranking it by the walk and finding where to stand.
-
 use super::climb::climb_toward;
 use super::sealing::{cutting, strands};
 use super::verdict::{settle_verdict, viability, waits_there, Viable};
@@ -16,8 +14,6 @@ use crate::worker::waiting::{Probe, Waiting};
 use crate::worker::Job;
 use crate::worker::{pillar, sight, stance, Body, Ctx, Task, Then};
 
-/// Somewhere to stand for `task`, the first leg of the walk there, and what
-/// the trip costs.
 pub(super) struct Spot {
     task: Task,
     leg: [i32; 3],
@@ -25,9 +21,6 @@ pub(super) struct Spot {
     ticks: i32,
 }
 
-/// Moves from where the golem stands to the nearest foothold within reach of
-/// each cell, by the flood of the site from here. `None` when no flood answers
-/// this tick.
 pub(super) fn walk_costs(
     ctx: &mut Ctx,
     job: &Job,
@@ -54,10 +47,6 @@ pub(super) fn walk_costs(
                         }
                     }
                 }
-                // Out of reach from any ground: price the walk to ground under
-                // it and the climb, so a pillar beside the golem beats the way
-                // back upstairs. Ground beyond the walls is no foot: a perch
-                // indoors does not see the eave outside.
                 if best.is_none() {
                     let inside = job.design.over_floor(*cell);
                     for dy in -PILLAR_SPAN..-5 {
@@ -83,9 +72,6 @@ pub(super) fn walk_costs(
     )
 }
 
-/// The corner being worked through is finished first while work is left in
-/// it: ranked by the walk alone, the golem crossed the same wall back and
-/// forth.
 pub(super) fn rank_by_walk(
     ctx: &mut Ctx,
     _projects: &mut Projects,
@@ -100,11 +86,8 @@ pub(super) fn rank_by_walk(
             .any(|(_, c)| manhattan(*c, *f) <= FOCUS_REACH)
     });
     job.crew.pace.focus = focus;
-    // Nearest by walking, not as the crow flies: the block through the wall is
-    // the whole way round by the door.
     let mut walks: Vec<Option<u32>> = vec![None; candidates.len()];
     if let Some(costs) = walk_costs(ctx, job, body, &candidates) {
-        // Not urgent, late, away from the focus, the walk, the distance.
         type Order = (bool, bool, bool, u32, i32);
         let mut keyed: Vec<((Task, [i32; 3]), Order)> = candidates
             .into_iter()
@@ -138,8 +121,6 @@ pub(super) fn rank_by_walk(
     Flow::Pass
 }
 
-/// Work reachable on foot comes before work that wants a pillar: scaffolding
-/// builds nothing, and a wall laid from the ground soon saves the climb.
 pub(super) fn stance_spots(
     ctx: &mut Ctx,
     _projects: &mut Projects,
@@ -164,9 +145,6 @@ pub(super) fn stance_spots(
         if job.crew.deferrals.deferred(*task, ctx.now) {
             continue;
         }
-        // Walking or climbing to a block that cannot be placed yet wastes the
-        // trip; landing the neighbour wakes it.
-        // Walking or climbing to work the world would refuse wastes the trip.
         let verdict = viability(ctx, job, body, *task, body.pos);
         if !matches!(verdict, Viable::Now | Viable::Elsewhere) {
             settle_verdict(ctx, job, *task, verdict);
@@ -184,17 +162,12 @@ pub(super) fn stance_spots(
         let hubs = Hubs::new(project.home, &trail);
         let crew = &job.crew;
         let filled = &job.design.filled;
-        // Never stand where the design puts an object: a wall laid over the
-        // golem's head would wedge it.
         let usable = |s: [i32; 3]| {
             !crew.deferrals.blind(*task, s)
                 && !filled.contains(&s)
                 && !filled.contains(&offset(s, [0, 1, 0]))
         };
         let mut unseen = false;
-        // Standing room the design will fill is standing room until it does (a
-        // hedge is laid from its slot, backing out), second choice after
-        // lasting ground.
         let work = sight::work(job, *task);
         let mut found = stance::find(ctx, body, hubs, &cells, &work, digging, usable);
         if matches!(found, stance::Search::None | stance::Search::Unseen) {
@@ -214,8 +187,6 @@ pub(super) fn stance_spots(
                 if matches!(task, Task::Support { .. })
                     || (matches!(task, Task::Unit(_)) && !digging)
                 {
-                    // Walled in at this stance (a door closed from inside):
-                    // another stance may do; the stance is struck, not the task.
                     match strands(ctx, job, project, to, *task, &cells) {
                         Some(true) => {
                             job.crew.deferrals.strike(*task, to);
@@ -238,8 +209,6 @@ pub(super) fn stance_spots(
                         Some(false) => {}
                     }
                 }
-                // The navigator walks into whatever blocks an unreachable
-                // goal; confirm the route from where the golem stands first.
                 match route::leg(ctx, hubs, body, to) {
                     Some(Some(cell)) => {
                         let moves = route::moves_or_guess(ctx, body.cell, to);
@@ -283,9 +252,6 @@ pub(super) fn stance_spots(
     Flow::Pass
 }
 
-/// The place to work from that costs least for each block it lays: a
-/// stance found on foot, or a pillar beside the golem where that lays its
-/// blocks for less.
 pub(super) fn nearest_spot(
     ctx: &mut Ctx,
     _projects: &mut Projects,
@@ -298,7 +264,6 @@ pub(super) fn nearest_spot(
     let (spots, wants_perch) = (&round.spots, &round.wants_perch);
     if !spots.is_empty() {
         let open: Vec<[i32; 3]> = candidates.iter().map(|(_, c)| *c).collect();
-        // Ticks for each block laid, in sixteenths.
         let worth = |ticks: i32, lays: i32| ticks * 16 / lays.max(1);
         let mut best: Option<(usize, i32)> = None;
         for (n, spot) in spots.iter().enumerate() {
@@ -309,8 +274,6 @@ pub(super) fn nearest_spot(
             }
         }
         let (n, least) = best.expect("spots is not empty");
-        // A pillar beside the golem for the nearest work that wants one,
-        // where it lays its blocks for less.
         if let Some((task, _)) = wants_perch.first().copied() {
             let cells = task_cells(job, task);
             match pillar::find(ctx, job, project, body, task, &cells, &open) {

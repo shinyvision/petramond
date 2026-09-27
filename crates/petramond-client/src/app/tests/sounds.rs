@@ -1,7 +1,5 @@
-//! World-anchored sounds are event-driven and POSITIONAL: the
-//! app buffers a spatial cue per world event and plays NOTHING immediately
-//! off the `GameEvents` one-shots that used to drive local plays — so an
-//! action can never sound twice (once locally, once via its broadcast event).
+//! World-anchored sounds come from world events, as positional cues. Don't play them off the
+//! `GameEvents` one-shots too, or every action sounds twice.
 
 use super::app;
 use crate::animation::FootstepSource;
@@ -17,8 +15,6 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
     let mut app = app();
     let pos = IVec3::new(4, 64, 4);
     let events = GameEvents {
-        // The actor's own one-shots (hand animation feeds) — their former
-        // local sound plays are gone.
         placed_block: Some(petramond_world::block::Block::Dirt),
         toggled_panel: Some(true),
         open_gui: Some((
@@ -26,7 +22,6 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
             Some(petramond::menu::MenuAnchor::Block(pos)),
         )),
         interacted: true,
-        // The broadcast events every observer presents, positionally.
         world_events: vec![
             WorldEvent::BlockPlaced {
                 pos,
@@ -38,8 +33,6 @@ fn world_anchored_sounds_come_from_events_once_never_from_one_shots() {
             },
             WorldEvent::ChestOpened { pos },
             WorldEvent::ChestClosed { pos },
-            // A FOREIGN pickup cues positionally; the local player's own
-            // pickup keeps the non-positional `picked_up_item` play instead.
             WorldEvent::ItemPickedUp {
                 pos: WorldPos::new(4.5, 64.5, 4.5),
                 by_self: false,
@@ -149,10 +142,6 @@ fn mob_presentation(id: u64) -> MobPresentation {
     }
 }
 
-/// The footstep cadence: one step per body per [`FOOTSTEP_INTERVAL_TICKS`], a
-/// step the MOMENT a body starts walking, and silence for a body that is not.
-/// The handle pool is the observable — every step allocates exactly one, so it
-/// counts plays without asserting on clip identity.
 #[test]
 fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
     let mut test_app = app();
@@ -166,8 +155,6 @@ fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
         ground: Some(petramond_world::block::Block::Stone),
         sprinting: false,
     };
-    // A sneaking body arrives exactly as a standing one — presentation, not
-    // `App`, is what silences it.
     let standing = |id: u64| FootstepSource {
         ground: None,
         ..walking(id)
@@ -183,30 +170,24 @@ fn footsteps_fire_on_first_sight_then_hold_their_cadence() {
         app.sess_mut().sounds.next_handle() - before
     };
 
-    // Two bodies seen walking for the first time both step at once.
     assert_eq!(steps(app, &[walking(0), walking(3)], 500), 2);
-    // …and neither steps again until the interval has passed.
     for t in 501..510 {
         assert_eq!(steps(app, &[walking(0), walking(3)], t), 0, "tick {t}");
     }
     assert_eq!(steps(app, &[walking(0), walking(3)], 510), 2);
 
-    // A body that stops walking is silent, and does NOT bank steps: resuming
-    // after a long pause plays one, not one per tick missed.
     for t in 511..560 {
         assert_eq!(steps(app, &[standing(0)], t), 0, "standing at {t}");
     }
     assert_eq!(steps(app, &[walking(0)], 560), 1);
     assert_eq!(steps(app, &[walking(0)], 561), 0);
 
-    // A SPRINT tightens the interval to 7 ticks.
     assert_eq!(steps(app, &[sprinting(0)], 571), 1);
     for t in 572..578 {
         assert_eq!(steps(app, &[sprinting(0)], t), 0, "sprinting at {t}");
     }
     assert_eq!(steps(app, &[sprinting(0)], 578), 1);
 
-    // Bodies that leave take their cadence state with them.
     assert!(app.sess_mut().sounds.footstep_tracks().contains_key(&0));
     steps(app, &[], 600);
     assert!(app.sess_mut().sounds.footstep_tracks().is_empty());

@@ -1,27 +1,3 @@
-//! Grid pathfinding for walking mobs: A* over **footholds** (cells a mob can
-//! stand in), with movement rules that match how a mob actually moves —
-//! step flat, climb exactly [`CLIMB_CELLS`], or walk off a ledge and fall up
-//! to a capped height. No move climbs higher; no descent exceeds
-//! [`PathParams::max_drop`].
-//!
-//! Pure and world-agnostic: the search takes closures plus the mob's body
-//! footprint, so it is fully unit-testable against a stub world. Two occupancy
-//! predicates keep cell probes honest about partial-collision shapes:
-//! `solid(cell)` marks cells whose collision fills the whole cell (a body can
-//! never be there), while `support(cell)` marks cells that can bear feet (any
-//! collision at all — a slab, a bed, a ladder column's top). A cell with
-//! partial collision is therefore routable in principle; whether a specific
-//! body actually fits through a specific move is the `step_allowed` edge
-//! gate's call (the world adapter sweeps the real body AABB against the real
-//! collision boxes — see `mob::nav`). `cell_cost` adds a per-cell surcharge so
-//! soft obstacles (other mobs, players) are routed around when a detour
-//! exists without ever walling a route off.
-//!
-//! [`find_path_nav`] returns the foothold cells from the start toward the goal; if
-//! the goal is unreachable it returns the path to the reachable cell that gets
-//! **closest** to the goal (a best-effort partial path), so a mob always makes
-//! progress instead of standing still.
-
 use rustc_hash::FxHashMap;
 
 use petramond_math::math::IVec3;
@@ -35,29 +11,13 @@ pub use box_memo::{fits_a_table, BoxFacts, BoxLeads, Fact};
 pub use reach::{reachable_nav, reachable_on, walk_region, BoxGraph, NavWorld, Planned, Reads};
 pub use search::{NavSearch, SearchPoll, SearchProbes};
 
-/// Cells one climb edge rises. The body delivers it with a jump on land and a
-/// shore climb from fluid footing (`entity::shore`), which reads this reach.
 pub const CLIMB_CELLS: i32 = 1;
 
-/// Cost of a flat (same-level) step. Costs are integers (scaled ×10 of "one cell")
-/// so the open set can order on a total `Ord` without floats.
 pub(crate) const COST_FLAT: u32 = 10;
-/// A one-block jump up costs a little more than a flat step, so the route prefers
-/// level ground when both reach the goal equally fast.
 const COST_JUMP: u32 = 14;
-/// A flat diagonal step (≈ `COST_FLAT * √2`). Diagonals are only taken on open flat
-/// ground, so a clear straight-ish route is the shortest one instead of a staircase.
 const COST_DIAG: u32 = 14;
-/// Per-block surcharge for a descent, so a gentle route is preferred over a
-/// plunge when both are otherwise equal (descents are still cheap — they're free
-/// movement, just mildly discouraged when avoidable).
 const COST_DROP_PER_BLOCK: u32 = 1;
 
-/// Tuning for [`find_path_nav`]. `head` is the mob's vertical clearance in whole cells
-/// (how many cells above the floor its body needs); `half_width` is its horizontal
-/// body radius from centre to side; `max_drop` caps how far a descent may fall;
-/// `max_nodes` bounds the search so one pathfind can't stall the tick;
-/// `tolerated` lists the hazardous blocks this body's species may route through.
 #[derive(Copy, Clone, Debug)]
 pub struct PathParams {
     pub head: i32,
@@ -88,7 +48,6 @@ impl PathParams {
         }
     }
 
-    /// These params for a species that tolerates `blocks` (see `MobDef::tolerates`).
     pub fn tolerating(self, blocks: &'static [Block]) -> Self {
         PathParams {
             tolerated: blocks,
@@ -107,20 +66,11 @@ impl PathParams {
     }
 }
 
-/// Direct-mapped memo for a pure per-cell predicate over ONE search.
-///
-/// Both cell searches ask the same cell many times over — a flood asks each
-/// neighbour from up to four sides, and A*'s diagonal rule re-asks the two
-/// orthogonals it just tested — while the predicate itself is a whole
-/// support/solid/fluid probe stack. A fixed table keyed by a cell hash turns
-/// the repeats into two array reads; a collision simply recomputes, so the
-/// answer is always the predicate's own.
 pub struct CellMemo<const N: usize> {
     key: [std::cell::Cell<IVec3>; N],
     val: [std::cell::Cell<bool>; N],
 }
 
-/// A cell coordinate no probe can ever ask about, so an untouched slot misses.
 const MEMO_EMPTY: IVec3 = IVec3::new(i32::MIN, i32::MIN, i32::MIN);
 
 impl<const N: usize> Default for CellMemo<N> {
@@ -151,7 +101,6 @@ impl<const N: usize> CellMemo<N> {
     }
 }
 
-/// A memo for a pure per-cell predicate over one search.
 pub trait CellCache {
     fn get(&self, c: IVec3, compute: impl FnOnce(IVec3) -> bool) -> bool;
 }
@@ -163,17 +112,10 @@ impl<const N: usize> CellCache for CellMemo<N> {
     }
 }
 
-/// Is `cell` a foothold — a cell a mob can stand in? Its floor (the cell below)
-/// blocks movement under the whole body footprint, and the `head` cells from `cell`
-/// upward are clear for that footprint.
-/// Shared by the pathfinder, the navigator, and wander destination picking so they
-/// all agree on what "standable" means.
 pub fn is_foothold(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) -> bool) -> bool {
     supported_foothold(cell, params, solid, solid)
 }
 
-/// Is `cell` a navigation foothold when fluid may support the body? Fluid support
-/// only counts at the surface: submerged cells are passable, not standable waypoints.
 #[cfg(test)]
 fn is_navigation_foothold(
     cell: IVec3,
@@ -184,11 +126,6 @@ fn is_navigation_foothold(
     is_navigation_foothold_with(cell, params, solid, solid, fluid)
 }
 
-/// Navigation foothold probing with a separate `support` predicate: `solid`
-/// marks fully-blocked cells (body clearance), while `support` marks any cell
-/// that can bear feet — including partial-collision shapes (a slab, a bed, a
-/// ladder column) that do not blanket-block their cell. Whether a body truly
-/// fits a specific move through a partial cell is the edge gate's call.
 pub fn is_navigation_foothold_with(
     cell: IVec3,
     params: PathParams,
@@ -200,15 +137,6 @@ pub fn is_navigation_foothold_with(
     supported_foothold(cell, params, &bearing, solid) && body_layer_clear(cell, params, fluid)
 }
 
-/// Find the foothold cell a mob is standing in, given its feet position `pos` and
-/// footprint `half_width`. Prefers the cell under the mob's centre; if that centre
-/// overhangs an edge (its floor is air) it falls back to the foothold under a
-/// footprint corner nearest the centre — the block the mob is actually resting on.
-/// `None` if the mob is over no foothold (e.g. mid-air).
-///
-/// Without this, a mob standing at a block edge — centre over the drop, body still on
-/// the block — would have a non-foothold "current cell", so [`find_path_nav`] would bail
-/// and it would never path anywhere (it'd freeze at the edge).
 #[cfg(test)]
 fn standing_cell(
     pos: petramond_math::world_pos::WorldPos,
@@ -219,9 +147,6 @@ fn standing_cell(
     standing_cell_with(pos, half_width, head, solid, solid)
 }
 
-/// Standing-cell resolution with a separate `support` predicate (see
-/// [`is_navigation_foothold_with`]): partial-collision blocks bear feet
-/// without blanket-blocking their cell.
 pub fn standing_cell_with(
     pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
@@ -252,7 +177,6 @@ pub fn standing_cell_with(
     if let Some(c) = foothold_at(centre) {
         return Some(c);
     }
-    // The centre overhangs — pick the footprint-corner foothold nearest the centre.
     let mut best: Option<(IVec3, f32)> = None;
     for sx in [-half_width, half_width] {
         for sz in [-half_width, half_width] {
@@ -280,9 +204,6 @@ pub fn standing_cell_with(
     best.map(|(c, _)| c)
 }
 
-/// Find the fluid-surface navigation cell near a swimming mob. This deliberately
-/// searches upward from the feet: submerged cells are not path waypoints, but the
-/// surface just above them can be.
 #[cfg(test)]
 fn swimming_cell(
     pos: petramond_math::world_pos::WorldPos,
@@ -294,7 +215,6 @@ fn swimming_cell(
     swimming_cell_with(pos, half_width, head, solid, solid, fluid)
 }
 
-/// Swimming-cell resolution with the separate `support` predicate.
 pub fn swimming_cell_with(
     pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
@@ -316,12 +236,11 @@ pub fn swimming_cell_with(
     None
 }
 
-/// The cell a mob paths from: its standing foothold on dry ground, or — while its
-/// body is in fluid — the fluid-surface navigation cell above its feet. The two must
-/// not be conflated: in one-deep fluid the solid bed sits directly below the feet, so
-/// the solid-only standing probe would claim the *submerged* feet cell, which
-/// [`find_path_nav`] rejects as a start (fluid cells are passable, not standable) —
-/// leaving the mob goalless, bobbing in place forever.
+/// The cell a mob paths from: standing foothold on dry ground, or the fluid-surface cell above the
+/// feet while its body is in fluid.
+/// Don't conflate the two. In one-deep fluid the solid bed is right under the feet, so a solid-only
+/// probe grabs the submerged feet cell instead. [`find_path_nav`] rejects fluid cells as a start,
+/// so the mob ends up goalless, bobbing in place forever.
 #[cfg(test)]
 fn navigation_cell(
     pos: petramond_math::world_pos::WorldPos,
@@ -334,7 +253,6 @@ fn navigation_cell(
     navigation_cell_with(pos, half_width, head, in_fluid, solid, solid, fluid)
 }
 
-/// Navigation-cell resolution with the separate `support` predicate.
 pub fn navigation_cell_with(
     pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
@@ -351,8 +269,6 @@ pub fn navigation_cell_with(
     }
 }
 
-/// Keep exact boundary contact from claiming the neighbouring cell. Collision uses
-/// strict overlap too, so a half-width of exactly 0.5 still fits one cell wide.
 const FOOTPRINT_EPS: f32 = 1e-4;
 
 fn footprint_range(half_width: f32) -> std::ops::RangeInclusive<i32> {
@@ -382,15 +298,10 @@ pub fn body_layer_clear(cell: IVec3, params: PathParams, solid: &impl Fn(IVec3) 
     !body_layer_touches(cell, params, solid)
 }
 
-/// True when every cell occupied by the mob's body footprint from `cell` upward is
-/// clear of the supplied occupancy predicate.
 pub fn body_clear(cell: IVec3, params: PathParams, occupied: &impl Fn(IVec3) -> bool) -> bool {
     (0..params.head_cells()).all(|dy| body_layer_clear(cell + IVec3::Y * dy, params, occupied))
 }
 
-/// True when the occupied predicate touches the body footprint or the floor/support
-/// footprint under it. Useful for classifying "wet" destinations: a fluid-surface
-/// waypoint has dry body clearance but fluid under the feet.
 pub fn body_or_floor_touches(
     cell: IVec3,
     params: PathParams,
@@ -423,18 +334,6 @@ fn supported_foothold(
     footprint_supported(cell, params, support) && body_clear(cell, params, solid)
 }
 
-/// Find a walkable path of foothold cells from `start` toward `goal`.
-///
-/// Returns the cells to walk, beginning with `start`. Reaching `goal` returns the
-/// full route; if `goal` can't be reached (walled off, or not itself a foothold)
-/// the path leads to the reachable cell with the smallest remaining distance to
-/// `goal`. An empty `Vec` means `start` isn't a foothold (the mob isn't standing on
-/// anything — the caller should just let physics settle it first).
-///
-/// `fluid(cell)` marks fluid. Fluid counts as **footing** (a mob swims across the
-/// surface), so a route may cross a body of fluid of any depth — the kinematics float
-/// the mob up while it does. Avoiding fluid is a *destination* preference (see the
-/// wander behavior), not a routing constraint: the shortest path still cuts across.
 #[cfg(test)]
 pub(super) fn find_path(
     start: IVec3,
@@ -455,21 +354,17 @@ pub(super) fn find_path(
     )
 }
 
-/// The full production navigation search. In addition to the basic world
-/// predicates it takes:
-/// - `support(cell)` — cells that can bear feet even when not fully `solid`
-///   (partial-collision shapes), see [`is_navigation_foothold_with`];
-/// - `step_allowed(from, to)` — the accurate edge gate: rejects a specific
-///   transition between two accepted footholds when the real body AABB cannot
-///   sweep that move through the real collision boxes (partial shapes, doors);
-/// - `cell_cost(cell)` — a soft per-cell surcharge added when an edge ENTERS
-///   that cell. Soft obstacles (other entities) get routed around when a
-///   detour exists, yet never wall off the only route. Costs are in the same
-///   scale as the step costs ([`COST_FLAT`] = 10 per cell); the heuristic
-///   ignores them, so they only ever ADD cost and A* stays admissible.
+/// Full production nav search. Extra params over the basic world predicates:
+/// - `support(cell)`: cells that can bear feet even if not fully `solid` (partial shapes), see
+///   [`is_navigation_foothold_with`].
+/// - `step_allowed(from, to)`: edge gate, rejects a move the real body AABB can't sweep through
+///   (partial shapes, doors).
+/// - `cell_cost(cell)`: soft surcharge for entering a cell. Routes around other entities but never
+///   blocks the only path. Same scale as step costs ([`COST_FLAT`] = 10 per cell); the heuristic
+///   ignores it, so A* stays admissible.
 ///
-/// The one-shot wrapper over [`NavSearch`], which the navigator drives
-/// directly so a search can span ticks under the path budget.
+/// One-shot wrapper over [`NavSearch`], which the navigator drives directly so a search can span
+/// ticks under the path budget.
 #[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::too_many_arguments)]
 pub fn find_path_nav(
@@ -498,9 +393,6 @@ pub fn find_path_nav(
         .0
 }
 
-/// The walkable neighbours of foothold `a`: for each cardinal direction, exactly one
-/// of step-flat / jump-up-one / descend (first ground within `max_drop`), or nothing
-/// if that direction is blocked.
 #[allow(clippy::too_many_arguments)]
 fn neighbors(
     a: IVec3,
@@ -516,9 +408,6 @@ fn neighbors(
     for (dx, dz) in DIRS {
         let side = a + IVec3::new(dx, 0, dz);
 
-        // Climb: the higher cell is a foothold and every layer the head rises
-        // through above the start is clear. One move per direction; a climb
-        // wins when it exists.
         let up = side + IVec3::Y * CLIMB_CELLS;
         if foothold(up)
             && step_allowed(a, up)
@@ -530,20 +419,16 @@ fn neighbors(
             continue;
         }
 
-        // Flat step: the neighbour at the same level is a foothold.
         if foothold(side) && step_allowed(a, side) {
             out.push((side, COST_FLAT));
             continue;
         }
 
-        // Descend: step into `side` (body must fit) and fall to the first foothold
-        // within `max_drop`. A solid cell in the fall column blocks the descent;
-        // running past `max_drop` means it's a cliff (no move that direction).
         if passable_col(side) {
             for dy in 1..=params.max_drop {
                 let c = side - IVec3::Y * dy;
                 if solid(c) {
-                    break; // hit a wall/ground that isn't cleanly standable-into
+                    break;
                 }
                 if foothold(c) && step_allowed(a, c) {
                     out.push((c, COST_FLAT + dy as u32 * COST_DROP_PER_BLOCK));
@@ -553,10 +438,6 @@ fn neighbors(
         }
     }
 
-    // Flat diagonals: taken only across a fully-flat 2×2 of footholds — the diagonal
-    // target AND both orthogonal neighbours are footholds at this level. That forbids
-    // cutting an obstacle's corner or slicing over a gap, and keeps jumps/falls
-    // cardinal, yet lets a mob take the short straight-ish route over open ground.
     const DIAGS: [(i32, i32); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
     for (dx, dz) in DIAGS {
         let target = a + IVec3::new(dx, 0, dz);
@@ -568,8 +449,6 @@ fn neighbors(
     }
 }
 
-/// Walk `came_from` back from `end` to the start and return the cells in
-/// start→end order.
 fn reconstruct(came_from: &FxHashMap<IVec3, IVec3>, end: IVec3) -> Vec<IVec3> {
     let mut path = vec![end];
     let mut node = end;

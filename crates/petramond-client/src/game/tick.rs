@@ -1,8 +1,3 @@
-//! The frame→tick boundary types shared by the client and the server sim
-//! ([`GameInput`], [`GameEvents`], `TickEvents`/`WorldEvents`) plus the
-//! client's per-frame [`Game::tick`] driver. The fixed-tick stage ladder
-//! itself lives on the server, behind the session's `ServerHandle`.
-
 use super::Game;
 use petramond::net::protocol::{ClientToServer, OpenScreen, PlayerAction, PlayerUpdate, TargetRef};
 use petramond_math::math::IVec3;
@@ -16,29 +11,14 @@ pub use replica_clock::ReplicaClock;
 pub use petramond::events::tick::TICK_DT;
 pub use petramond::events::tick::{MobSoundEvent, SoundEvent, SpatialSoundCommand};
 
-/// What the place-prediction pass decided for a use click (see
-/// `Game::try_predict_place_ghost`). Distinguishing `Plausible` from `No`
-/// matters twice: the P0 hand jab fires for any click that will likely place,
-/// and the wire's `UseClick.predicted` flag (true only for `Predicted`) tells
-/// the server whether to strip the initiator's `BlockPlaced` echo.
 #[derive(Copy, Clone, Debug)]
 pub enum PlacePrediction {
-    /// Full P1: replica cells written, presentation played, ledger entry open.
     Predicted(petramond::net::protocol::ClientRequestId),
-    /// Ledger frozen: the id ships (and is answered) but nothing presented.
     TrackOnly(petramond::net::protocol::ClientRequestId),
-    /// The server will likely place, but off the ghost convention
-    /// (`target + normal`) — replace-in-place, a slab stack into the hit
-    /// cell, an oriented model's shifted base — so no ghost is drawn.
     Plausible,
-    /// The click won't place anything.
     No,
 }
 
-/// A use click's predicted verdict: whether something consumes it, whether
-/// that consumer presents itself (an eat's raise, not a jab) or is a
-/// placement (the place jab, not the interact one), which hand acted, and
-/// what the place prediction did.
 pub struct ClickVerdict {
     pub consumed: bool,
     pub presents_itself: bool,
@@ -60,20 +40,13 @@ pub struct MovementInput {
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct GameInput {
-    /// False while an app screen such as inventory owns input focus.
     pub gameplay_enabled: bool,
     pub movement: MovementInput,
     pub look_delta: (f32, f32),
-    /// Whole wheel notches scrolled this frame (signed): negative selects
-    /// previous slots, positive selects next, 0 for none. Wraps within the hotbar.
     pub hotbar_scroll: i32,
-    /// Level state: primary button held for mining.
     pub break_held: bool,
-    /// Edge state: primary button *pressed* this frame.
     pub attack_clicked: bool,
-    /// Edge state: secondary button pressed for placement.
     pub place_clicked: bool,
-    /// Level state: secondary button held — sustains an in-progress eat.
     pub use_held: bool,
 }
 
@@ -83,27 +56,15 @@ impl Game {
         self.tick_receive(dt)
     }
 
-    /// The frame's INPUT half: per-frame client systems, then this frame's
-    /// protocol messages onto the server channel — the ONLY road input takes
-    /// into the sim (the server thread latches them before its next ticks).
-    /// Split from [`tick_receive`](Self::tick_receive) so the test harness can
-    /// service the pipe synchronously between the halves (production runs
-    /// them back-to-back; the thread answers asynchronously).
     pub fn tick_send(&mut self, dt: f32, input: &GameInput) {
         self.capture_frame_begin();
-        // A presentation's calls and position move FIRST: everything below —
-        // the interpolation window, the world's frame time — reads this
-        // frame's position, never last frame's.
         self.drive_presentation(dt);
-        // Render time advances by real frame dt FIRST, and the interpolation
-        // window turns HERE too — a batch staged last frame whose segment the
-        // phase just crossed must commit BEFORE the mount slaving below
-        // samples it, or the rider's camera clamps at the segment end for one
-        // frame every tick (a 20 Hz stutter) while the world glides on. The
-        // receive half turns it again for batches that arrive already overdue.
+        // Advance render time and turn the interpolation window before the mount slaving below.
+        // A batch whose segment the phase just crossed must commit first, or the rider's camera
+        // clamps at the segment end for a frame every tick (a 20 Hz stutter). The receive half
+        // turns the window again for batches that arrive overdue.
         self.replica.entities.advance_clock(self.world_dt(dt));
         self.advance_interp_window();
-        // Per-frame exceptions kept for local feel: look, hotbar, local player, entity push.
         self.apply_camera_input(input);
         self.apply_hotbar_input(input);
         self.tick_player(dt, input);
@@ -111,10 +72,6 @@ impl Game {
         self.tick_replica_view();
         self.refresh_target();
         self.update_third_person(dt);
-        // The local body's bones ease at the same rate as the item in its fist
-        // — the local player sees their own arms in third person, and an arm
-        // that snaps while its shield glides is the shield trailing its own
-        // hand.
         self.fx.ease_local_bones(
             &self
                 .client_mods
@@ -130,9 +87,6 @@ impl Game {
 
         let update = self.build_player_update(input);
         self.build_outgoing_messages(input, update);
-        // What we are claiming this frame — the reference a later
-        // `SelfState::transform` correction diffs against (fields the server
-        // merely echoes back must not stomp newer local values).
         self.local.last_sent_transform = Some(petramond::net::protocol::SelfTransform {
             transform: update.transform,
             on_ground: update.on_ground,
@@ -140,33 +94,12 @@ impl Game {
         self.net.flush_frame();
     }
 
-    /// The frame's OUTPUT half: drain + apply the server's messages, then the
-    /// per-frame presentation systems, and assemble the app-facing events.
     pub fn tick_receive(&mut self, dt: f32) -> GameEvents {
         let dt = self.world_dt(dt);
-        // Apply the drained messages (terrain installs, then tick batches)
-        // BEFORE any presentation/HUD read — the same messages a remote
-        // client applies off the wire. Everything below consumes ONLY what
-        // those messages carried (`ClientEvents`), never sim state. More than
-        // one `TickUpdate` may have landed since last frame; `ClientEvents`
-        // accumulates their immediate payloads (one-shots OR, queues append,
-        // latest read-model state wins), while entity rows enter their bounded
-        // interpolation FIFO.
         self.pump_network();
-        // Bake any custom-shape cells the ingested deltas dirtied, so the
-        // next frame's client physics/prediction reads real (server-matching)
-        // collision instead of the static fallback.
         self.bake_client_custom_shapes();
-        // Turn the staged interpolation window now that the batches drained,
-        // so presentation below samples committed pairs + a settled alpha —
-        // then ease the named-animation blend weights toward the committed
-        // target sets (oars pick up / settle instead of snapping).
         self.advance_interp_window();
 
-        // Presentation/infra after fixed simulation; no gameplay mutation here.
-        // Remote players' per-frame animation state (shared body pose,
-        // held-item easing, animator plays, hurt/eat ramps) advances right after the batches
-        // applied, so this frame's latched one-shots jab this frame.
         let replica = &self.replica.world;
         self.replica.entities.advance_animation(dt, |pos| {
             super::body_pose::movement_medium(replica.data(), pos)
@@ -174,14 +107,10 @@ impl Game {
         let mut events = std::mem::take(&mut self.replica.events);
         self.deliver_client_mod_events(&events.self_events.client_events);
         self.sync_sleep_camera_on_open(&events.self_events);
-        // World-anchored effects the tick batch carried (break bursts, door
-        // swings) spawn from the replicated events — the identical path a
-        // remote client drives them from off the wire.
         let world = &self.replica.world;
         self.fx.apply_world_effects(world, &events.world);
         let mining = self.replica.self_view.mining.map(|(cell, _)| cell);
         self.fx.tick_mining_dust(world, mining, self.local.look, dt);
-        // Mob dig hits join the frame's sounds after the replicated ones.
         self.fx
             .tick_mob_digging(world, self.replica.entities.mobs(), dt, &mut events.sounds);
         self.fx.tick_particles(world, dt);
@@ -212,10 +141,6 @@ impl Game {
         self.net.recycle(msgs);
     }
 
-    /// Advance the local mining timer for crack overlay and emit
-    /// `BreakFinished` when the client finishes a break. On finish the client
-    /// fully applies the break it can see (cell clear, hand, local world
-    /// event).
     fn tick_local_mining(&mut self, dt: f32, input: &GameInput) {
         let tool = self
             .replica
@@ -224,10 +149,6 @@ impl Game {
             .selected()
             .and_then(|st| st.tool());
         let look = self.local.look.map(|h| h.block);
-        // One question, the same one the server asks: a body barred from mining
-        // stops predicting one, whether the bar is a pack's claim or the open
-        // menu the engine claims for. Without it the crack creeps up a block
-        // the authority already refused and then snaps back.
         let barred = self
             .local
             .player
@@ -259,9 +180,6 @@ impl Game {
             self.replica.world.data(),
             tool,
         );
-        // The own crack overlay is CLIENT-OWNED: the local timer is its only
-        // source (the server never ships it back — SelfState carries no
-        // `mining` echo).
         self.replica.self_view.mining = self.local.mining.overlay();
 
         if let Some(ev) = event {
@@ -274,15 +192,8 @@ impl Game {
         }
     }
 
-    /// Map this frame's replicated event payloads onto the app-facing
-    /// `GameEvents` shape (the app's consumption is unchanged: the one-shots
-    /// and `open_*` fields read exactly as they did pre-wire). `dt` is the
-    /// frame's seconds.
     fn assemble_game_events(&mut self, events: ClientEvents, dt: f32) -> GameEvents {
         let se = events.self_events;
-        // The hand one-shots are fed by the local prediction latches — the
-        // server never echoes an action the client already animated. The one
-        // exception is `used_unpredicted` (see `LocalHand::take_frame`).
         let hand = self
             .hand
             .take_frame(se.used_unpredicted, se.used_unpredicted_off);
@@ -318,10 +229,9 @@ impl Game {
         match se.open_screen {
             None => {}
             Some(OpenScreen::Gui { kind_key, anchor }) => {
-                // Unknown kind = a mod the client lacks; the handshake makes
-                // this unreachable in practice — skip rather than panic. The
-                // inventory open is the server's ack of the client's own E-key
-                // request (its screen is already up), so it never re-opens.
+                // An unknown kind is a mod the client lacks. The handshake makes this unreachable
+                // in practice, so skip rather than panic. An inventory open is the server's ack of
+                // our own E-key request, whose screen is already up, so it never re-opens.
                 match petramond_world::gui_state::resolve_kind(&kind_key) {
                     Some(kind) if kind != petramond_world::gui_state::GuiKind::Inventory => {
                         out.open_gui = Some((kind, anchor));
@@ -331,23 +241,11 @@ impl Game {
             }
             Some(OpenScreen::Sleep) => out.open_sleep = true,
         }
-        // The hand one-shots, latched AGAIN for the client-mod frame hook:
-        // the app's own latch feeds the animators and drains at render, so a
-        // consumer on the update clock needs its own copy.
         self.hand.latch_swing_events(out.one_shots());
         out
     }
 
-    /// This frame's transform + held-intent message, built from the predicted
-    /// player and the per-frame targeting. Held intents ride raw — the server
-    /// forces them off while `gameplay` is false (the old `capture_intent`
-    /// rule); the held-rotation counter rides raw and the session re-derives
-    /// the armed item (see `HeldRotation::apply_wire`).
     fn build_player_update(&self, input: &GameInput) -> PlayerUpdate {
-        // The movement intent is EXACTLY what this frame's local physics
-        // consumed (`tick_player` stashes it) — re-deriving it here would read
-        // the camera after `sync_camera_to_player_eye` moved it and drift the
-        // wire intent from the prediction.
         let intent = self.local.predicted_input;
         PlayerUpdate {
             transform: petramond::net::protocol::Transform {
@@ -357,9 +255,6 @@ impl Game {
                 pitch: self.local.player.pitch,
             },
             on_ground: self.local.player.on_ground,
-            // Sneak is part of the F2 movement intent now: ship EXACTLY what the
-            // local physics consumed (gameplay-gated), so the server integrates
-            // the same edge-guarded, half-speed step the prediction ran.
             sneak: intent.sneak,
             gameplay: input.gameplay_enabled,
             break_held: input.break_held,
@@ -396,8 +291,6 @@ impl Game {
         let outcome = self.predict_use_click(input.movement.sneak, use_mob);
         let place = outcome.placement.unwrap_or(PlacePrediction::No);
         let consumed = outcome.consumed();
-        // NOTHING claimed it: offer the gesture, exactly as the server does
-        // once its own chain has passed. This is the frame a guard goes up on.
         if !consumed {
             let payload = mod_api::EventPayload::UseUnclaimed {
                 block: self.local.look.map(|h| h.block.to_array()),
@@ -405,16 +298,8 @@ impl Game {
                 mob: use_mob,
                 player: mod_api::PlayerId(self.replica.entities.self_id().0),
             };
-            // The verdict is NOT a jab: nothing happened to the world, and
-            // whoever took the gesture poses the body itself. Predicting a
-            // swing here would punch the air every time a guard went up.
-            // Through the scoped dispatch: a rule that gates on what the
-            // pack holds (a launcher with nothing to launch) reads the
-            // replicated inventory.
             self.predict_mod_claim(input.movement.sneak, payload);
         }
-        // Mirror whoever took it onto the body, so the predicted player answers
-        // "is this press spoken for" the way the authority will.
         self.local.player.use_gesture = match self.client_mods.use_holder() {
             Some(owner) => petramond::player::UseGesture::Held(owner.into()),
             None => petramond::player::UseGesture::Free,
@@ -428,10 +313,6 @@ impl Game {
         }
     }
 
-    /// Whether the primary button swings the hand THIS frame (see
-    /// `LocalHand::attack_press`): the body's action bar and the mining level
-    /// gate it, and the follow-through window is the same attribute-scaled
-    /// cooldown the server paces the hand by.
     fn attack_press(&mut self, input: &GameInput) -> bool {
         let denied = self
             .local
@@ -450,40 +331,19 @@ impl Game {
             })
     }
 
-    /// Assemble this frame's message batch on the `NetLink`, in consumption
-    /// order: the `PlayerUpdate` first (so the edge-drop rule and
-    /// slot-dependent actions see this frame's state), then this frame's click
-    /// edges (mob targets resolved to STABLE ids now, at click time), then
-    /// everything the app-facing methods queued since the last frame (the
-    /// flush appends those).
     fn build_outgoing_messages(&mut self, input: &GameInput, update: PlayerUpdate) {
         debug_assert!(self.net.frame_is_empty(), "pump drains every frame");
         let use_mob = input
             .place_clicked
             .then(|| self.targeted_mob_id())
             .flatten();
-        // The swing this frame: a fresh press, or the one held over from the
-        // hand's follow-through. Resolved BEFORE the targets so a queued
-        // press takes the crosshair it fires at, not the one it was pressed
-        // at — the authority validates the target at the same instant.
         let attacks = input.gameplay_enabled && self.attack_press(input);
         let attack_mob = attacks.then(|| self.targeted_mob_id()).flatten();
-        // At most one of mob/player is targeted per frame (refresh_target's
-        // nearest-wins pick), so the click carries at most one.
         let attack_player = attacks.then_some(self.local.targeted_player).flatten();
         self.net.push_frame(ClientToServer::PlayerUpdate(update));
         if input.gameplay_enabled {
-            // A barred body sends no click, runs no prediction and plays no
-            // jab: the server would spend the press for nothing, so predicting
-            // one would put a place ghost on screen that the next batch takes
-            // straight back. The button is dead on both mirrors at once.
             let denied = self.local.player.denied_actions();
             if input.place_clicked && !denied.denies(mod_api::BodyAction::Use) {
-                // The click's block target rides the wire: the server resolves
-                // the interact/place against THIS cell, never a fresher look —
-                // a click racing the crosshair must land where the ghost is.
-                // `use_look` == `look` unless the held item declares a
-                // water-stopping use ray (see `refresh_target`).
                 let target = self.local.use_look.map(|h| TargetRef::of_hit(&h));
                 let verdict = self.predict_click_verdict(input, use_mob);
                 let request_id = match verdict.place {
@@ -505,9 +365,6 @@ impl Game {
                         jabbed: verdict.consumed,
                     }));
             }
-            // Same for the swing — it would be the one visible thing a denied
-            // action is allowed to leave behind ([`Self::attack_press`] reads
-            // the same denial).
             if attacks {
                 self.hand.latch_swing();
                 self.net
@@ -532,13 +389,10 @@ impl Game {
     ///
     /// YAW/PITCH ARE NEVER ADOPTED: the look is client-owned INPUT (like the
     /// hotbar index), not physics — no server tick steers it, so a correction
-    /// can only ever carry the one-RTT-old echo of our own look. The old
-    /// per-field adoption made that echo look like a server-side set the
-    /// moment the player turned: while a correction STREAM flows (claims
-    /// rejected over not-yet-final terrain — routine when two players drag
-    /// far-apart streaming windows), every look change was reverted before
-    /// the server could see it, which silently killed everything that needs
-    /// the server's own view ray to agree (the `use_ray: water` boat click).
+    /// can only ever carry the one-RTT-old echo of our own look. Adopting
+    /// that echo during a stream of corrections would revert look changes
+    /// before the server sees them, breaking actions that depend on the
+    /// server's view ray.
     /// If a server feature must one day force a look, it needs an explicit
     /// signal on the wire, not this echo channel.
     pub fn adopt_authoritative_transform(&mut self, t: &petramond::net::protocol::SelfTransform) {

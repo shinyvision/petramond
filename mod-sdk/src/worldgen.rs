@@ -1,8 +1,3 @@
-//! Worldgen hooks: feature/stage/generator registration, the per-dispatch
-//! [`GenCtx`], and the positional [`GenRng`] mirroring the engine's frozen
-//! seeding contract. (Block/item name resolution lives in
-//! [`crate::registry`].)
-
 use mod_api::calls;
 use mod_api::{BlockId, WorldgenStage};
 mod colony;
@@ -11,121 +6,65 @@ pub use colony::{isqrt, smoothstep01, Colony, ColonyField};
 pub use terrain::TerrainCache;
 
 host_fn! {
-    /// Highest solid density cells before cave carving and feature stages.
-    /// Useful for depth limits and scans from a stable pre-excavation surface.
-    /// At most [`crate::SIM_BATCH_MAX`] columns; independent of loaded sections.
     pub fn terrain_heights_at(columns: Vec<[i32; 2]>) -> Vec<i32>
         => TerrainHeightsAt { columns } => TerrainHeights
 }
 
-// Imported for intra-doc links only.
 #[allow(unused_imports)]
 use crate::Mod;
 
 use crate::__rt::host_fn;
 
 host_fn! {
-    /// Register a worldgen feature that runs after `stage` (use
-    /// [`WorldgenStage::Trees`] — the end of the pipeline — unless the feature
-    /// must see pre-vegetation ground). Only legal during [`Mod::init`];
-    /// `Climate` is not a valid attach point. `feature_id` is echoed to
-    /// [`Mod::gen_feature`]. `filter` declares the feature's conservative
-    /// write bounds — the host skips every section they exclude without a
-    /// dispatch, so declare them next to the constants that bound the writes
-    /// (`GenFeatureFilter::y_band` / `surface_band`; `ANY` admits all).
     pub fn register_worldgen_feature(stage: WorldgenStage, feature_id: u32, filter: mod_api::GenFeatureFilter)
         => RegisterWorldgenFeature { feature_id, stage, filter }
 }
 
 host_fn! {
-    /// Replace one engine worldgen stage. Only legal during [`Mod::init`];
-    /// `callback_id` is echoed to [`Mod::gen_climate`] / [`Mod::gen_terrain`] /
-    /// [`Mod::gen_stage`] depending on the stage. Last mod in load order wins a
-    /// conflict; a failing replacement falls back to the engine stage.
     pub fn register_stage_replacement(stage: WorldgenStage, callback_id: u32)
         => RegisterStageReplacement { stage, callback_id }
 }
 
 host_fn! {
-    /// Replace the whole generator: every stage dispatches to `callback_id` (your
-    /// `gen_climate`/`gen_terrain`/`gen_stage` switch on the stage). Same rules as
-    /// [`register_stage_replacement`], applied per stage.
     pub fn register_generator(callback_id: u32) => RegisterGenerator { callback_id }
 }
 
 host_fn! {
-    /// Resolve an UNDERGROUND-BIOME registry name (`"petramond:marble"`, your
-    /// own `"mymod:mushroom_cavern"` row in `underground_biomes.json`) to its
-    /// session-scoped id — the underground twin of
-    /// [`resolve_block`](crate::resolve_block). Registry-only, so it is legal
-    /// on worldgen instances; `None` = no such row. Resolve once in
-    /// [`Mod::init`], keep the id in mod state, never persist it.
     pub fn resolve_underground_biome(key: &str) -> Option<u8>
         => ResolveUndergroundBiome { key: key.into() } => MaybeByte
 }
 
 host_fn! {
-    /// The underground biome id owning each world position, parallel to
-    /// `positions` (at most [`crate::SIM_BATCH_MAX`] per call). A pure function of position — the
-    /// same climate partition used by cave lining and decoration — so it
-    /// is seam-safe inside a worldgen feature and needs no loaded section. A
-    /// position no row claims answers `0`, the fallback biome.
-    ///
-    /// Query the candidate ANCHOR of each origin (a handful of positions per
-    /// section), never every cell: this is an ABI crossing, not a field
-    /// sampler.
-    ///
-    /// Legal on a CLIENT instance too (the underground twin of
-    /// [`client_biome_at`](crate::client_biome_at)) — a client mod may ask
-    /// which cave biome the camera stands in, and gets the same answer the
-    /// server would. Same batching rule: a presentation mod should sample the
-    /// camera every few frames, not every frame.
     pub fn underground_biome_at(positions: Vec<[i32; 3]>) -> Vec<u8>
         => UndergroundBiomeAt { positions } => UndergroundBiomes
 }
 
 host_fn! {
-    /// Which underground biomes CAN own a cell inside the inclusive world box
-    /// `lo..=hi` — the bounded, conservative form of
-    /// [`underground_biome_at`]. An id the reply OMITS provably owns nothing
-    /// in the box; an id it lists may still be absent.
-    ///
-    /// Use it as the FIRST thing a one-biome worldgen feature does. Worldgen
-    /// dispatches every registered feature for every section it generates, so
-    /// a feature that only decorates its own underground biome otherwise pays
-    /// its whole candidate gather — and a per-cell biome batch — in the vast
-    /// majority of sections that hold none of its territory. One box query
-    /// over the dispatch's entire reach rejects those for a bounded cost that
-    /// does not grow with the number of candidates.
     pub fn underground_biomes_in_box(lo: [i32; 3], hi: [i32; 3]) -> Vec<u8>
         => UndergroundBiomesInBox { lo, hi } => UndergroundBiomes
 }
 
 host_fn! {
-    /// Terrain occupancy before feature stages, in request order. Use for
-    /// bounded support/clearance probes that must distinguish water from air.
-    /// At most [`crate::SIM_BATCH_MAX`] positions; independent of loaded sections.
     pub fn terrain_space_at(positions: Vec<[i32; 3]>) -> Vec<crate::TerrainSpace>
         => TerrainSpaceAt { positions } => TerrainSpaces
 }
 
 host_fn! {
-    /// Whether the generated TERRAIN is solid at each world position, parallel
-    /// to `positions` (at most [`crate::SIM_BATCH_MAX`] per call). `false` = air or water. A pure
-    /// function of (world seed, position) — the density surface minus the cave
-    /// carve — so, like [`underground_biome_at`], it answers before any
-    /// section exists and every section's dispatch gets the same answer.
+    /// Whether generated TERRAIN is solid at each position, parallel to `positions` (max
+    /// [`crate::SIM_BATCH_MAX`] per call). `false` means air or water.
     ///
-    /// This is how a structure that spans sections makes ONE acceptance
-    /// decision. [`GenCtx::block`] cannot: it answers `None` outside the
-    /// dispatching section, so the same origin would be accepted by some
-    /// sections and rejected by others, and the structure comes out in
-    /// fragments. Use `block` for per-cell clipping (only the owner's cells),
-    /// this for the decision.
+    /// Pure function of (seed, position): the density surface minus the cave carve. Like
+    /// [`underground_biome_at`], it answers before any section exists, so every section's
+    /// dispatch gets the same answer.
     ///
-    /// Terrain only: ore veins, vegetation, trees and other mods' writes are
-    /// not positional and are not included. Same batching rule — query the
-    /// handful of cells a decision needs, never a volume.
+    /// That's what lets a structure spanning sections make one accept/reject decision.
+    /// [`GenCtx::block`] can't: it returns `None` outside the dispatching section, so some
+    /// sections would accept the origin and others reject it, and the structure comes out
+    /// fragmented. Use `block` for per-cell clipping (owner's cells only), this for the decision.
+    ///
+    /// Terrain only. Ore veins, vegetation, trees and other mods' writes aren't positional, so
+    /// they aren't included. Same batching rule: query the handful of cells a decision needs,
+    /// never a volume.
     pub fn terrain_solid_at(positions: Vec<[i32; 3]>) -> Vec<bool>
         => TerrainSolidAt { positions } => TerrainSolid
 }
@@ -152,14 +91,10 @@ host_fn! {
 }
 
 host_fn! {
-    /// Filled and carved terrain materials, independent of loaded sections and later features.
-    /// Batch nearby cells together: every touched section shares generation's immutable cache.
     pub fn terrain_blocks_at(positions: Vec<[i32; 3]>) -> Vec<BlockId>
         => TerrainBlocksAt { positions } => BlockList
 }
 
-/// [`terrain_blocks_at`] for one whole 16³ section, in section order
-/// (`(y * 16 + z) * 16 + x`), without shipping every position.
 pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
     match crate::__rt::host_call(&crate::HostCall::from(calls::TerrainSectionAt { section })) {
         crate::HostRet::SectionBlocks(bytes) => bytes
@@ -170,39 +105,38 @@ pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
     }
 }
 
-/// One worldgen dispatch's inputs, with the accessors a well-behaved feature
-/// needs. See the seam/determinism contract below — the engine cannot check it
-/// for you; a violation shows up as features cut off at section borders.
+/// One worldgen dispatch's inputs, plus the accessors a well-behaved feature needs.
+/// Read the seam/determinism contract below before writing one. The engine can't check
+/// it for you, and a violation just shows up as features cut off at section borders.
 ///
 /// # The worldgen determinism & seam contract
 ///
-/// Sections generate independently, in any order, on any thread. The engine
-/// dispatches your feature once per section and CLIPS the returned writes to
-/// that section. A feature whose blocks span sections therefore only comes out
-/// seamless if every section's call re-derives the SAME decisions for a shared
-/// origin. That holds automatically when a per-origin decision uses only:
+/// Sections generate independently, in any order, on any thread. The engine dispatches
+/// your feature once per section and clips the returned writes to that section. So a
+/// feature whose blocks span sections only comes out seamless if every section's call
+/// re-derives the same decision for a shared origin. That holds automatically if a
+/// per-origin decision uses only:
 ///
 /// - positional RNG: [`GenRng::positional`] over `(ctx.seed(), your own salt,
-///   origin coords)` — never a stateful stream, never state kept in `self`;
-/// - the column data ([`GenCtx::surface_y`], [`GenCtx::biome`],
-///   [`GenCtx::sea_level`]), which is IDENTICAL for every section of a column
-///   — so a column-anchored feature may span any number of VERTICAL sections;
-/// - per-cell occupancy predicates via [`GenCtx::block`] applied only to cells
-///   inside the current section (out-of-section cells return `None`; emit
-///   nothing for them — the owning section's call emits its own cells).
+///   origin coords)`, never a stateful stream, never state kept in `self`;
+/// - column data ([`GenCtx::surface_y`], [`GenCtx::biome`], [`GenCtx::sea_level`]),
+///   identical for every section of a column, so a column-anchored feature can span
+///   any number of vertical sections;
+/// - per-cell occupancy checks via [`GenCtx::block`], applied only to cells inside
+///   the current section (cells outside return `None`; emit nothing for them, the
+///   owning section's call handles its own cells).
 ///
-/// Column data covers only this section's own 16×16 footprint. An origin in a
-/// HORIZONTAL margin (a neighbouring column) has no surface/biome data here,
-/// so cross-column reach is safe only for decisions that are purely positional
-/// (e.g. underground blobs at absolute Y, iterated via
-/// [`GenCtx::for_each_origin`] with a margin equal to the feature's horizontal
-/// reach). Surface-anchored features should keep margin 0 and write only in
-/// the origin's own column.
+/// Column data only covers this section's own 16x16 footprint. An origin in a
+/// horizontal margin (a neighbouring column) has no surface/biome data here, so
+/// reaching across columns is only safe for purely positional decisions (e.g.
+/// underground blobs at absolute Y, iterated via [`GenCtx::for_each_origin`] with a
+/// margin equal to the feature's horizontal reach). Surface-anchored features should
+/// keep margin 0 and write only into the origin's own column.
 ///
-/// [`underground_biome_at`] is a pure function of position too, so it is a
-/// legal decision input on the same footing as [`GenRng::positional`] — a
-/// cross-section feature may gate on "is this anchor inside my cave biome" and
-/// every section's call re-derives the same answer.
+/// [`underground_biome_at`] is also a pure function of position, so it's a legal
+/// decision input on the same footing as [`GenRng::positional`], and a cross-section
+/// feature can gate on "is this anchor inside my cave biome" and every section's call
+/// will re-derive the same answer.
 pub struct GenCtx {
     pub(crate) section_pos: [i32; 3],
     pub(crate) seed: u32,
@@ -213,18 +147,6 @@ pub struct GenCtx {
 }
 
 impl GenCtx {
-    /// Build a dispatch context by hand, so a mod can UNIT-TEST its
-    /// `gen_feature` without a running engine.
-    ///
-    /// Worldgen is the one mod surface where a bug is both easy to write and
-    /// expensive to see — a seam violation shows up as features sliced at
-    /// section borders, hours later, in a screenshot. Being able to call your
-    /// own feature over a synthetic section and assert on the writes is worth
-    /// far more than any amount of staring at the seam contract.
-    ///
-    /// `blocks` must be 4096 (`y*256 + z*16 + x`) or empty for the stages that
-    /// carry no snapshot; `surface_heights` and `biomes` must be 256
-    /// (`z*16 + x`) or empty.
     pub fn for_test(
         section_pos: [i32; 3],
         seed: u32,
@@ -243,12 +165,10 @@ impl GenCtx {
         }
     }
 
-    /// Section coordinates (16³ units).
     pub fn section_pos(&self) -> [i32; 3] {
         self.section_pos
     }
 
-    /// The section's world origin (minimum corner).
     pub fn origin_world(&self) -> [i32; 3] {
         [
             self.section_pos[0] * 16,
@@ -257,51 +177,30 @@ impl GenCtx {
         ]
     }
 
-    /// The world seed — feed it to [`GenRng::positional`].
     pub fn seed(&self) -> u32 {
         self.seed
     }
 
-    /// Sea level (world Y of the waterline).
     pub fn sea_level(&self) -> i32 {
         self.sea_level
     }
 
-    /// The column's post-cave bare-ground surface (world Y, before
-    /// vegetation/trees) at world `(wx, wz)`, or `None` outside this section's
-    /// 16×16 footprint. Below [`GenCtx::sea_level`] = submerged or floorless.
-    /// Identical for every section of the column.
     pub fn surface_y(&self, wx: i32, wz: i32) -> Option<i32> {
         Some(self.surface_heights[self.column_index(wx, wz)?])
     }
 
-    /// The biome id at world `(wx, wz)`, or `None` outside the footprint.
-    /// Identical for every section of the column.
     pub fn biome(&self, wx: i32, wz: i32) -> Option<u8> {
         Some(self.biomes[self.column_index(wx, wz)?])
     }
 
-    /// The engine's proposed biome map (`z*16 + x`) — only meaningful inside
-    /// [`Mod::gen_climate`], where it is the map you are replacing.
     pub fn biomes(&self) -> &[u8] {
         &self.biomes
     }
 
-    /// Whether this call carries the 4096-cell block snapshot. Every
-    /// [`Mod::gen_feature`] attach point is after `Terrain`, so a feature
-    /// dispatch without one means the feature registered a
-    /// [`GenFeatureFilter`](mod_api::GenFeatureFilter) with `needs_blocks:
-    /// false`; a stage replacement lacks it only for `Climate`/`Terrain`,
-    /// where no blocks exist yet.
     pub fn has_block_snapshot(&self) -> bool {
         self.blocks.len() == 4096
     }
 
-    /// The block currently at world `p`, or `None` when `p` is outside this
-    /// section or the call carries no snapshot (see
-    /// [`has_block_snapshot`](Self::has_block_snapshot)). Use it for per-cell
-    /// occupancy predicates ("only place over air") on the cells you emit —
-    /// each section checks exactly the cells it owns.
     pub fn block(&self, p: [i32; 3]) -> Option<BlockId> {
         if !self.has_block_snapshot() {
             return None;
@@ -316,11 +215,6 @@ impl GenCtx {
         ))
     }
 
-    /// Iterate candidate feature origins over this section's XZ footprint plus
-    /// `margin` extra columns on every side, in the engine's canonical
-    /// `(wz, wx)` order — the same loop the engine's own features use. Use
-    /// margin 0 for column-anchored features; a positive margin only for
-    /// purely positional ones (see the contract on [`GenCtx`]).
     pub fn for_each_origin(&self, margin: i32, mut f: impl FnMut(i32, i32)) {
         let o = self.origin_world();
         for wz in (o[2] - margin)..(o[2] + 16 + margin) {
@@ -330,7 +224,6 @@ impl GenCtx {
         }
     }
 
-    /// `z*16 + x` index for a world column inside the footprint.
     fn column_index(&self, wx: i32, wz: i32) -> Option<usize> {
         let o = self.origin_world();
         let (lx, lz) = (wx - o[0], wz - o[2]);
@@ -342,33 +235,17 @@ impl GenCtx {
     }
 }
 
-/// The SplitMix64 finalizer — the engine's frozen bit-mixing primitive (the
-/// `entity::hash01` finalizer, the [`GenRng::positional`] seed mix). Use it to
-/// spread correlated inputs (one shared RNG draw XOR a stable id, packed
-/// coordinates) into decorrelated u64s without a host call per input.
 pub fn splitmix64_mix(mut z: u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
 
-/// Deterministic positional RNG for worldgen hooks — the guest-side mirror of
-/// the engine's frozen positional seeding contract (same SplitMix64 finalizer,
-/// same xorshift64 stepper), so mod features get engine-grade order
-/// independence by default. Derive every independent stream from
-/// `(world seed, your own salt, world coords)`; NEVER carry RNG state between
-/// dispatches. Derive each stream's salt from its own namespaced name with
-/// [`GenRng::salt`] so it is decorrelated from the engine's, from other
-/// mods', and from your other streams.
 pub struct GenRng {
     state: u64,
 }
 
 impl GenRng {
-    /// A salt derived from a namespaced stream name (`"mymod:feature"`): FNV-1a
-    /// 64 over its bytes, usable in a `const`. Naming streams instead of
-    /// numbering them means two streams collide only by sharing a name —
-    /// never by one feature copying the next free literal of another's run.
     pub const fn salt(name: &str) -> u64 {
         let bytes = name.as_bytes();
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -380,8 +257,6 @@ impl GenRng {
         h
     }
 
-    /// Seed from `(seed, salt, world coords)` — a pure function of the inputs,
-    /// bit-identical across platforms.
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
         let z = splitmix64_mix(
             (seed as u64)
@@ -404,17 +279,14 @@ impl GenRng {
         x
     }
 
-    /// Uniform in `[0, 1)`.
     pub fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }
 
-    /// Uniform integer in `[lo, hi]` (inclusive).
     pub fn next_i32(&mut self, lo: i32, hi: i32) -> i32 {
         lo + (self.next_u64() % (hi - lo + 1).max(1) as u64) as i32
     }
 
-    /// True with probability `p`.
     pub fn chance(&mut self, p: f32) -> bool {
         self.next_f32() < p
     }
@@ -424,10 +296,6 @@ impl GenRng {
 mod tests {
     use super::GenRng;
 
-    /// [`GenRng`] mirrors the ENGINE's frozen positional seeding contract
-    /// (`src/worldgen/rng.rs` pins the same vectors) — if this drifts, mod
-    /// features lose engine-grade determinism. Never "fix" these numbers;
-    /// fix the generator.
     #[test]
     fn positional_stream_matches_the_engine_contract() {
         let mut rng = GenRng::positional(0x1234_5678, 0x0000_7a3e_0ac0_ffee, 12, 0, -34);
@@ -449,8 +317,6 @@ mod tests {
         assert_eq!(zero.next_u64(), 0x37c5_9ca7_bf06_be52);
     }
 
-    /// Named salts are FNV-1a 64 (frozen: mod worldgen depends on the bits)
-    /// and evaluate in a `const`.
     #[test]
     fn named_salts_are_fnv1a() {
         const EMPTY: u64 = GenRng::salt("");

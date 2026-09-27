@@ -1,12 +1,3 @@
-//! Multiplayer networking: wire protocol types, server address parsing, and
-//! registry id remapping.
-//!
-//! Protocol messages are plain Rust values; SERIALIZATION IS A TRANSPORT
-//! CONCERN. The in-process (singleplayer / listen-host) connection passes them
-//! over channels untouched — `Arc<[u8]>` section buffers are refcount bumps —
-//! while the TCP transport encodes length-prefixed postcard frames on
-//! its own reader/writer threads.
-
 pub mod address;
 pub mod blob;
 pub mod connection;
@@ -19,78 +10,6 @@ pub mod rate;
 pub mod remap;
 pub mod spatial_loops;
 
-/// Bumped on ANY wire-incompatible change. Checked first in the handshake —
-/// nothing else is parseable across a mismatch.
-// 19: menu drag/drop actions carry ordered logical slot identities.
-// 21: cursor throws are one `ThrowCursor { amount }` action.
-// 27: block light is a packed RGB cell (`SectionLight`), two bytes per voxel.
-// 28: the chest AND furnace lost their own slot/target variants — every
-//     container ships as the keyed generic `Container` target with
-//     `Container(i)` slots and named gauge readings in `gui_state`, so no
-//     engine content identity remains in the menu protocol.
-// 31: the off-hand slot — self inventory bodies append the off-hand stack
-//     after the cursor, `MenuSlotWire::OffHand`, the hovered-slot swap
-//     gesture (`ClientToServer::MenuSwapOffHand`), the off-hand item +
-//     acting-hand eat/use flags on the player rows.
-// 32: claimed player body state — `SelfState` gains the resolved
-//     `move_scale`, the barred-action set, and the per-hand held poses, which
-//     the player rows carry too so every observer sees a raised guard on
-//     somebody else's body, plus the rig-bone offsets that move the arm
-//     holding it. Bones ride as RIG IDS (`player::BonePose`), never names: the
-//     row ships for every player every tick, and the ABI's names resolve once
-//     at the host call.
-//     `move_scale` and the barred-action set carry only the half the recipient
-//     cannot derive: the engine's own claim (status-effect speed, spectator, an
-//     open menu) is folded by BOTH mirrors from state they both hold, so
-//     sending it would double it. Same shape, same size — no bump.
-// 33: the per-hand hand-motion claim (`motion_claims: [HandMotions; 2]`) on
-//     the player rows and `SelfState` — while a motion is claimed, every
-//     mirror's vanilla copy of it stands down for that hand because the
-//     claimant animates it through the pose seams.
-// 35: `SpatialSoundMsg::Set` (a live spatial sound retuned in place —
-//     the loop rows' volume follows what the mod integrates, e.g. a cart's
-//     speed) appended after `Stop`.
-// 36: `ClientToServer::TerrainBacklog { mesh_sections, upload_columns }` —
-//     the client's raw presentation backlog, reported every 100 ms
-//     independently of batch acks, so the server's terrain admission backs
-//     off while the client is still MESHING what it already received (an ack
-//     only says it was applied). Counts only; the pressure policy is the
-//     server's (`TerrainSync::apply_presentation_backlog`).
-// 40: animator claims on the player rows and `SelfState` (`animator`: graph
-//     params set and slots played, by rig and graph ids the join's per-rig
-//     animator name tables remap), the `Animator` player action kind and the
-//     echoed `SelfEvents::animator_events` for fired graph events. The
-//     per-hand `motion_claims` of 33 are gone: a mod stands an engine gesture
-//     down through the graph's own `swing_claim` / `jab_claim` params.
-// 41: creative mode, portable schematic actions and capture replies.
-// 42: schematic wand in the engine item table.
-// 43: creative catalog pickup joins the ordered inventory-action stream.
-// 45: redo for authoritative creative schematic placement history.
-// 46: schematic capture requests carry region bounds instead of voxel coordinates.
-// 48: mob rows carry a digging mob's crack stage and the items it holds.
-// 50: authenticated joins — `HelloAck` carries a per-connection `challenge`;
-//     `Join` carries the player's ed25519 identity `key` and a `proof`
-//     signature over that challenge (`net::identity`). Saves and operator
-//     rights key on the identity, not the display name. `JoinRejectReason`
-//     is now `BadProof` / `InvalidName` / `AlreadyConnected` / `ServerFull`
-//     (`NameTaken` is gone — taken names are still auto-suffixed).
-// 51: interest-scoped entity replication — `TickUpdate` mobs/items/players are
-//     per-recipient `EntityLane`s (despawned ids, spawned rows, updated rows)
-//     over the connection's interest set instead of the whole population,
-//     `player_actions` only for tracked players, and a `SleepTally` for the
-//     server-wide sleep headcount the player rows no longer imply.
-// 52: join name tables include biome keys; tick batches are typed sections;
-//     `ModsDisabled` propagates server-side mod disablement to clients.
-// 55: the Studio branch's changes, which numbered themselves 50–54 in
-//     parallel with the above: `JoinData::player_name` (the name the joining
-//     player was admitted under) and `JoinData::client_policy`;
-//     `ClientToServer::TerrainBacklog` removed (the ack-measured apply rate
-//     alone sizes streaming); Petramond accounts — `HelloAck` also carries
-//     `requires_account` and `server_id`, `Join` carries a `credential`
-//     (`JoinCredential::Ticket` or `::Name`) beside the identity proof, and
-//     `JoinRejectReason` gains the `Account*` refusals.
 pub const PROTOCOL_VERSION: u16 = 55;
 
-/// The default server port: used by "Open to LAN" and by "Connect to server"
-/// addresses that don't name a `:port`.
 pub const DEFAULT_PORT: u16 = 7434;

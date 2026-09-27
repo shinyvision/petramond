@@ -2,22 +2,15 @@
 ///
 /// A column's terrain, model and contact streams are in mesh space
 /// (column-local XZ); their vertex shaders offset them by this origin minus
-/// the render origin, in integers. It used to be a 16-byte GPU buffer PER COLUMN, which cost a
-/// `set_vertex_buffer` on every single terrain draw — a quarter of the frame's
-/// recorded commands at high render distance, and thousands of tiny buffer
-/// objects for the driver and wgpu's submit-time resource tracker to carry.
-/// Now every column indexes ONE array and the draw selects its row through
+/// the render origin, in integers. Every column indexes one array instead of
+/// binding a separate buffer per terrain draw; the draw selects its row through
 /// `first_instance`, so the bind happens once per pass.
 pub struct ColumnOrigins {
     buf: wgpu::Buffer,
-    /// CPU mirror, so growing the buffer is one write of everything live.
     values: Vec<[i32; 4]>,
     free: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
 }
 
-/// A column's row in [`ColumnOrigins`], returned to the free list on drop —
-/// which is what keeps the table bounded across every path that can drop a
-/// column (retain, remove, clear).
 pub struct ColumnOriginSlot {
     index: u32,
     free: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
@@ -38,8 +31,6 @@ impl Drop for ColumnOriginSlot {
     }
 }
 
-/// The instance-step layout of one [`ColumnOrigins`] row, shared by every
-/// pipeline that draws a column's mesh-space streams.
 pub(crate) const COLUMN_ORIGIN_LAYOUT: wgpu::VertexBufferLayout<'static> =
     wgpu::VertexBufferLayout {
         array_stride: 16,
@@ -51,7 +42,6 @@ pub(crate) const COLUMN_ORIGIN_LAYOUT: wgpu::VertexBufferLayout<'static> =
         }],
     };
 
-/// Rows the table starts with; it doubles from here.
 const COLUMN_ORIGIN_INITIAL: u32 = 2048;
 
 impl ColumnOrigins {
@@ -76,7 +66,6 @@ impl ColumnOrigins {
         &self.buf
     }
 
-    /// Claim (or refresh) the row holding `(col_ox, col_oz)`.
     pub(super) fn slot(
         &mut self,
         device: &wgpu::Device,

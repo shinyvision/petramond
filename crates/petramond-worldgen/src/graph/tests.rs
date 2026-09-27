@@ -5,9 +5,6 @@ use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-/// Terracing a heightfield must stay monotone (a non-monotone height map
-/// strands floating terrain) and must preserve tread-corner heights so the
-/// overall elevation trend survives.
 #[test]
 fn terrace_value_is_monotone_and_tread_anchored() {
     let step = 8.0;
@@ -22,7 +19,6 @@ fn terrace_value_is_monotone_and_tread_anchored() {
         prev = t;
         h += 0.05;
     }
-    // Exact tread anchors: multiples of the step map to themselves.
     for k in -8..=32 {
         let anchor = k as f64 * step;
         assert!((terrace_value(anchor, step) - anchor).abs() < 1e-9);

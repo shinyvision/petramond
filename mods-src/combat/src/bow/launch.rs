@@ -1,31 +1,13 @@
-//! The loose: where an arrow leaves from, which way, how fast — and the
-//! server's act of spending one from the pack and launching it.
-
 use super::rows::{BowRow, Rows};
 use crate::strike::{self, Aim};
 use mod_sdk::*;
 
-/// Where the arrow leaves from, below the eye (blocks): a nocked arrow sits
-/// at the cheek, not in the pupil, and starting it a touch lower keeps the
-/// first frame of flight out of the camera.
 const NOCK_DROP: f32 = 0.1;
 
-/// ...and to the RIGHT of the eye (blocks): the arrow sits at the bow in
-/// the main hand, not on the nose, and a shot leaving off-centre is one the
-/// archer can watch fly instead of losing it behind the crosshair.
 const NOCK_RIGHT: f32 = 0.35;
 
-/// How far out the shot converges on the crosshair when nothing is under
-/// it (blocks): far enough that the offset nock is a hair's angle.
 const CONVERGE_FAR: f32 = 48.0;
 
-/// Where an arrow leaves from and which way: beside the eye, a touch low
-/// and to the archer's RIGHT (the negative of the aim's `across` — the
-/// world is right-handed with Y up, so facing +Z puts +X on the LEFT; the
-/// first cut had it mirrored and shot from the left), aimed at the point
-/// the crosshair rests on — `target` blocks along the look, the first body
-/// or block there, or [`CONVERGE_FAR`] with nothing under it — so a shot
-/// at a zombie a few blocks off lands on the zombie, not beside it.
 pub fn nock(state: &PlayerSnapshot, target: Option<f32>) -> ([f64; 3], [f32; 3]) {
     let aim = Aim::of(state);
     let nock = [
@@ -46,8 +28,6 @@ pub fn nock(state: &PlayerSnapshot, target: Option<f32>) -> ([f64; 3], [f32; 3])
     (from, [to[0] / len, to[1] / len, to[2] / len])
 }
 
-/// Where a ray from `from` along unit `dir` enters the box `(min, max)`:
-/// the distance, or `None` for a miss (a start inside counts at 0).
 pub fn ray_box(from: [f64; 3], dir: [f32; 3], (min, max): strike::Box3) -> Option<f32> {
     let (min, max) = (strike::relative(min, from), strike::relative(max, from));
     let from = [0.0f32; 3];
@@ -70,9 +50,6 @@ pub fn ray_box(from: [f64; 3], dir: [f32; 3], (min, max): strike::Box3) -> Optio
     Some(near)
 }
 
-/// SERVER: how far along the look the crosshair rests — the nearest of
-/// the first collidable block and the first body (any mob, any other
-/// player) on the ray, `None` for open air. What the shot converges on.
 fn crosshair_reach(me: PlayerId, state: &PlayerSnapshot) -> Option<f32> {
     let aim = Aim::of(state);
     let (eye, dir) = (aim.eye, aim.forward);
@@ -101,10 +78,6 @@ fn crosshair_reach(me: PlayerId, state: &PlayerSnapshot) -> Option<f32> {
     best
 }
 
-/// SERVER: the draw of `bow` came off at `ticks` — spend the first arrow
-/// row the archer carries and launch it from the eye along the look. No
-/// arrow, no shot: the draw was still shown (both sides agree on that by
-/// construction), it simply had nothing to loose.
 pub fn loose(rows: &Rows, bow: &BowRow, me: PlayerId, state: &PlayerSnapshot, ticks: u32) {
     let Some((arrow, stack)) = rows
         .arrows
@@ -115,8 +88,6 @@ pub fn loose(rows: &Rows, bow: &BowRow, me: PlayerId, state: &PlayerSnapshot, ti
     };
     let (from, dir) = nock(state, crosshair_reach(me, state));
     let speed = bow.draw.launch_speed(ticks);
-    // The arrow leaves with the archer's own motion on top of the draw's:
-    // a shot loosed on the run is not slower than the runner.
     let vel = [
         dir[0] * speed + state.vel[0],
         dir[1] * speed + state.vel[1],

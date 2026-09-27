@@ -1,6 +1,3 @@
-//! Replicated entity-row stores: interpolation pairs, staged windows,
-//! overflow resync, and the presentation rows they feed.
-
 use super::common::{game, game_on_empty_chunk};
 use super::pump_one_tick;
 use crate::game::presentation::GamePresentationScratch;
@@ -69,9 +66,6 @@ fn fire_body_light_composes_and_survives_the_ragdoll_transition() {
     );
 }
 
-/// Store semantics over interest lanes: a spawn starts with prev == curr, an
-/// update shifts curr→prev, a tracked id the lane does not mention holds
-/// still (unchanged, NOT gone), and only an explicit despawn drops an id.
 #[test]
 fn replicated_store_pairs_updates_holds_unmentioned_ids_and_drops_despawns() {
     use petramond::net::protocol::{EntityLane, RowSet};
@@ -110,7 +104,6 @@ fn replicated_store_pairs_updates_holds_unmentioned_ids_and_drops_despawns() {
         "an unmentioned tracked id holds at its last row"
     );
 
-    // A re-spawn of a held id reseeds rather than lerping from the old row.
     store.apply(&EntityLane {
         despawned: Vec::new(),
         spawned: vec![mob_row(7, p1, 0.0)].into(),
@@ -120,9 +113,6 @@ fn replicated_store_pairs_updates_holds_unmentioned_ids_and_drops_despawns() {
     assert_eq!((reseeded.prev.pos, reseeded.curr.pos), (p1, p1));
 }
 
-/// A receive burst must fill the FIFO without turning the interpolation
-/// window early. Bootstrap is the sole immediate adoption; every later row
-/// shifts prev/curr at one crossed render-time boundary, in FIFO order.
 #[test]
 fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     use petramond::net::protocol::TickUpdate;
@@ -208,10 +198,6 @@ fn burst_before_a_boundary_does_not_shift_the_committed_pair() {
     assert!(game.game.replica.entities.staged().is_empty());
 }
 
-/// If the bounded FIFO overflows, the newest state becomes a declared resync
-/// while EVERY queued player action keeps arrival order. Neither the collapse
-/// nor the snap may touch committed rows until a boundary; after that, enough
-/// crossed boundaries catch up ordinary consecutive snapshots one-for-one.
 #[test]
 fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     use petramond::net::protocol::{ItemStateRow, PlayerActionKind, PlayerStateRow, TickUpdate};
@@ -298,9 +284,6 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
         PlayerActionKind::Died,
         PlayerActionKind::Respawned,
     ];
-    // Two full queue depths plus one arrival forces TWO collapses; carrying
-    // one distinct enum value per tick also proves every action kind survives
-    // a collapse that already contains actions from an earlier collapse.
     let burst_len = crate::game::replicated::MAX_STAGED_ROW_BATCHES * 2 + 1;
     let mut expected_actions = Vec::new();
     for i in 0..burst_len {
@@ -386,10 +369,8 @@ fn staged_overflow_resyncs_at_a_boundary_and_catch_up_stays_one_per_segment() {
     assert!(game.game.replica.entities.staged().is_empty());
 }
 
-/// The riding rubber-band regression (2026-07-15): batch arrivals reach the
-/// client quantized to FRAME boundaries, aliasing against the fixed tick —
-/// the old arrival-anchored clock turned that into a stall/lurch cycle,
-/// violent with the camera glued to a fast mount. The STAGED interpolation
+/// Batch arrivals reach the client quantized to frame boundaries, aliasing
+/// against the fixed tick. The staged interpolation
 /// window must render an entity moving at constant server velocity with
 /// uniform per-frame steps: the committed pair under the render only shifts
 /// when render time crosses the segment (see `ReplicaClock`).
@@ -413,20 +394,13 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
                 .x
         })
     };
-    // Two sample points per frame, mirroring production: the SEND half (what
-    // the rider's camera slaves to — the window must turn there too, or the
-    // camera stalls one frame every tick) and the RECEIVE half (what
-    // presentation renders after the batches drained).
     let mut camera = Vec::new();
     let mut presentation = Vec::new();
     for f in 1..=120u64 {
         let now = f as f32 * frame;
-        // Send half: render time advances, the window turns, the slave samples.
         game.game.replica.entities.clock_mut().advance(frame);
         game.game.advance_interp_window();
         camera.extend(sample(&game));
-        // Receive half: due batches drain, the window turns again,
-        // presentation samples.
         while (applied as f32 + 1.0) * TICK_DT <= now {
             applied += 1;
             let update = TickUpdate {
@@ -447,8 +421,6 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
         presentation.extend(sample(&game));
     }
     let nominal = speed * frame / TICK_DT;
-    // Past the ratchet warm-up, every frame advances BOTH sample sequences by
-    // exactly one frame's worth of server motion — no stalls, no snaps.
     for (name, positions) in [("camera", camera), ("presentation", presentation)] {
         let steps: Vec<f32> = positions.windows(2).map(|w| (w[1] - w[0]) as f32).collect();
         for (i, s) in steps.iter().enumerate().skip(20) {
@@ -460,15 +432,10 @@ fn staged_window_renders_uniform_motion_across_frame_aliased_batches() {
     }
 }
 
-/// Two pumped batches feed the presentation path: `collect_mobs` reads the
-/// REPLICATED store and yields prev/curr rows matching the two batches (the
-/// interpolation source the renderer blends), with the replicated kind.
 #[test]
 fn pumped_mob_batches_become_interpolated_presentation_rows() {
     let mut game = game_on_empty_chunk();
     game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
-    // An owl in free fall right above the player: gravity guarantees its
-    // position differs between consecutive ticks.
     assert!(game
         .server_world_mut()
         .spawn_mob(Mob::Owl, WorldPos::new(8.5, 70.0, 8.5), 0.0)
@@ -514,8 +481,6 @@ fn pumped_mob_batches_become_interpolated_presentation_rows() {
     assert_eq!(row.pos, row2.pos, "curr = latest batch state");
 }
 
-/// A mob removed server-side despawns in the next batch, so its id drops from
-/// the store and the presentation rows.
 #[test]
 fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     let mut game = game_on_empty_chunk();
@@ -552,13 +517,9 @@ fn a_despawned_mob_drops_from_the_store_on_the_next_batch() {
     );
 }
 
-/// Dropped items replicate through the same path: batch rows carry the stable
-/// per-spawn id, and presentation reads the replicated store.
 #[test]
 fn dropped_items_replicate_with_stable_ids_into_presentation() {
     let mut game = game_on_empty_chunk();
-    // Far from the player so no pickup interferes; above the floor so it moves
-    // (falls) between ticks.
     let mut drop = DroppedItem::new(
         WorldPos::new(2.5, 70.0, 2.5),
         ItemStack::new(ItemType::Dirt, 3),
@@ -609,8 +570,6 @@ fn dropped_items_replicate_with_stable_ids_into_presentation() {
     assert_eq!(row.count, 3);
 }
 
-/// A draw set a mob wears reaches the frame at the body's interpolated feet,
-/// and leaves with the row's set.
 #[test]
 fn a_mob_draw_set_follows_the_interpolated_body_and_clears() {
     let mut game = game_on_empty_chunk();

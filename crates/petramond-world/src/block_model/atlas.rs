@@ -1,7 +1,3 @@
-//! The combined model texture atlas — every kind's texture packed into one sheet with
-//! a per-kind UV transform — plus the pre-scanned break/mining particle patches
-//! sampled from it.
-
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
@@ -9,16 +5,10 @@ mod packing;
 
 use super::{all, models, BlockModelKind};
 
-/// Every model kind's texture packed into one RGBA sheet, with a
-/// per-kind UV transform into it, so all model geometry in a chunk draws with a single
-/// texture bind. Built once from the compiled models; the mesher remaps each face UV through
-/// [`remap`](Self::remap) and the renderer uploads [`rgba`](Self::rgba).
 pub struct ModelAtlas {
     rgba: Vec<u8>,
     w: u32,
     h: u32,
-    /// Per-kind `[u_off, v_off, u_scale, v_scale]` mapping the kind's own `[0,1]` UVs
-    /// into the combined sheet.
     xform: Vec<[f32; 4]>,
     animations: Vec<super::TextureAnimation>,
     surface_animations: Vec<Vec<u8>>,
@@ -26,8 +16,6 @@ pub struct ModelAtlas {
 
 impl ModelAtlas {
     fn build() -> Self {
-        // State variants commonly share an entire sheet. Equality checks keep
-        // content deduplication safe even when two hashes collide.
         let mut hashes: HashMap<u64, Vec<usize>> = HashMap::new();
         let mut unique: Vec<usize> = Vec::new();
         let mut entries = Vec::with_capacity(models().len());
@@ -120,12 +108,10 @@ impl ModelAtlas {
         }
     }
 
-    /// Animation table shared by the template bake and shader compiler.
     pub fn animations(&self) -> &[super::TextureAnimation] {
         &self.animations
     }
 
-    /// The face's appearance resolved from its atlas-space UV rectangle.
     pub fn appearance(&self, kind: BlockModelKind, uv: [f32; 4]) -> super::FaceAppearance {
         let [uo, vo, us, vs] = self.xform[kind.0 as usize];
         let x = ((uv[0] + uv[2]) * 0.5 - uo) / us;
@@ -145,26 +131,16 @@ impl ModelAtlas {
         super::FaceAppearance::default()
     }
 
-    /// The combined sheet bytes + dimensions, for GPU upload.
     pub fn texture(&self) -> (&[u8], u32, u32) {
         (&self.rgba, self.w, self.h)
     }
 
-    /// Remap a model-local `[u, v]` (in `kind`'s own `[0,1]` texture) into the combined
-    /// sheet's UV space.
     #[inline]
     pub fn remap(&self, kind: BlockModelKind, uv: [f32; 2]) -> [f32; 2] {
         let [uo, vo, us, vs] = self.xform[kind.0 as usize];
         [uo + uv[0] * us, vo + uv[1] * vs]
     }
 
-    /// The face's UV rect inset by half an atlas texel per side (capped at the
-    /// rect's midpoint so a sub-texel rect still maps to its own texel). For
-    /// RENDER emission only: a quad-edge fragment's interpolated UV then lands
-    /// on the edge texel's CENTRE, so rasterizer float error can never spill
-    /// onto the sheet row/column above or beside the rect (the gray line along
-    /// the top of the forge furnace's `coals`). Picking and AO keep the
-    /// authored rect — a half-texel shift would move the pixel-perfect mapping.
     pub fn inset_face_uv(&self, uv: [f32; 4]) -> [f32; 4] {
         let (hw, hh) = (0.5 / self.w as f32, 0.5 / self.h as f32);
         let inset = |lo: f32, hi: f32, half: f32| {
@@ -187,17 +163,6 @@ impl ModelAtlas {
         [u0, v0, u1, v1]
     }
 
-    /// Alpha classification of the texels under an (atlas-space, possibly
-    /// flipped) UV rect `[u0, v0, u1, v1]`: `(visible, blend)`.
-    /// - `visible`: any texel with alpha > 0. A face with NO visible texel
-    ///   discards every fragment at mip 0 — and if the bake dropped it there
-    ///   would be nothing to see — but LEFT IN, the cutout mip chain
-    ///   (`build_cutout_mips`) promotes its transparent texels to opaque with
-    ///   the neighbouring artwork's averaged colour, so a fully transparent
-    ///   sliver face (the side of a 1px panel) renders as a bright line. The
-    ///   template bake drops these faces outright.
-    /// - `blend`: any PARTIAL alpha (`1..=254`) — the face must draw
-    ///   alpha-blended rather than opaque-cutout.
     pub fn rect_alpha_class(&self, uv: [f32; 4]) -> (bool, bool) {
         let u0 = uv[0].min(uv[2]);
         let u1 = uv[0].max(uv[2]);
@@ -218,9 +183,6 @@ impl ModelAtlas {
         (visible, blend)
     }
 
-    /// The alpha byte (`0..=255`) of the combined sheet at normalized `uv` (nearest
-    /// texel; UV clamped to the edge) — the texel opacity the pixel-perfect ray pick
-    /// ([`ray_vs_model`]) tests so a hit only lands on a non-transparent texel.
     #[inline]
     pub fn alpha_at(&self, uv: [f32; 2]) -> u8 {
         let x = ((uv[0] * self.w as f32) as i32).clamp(0, self.w as i32 - 1) as u32;
@@ -230,8 +192,6 @@ impl ModelAtlas {
     }
 }
 
-/// The combined model texture atlas of a content registry — a derived view,
-/// packed on first use from the registry's compiled models.
 static ATLAS: crate::content::Slot<ModelAtlas> = crate::content::Slot::new(
     "block model atlas",
     &[crate::content::stage::MODELS],
@@ -242,14 +202,9 @@ fn build_atlas(_: &crate::content::ContentRegistry) -> Result<ModelAtlas, String
     Ok(ModelAtlas::build())
 }
 
-/// The current registry's combined model texture atlas.
 pub fn atlas() -> &'static ModelAtlas {
     ATLAS.current()
 }
-
-// ---------------------------------------------------------------------------------
-// Break/mining particle texture patches
-// ---------------------------------------------------------------------------------
 
 /// Pre-scanned OPAQUE fleck patches for a kind: model-local `[u, v]` mins of small
 /// square texture patches whose centre texel is opaque, plus the patch edge in
@@ -261,7 +216,6 @@ struct ParticlePatches {
     size_local: f32,
 }
 
-/// Every kind's fleck patches, a derived view of the content registry.
 static PATCHES: crate::content::Slot<Vec<ParticlePatches>> = crate::content::Slot::new(
     "block model particle patches",
     &[crate::content::stage::MODELS],
@@ -276,7 +230,6 @@ impl ParticlePatches {
     fn scan(kind: BlockModelKind) -> Self {
         let m = &models()[kind.0 as usize];
         let (tw, th) = (m.tex_w.max(1), m.tex_h.max(1));
-        // A 4-texel fleck patch, stepped across the sheet on the same stride.
         let patch = 4u32.min(tw).min(th);
         let mut mins = Vec::new();
         let mut y = 0;
@@ -346,9 +299,6 @@ mod tests {
         }
     }
 
-    /// The edge-spill guard: every rect edge moves half a texel INWARD, flipped
-    /// rects inset rather than explode, and a sub-texel rect collapses onto its
-    /// own midpoint instead of inverting.
     #[test]
     fn inset_face_uv_moves_edges_inward_and_never_past_the_midpoint() {
         let at = ModelAtlas {
@@ -362,10 +312,8 @@ mod tests {
         let [u0, v0, u1, v1] = at.inset_face_uv([0.0, 0.0, 1.0, 1.0]);
         let half = 0.5 / 4.0;
         assert_eq!([u0, v0, u1, v1], [half, half, 1.0 - half, 1.0 - half]);
-        // Flipped rect (v0 > v1): still an inset.
         let [_, v0, _, v1] = at.inset_face_uv([0.0, 1.0, 1.0, 0.0]);
         assert_eq!([v0, v1], [1.0 - half, half]);
-        // Sub-texel rect: both edges meet at the midpoint, never cross.
         let [u0, _, u1, _] = at.inset_face_uv([0.4, 0.0, 0.5, 1.0]);
         assert_eq!((u0, u1), (0.45, 0.45));
     }

@@ -1,22 +1,7 @@
-//! Gauge state published by an open container's block entity.
-//!
-//! A machine's slots ride the generic [`SlotSpec`](petramond_world::container::SlotSpec)
-//! path in [`super::generic`] like every other container's. What a machine
-//! additionally has is READINGS — the furnace's cook arrow and burn flame —
-//! and those ship as ordinary named GUI-state values, the same channel a
-//! pack's machine publishes through. The document binds a `gauge` node to the
-//! key; neither the wire nor the GUI vocabulary knows a furnace exists.
-
 use super::ContainerMenu;
 use crate::world::ServerWorld;
 
 impl ContainerMenu {
-    /// The named gauge readings the open container's block entity publishes
-    /// this tick, or empty when it publishes none (a plain chest, a pack
-    /// container whose state is its own).
-    ///
-    /// Engine machines answer here rather than earning a wire variant of
-    /// their own; a pack machine writes the same keys through its GUI state.
     pub fn open_gauges(&self, world: &ServerWorld) -> Vec<(String, f32)> {
         let Some(pos) = self.target.anchor().and_then(|a| a.block()) else {
             return Vec::new();

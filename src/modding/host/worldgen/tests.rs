@@ -3,9 +3,6 @@ use mod_api::{HostCall, HostRet};
 
 use crate::modding::host::{handle_host_call, ModStoreData, Phase, Registration};
 
-/// Worldgen hook registration is `mod_init`-window-gated like every other
-/// registration, and `Climate` is not a feature attach point (features
-/// write blocks; climate is column-level).
 #[test]
 fn gen_registrations_gate_on_the_init_window() {
     let mut data = ModStoreData::new("alpha", 1);
@@ -51,7 +48,6 @@ fn gen_registrations_gate_on_the_init_window() {
     assert_eq!(data.stats.registered, 3);
     assert!(data.pending.iter().all(Registration::is_gen));
 
-    // Outside the window every gen registration is rejected...
     data.phase = Phase::Run;
     for call in [
         HostCall::from(calls::RegisterWorldgenFeature {
@@ -67,13 +63,9 @@ fn gen_registrations_gate_on_the_init_window() {
     ] {
         assert!(matches!(handle_host_call(&mut data, call), HostRet::Err(_)));
     }
-    // ...and the in-window Climate refusal above counted too.
     assert_eq!(data.stats.rejected_registrations, 4);
 }
 
-/// A feature whose declared write bounds are inverted can never be admitted
-/// anywhere; the host refuses the registration up front (counted like every
-/// other rejection) instead of silently registering a dead feature.
 #[test]
 fn inverted_feature_bounds_are_rejected_at_registration() {
     let mut data = ModStoreData::new("alpha", 1);
@@ -109,10 +101,8 @@ fn inverted_feature_bounds_are_rejected_at_registration() {
     );
 }
 
-/// The underground-biome vocabulary is a REGISTRY-shaped pair: resolve a
-/// declared name to a session id, then ask which biome owns a cell. Both
-/// must work outside the init window (a worldgen feature calls them at
-/// generate time) and the batch reply must stay parallel to the request.
+/// Name to id, then biome per cell. Both have to work at generate time, not just init, and the
+/// batch reply keeps request order.
 #[test]
 fn underground_biome_calls_answer_outside_the_init_window() {
     let mut data = ModStoreData::new("alpha", 0x312);
@@ -162,10 +152,6 @@ fn underground_biome_calls_answer_outside_the_init_window() {
         );
     }
 
-    // The lattice scales a position by its step, so integer-limit input
-    // must be clamped before it reaches the multiply: a guest may not
-    // steer a host call into overflow (a debug build's panic is the host
-    // going down, not the mod).
     let extremes = vec![
         [i32::MIN, i32::MIN, i32::MIN],
         [i32::MAX, i32::MAX, i32::MAX],
@@ -182,11 +168,6 @@ fn underground_biome_calls_answer_outside_the_init_window() {
     }
 }
 
-/// The surface-biome query answers outside the init window on a detached
-/// instance, and — the part with a real failure mode — a batch spanning
-/// several generation tiles in ARBITRARY order answers exactly what
-/// one-column calls do. The handler keeps a single hot tile as it walks
-/// the batch, so a cursor bug shows up only when the order shuffles.
 #[test]
 fn the_surface_biome_query_batches_across_tiles_in_any_order() {
     let mut data = ModStoreData::new("alpha", 0x312);
@@ -221,8 +202,6 @@ fn the_surface_biome_query_batches_across_tiles_in_any_order() {
         assert_eq!(*got, alone, "batched answer differs at {column:?}");
     }
 
-    // Integer-limit input must be clamped before it reaches any lattice
-    // multiply — a guest may not steer a host call into overflow.
     match handle_host_call(
         &mut data,
         HostCall::from(calls::SurfaceBiomeAt {

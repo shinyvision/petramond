@@ -1,6 +1,3 @@
-//! Entity interest end to end through the batch builder: what each
-//! recipient's lanes carry as entities and players move, leave, and die.
-
 use crate::events::tick::TickEvents;
 use crate::mob::Mob;
 use crate::net::protocol::{ItemLane, MobLane, PlayerLane, SleepTally};
@@ -8,9 +5,6 @@ use crate::player::PlayerId;
 use crate::server::game::ServerGame;
 use petramond_math::world_pos::WorldPos;
 
-/// A listen server with a second session parked `far` blocks east of the
-/// host. View distance floors at four chunks (64 blocks), so 1000 blocks is
-/// out of everybody's view.
 fn two_sessions(far: f64) -> (ServerGame, usize) {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
     server.sessions[0].player.pos = WorldPos::new(0.5, 65.0, 0.5);
@@ -19,8 +13,6 @@ fn two_sessions(far: f64) -> (ServerGame, usize) {
     (server, remote)
 }
 
-/// One recipient's entity sections for a window (an absent section is an
-/// empty lane).
 struct Batch {
     mobs: MobLane,
     items: ItemLane,
@@ -28,7 +20,6 @@ struct Batch {
     sleep_tally: SleepTally,
 }
 
-/// One window's batches, indexed like `sessions`.
 fn window(server: &mut ServerGame) -> Vec<Batch> {
     let events = TickEvents::default();
     let shared = server.shared_tick_rows(&events);
@@ -66,8 +57,6 @@ fn move_host(server: &mut ServerGame, x: f64) {
     server.sessions[0].player.pos = WorldPos::new(x, 65.0, 0.5);
 }
 
-/// Far-apart players pay nothing for each other's surroundings: each batch
-/// carries its own mobs, items and self row, never the other side's.
 #[test]
 fn far_apart_sessions_only_receive_what_is_near_them() {
     let (mut server, remote) = two_sessions(1000.0);
@@ -87,15 +76,12 @@ fn far_apart_sessions_only_receive_what_is_near_them() {
     assert_eq!(player_ids(host), [server.sessions[0].id], "own row only");
     assert_eq!(player_ids(far), [server.sessions[remote].id]);
     assert_eq!(host.sleep_tally.connected, 2, "the headcount is global");
-    // First sight is a spawn; the next window an update.
     assert_eq!(host.mobs.spawned.len(), 1);
     let again = window(&mut server);
     assert!(again[0].mobs.spawned.is_empty());
     assert_eq!(mob_ids(&again[0]), [near_host]);
 }
 
-/// Entering view spawns, the hysteresis band keeps, leaving it despawns, and
-/// a removed entity despawns wherever it stood.
 #[test]
 fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
     let (mut server, _) = two_sessions(1000.0);
@@ -109,7 +95,6 @@ fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
         [id]
     );
 
-    // Past the 64-block entry radius, inside the 16-block band: kept.
     move_host(&mut server, 64.5);
     let host = &window(&mut server)[0];
     assert_eq!(
@@ -137,7 +122,6 @@ fn mobs_spawn_on_entry_hold_through_the_band_and_despawn_on_exit_or_removal() {
     );
 }
 
-/// Players track each other by view distance, both ways.
 #[test]
 fn players_enter_and_leave_each_others_interest() {
     let (mut server, remote) = two_sessions(1000.0);
@@ -153,8 +137,6 @@ fn players_enter_and_leave_each_others_interest() {
     assert_eq!(window(&mut server)[0].players.despawned, [remote_id]);
 }
 
-/// A tracked rider brings its mount, however far the mob itself is from the
-/// recipient's view (the rider's seat glue needs the mount's rows).
 #[test]
 fn a_tracked_riders_mount_is_always_replicated() {
     let (mut server, _) = two_sessions(1000.0);

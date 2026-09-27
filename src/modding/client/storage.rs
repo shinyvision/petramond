@@ -1,34 +1,13 @@
-//! Client-mod KV storage with ordered background writes and reads.
-//!
-//! Guests address exact namespaced keys in batches. Synchronous reads exist
-//! for small startup/edit lookups; BULK reads go through ticket-based
-//! asynchronous requests on the same ordered worker, so neither map
-//! exploration nor a zoomed-out viewport ever performs filesystem operations
-//! on the app frame. Reads enqueue behind already-queued writes, which makes
-//! read-your-writes ordering structural.
-//!
-//! A write is ticketed: one worker commits every write in the order it was
-//! queued, so a bucket's outcomes arrive in ticket order and "where does
-//! ticket N stand" is a watermark plus the tickets the disk refused.
-//!
-//! Nothing here is capped: a key is as long as the OS lets its hex file name
-//! be (a refusal comes back in its words), a value and a batch as large as
-//! the mod passes, and the queue is never full. The one rule is the reply's:
-//! an answer larger than the guest can address could never be delivered.
-
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, LazyLock};
 
-/// One key's write in a batch: `None` deletes it; the ticket it belongs to.
 type KeyedWrite = (String, Option<Arc<[u8]>>, u64);
 
-/// A queued write's revision and value; `None` is a delete.
 type PendingValue = (u64, Option<Arc<[u8]>>);
 type Values = Vec<Option<Vec<u8>>>;
 type ReadResult = Result<Values, String>;
 
-/// What the worker reports for one committed write batch.
 struct WriteDone {
     ticket: u64,
     revisions: Vec<(String, u64)>,
@@ -42,12 +21,7 @@ pub(super) struct ClientStorage {
     done_tx: mpsc::Sender<WriteDone>,
     done_rx: mpsc::Receiver<WriteDone>,
     next_write_ticket: u64,
-    /// Every write ticket up to this one has landed.
     written_through: u64,
-    /// The tickets the disk refused, kept for the bucket's life so an
-    /// answer never changes once given: runs of consecutive tickets refused
-    /// for one reason, by first ticket → (last ticket, reason). A disk that
-    /// refuses every write for an hour is one run.
     failed_writes: BTreeMap<u64, (u64, Arc<str>)>,
     next_ticket: u64,
     in_flight_reads: HashSet<u64>,
@@ -56,8 +30,6 @@ pub(super) struct ClientStorage {
     read_rx: mpsc::Receiver<(u64, ReadResult)>,
 }
 
-/// `Err` when `values` could never be delivered to a guest that addresses
-/// `reply_max` bytes.
 fn deliverable(values: &Values, reply_max: u64) -> Result<(), String> {
     let total: u64 = values
         .iter()
@@ -73,7 +45,6 @@ fn deliverable(values: &Values, reply_max: u64) -> Result<(), String> {
 }
 
 impl ClientStorage {
-    /// The bucket's directory: its KV blobs, and its mod files under `files/`.
     pub(in crate::modding) fn dir(&self) -> &Path {
         &self.dir
     }
@@ -98,10 +69,6 @@ impl ClientStorage {
         }
     }
 
-    /// Queue an asynchronous read on the storage worker. The worker processes
-    /// the request after every already-queued write has committed (one FIFO
-    /// channel), so a begun read always observes this session's earlier
-    /// writes.
     pub(super) fn read_begin(&mut self, keys: Vec<String>) -> Result<u64, String> {
         let ticket = self.next_ticket;
         self.next_ticket = self.next_ticket.wrapping_add(1).max(1);
@@ -118,7 +85,6 @@ impl ClientStorage {
         Ok(ticket)
     }
 
-    /// `Ok(Some(values))` consumes the ticket; `Ok(None)` = still in flight.
     pub(super) fn read_poll(
         &mut self,
         ticket: u64,
@@ -157,8 +123,6 @@ impl ClientStorage {
         Ok(out)
     }
 
-    /// Queue a batch of writes (`None` = delete) and answer its ticket.
-    /// `Err` = the worker is gone.
     pub(super) fn set_many(
         &mut self,
         entries: Vec<(String, Option<Vec<u8>>)>,
@@ -166,8 +130,6 @@ impl ClientStorage {
         self.drain_completions();
         let ticket = self.next_write_ticket;
         if entries.is_empty() {
-            // Nothing to write lands at once — but only once every earlier
-            // ticket has, or the watermark would claim them too.
             if self.written_through + 1 == ticket {
                 self.written_through = ticket;
             } else {
@@ -202,8 +164,6 @@ impl ClientStorage {
             .map_err(|_| "the storage worker stopped".to_owned())
     }
 
-    /// Where write `ticket` stands: `None` = still queued, then whether the
-    /// disk took it. A ticket never issued is an error.
     pub(super) fn write_poll(&mut self, ticket: u64) -> Result<Option<Result<(), String>>, String> {
         if ticket == 0 || ticket >= self.next_write_ticket {
             return Err(format!("unknown client storage write ticket {ticket}"));
@@ -251,7 +211,6 @@ impl ClientStorage {
         self.failed_writes.insert(ticket, (ticket, why.into()));
     }
 
-    /// Wait until the worker has done everything queued before this call.
     #[cfg(test)]
     fn settle(&self) {
         let (done, wait) = mpsc::channel();
@@ -412,10 +371,6 @@ mod tests {
         );
     }
 
-    /// The async-read contracts: reads see writes queued before them (one
-    /// FIFO worker), a delivered result consumes its ticket, unknown tickets
-    /// error, and an answer the guest could never address is an error rather
-    /// than a reply.
     #[test]
     fn async_reads_are_ordered_after_writes_and_ticketed() {
         let dir = petramond_util::test_dirs::TestScratchDir::new("client-storage-async");
@@ -466,10 +421,6 @@ mod tests {
             .expect("settled writes have landed")
     }
 
-    /// `None` deletes (reads then answer absent, the pending copy included),
-    /// empty bytes are a value, and a write's ticket reports what the DISK
-    /// said — a refused directory is an `Err`, never a silent `Ok`, however
-    /// long ago it was refused and however often it is asked.
     #[test]
     fn deletes_and_write_outcomes_are_reported_truthfully() {
         let root = petramond_util::test_dirs::TestScratchDir::new("client-storage-outcomes");

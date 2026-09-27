@@ -111,7 +111,6 @@ fn a_machine_without_ffmpeg_can_write_nothing_and_says_how_to_fix_it() {
         .expect("nothing opens without an encoder");
     assert!(refusal.contains("install ffmpeg"), "{refusal}");
 
-    // An encoder that vanished after the probe fails the file in words.
     let input = Arc::new(MediaInput::at(empty.join("clip.mkv"), Some(&video()), None));
     let encoder = Encoder::start(spec(&empty.join("ffmpeg"), false), Arc::clone(&input));
     input.close();
@@ -252,7 +251,6 @@ fn an_encoder_that_dies_mid_stream_fails_the_file_in_its_own_words() {
 #[test]
 fn an_aborted_media_file_leaves_nothing() {
     let dir = TestScratchDir::new("media-abort");
-    // An encoder that never finishes on its own: an abort has to stop it.
     let ffmpeg = fake_encoder(&dir, "cat >/dev/null\nexec sleep 600");
     let input = open(&dir, true);
     let encoder = Encoder::start(spec(&ffmpeg, true), Arc::clone(&input));
@@ -340,7 +338,6 @@ fn n_advances_span_exactly_n_steps() {
         let mut moved = 0.0;
         while advanced < n {
             moved += clock.take_step();
-            // Hold every third frame, as an unsettled world would.
             if attempt % 3 != 2 {
                 clock.advance(1);
                 advanced += 1;
@@ -380,14 +377,11 @@ fn presentation_time_never_runs_backwards_across_a_stepped_stretch() {
         (clock.now(999.0) - 7.0).abs() < 1e-9,
         "stepped ignores the wall"
     );
-    // It ran slower than real time: the wall is far ahead now.
     clock.end_stepped(60.0);
     assert!((clock.now(60.0) - 7.0).abs() < 1e-9);
     assert!((clock.now(61.0) - 8.0).abs() < 1e-9);
 }
 
-/// What `ClientMediaEncoders` answers once this machine was asked, and a
-/// name it lacks refuses the open by name.
 #[test]
 fn a_media_open_naming_a_codec_the_machine_lacks_is_refused_with_its_name() {
     let desk = MediaDesk::default();

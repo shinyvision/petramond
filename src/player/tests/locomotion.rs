@@ -1,11 +1,5 @@
 use super::*;
 
-/// The mode keys are modifiers on a WISH: held over planted feet they select
-/// nothing, so everything that follows `wish_speed` (the speed-widened FOV)
-/// stays at rest — the bug was the camera widening for a player standing
-/// still holding sprint. Effects are body state, not a wish, and scale the
-/// selection whether or not it moves; that half is pinned by the arithmetic
-/// of `speed_scale` (a fresh player's is 1) rather than a registry fixture.
 #[test]
 fn mode_keys_select_nothing_without_a_wish() {
     let pl = p(WorldPos::ZERO);
@@ -25,11 +19,6 @@ fn mode_keys_select_nothing_without_a_wish() {
     assert_eq!(pl.wish_speed(moving(false, false)), WALK);
 }
 
-/// The claimed body scale reaches the SELECTED land speed — the one
-/// signal every consumer (movement, the speed-coupled FOV) reads. What the
-/// claims resolve to is `BodyClaims`'s business; what locomotion owes is that
-/// the resolved number multiplies the wish, and that a mirror body (the
-/// client's predicted player) walks at the answer it was handed.
 #[test]
 fn the_mod_body_scale_multiplies_the_wished_land_speed() {
     let mut pl = p(WorldPos::ZERO);
@@ -45,19 +34,10 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
         .set_attribute("combat", mod_api::PlayerAttribute::MoveSpeed, 0.5);
     assert_eq!(pl.wish_speed(walk), WALK * 0.5);
 
-    // A second pack's claim composes rather than replacing the first.
     pl.claims
         .set_attribute("armour", mod_api::PlayerAttribute::MoveSpeed, 0.5);
     assert_eq!(pl.wish_speed(walk), WALK * 0.25);
 
-    // The mirror path: told an answer, the body walks at it, and the denial
-    // rides with the scale — a client that took one and not the other would
-    // predict a body the authority is not simulating.
-    //
-    // It replaces only the MIRRORED slot. A mirror also carries the ENGINE's
-    // claim, worked out from state it holds rather than waited for, so an
-    // adopt that cleared the whole set would drop the effect slow and the
-    // menu bar until the next frame re-stated them.
     use crate::player::DeniedActions;
     use mod_api::BodyAction;
     pl.claims
@@ -85,14 +65,10 @@ fn the_mod_body_scale_multiplies_the_wished_land_speed() {
 
 #[test]
 fn air_decays_slower_than_ground() {
-    // No input: both decay gradually toward zero, but air friction is far
-    // weaker than ground friction, so in a single frame the airborne body
-    // sheds only a sliver of its speed while the grounded body sheds a larger
-    // share — both a slide, ground just firmer.
-    let dt = FRICTION_REF_DT; // at the reference frame, retain == 1 - friction
+    let dt = FRICTION_REF_DT;
     let open = |_x: i32, _y: i32, _z: i32| false;
     let mut air = p(WorldPos::new(0.0, 128.0, 0.0));
-    air.vel = Vec3::new(WALK, 5.0, 0.0); // gliding +x, rising
+    air.vel = Vec3::new(WALK, 5.0, 0.0);
     air.on_ground = false;
     air.update_core(dt, &open, Input::default());
 
@@ -102,7 +78,6 @@ fn air_decays_slower_than_ground() {
     gnd.on_ground = true;
     gnd.update_core(dt, &floor, Input::default());
 
-    // Air retains 1 - AIR_FRICTION of its speed; ground retains less per frame.
     assert!(
         (air.vel.x - WALK * (1.0 - AIR_FRICTION)).abs() < 1e-5,
         "air vx = {}",
@@ -130,9 +105,6 @@ fn ground_accelerates_faster_than_air() {
     };
     let dt = FRICTION_REF_DT;
 
-    // On the ground from rest, one step ramps toward walk speed at the high
-    // ground acceleration (GROUND_ACCEL·dt, still well below WALK so it is not
-    // yet clamped) — a few frames to top speed, so the ground feels snappy.
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
     let mut g = p(WorldPos::new(0.0, 64.0, 0.0));
     g.on_ground = true;
@@ -143,8 +115,6 @@ fn ground_accelerates_faster_than_air() {
         g.vel.x
     );
 
-    // In the air from rest, the same input ramps far more slowly — gentle
-    // steering, not a snap to speed.
     let open = |_x: i32, _y: i32, _z: i32| false;
     let mut a = p(WorldPos::new(0.0, 128.0, 0.0));
     a.on_ground = false;
@@ -162,11 +132,6 @@ fn ground_accelerates_faster_than_air() {
 
 #[test]
 fn air_input_does_not_brake_momentum() {
-    // Airborne at sprint speed, then holding plain forward (a *slower* walk
-    // wish). Air acceleration is additive — it only adds toward the wish
-    // direction, never brakes — so the launched momentum is kept, not bled
-    // down to walk speed. (Releasing input instead lets air friction coast it
-    // down very gradually; that path is covered elsewhere.)
     let open = |_x: i32, _y: i32, _z: i32| false;
     let input = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
@@ -176,7 +141,7 @@ fn air_input_does_not_brake_momentum() {
     };
     let mut a = p(WorldPos::new(0.0, 128.0, 0.0));
     a.on_ground = false;
-    a.vel = Vec3::new(SPRINT, 0.0, 0.0); // gliding +x faster than WALK
+    a.vel = Vec3::new(SPRINT, 0.0, 0.0);
     a.update_core(FRICTION_REF_DT, &open, input);
     assert!(
         (a.vel.x - SPRINT).abs() < 1e-5,
@@ -187,10 +152,6 @@ fn air_input_does_not_brake_momentum() {
 
 #[test]
 fn air_steering_redirects_without_inflating_speed() {
-    // Airborne moving +x at walk speed; steering +z rotates the velocity
-    // toward +z at constant total speed — momentum is redirected, not pumped
-    // (forward bleeds a hair as lateral is added). This speed cap is what stops
-    // wall-scraping from building crazy sideways speed.
     let open = |_x: i32, _y: i32, _z: i32| false;
     let input = Input {
         wishdir: Vec3::new(0.0, 0.0, 1.0),
@@ -217,15 +178,10 @@ fn air_steering_redirects_without_inflating_speed() {
 
 #[test]
 fn jumping_into_wall_does_not_pump_sideways_speed() {
-    // Wall just ahead in +x; hold a wish mostly *into* the wall, slightly along
-    // it. The into-wall velocity is killed by the wall every step, which used to
-    // let the perpendicular (+z) speed climb without bound. With the air speed
-    // cap, total horizontal speed stays bounded by walk speed no matter how
-    // long you scrape the wall.
     let wall_x = 6;
     let solid = move |x: i32, _y: i32, _z: i32| x >= wall_x;
     let mut a = p(WorldPos::new(wall_x as f64 - 1.0, 128.0, 0.0));
-    a.on_ground = false; // open below: stays airborne the whole run
+    a.on_ground = false;
     let wishdir = Vec3::new(0.98, 0.0, 0.2).normalize();
     let input = Input {
         wishdir,
@@ -245,26 +201,19 @@ fn jumping_into_wall_does_not_pump_sideways_speed() {
 
 #[test]
 fn air_out_coasts_ground() {
-    // No input: both decay by friction alone. Air friction is far weaker than
-    // ground friction, so after the same coast the airborne body retains
-    // strictly — and, with the tuned values, far — more speed. Expectations are
-    // derived from the constants, so this survives retuning either friction (it
-    // only assumes the design invariant AIR_FRICTION < GROUND_FRICTION).
     let open = |_x: i32, _y: i32, _z: i32| false;
     let floor = |_x: i32, y: i32, _z: i32| y < 64;
-    let mut air = p(WorldPos::new(0.0, 1024.0, 0.0)); // open below: airborne the whole run
+    let mut air = p(WorldPos::new(0.0, 1024.0, 0.0));
     air.on_ground = false;
     air.vel = Vec3::new(WALK, 0.0, 0.0);
     let mut gnd = p(WorldPos::new(0.0, 64.0, 0.0));
     gnd.on_ground = true;
     gnd.vel = Vec3::new(WALK, 0.0, 0.0);
-    let steps = 30; // ~half a second at the reference step
+    let steps = 30;
     for _ in 0..steps {
         air.update_core(FRICTION_REF_DT, &open, Input::default());
         gnd.update_core(FRICTION_REF_DT, &floor, Input::default());
     }
-    // Pure-decay speeds implied by the friction constants (one ref step retains
-    // exactly 1 - friction).
     let air_expected = WALK * (1.0 - AIR_FRICTION).powi(steps);
     let gnd_expected = WALK * (1.0 - GROUND_FRICTION).powi(steps);
     assert!(
@@ -288,20 +237,17 @@ fn air_out_coasts_ground() {
 #[test]
 fn friction_endpoints_hold_at_any_dt() {
     for &dt in &[0.005f32, FRICTION_REF_DT, 0.05] {
-        // friction 0: nothing shed, motion continues indefinitely.
         assert_eq!(
             friction_retain(0.0, dt),
             1.0,
             "friction 0 must not decay (dt={dt})"
         );
-        // friction 1: everything shed, an immediate stop.
         assert_eq!(
             friction_retain(1.0, dt),
             0.0,
             "friction 1 must snap to a stop (dt={dt})"
         );
     }
-    // At the reference frame the retained fraction is exactly 1 - friction.
     assert!(
         (friction_retain(GROUND_FRICTION, FRICTION_REF_DT) - (1.0 - GROUND_FRICTION)).abs() < 1e-6
     );
@@ -310,8 +256,6 @@ fn friction_endpoints_hold_at_any_dt() {
 
 #[test]
 fn friction_is_framerate_independent() {
-    // One big decay step must retain the same fraction as several small steps
-    // spanning the same wall-clock time (the property the sub-step loop relies on).
     let total = 0.05f32;
     let one = friction_retain(GROUND_FRICTION, total);
     let n = 5;
@@ -325,7 +269,6 @@ fn friction_is_framerate_independent() {
 #[test]
 fn gravity_eases_near_apex() {
     let open = |_x: i32, _y: i32, _z: i32| false;
-    // In a jump, inside the apex band: reduced gravity loses less speed.
     let mut near = p(WorldPos::new(0.0, 128.0, 0.0));
     near.vel = Vec3::new(0.0, 1.0, 0.0);
     near.on_ground = false;
@@ -333,7 +276,6 @@ fn gravity_eases_near_apex() {
     near.update_core(0.05, &open, Input::default());
     let near_drop = 1.0 - near.vel.y;
 
-    // In a jump, outside the band: full gravity.
     let mut fast = p(WorldPos::new(0.0, 128.0, 0.0));
     fast.vel = Vec3::new(0.0, 20.0, 0.0);
     fast.on_ground = false;
@@ -353,12 +295,9 @@ fn gravity_eases_near_apex() {
 
 #[test]
 fn no_apex_easing_when_not_jumping() {
-    // Walking off a ledge / stepping down (jumping == false) must fall at
-    // full gravity even though vel.y is briefly inside the apex band — the
-    // easing is reserved for real jump arcs, so the world never feels floaty.
     let open = |_x: i32, _y: i32, _z: i32| false;
     let mut pl = p(WorldPos::new(0.0, 128.0, 0.0));
-    pl.vel = Vec3::new(0.0, 1.0, 0.0); // small downward-bound speed, no jump
+    pl.vel = Vec3::new(0.0, 1.0, 0.0);
     pl.on_ground = false;
     pl.jumping = false;
     pl.update_core(0.05, &open, Input::default());

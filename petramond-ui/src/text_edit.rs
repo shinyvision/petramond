@@ -1,18 +1,6 @@
-//! Reusable single-line text-editing state: cursor movement, selection,
-//! replacement, filtering, horizontal scroll, blink timing, and clipboard
-//! operations. Moved from the game's `app::text_input` so the builder preview
-//! edits text with byte-identical behavior.
-//!
-//! The editor owns character indices and selection anchors; the widget layer
-//! owns focus and rectangles, and converts pointer x-offsets to char indices
-//! at the boundary ([`TextInput::cursor_index_for_x`] takes a run-relative
-//! offset, not a screen position).
-
 const CURSOR_STEADY_SECS: f64 = 0.45;
 const CURSOR_BLINK_SECS: f64 = 0.5;
 
-/// Host clipboard access; tests use in-memory clipboards so behavior tests
-/// never touch the OS.
 pub trait TextClipboard {
     fn get_text(&mut self) -> Option<String>;
     fn set_text(&mut self, text: &str) -> bool;
@@ -37,9 +25,6 @@ pub struct TextInput {
     last_activity: f64,
 }
 
-/// The per-frame read model: visible text is already scrolled, cursor and
-/// selection offsets are relative to it, and blink is resolved. Paint never
-/// infers editing state from full strings.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextInputRender {
     pub text: String,
@@ -60,7 +45,6 @@ impl TextInput {
         }
     }
 
-    /// An editor pre-loaded with `text`, cursor at the end.
     pub fn with_text(text: &str, max_chars: usize, now: f64) -> Self {
         let mut e = Self::new(max_chars);
         e.insert_text(text, usize::MAX, now);
@@ -134,7 +118,6 @@ impl TextInput {
         true
     }
 
-    /// Delete the previous word (or the selection, if any).
     pub fn backspace_word(&mut self, visible_chars: usize, now: f64) -> bool {
         if self.delete_selection() {
             self.ensure_cursor_visible(visible_chars);
@@ -168,7 +151,6 @@ impl TextInput {
         true
     }
 
-    /// Delete the next word (or the selection, if any).
     pub fn delete_word_forward(&mut self, visible_chars: usize, now: f64) -> bool {
         if self.delete_selection() {
             self.ensure_cursor_visible(visible_chars);
@@ -220,7 +202,6 @@ impl TextInput {
         self.edit_state() != before
     }
 
-    /// Move (or extend selection) to the previous word boundary.
     pub fn move_word_left(
         &mut self,
         extend_selection: bool,
@@ -241,7 +222,6 @@ impl TextInput {
         self.edit_state() != before
     }
 
-    /// Move (or extend selection) to the next word boundary.
     pub fn move_word_right(
         &mut self,
         extend_selection: bool,
@@ -340,10 +320,6 @@ impl TextInput {
         self.insert_text(&text, visible_chars, now)
     }
 
-    /// The caret index for a pointer `x_rel` logical px into the visible run.
-    /// The hit is MEASURED with `font` — the one paint draws with — so a click
-    /// lands between the glyphs it looks like it landed between at any glyph
-    /// width.
     pub fn cursor_index_for_x(
         &self,
         font: &crate::text::Font,
@@ -475,8 +451,6 @@ fn is_word_char(ch: char) -> bool {
     ch.is_alphanumeric() || ch == '_'
 }
 
-/// Char index of the word boundary left of `cursor` (OS-editor style: skip
-/// trailing whitespace, then the preceding run of word or non-word chars).
 fn prev_word_boundary(text: &str, cursor: usize) -> usize {
     let chars: Vec<char> = text.chars().collect();
     let mut i = cursor.min(chars.len());
@@ -496,7 +470,6 @@ fn prev_word_boundary(text: &str, cursor: usize) -> usize {
     i
 }
 
-/// Char index of the word boundary right of `cursor`.
 fn next_word_boundary(text: &str, cursor: usize) -> usize {
     let chars: Vec<char> = text.chars().collect();
     let len = chars.len();
@@ -656,8 +629,6 @@ mod tests {
     fn drag_selects_between_mouse_positions() {
         let mut input = TextInput::new(48);
         input.insert_text("abcdef", 6, 0.0);
-        // Run-relative pixel offsets at the glyph boundaries after "a" and
-        // "abcd" land on chars 1 and 4.
         let font = crate::text::Font::builtin();
         let start = input.cursor_index_for_x(&font, font.width("a") as f32, 6);
         let end = input.cursor_index_for_x(&font, font.width("abcd") as f32, 6);
@@ -691,14 +662,14 @@ mod tests {
         input.insert_text("hello world", 20, 0.0);
 
         assert!(input.move_word_left(false, 20, 0.1));
-        assert_eq!(input.render(20, true, 0.1).cursor, 6); // before "world"
+        assert_eq!(input.render(20, true, 0.1).cursor, 6);
         assert!(input.move_word_left(false, 20, 0.2));
         assert_eq!(input.render(20, true, 0.2).cursor, 0);
 
         assert!(input.move_word_right(true, 20, 0.3));
         let view = input.render(20, true, 0.3);
         assert_eq!(view.cursor, 6);
-        assert_eq!(view.selection, Some((0, 6))); // "hello "
+        assert_eq!(view.selection, Some((0, 6)));
     }
 
     #[test]

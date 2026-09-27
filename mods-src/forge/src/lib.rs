@@ -1,27 +1,26 @@
 //! Forge: metal is CAST, not assembled.
 //!
-//! Three pieces, and only the third is code worth the name:
+//! Three pieces, only one has real code.
 //!
-//! - `clay.rs` — a worldgen feature that lays clay in riverbeds, on the banks
-//!   beside them, and in patches across savanna. Pure data plus one positional
-//!   field; the only host call in it is the batched biome probe that tells a
-//!   BANK apart from ordinary ground.
-//! - `ore.rs` — petramond ore, the socket-carving gem's source, in rare
-//!   veins below the cave floor. Purely positional, zero host calls.
-//! - the pottery table — no code at all. A block row whose interaction opens
-//!   `forge:pottery_table` plus recipe rows naming that station is a whole
-//!   crafting bench; the engine runs the ordinary crafting session.
-//! - recipe `petramond:unlock_on` rows — when each station becomes visible.
-//! - `furnace.rs` — the forging furnace: a machine you OPERATE. Mould in by
-//!   hand, lever to pour, and the cast pops out of the basin as an item.
+//! clay.rs - worldgen feature, clay in riverbeds, banks, savanna patches. Data plus one
+//! positional field. Only host call: batched biome probe for bank detection.
 //!
-//! WHAT DECIDES A CAST IS DATA. The mould sitting in the basin carries a
-//! `forge:mould` row-data entry naming a recipe CLASS; the furnace looks up
-//! `(that class, the metal in the input slot)` in the ordinary machine-recipe
-//! table. With no mould the class is `forge:cast_plate`. So the whole
-//! metal x mould matrix lives in `recipes.json`, another pack adds a mould by
-//! shipping an item row and its processing rows, and nothing here or in the
-//! engine learns a new name. There is no `cast_iron_axe` anywhere.
+//! ore.rs - petramond ore, socket-carving gem source, rare veins below cave floor. Purely
+//! positional, no host calls.
+//!
+//! Pottery table - no code. A block row that opens `forge:pottery_table` plus recipe rows
+//! naming that station gives you a full crafting bench, engine handles the rest.
+//!
+//! Recipe `petramond:unlock_on` rows decide when each station shows up.
+//!
+//! furnace.rs - the forging furnace, a machine you run by hand. Mould in, lever to pour,
+//! cast comes out of the basin as an item.
+//!
+//! Data decides the cast, not code. Mould in the basin carries a `forge:mould` row naming
+//! a recipe class; furnace looks up (class, input metal) in the machine-recipe table. No
+//! mould means `forge:cast_plate`. Whole metal x mould matrix lives in recipes.json, so
+//! another pack adds a mould just by shipping item and processing rows. No `cast_iron_axe`
+//! anywhere.
 
 mod anvil;
 mod augments;
@@ -60,23 +59,14 @@ struct Forge {
 
 impl Mod for Forge {
     fn init(&mut self) {
-        // Worldgen instances run detached and re-run `init` per thread; the
-        // clay feature resolves its own block there, so it must come first and
-        // must not depend on anything sim-side.
         self.clay.init();
         register_worldgen_feature(WorldgenStage::Underground, GEN_CLAY, clay::GEN_FILTER);
         self.ore.init();
         register_worldgen_feature(WorldgenStage::Underground, GEN_ORE, ore::GEN_FILTER);
 
-        // Everything below reaches the SIMULATION — the anchor registry lives
-        // in world KV. Worldgen instances run `mod_init` detached, with no
-        // simulation to call into, and a sim call there is a hard error that
-        // would take this thread's generator down with it.
         if runtime_side() != RuntimeSide::Server {
             return;
         }
-        // Gold's nondestructive mining: pure break-drops policy, independent
-        // of the machines.
         self.gold = gold::Gold::resolve();
 
         let furnace_ok = self.furnace.init();
@@ -87,9 +77,6 @@ impl Mod for Forge {
         if !anvil_ok {
             log("forge: the anvil rows are missing; augments stay idle");
         }
-        // Breaks feed gold's drops policy AND augment wear; mob hits feed
-        // wear alone. Registered before the machine gate — gold works even
-        // with both machines idle.
         if !self.gold.is_empty() || anvil_ok {
             register_event_handler(EventKind::BlockBreakPre, 0, ON_BLOCK_BREAK);
         }
@@ -100,16 +87,8 @@ impl Mod for Forge {
             return;
         }
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
-        // The machines are HANDLED, not just opened: a claim here is what
-        // makes the mould, the lever and the augment slots real interactions
-        // instead of GUI widgets.
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
-        // After WorldScheduled = beside the engine's own furnace step.
         register_tick_system(Stage::WorldScheduled, AttachSide::After, 0, TICK_SYSTEM);
-        // The anvil steps right AFTER the menu stage: a click's slot change
-        // is adjudicated (carve, return, masks, preview) in the same tick,
-        // immediately after the stage that applied it — the panel can never
-        // show last tick's answer to this tick's click.
         register_tick_system(Stage::Menu, AttachSide::After, 0, ANVIL_TICK_SYSTEM);
     }
 
@@ -126,8 +105,6 @@ impl Mod for Forge {
                 },
             ) => {
                 let proc = self.gold.on_block_break(*block, *harvested, *player, drops);
-                // Every completed break wears break-keyed augments; a gentle
-                // proc additionally wears the augment that granted it.
                 self.anvil
                     .spec()
                     .wear_held(*player, anvil::WearOn::Break, proc.as_deref());
@@ -154,8 +131,6 @@ impl Mod for Forge {
         Outcome::Continue
     }
 
-    /// A widget in one of this pack's documents was clicked: the forging
-    /// furnace's pour lever and fittings pages, or the anvil's Augment button.
     fn gui_click(&mut self, kind_key: &str, widget_id: &str, at: Option<ContainerAddress>) {
         let Some(ContainerAddress::Block(pos)) = at else {
             return;

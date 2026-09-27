@@ -1,19 +1,9 @@
-//! World-space geometry for dropped item-entities, baked each frame into a
-//! reusable dynamic vbuf/ibuf and drawn by the **existing** opaque block pipeline
-//! (no new pipeline). Each [`ItemEntityInstance`] becomes either:
-//! - a small spinning + bobbing lit cube (`block_model::cube_textured`)
-//!   for `BlockCube` items (logs etc. keep their per-face tiles), or
-//! - a spinning extruded pixel-perfect 3D slab for `Sprite` items (flowers /
-//!   tools), baked by [`build_item_sprite_entities`] into the explicit-UV
-//!   `ItemVertex` stream (block atlas) since its side walls sample single
-//!   boundary texels the packed vertex cannot express.
+//! Dropped items. Each frame they're rebuilt into a reusable vbuf/ibuf and drawn by the opaque
+//! block pipeline, which is why the geometry is in world space.
 //!
-//! Geometry is built in WORLD space because it rides the opaque pipeline whose
-//! vertex shader (`block.wgsl::vs_main`) transforms `pos` by `view_proj`. Verts
-//! carry the instance skylight sampled from the world plus full AO.
-//!
-//! The builder appends into caller-owned `Vec`s (cleared, capacity reused) so the
-//! renderer never reallocates once the per-frame instance count has plateaued.
+//! A block item is a spinning cube with its per-face tiles. A sprite item is an extruded slab;
+//! [`build_item_sprite_entities`] bakes it into the explicit-UV `ItemVertex` stream, since the
+//! packed vertex can't express the single boundary texels its side walls sample.
 
 use glam::{Mat4, Vec3};
 
@@ -25,23 +15,13 @@ use petramond_mesh::Vertex;
 use petramond_world::block::Block;
 use petramond_world::item::ItemRenderKind;
 
-/// Side length (metres) of a dropped block-cube. Small so items read as loot, not
-/// world blocks.
 const ITEM_CUBE_SIZE: f32 = 0.4;
-/// Side length (metres) of a dropped extruded sprite (flowers etc.).
 const ITEM_SPRITE_SIZE: f32 = 0.45;
-/// Vertical bob amplitude (metres) — a gentle hover.
 const BOB_AMP: f32 = 0.08;
-/// Centre height (metres) the item floats above its `pos`, before bob.
 const BOB_BASE: f32 = 0.25;
 
-/// Most geometries a dropped stack ever bakes, no matter how big the count: a
-/// 64-stack still draws only 5 layered copies (a bigger pile reads the same).
 const STACK_MAX_LAYERS: usize = 5;
 
-/// How many layered copies a stack draws: a loose pile spreads up to
-/// [`STACK_MAX_LAYERS`] copies (always at least one), an aimed item is one
-/// piece whatever its count.
 fn layers(inst: &ItemEntityInstance) -> usize {
     match inst.pose {
         ItemEntityPose::Spin(_) => (inst.count.max(1) as usize).min(STACK_MAX_LAYERS),
@@ -49,10 +29,6 @@ fn layers(inst: &ItemEntityInstance) -> usize {
     }
 }
 
-/// Where a pose puts an item's model-space geometry (origin-centred, already
-/// scaled and pile-offset): a world origin plus the world axes model X/Y/Z
-/// land on. One frame for all three render kinds, so a cube, a slab and a
-/// bbmodel answer the same pose the same way.
 #[derive(Copy, Clone)]
 struct Placement {
     origin: Vec3,
@@ -62,9 +38,6 @@ struct Placement {
 }
 
 impl Placement {
-    /// A loose stack Y-spins about its hover centre (`BOB_BASE` + bob above
-    /// `pos`); an aimed item lies in its heading's basis about the entity's
-    /// own centre — pitched as well as yawed, never bobbing.
     fn of(inst: &ItemEntityInstance, render_origin: glam::IVec3) -> Self {
         let pos = inst.pos.relative_to(render_origin);
         match inst.pose {
@@ -104,20 +77,12 @@ impl Placement {
     }
 }
 
-/// Speed (m/s) below which a flying item trails nothing: a lob is easy to
-/// follow, a fast one is a streak the eye would otherwise lose.
 const TRAIL_SPEED_MIN: f32 = 12.0;
-/// The trail covers this many TICKS of travel behind the item — it is the
-/// path just flown, so it scales with speed rather than a fixed length.
 const TRAIL_TICKS: f32 = 1.5;
-/// Longest trail (blocks), and its width at the item (blocks); it tapers
-/// to nothing at the tail.
 const TRAIL_MAX: f32 = 7.0;
 const TRAIL_WIDTH: f32 = 0.07;
-/// How dim the tail end of the trail is next to the item.
 const TRAIL_TAIL_DIM: f32 = 0.25;
 
-/// How long a trail `speed` earns, in blocks (`0` = none).
 fn trail_length(speed: f32) -> f32 {
     if speed < TRAIL_SPEED_MIN {
         return 0.0;
@@ -125,14 +90,6 @@ fn trail_length(speed: f32) -> f32 {
     (speed * TRAIL_TICKS / 20.0).min(TRAIL_MAX)
 }
 
-/// The path-just-flown streak behind a fast aimed item of ANY render kind:
-/// two crossed tapering ribbons from the item's centre back along its
-/// heading, fading toward the tail. Samples the engine's flat white trail
-/// tile in the block atlas, so the streak is disturbed air whatever is
-/// flying — the light and the taper are the geometry's — and rides the
-/// block-atlas [`ItemVertex`] stream whether the item itself is a cube, a
-/// slab or a bbmodel. A non-indexed triangle list, indexed sequentially.
-/// Nothing for a loose stack or a slow flight.
 fn push_flight_trail(
     inst: &ItemEntityInstance,
     render_origin: glam::IVec3,
@@ -165,7 +122,6 @@ fn push_flight_trail(
     for side in [placement.y, placement.z] {
         let half = side * (TRAIL_WIDTH * 0.5);
         let (a, b) = (centre - half, centre + half);
-        // Both windings, so the ribbon reads from either side.
         for (p, q) in [(a, b), (b, a)] {
             verts.push(vert(p, head_tint));
             verts.push(vert(q, head_tint));
@@ -175,8 +131,6 @@ fn push_flight_trail(
     indices.extend(base..verts.len() as u32);
 }
 
-/// The world basis an aimed item is laid into: model X along the heading,
-/// Y up out of that line, Z across.
 fn aim_basis(yaw: f32, pitch: f32) -> (Vec3, Vec3, Vec3) {
     let (sp, cp) = pitch.sin_cos();
     let (sy, cy) = yaw.sin_cos();
@@ -188,9 +142,6 @@ fn aim_basis(yaw: f32, pitch: f32) -> (Vec3, Vec3, Vec3) {
     (forward, up, across)
 }
 
-/// Per-layer model-space offsets (metres) for a layered stack, applied BEFORE the
-/// Y-spin so the little pile rotates as one body. A tight clustered scatter
-/// (mostly horizontal, a slight rise) so the copies read as a heap, not a tower.
 const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
     Vec3::new(0.00, 0.000, 0.00),
     Vec3::new(0.07, 0.012, 0.05),
@@ -199,9 +150,6 @@ const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
     Vec3::new(-0.05, 0.048, -0.04),
 ];
 
-/// Bake all `instances` into `verts` / `indices` (cleared first, capacity reused).
-/// Returns the number of indices written. Caller is responsible for frustum-culling
-/// instances before calling (so culled items cost nothing here).
 pub fn build_item_entities(
     instances: &[ItemEntityInstance],
     render_origin: glam::IVec3,
@@ -211,8 +159,6 @@ pub fn build_item_entities(
     verts.clear();
     indices.clear();
     for inst in instances {
-        // A stack draws several offset copies so a pile reads as loot; capped so a
-        // big count never bakes a wall of geometry. Always at least one layer.
         let layers = layers(inst);
         match inst.item.render_kind() {
             ItemRenderKind::BlockCube(block) => {
@@ -220,11 +166,7 @@ pub fn build_item_entities(
                     push_posed_cube(verts, indices, inst, render_origin, block, offset);
                 }
             }
-            // Sprite items ride the explicit-UV block-atlas stream, baked by
-            // `build_item_sprite_entities` (extruded 3D slabs) — skip here.
             ItemRenderKind::Sprite(_) => {}
-            // bbmodel items ride the explicit-UV model stream (own atlas), baked by
-            // `build_item_model_entities` and drawn by the model pipeline — skip here.
             ItemRenderKind::Model(_) => {}
         }
     }
@@ -259,8 +201,6 @@ pub fn build_item_sprite_entities(
         let ItemRenderKind::Sprite(tile) = inst.item.render_kind() else {
             continue;
         };
-        // One extrusion per instance (light is per-instance, folded into the
-        // tint); the layered pile copies just re-place the same model-space mesh.
         let count = super::item_model::build_extruded_stack_lit(
             tile,
             inst.variant,
@@ -271,9 +211,6 @@ pub fn build_item_sprite_entities(
         if count == 0 {
             continue;
         }
-        // A sprite has an art axis of its own: aimed, the slab is rolled in
-        // its plane so that axis lies along model X — the heading — and it
-        // flies point-first. A loose one keeps its upright art.
         let roll = match inst.pose {
             ItemEntityPose::Aimed { .. } => inst.item.sprite_axis_roll(),
             ItemEntityPose::Spin(_) => 0.0,
@@ -283,9 +220,6 @@ pub fn build_item_sprite_entities(
         for &offset in &STACK_LAYER_OFFSETS[..layers(inst)] {
             let base = verts.len() as u32;
             for v in scratch.iter() {
-                // Roll + scale the unit slab, offset within the pile, then
-                // place — the same order as `place_into_world`, so the pile
-                // turns as one body.
                 let local = Vec3::new(
                     (v.pos[0] * rc - v.pos[1] * rs) * ITEM_SPRITE_SIZE,
                     (v.pos[0] * rs + v.pos[1] * rc) * ITEM_SPRITE_SIZE,
@@ -297,18 +231,12 @@ pub fn build_item_sprite_entities(
                     ..*v
                 });
             }
-            // The extrusion is a non-indexed triangle list; sequential
-            // indices let it ride the indexed ItemVertex draw.
             indices.extend(base..base + count);
         }
     }
     indices.len() as u32
 }
 
-/// Bake the bbmodel dropped-items into `verts`/`indices` (cleared first, capacity reused)
-/// as world-space [`ItemVertex`] geometry sampling the MODEL atlas — the explicit-UV
-/// counterpart of [`build_item_entities`], drawn by the model pipeline. Each shows its
-/// real baked model, posed like any dropped stack, not a stand-in cube.
 pub fn build_item_model_entities(
     instances: &[ItemEntityInstance],
     render_origin: glam::IVec3,
@@ -346,18 +274,11 @@ fn inst_light(inst: &ItemEntityInstance) -> DynLight {
     DynLight::new(inst.skylight, inst.blocklight)
 }
 
-/// A gentle sinusoidal bob derived from the per-instance spin phase so it needs no
-/// separate stored time (spin already advances with `dt` in the App).
 #[inline]
 fn bob(spin: f32) -> f32 {
     spin.sin() * BOB_AMP
 }
 
-/// Append a small posed textured cube for `inst`, centred on its placement
-/// plus a model-space `offset` (the pile-layer displacement). The cube is built
-/// in model space (centred on origin), offset within the pile, then placed per
-/// `inst.pose`. We move the positions of each vertex on the CPU since the
-/// opaque pipeline has no per-draw model matrix.
 fn push_posed_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -367,8 +288,6 @@ fn push_posed_cube(
     offset: Vec3,
 ) {
     let half = ITEM_CUBE_SIZE * 0.5;
-    // Append the cube centred on the origin (model space) directly into the
-    // caller's buffers (no temporary Vec), then spin + place it in the world.
     let start = verts.len();
     push_block_item_cube_lit(
         verts,
@@ -379,14 +298,10 @@ fn push_posed_cube(
         inst_light(inst),
         false,
     );
-    // Instance-data tint (`petramond:tint`): one multiply over the fresh verts.
     super::item_model::dye_block_verts(&mut verts[start..], inst.variant);
     place_into_world(verts, start, inst, render_origin, offset);
 }
 
-/// Place the just-appended model-space verts `[start..]` per `inst.pose`
-/// (offset within the pile first so layered copies turn coherently). Shared
-/// by the dropped cube and chest builders.
 fn place_into_world(
     verts: &mut [Vertex],
     start: usize,
@@ -436,14 +351,10 @@ mod tests {
         );
         assert_eq!(v.len(), 24, "one textured cube = 24 verts");
         assert_eq!(n, 36, "one textured cube = 36 indices");
-        // Cube is centred near pos (+ bob base), not at the origin.
         let cx: f32 = v.iter().map(|vert| vert.pos[0]).sum::<f32>() / v.len() as f32;
         assert!((cx - 10.0).abs() < 0.01, "cube centred on pos.x, got {cx}");
     }
 
-    /// An aimed pose is honoured by the cube kind, not just the sprite: the
-    /// cube sits on the entity centre (no hover), is PITCHED about it, and
-    /// its trail rides the block-atlas sprite stream.
     #[test]
     fn an_aimed_cube_pitches_about_its_centre_and_trails() {
         let pos = WorldPos::new(4.0, 70.0, -3.0);
@@ -501,8 +412,6 @@ mod tests {
 
     #[test]
     fn sprite_item_bakes_an_extruded_slab_not_a_billboard() {
-        // Poppy is a cross-plant -> Sprite render kind: it must emit NOTHING on
-        // the packed stream and an extruded 3D slab on the ItemVertex stream.
         let inst = ItemEntityInstance {
             pos: WorldPos::new(3.0, 10.0, -2.0),
             item: ItemType::Poppy,
@@ -533,19 +442,14 @@ mod tests {
             &mut sv,
             &mut si,
         );
-        // Front + back faces are 12 verts; a real flower silhouette adds side
-        // walls on top. Sequential indices (non-indexed list riding the draw).
         assert!(n > 12, "expected extruded front+back+walls, got {n}");
         assert_eq!(n as usize, sv.len());
         assert_eq!(n as usize, si.len());
-        // The slab is placed at the instance position (plus bob), not the origin.
-        // Bounds midpoint, not vertex mean: wall quads cluster on the silhouette.
         let (min_x, max_x) = sv.iter().fold((f32::MAX, f32::MIN), |(lo, hi), vert| {
             (lo.min(vert.pos[0]), hi.max(vert.pos[0]))
         });
         let cx = (min_x + max_x) * 0.5;
         assert!((cx - 3.0).abs() < 0.01, "slab centred on pos.x, got {cx}");
-        // Spun about Y (spin = 1.0), the flat sprite gains real Z extent.
         let (min_z, max_z) = sv.iter().fold((f32::MAX, f32::MIN), |(lo, hi), vert| {
             (lo.min(vert.pos[2]), hi.max(vert.pos[2]))
         });
@@ -582,7 +486,6 @@ mod tests {
         assert!(per_layer > 12);
         assert_eq!(sv.len(), per_layer * 3, "3-stack = 3 layered slabs");
 
-        // A huge count is capped at 5 layered copies, not 64.
         let huge = ItemEntityInstance { count: 64, ..inst };
         build_item_sprite_entities(
             std::slice::from_ref(&huge),
@@ -615,8 +518,6 @@ mod tests {
             &mut i,
         );
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
-        // Same input -> identical vert/index count, so the cleared+refilled
-        // buffers keep their capacity: rebuilding to the same size never reallocs.
         build_item_entities(
             std::slice::from_ref(&inst),
             petramond_math::math::IVec3::ZERO,
@@ -663,7 +564,6 @@ mod tests {
     fn stack_count_bakes_layered_copies_capped_at_five() {
         let mut v = Vec::new();
         let mut i = Vec::new();
-        // A 3-stack cube bakes 3 layered cubes = 72 verts / 108 indices.
         let three = ItemEntityInstance {
             pos: WorldPos::new(2.0, 5.0, 2.0),
             item: ItemType::Stone,
@@ -682,7 +582,6 @@ mod tests {
         assert_eq!(v.len(), 24 * 3, "3-stack = 3 layered cubes");
         assert_eq!(n, 36 * 3);
 
-        // A huge count is capped at 5 layered copies, not 64.
         let huge = ItemEntityInstance { count: 64, ..three };
         build_item_entities(
             std::slice::from_ref(&huge),
@@ -692,7 +591,6 @@ mod tests {
         );
         assert_eq!(v.len(), 24 * 5, "count capped at 5 layers");
 
-        // count 0 is treated as a single layer (never zero geometry).
         let zero = ItemEntityInstance { count: 0, ..three };
         build_item_entities(
             std::slice::from_ref(&zero),

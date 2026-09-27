@@ -2,15 +2,6 @@ use super::*;
 use crate::renderer::instance_descriptor;
 use crate::uniforms::ShaderParams;
 
-/// Headless validation that the REAL pipeline factory produces internally
-/// consistent pipelines: WGSL parses + passes naga validation, each pass's
-/// vertex attribute formats/locations match its shader's `VsIn`, and the
-/// bind-group layouts match the shaders' declared bindings. This calls the
-/// production `create_pipeline_resources` under a validation error scope and
-/// asserts nothing was reported — so it can never drift from the runtime
-/// pipelines the way a hand-copied descriptor would. Skips cleanly on
-/// machines/CI with no GPU adapter (the interactive demo is where final
-/// visual confirmation happens).
 #[test]
 fn packed_vertex_pipeline_validates() {
     let instance = wgpu::Instance::new(&instance_descriptor());
@@ -35,12 +26,6 @@ fn packed_vertex_pipeline_validates() {
     }))
     .expect("device");
 
-    // Fabricate the minimal external resources `create_pipeline_resources`
-    // binds: a 1x1 Rgba8UnormSrgb texture view for both the block atlas and
-    // the gui atlas (matches the real `Float { filterable: true }` / D2 BGLs),
-    // a filtering sampler, and a uniform buffer sized to `Uniforms`. The
-    // factory never samples or reads these in this test — it only builds bind
-    // groups + pipelines — so 1x1 placeholders are sufficient to validate.
     let tex = crate::gpu_mem::create_texture(
         &device,
         &wgpu::TextureDescriptor {
@@ -59,8 +44,6 @@ fn packed_vertex_pipeline_validates() {
         },
     );
     let atlas_view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-    // A 1-layer D2Array view for the terrain pipeline's tile-array bind (matches the
-    // real `D2Array` BGL). A D2 texture with one layer views fine as D2Array.
     let array_tex = crate::gpu_mem::create_texture(
         &device,
         &wgpu::TextureDescriptor {
@@ -106,9 +89,6 @@ fn packed_vertex_pipeline_validates() {
         let _ = p.get(1);
     }
 
-    // Build EVERY real pipeline through the production factory. Any
-    // shader/layout/vertex-attribute/blend/depth mismatch surfaces as a
-    // captured validation error below.
     let resources = create_pipeline_resources(
         &device,
         &queue,
@@ -147,32 +127,17 @@ fn packed_vertex_pipeline_validates() {
         let _ = ghost.get(1);
     }
 
-    // The model-break decal: its own group(2) layout over the model vertex
-    // stream, and the only pipeline nothing else in this test instantiates.
     let _ = resources.model_break_pipe.get(1);
-    // The skinned body pipeline: a vertex-stage storage palette and an
-    // instance-stepped buffer, which no other pipeline has.
     let _ = resources.skinned_pipe.get(1);
-    // The particle pipelines: instance-stepped rows expanded from
-    // `vertex_index`, with no per-vertex buffer.
     let _ = resources.particle_pipe.get(1);
     let _ = resources.emitter_particle_pipe.get(1);
 
     let err = pollster::block_on(device.pop_error_scope());
     assert!(err.is_none(), "real-pipeline validation error: {err:?}");
-    // Confirm the assumption baked into the packing: tile ids fit the packed
-    // word's tile field (also enforced by the atlas loader at composition time).
     assert!(Tile::count() <= petramond_mesh::MAX_TILES);
-    // Stride sanity: the compressed block vertex is exactly 24 bytes
-    // (unorm8 tint + two packed u32 words).
     assert_eq!(std::mem::size_of::<Vertex>(), 24);
     assert_eq!(std::mem::size_of::<petramond_mesh::TerrainVertex>(), 20);
-    // item3d vertex stride must match its declared attribute layout
-    // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24 = 36 bytes).
     assert_eq!(std::mem::size_of::<crate::item_model::ItemVertex>(), 36);
-    // world-model vertex stride must match ITS declared attribute layout
-    // (pos f32x3 @0, uv f32x2 @12, shade f32 @20, packed light u32 @24,
-    // tint u32 @28 = 32 bytes).
     assert_eq!(std::mem::size_of::<petramond_mesh::ModelVertex>(), 32);
     assert_eq!(std::mem::offset_of!(petramond_mesh::ModelVertex, light), 24);
     assert_eq!(std::mem::offset_of!(petramond_mesh::ModelVertex, tint), 28);

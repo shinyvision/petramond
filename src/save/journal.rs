@@ -1,18 +1,3 @@
-//! Durable save batches: every authoritative write of one save lands on disk
-//! together or not at all.
-//!
-//! A batch is first written whole to `journal.bin` (checksummed, flushed to
-//! disk, then renamed into place), only then applied to the region, level and
-//! player files, and only after every apply succeeded — and every region it
-//! appended to was flushed, once per file, at the end of the batch — is the
-//! journal retired. Region records are appended in place (see
-//! `petramond_region`), so a batch writes what changed, not whole regions.
-//! Opening a world finishes a journal left behind: a crash after the commit
-//! replays the whole batch (region records are replacements, files are whole,
-//! so replaying is idempotent), and a torn journal is discarded, leaving the
-//! previous save intact. A write that fails keeps the journal, and nothing is
-//! committed over it: the next write (or the next open) finishes it first.
-
 use std::io;
 use std::path::{Component, Path};
 
@@ -23,38 +8,29 @@ use super::region::{self, MergePolicy};
 
 const MAGIC: &[u8; 4] = b"PMJ2";
 const NAME: &str = "journal.bin";
-/// The authoritative section store, relative to the world directory.
 const REGION_DIR: &str = "region";
 
-/// One write in a batch.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Entry {
-    /// Section records replacing theirs in the authoritative region file
-    /// `(rx, rz)`.
     Region {
         rx: i32,
         rz: i32,
         records: Vec<(u16, Vec<u8>)>,
     },
-    /// A whole file at a path relative to the world directory.
-    File { path: String, bytes: Vec<u8> },
+    File {
+        path: String,
+        bytes: Vec<u8>,
+    },
 }
 
-/// Stop points a test can make the batch writer halt at, as a crash would.
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Crash {
-    /// The journal file is only partly written.
     TornJournal,
-    /// The journal is committed; nothing is applied.
     AfterCommit,
-    /// Only the first `n` entries are applied.
     MidApply(usize),
 }
 
-/// Write `entries` durably: commit, apply, retire. An error after the commit
-/// leaves the journal in place, and the batch is finished by the next
-/// `write` or [`recover`] — nothing is committed over it.
 pub(super) fn write(dir: &Path, entries: &[Entry]) -> io::Result<()> {
     if entries.is_empty() {
         return Ok(());
@@ -78,8 +54,6 @@ pub(super) fn write_crashing(dir: &Path, entries: &[Entry], crash: Crash) -> io:
     }
 }
 
-/// Finish a batch that was committed but never retired. Returns whether one
-/// was replayed; a torn or unreadable journal is removed.
 pub(super) fn recover(dir: &Path) -> io::Result<bool> {
     let path = dir.join(NAME);
     let bytes = match std::fs::read(&path) {
@@ -106,8 +80,6 @@ fn commit(dir: &Path, entries: &[Entry]) -> io::Result<()> {
 }
 
 fn apply(dir: &Path, entries: &[Entry]) -> io::Result<()> {
-    // Region appends are flushed together once everything is written: one
-    // flush per touched file per batch, all before the journal may retire.
     let mut appended = std::collections::BTreeSet::new();
     for entry in entries {
         match entry {
@@ -130,12 +102,6 @@ fn apply(dir: &Path, entries: &[Entry]) -> io::Result<()> {
     appended.iter().try_for_each(|path| region::sync(path))
 }
 
-/// Merge into a region whose other records must survive. A region file whose
-/// CONTENT is bad is set aside under another name and the merge starts a
-/// new one: no reader can get a record out of it either, so nothing
-/// loadable is lost, the bytes are kept, and one bad file cannot stop the
-/// world from ever saving again. Any other failure to read it is an error —
-/// the records may be fine.
 fn merge_records(path: &Path, records: &[(u16, Vec<u8>)]) -> io::Result<()> {
     match region::merge_region(path, records.iter().cloned(), MergePolicy::Durable) {
         Err(e) if e.kind() == io::ErrorKind::InvalidData => {
@@ -235,7 +201,6 @@ fn decode(bytes: &[u8]) -> Option<Vec<Entry>> {
     r.is_at_end().then_some(entries)
 }
 
-/// A journal only ever names files inside the world directory.
 fn stays_inside(path: &str) -> bool {
     let mut components = Path::new(path).components().peekable();
     components.peek().is_some() && components.all(|c| matches!(c, Component::Normal(_)))

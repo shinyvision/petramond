@@ -1,8 +1,5 @@
 use super::*;
 
-/// A pack may recolour an engine biome (no new id) and ADD a biome under
-/// its own namespaced key, which registers the next id after the engine
-/// range; a bare or unknown engine-namespace key is refused.
 #[test]
 fn packs_may_override_engine_rows_and_add_biomes() {
     let base = std::fs::read_to_string(
@@ -52,8 +49,6 @@ fn packs_may_override_engine_rows_and_add_biomes() {
     }
 }
 
-/// The `trees` object rides the row untouched (worldgen parses it) and an
-/// omitted one reads as absent, not as an empty profile text.
 #[test]
 fn the_trees_field_is_carried_verbatim_and_absent_when_omitted() {
     let base = std::fs::read_to_string(
@@ -85,8 +80,6 @@ fn the_trees_field_is_carried_verbatim_and_absent_when_omitted() {
     assert!(desert(&parse_layers(&[&base, &row("")]).unwrap()).is_none());
 }
 
-/// Every shipped row states its `generation` rules, carried verbatim like
-/// `trees` for worldgen to parse.
 #[test]
 fn every_shipped_row_carries_its_generation_rules() {
     let base = std::fs::read_to_string(
@@ -106,8 +99,6 @@ fn every_shipped_row_carries_its_generation_rules() {
     }
 }
 
-/// The ambient map is validated per entry (namespaced key, density in
-/// range) and a row that omits it drives nothing.
 #[test]
 fn ambient_densities_validate_per_entry() {
     let row = |ambient: &str| {

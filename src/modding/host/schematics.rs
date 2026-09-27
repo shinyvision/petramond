@@ -1,6 +1,3 @@
-//! Schematic calls: reading world-held designs as construction records,
-//! asking a player's client to choose or position one, and anchoring ghosts.
-
 use mod_api::{
     BlockRecord, HostRet, SchematicCall, SchematicCellsData, SchematicInfoData, SchematicLookup,
 };

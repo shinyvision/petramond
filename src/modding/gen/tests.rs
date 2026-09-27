@@ -31,8 +31,6 @@ fn invalid_plan_members_reject_the_whole_generation_output() {
     .is_err());
 }
 
-/// A minimal guest whose init succeeds and whose every dispatch traps —
-/// the "runaway/broken gen mod" for the fallback contract.
 fn trapping_module() -> Module {
     let wat = format!(
         r#"(module
@@ -47,9 +45,6 @@ fn trapping_module() -> Module {
     Module::new(crate::modding::host::engine(), wat.as_bytes()).expect("assemble trap guest")
 }
 
-/// Conflict contract: two mods replacing the same stage → LAST in load
-/// order wins; `RegisterGenerator` claims every stage and later
-/// stage-specific replacements override it per stage.
 #[test]
 fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
     let module = trapping_module();
@@ -71,7 +66,6 @@ fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
         .unwrap();
     assert_eq!(hooks.mods[climate.mod_idx].id, "alpha");
 
-    // Nothing registered = no config = the empty fast path.
     assert!(
         GenHooksBuilder::new(1, ModHealthBoard::default(), FuelBudget::DEFAULT)
             .build()
@@ -79,9 +73,6 @@ fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
     );
 }
 
-/// Failure contract: a trapping replacement falls back to the ENGINE
-/// stage and a trapping feature is skipped — the generated section is
-/// byte-identical to a hookless generator's.
 #[test]
 fn trapping_gen_mod_falls_back_to_the_engine_stage() {
     let module = trapping_module();
@@ -114,9 +105,6 @@ fn trapping_gen_mod_falls_back_to_the_engine_stage() {
     }
 }
 
-/// Health contract: one worker's trap disables the mod for EVERY worker (and
-/// its tick instance, which shares the board) — no thread keeps generating
-/// a mod another thread dropped.
 #[test]
 fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
     let module = trapping_module();
@@ -153,7 +141,6 @@ fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
         "the mod is down session-wide"
     );
     assert_eq!(board.disabled_since(0), vec!["hostile".to_owned()]);
-    // This thread never instantiated the mod and now never will.
     assert!(hooks.replace_terrain(&inputs).is_none());
     assert_eq!(
         board.disabled_count(),

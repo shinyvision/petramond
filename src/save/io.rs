@@ -1,15 +1,3 @@
-//! The write side of a world's save: one writer thread that journals and
-//! applies every queued write, in order.
-//!
-//! The writer never compresses anything on the queue's behalf: section
-//! groups arrive as [`EncodeSlot`]s already deflating on the shared job pool
-//! (see `encode`), so the writer only collects bytes. Every message that is
-//! waiting when the writer turns to the queue joins ONE job, later writes of
-//! the same record, file or region slot replacing earlier ones — so a slow or
-//! failing disk turns a backlog into a single larger batch whose size is
-//! bounded by the distinct records written, not by how long the disk
-//! stalled, and a batch still lands whole or not at all.
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -27,9 +15,7 @@ use super::{colgen, level, region, SectionStore};
 
 type RegionRecords = HashMap<(i32, i32), Vec<(u16, Vec<u8>)>>;
 
-/// Messages from the game thread to the writer.
 pub(super) enum IoMsg {
-    /// One region group of sections, encoding (or encoded) in its slot.
     SaveSections {
         store: SectionStore,
         records: EncodeSlot,
@@ -41,26 +27,16 @@ pub(super) enum IoMsg {
         bytes: Vec<u8>,
     },
     SaveModsJson(Vec<u8>),
-    /// Writes that land on disk together or not at all (see `journal`).
     Batch(Vec<IoMsg>),
     Shutdown,
 }
 
-/// How often a batch that failed to land is tried again while no new write
-/// arrives to prompt it.
 const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Every write received since the last one landed, merged.
 struct Job {
-    /// The newest message folded in: landing the job completes every write
-    /// up to it.
     seq: u64,
-    /// Messages folded in (reported as held while the job fails).
     msgs: u64,
-    /// The authoritative part: lands whole through the journal.
     entries: Vec<Entry>,
-    /// Rebuildable caches riding along; written after the entries land,
-    /// never journaled.
     caches: Vec<CacheWrite>,
 }
 
@@ -79,9 +55,6 @@ impl Job {
         }
     }
 
-    /// Fold message `seq` in. While the job keeps failing (`failing`),
-    /// cache writes are dropped instead: held jobs already cost memory, and
-    /// a cache rebuilds.
     fn absorb(&mut self, seq: u64, msg: IoMsg, dir: &Path, pal: &Palette, failing: bool) {
         self.seq = seq;
         self.msgs += 1;
@@ -120,8 +93,6 @@ impl Job {
                 }
             }
             IoMsg::SaveLevel(bytes) => {
-                // The header being replaced becomes the backup, in the same
-                // batch (see `level`).
                 if let Some(previous) = level::backup_bytes(dir) {
                     self.add_file(level::BACKUP.into(), previous);
                 }
@@ -143,8 +114,6 @@ impl Job {
         }
     }
 
-    /// Records for region `(rx, rz)`, replacing any this job already holds
-    /// for the same slots.
     fn add_region(&mut self, rx: i32, rz: i32, records: Vec<(u16, Vec<u8>)>) {
         let existing = self.entries.iter_mut().find_map(|entry| match entry {
             Entry::Region {
@@ -174,7 +143,6 @@ impl Job {
         }
     }
 
-    /// A whole file, replacing any version of it this job already holds.
     fn add_file(&mut self, path: String, bytes: Vec<u8>) {
         let existing = self.entries.iter_mut().find_map(|entry| match entry {
             Entry::File { path: p, bytes } if *p == path => Some(bytes),
@@ -217,7 +185,6 @@ pub(super) fn write_thread(
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => shutdown = true,
         }
-        // Everything already queued joins the same job.
         received.extend(rx.try_iter());
         for (seq, msg) in received {
             shutdown |= matches!(msg, IoMsg::Shutdown);
@@ -268,7 +235,6 @@ pub(super) fn write_thread(
     }
 }
 
-/// Merge encoded cache records into their region files.
 fn write_cache_sections(region_dir: &Path, records: Vec<(SectionPos, Vec<u8>)>) {
     let mut by_region: RegionRecords = HashMap::new();
     for (pos, bytes) in records {

@@ -1,18 +1,3 @@
-//! The wasmtime side of the host: engine configuration, module cache, the
-//! `host_dispatch` import, and the per-mod store state (RNG streams, the
-//! registration window, diagnostics counters).
-//!
-//! Engine config is part of the determinism contract: NaN
-//! canonicalization ON, no threads, no WASI, no relaxed-SIMD, and FUEL
-//! metering ([`budget`]) for cost diagnostics. Epoch interruption, armed by a
-//! background ticker thread, is the emergency backstop for unbounded loops.
-//!
-//! Call handling is split per ABI domain (one submodule per domain enum of
-//! [`HostCall`]); the switchboard in [`handle_host_call`] gates every call on
-//! its declared legality and routes it on its domain, and each handler
-//! matches its own domain exhaustively. The client-instance surface lives in
-//! [`super::client`].
-
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
@@ -47,43 +32,22 @@ mod sounds;
 pub(in crate::modding) mod tags;
 mod worldgen;
 
-/// How often the background ticker advances the engine epoch.
 const EPOCH_PERIOD: Duration = Duration::from_millis(50);
 
-/// Epochs of GUEST COMPUTE a single dispatch may span before it traps: a
-/// one-minute emergency backstop for an unbounded loop. Fuel thresholds are
-/// diagnostics, so legitimate heavy work continues. Time spent inside
-/// re-entrant host calls is NOT charged — `host_dispatch` re-arms the deadline
-/// with the remaining budget when a host call returns, so a host-side stall
-/// (e.g. a slow storage read) cannot get an innocent mod disabled.
 pub(in crate::modding) const DISPATCH_DEADLINE_EPOCHS: u64 = 1200;
 
-/// Host calls one dispatch may make — the backstop that keeps the watchdog
-/// meaningful now that host-call time is uncharged: a guest spinning on cheap
-/// host calls consumes almost no charged epochs, so the call count is what
-/// bounds it. Orders of magnitude above legitimate use (the heaviest bundled
-/// dispatches make dozens).
 pub(in crate::modding) const DISPATCH_HOST_CALL_MAX: u32 = 65_536;
 
-/// Byte cap for the [`short_debug`] call renderings kept for disable-message
-/// diagnostics.
 pub(in crate::modding) const DIAG_DEBUG_CAP: usize = 160;
 
-/// The most linear memory a wasm32 guest can address.
 pub(in crate::modding) const WASM32_MEMORY_MAX: u64 = 1 << 32;
 
-/// Mirror of the engine's epoch counter (wasmtime does not expose a getter),
-/// advanced in lockstep by the ticker so the host can measure how many epochs
-/// a guest stretch consumed. Diagnostics-grade accuracy: ±1 epoch races with
-/// the ticker are fine.
 static EPOCH_NOW: AtomicU64 = AtomicU64::new(0);
 
 pub(in crate::modding) fn epoch_now() -> u64 {
     EPOCH_NOW.load(Ordering::Relaxed)
 }
 
-/// Advance the engine epoch and its mirror together — the ticker's step, also
-/// how tests simulate host-side stalls without waiting wall time.
 fn advance_epoch(engine: &Engine, ticks: u64) {
     for _ in 0..ticks {
         EPOCH_NOW.fetch_add(1, Ordering::Relaxed);
@@ -96,19 +60,12 @@ pub(in crate::modding) fn test_advance_epochs(ticks: u64) {
     advance_epoch(engine(), ticks);
 }
 
-/// Test-only seam: runs at the top of every host call made by the mod whose
-/// id matches, so a test can simulate a host call stalling for many epochs.
 #[cfg(test)]
 pub(in crate::modding) static HOST_CALL_TEST_HOOK: Mutex<Option<HostCallHook>> = Mutex::new(None);
 
-/// A host-call name and the callback to run when it is reached.
 #[cfg(test)]
 type HostCallHook = (String, fn());
 
-/// The process-wide wasmtime engine, plus its epoch ticker thread. The ticker
-/// only bumps a counter — it never touches the simulation — so determinism is
-/// unaffected; it exists purely so the deadline can fire while the main thread
-/// is stuck inside a guest.
 pub(in crate::modding) fn engine() -> &'static Engine {
     static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
         let mut config = Config::new();
@@ -133,15 +90,12 @@ pub(in crate::modding) fn engine() -> &'static Engine {
     &ENGINE
 }
 
-/// Whether the store is inside its registration window (`mod_init`).
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(in crate::modding) enum Phase {
     Init,
     Run,
 }
 
-/// A registration collected during `mod_init`, applied to the bus/scheduler by
-/// [`super::ModHost::initialize`] after the guest call returns.
 pub(in crate::modding) enum Registration {
     TickSystem {
         stage: mod_api::Stage,
@@ -153,8 +107,6 @@ pub(in crate::modding) enum Registration {
         event: mod_api::EventKind,
         priority: i32,
         handler_id: u32,
-        /// Which events of the kind the handler wants — evaluated before
-        /// every dispatch, so a filtered-out event never crosses.
         filter: mod_api::EventFilter,
     },
     WorldgenFeature {
@@ -174,20 +126,16 @@ pub(in crate::modding) enum Registration {
         callback_id: u32,
     },
     BlockBehavior {
-        /// The namespaced `blocks.json` `behavior` key this mod handles.
         key: String,
         callback_id: u32,
     },
     AiNode {
-        /// The namespaced `mobs.json` brain-row `node` key this mod handles.
         key: String,
         callback_id: u32,
     },
 }
 
 impl Registration {
-    /// Whether this registration targets the worldgen hook config (recorded by
-    /// the MAIN load; accepted-and-ignored on per-thread gen instances).
     pub(in crate::modding) fn is_gen(&self) -> bool {
         matches!(
             self,
@@ -198,53 +146,30 @@ impl Registration {
     }
 }
 
-/// Diagnostics counters (also the observability hooks the contract tests use).
 #[derive(Default, Copy, Clone)]
 pub struct HostStats {
-    /// `host_dispatch` calls that decoded successfully.
     pub host_calls: u64,
-    /// Registrations accepted during the init window.
     pub registered: u64,
-    /// Registration attempts rejected outside the window.
     pub rejected_registrations: u64,
 }
 
-/// Per-mod store data: everything `host_dispatch` can reach without the
-/// scoped [`SimCtx`](crate::events::SimCtx).
 pub(in crate::modding) struct ModStoreData {
     pub mod_id: String,
     world_seed: u32,
     pub phase: Phase,
     pub pending: Vec<Registration>,
-    /// Named deterministic RNG streams: state per key, seeded from
-    /// (world seed, mod id, key) on first use.
     rng: HashMap<String, u64>,
-    /// Cached handles into the guest, set right after instantiation.
     pub memory: Option<Memory>,
     pub alloc: Option<TypedFunc<u32, u32>>,
-    /// How far this instance's linear memory can grow: its module's declared
-    /// maximum, else what wasm32 addresses. A fact of the guest, never a cap.
     pub guest_memory_max: u64,
     pub stats: HostStats,
     pub side: RuntimeSide,
     pub client: Option<ClientStoreData>,
-    /// Watchdog accounting for the current dispatch (see
-    /// [`DISPATCH_DEADLINE_EPOCHS`]): guest-compute epochs still available,
-    /// and the [`epoch_now`] reading when the guest was last (re-)entered.
     deadline_budget: u64,
     deadline_armed_at: u64,
-    /// Host calls made by the current dispatch ([`DISPATCH_HOST_CALL_MAX`]).
     dispatch_host_calls: u32,
-    /// Wall time the current dispatch spent inside host calls — the
-    /// guest/host split for slow-dispatch diagnostics (target
-    /// `petramond::modding::perf`).
     pub(in crate::modding) dispatch_host_wall: std::time::Duration,
-    /// The dispatch's most recent host call as it came over the wire, and
-    /// whether it returned — diagnostics for disable messages, rendered only
-    /// when one is written ([`Self::last_host_call`]): this is set on every
-    /// host call of every mod.
     last_host_call: Option<(Vec<u8>, bool)>,
-    /// Deterministic fuel accounting (see [`budget`]).
     pub(in crate::modding) meter: budget::TickMeter,
 }
 
@@ -281,8 +206,6 @@ impl ModStoreData {
         }
     }
 
-    /// Reset the watchdog accounting for one guest entry; the caller arms the
-    /// store's epoch deadline with the same budget.
     pub(in crate::modding) fn begin_dispatch(&mut self) {
         self.deadline_budget = DISPATCH_DEADLINE_EPOCHS;
         self.deadline_armed_at = epoch_now();
@@ -291,8 +214,6 @@ impl ModStoreData {
         self.last_host_call = None;
     }
 
-    /// A bounded rendering of the dispatch's most recent host call, and
-    /// whether it returned.
     pub(in crate::modding) fn last_host_call(&self) -> Option<(String, bool)> {
         let (request, returned) = self.last_host_call.as_ref()?;
         let call: HostCall = mod_api::decode(request).ok()?;
@@ -303,30 +224,20 @@ impl ModStoreData {
         self.dispatch_host_calls
     }
 
-    /// The world seed this instance was created for — the input the pure
-    /// positional worldgen queries need on a detached (`SimCtx`-less) instance.
     pub(super) fn world_seed(&self) -> u32 {
         self.world_seed
     }
 
-    /// Move this store beside another world (a launched client instance
-    /// entering or leaving a presentation). RNG streams already drawn keep going.
     pub(in crate::modding) fn set_world_seed(&mut self, seed: u32) {
         self.world_seed = seed;
     }
 
-    /// Record a registration. The `mod_init` window itself is enforced by
-    /// the switchboard from the call's declared scope, before any handler
-    /// runs.
     pub(super) fn register(&mut self, reg: Registration) -> HostRet {
         self.stats.registered += 1;
         self.pending.push(reg);
         HostRet::Unit
     }
 
-    /// Refuse a registration (out of window, or a shape the host cannot
-    /// honour), counting it so the per-mod stats show a pack whose init is
-    /// misfiring.
     pub(super) fn refuse_registration(&mut self, code: ErrorCode, why: String) -> HostRet {
         self.stats.rejected_registrations += 1;
         HostRet::error(code, why)
@@ -344,9 +255,6 @@ impl ModStoreData {
     }
 }
 
-/// Intern a mod id so engine-side [`crate::events::DamageSource::Mod`] can
-/// carry it as a `Copy` `&'static str`. Bounded: one leaked entry per distinct
-/// pack id per process, deduplicated across sessions/tests.
 pub(super) fn intern_mod_id(id: &str) -> &'static str {
     static IDS: LazyLock<Mutex<HashSet<&'static str>>> =
         LazyLock::new(|| Mutex::new(HashSet::new()));
@@ -361,9 +269,6 @@ pub(super) fn intern_mod_id(id: &str) -> &'static str {
     }
 }
 
-/// Seed for a mod's named RNG stream: FNV-1a over `mod_id NUL key`, mixed with
-/// the world seed. Deterministic per (world, mod, key) and decorrelated between
-/// streams.
 fn stream_seed(world_seed: u32, mod_id: &str, key: &str) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
     for b in mod_id.bytes().chain([0u8]).chain(key.bytes()) {
@@ -372,7 +277,6 @@ fn stream_seed(world_seed: u32, mod_id: &str, key: &str) -> u64 {
     h ^ (world_seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
 }
 
-/// One SplitMix64 step (the same finalizer as [`crate::entity::hash01`]).
 fn splitmix_next(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     let mut z = *state;
@@ -381,8 +285,6 @@ fn splitmix_next(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// `{value:?}` truncated at roughly `cap` bytes — safe on variants carrying
-/// large payloads (an image call would otherwise Debug-print byte by byte).
 pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -> String {
     struct Bounded {
         out: String,
@@ -396,8 +298,6 @@ pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -
                 .find(|&i| s.is_char_boundary(i))
                 .unwrap_or(0);
             self.out.push_str(&s[..take]);
-            // Reporting an error aborts the formatting walk right here, so a
-            // multi-megabyte payload never renders past the cap.
             if take < s.len() {
                 Err(std::fmt::Error)
             } else {
@@ -415,16 +315,6 @@ pub(in crate::modding) fn short_debug(value: &dyn std::fmt::Debug, cap: usize) -
     w.out
 }
 
-/// THE host-call switchboard. Every call first passes [`admit`] — the gates
-/// derived from the call's declared [`Legality`](mod_api::Legality) — and is
-/// then routed on its DOMAIN to the handler that matches that domain's enum
-/// exhaustively, so a new call cannot compile without a handler arm and
-/// cannot be misrouted. Calls that need the live simulation reach it through
-/// the [`guards`] wrappers (`sim_read` shared, `sim_query`/`sim_call`/
-/// `sim_mutate` exclusive); everything else lives on the store.
-///
-/// Takes any domain call (`calls::GetBlock { .. }`) as well as a wrapped
-/// [`HostCall`].
 pub(in crate::modding) fn handle_host_call(
     data: &mut ModStoreData,
     call: impl Into<HostCall>,
@@ -443,8 +333,6 @@ pub(in crate::modding) fn handle_host_call(
     let client = data.side == RuntimeSide::Client;
     match call {
         HostCall::Core(call) => core::handle_core_call(data, call),
-        // The ray a sim instance casts, cast against the replica on a client
-        // instance: aim, a camera kept out of walls, what the view points at.
         HostCall::Block(mod_api::BlockCall::Raycast {
             from,
             dir,
@@ -454,10 +342,6 @@ pub(in crate::modding) fn handle_host_call(
         HostCall::Block(call) => blocks::handle_block_call(&data.mod_id, call),
         HostCall::Entity(call) => entities::handle_entity_call(&data.mod_id, call),
         HostCall::Player(call) => player::handle_player_call(&data.mod_id, call),
-        // A client instance's body calls are PREDICTIONS against its own
-        // mirror (and its actor is the prediction dispatch's snapshot), so
-        // they land on the client store; the server answers them
-        // authoritatively. Both handlers match the whole domain.
         HostCall::Body(call) if client => super::client::handle_body_call(data, call),
         HostCall::Body(call) => player::handle_body_call(&data.mod_id, call),
         HostCall::Sound(call) => sounds::handle_sound_call(&data.mod_id, call),
@@ -481,14 +365,8 @@ pub(in crate::modding) fn handle_host_call(
     }
 }
 
-/// The legality gates, all read from the call's declared
-/// [`Legality`](mod_api::Legality): the instance side, the `mod_init`
-/// window, and the read-only dispatch. A refusal here never reaches a
-/// handler.
 fn admit(data: &mut ModStoreData, call: &HostCall) -> Result<(), HostRet> {
     let legality = call.legality();
-    // A client instance on the shell runs beside no world: only the calls
-    // declared legal there reach it.
     let shell = data.client.as_ref().is_some_and(|client| client.shell);
     if !legality.sides.admits(data.side, shell) {
         let why = if shell && legality.sides.allows(data.side) {
@@ -524,11 +402,6 @@ fn admit(data: &mut ModStoreData, call: &HostCall) -> Result<(), HostRet> {
     Ok(())
 }
 
-/// Build the linker exposing the single guest import,
-/// `env::host_dispatch(ptr, len) -> u64` (packed reply `ptr << 32 | len`).
-/// Reply buffers are allocated IN the guest via its exported `mod_alloc` —
-/// wasmtime host functions may re-enter the calling instance — and freed by
-/// the guest once decoded.
 pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
     let mut linker = Linker::new(engine());
     linker
@@ -540,18 +413,11 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     .data()
                     .memory
                     .ok_or_else(|| wasmtime::Error::msg("host_dispatch during instantiation"))?;
-                // Bounds-check BEFORE sizing the copy so a hostile length
-                // can't balloon a host allocation; a lying guest just traps.
                 if len as usize > memory.data_size(&caller) {
                     return Err(wasmtime::Error::msg("host call exceeds guest memory"));
                 }
                 let mut buf = vec![0u8; len as usize];
                 memory.read(&caller, ptr as usize, &mut buf)?;
-                // A call the host cannot decode is a broken ABI, not a bad
-                // argument: trap (=> the mod is disabled), don't guess. A
-                // well-framed call past the enum's end comes from a guest
-                // built against a newer ABI minor: decline it with
-                // `Unsupported` instead.
                 let call = match mod_api::decode_host_call(&buf) {
                     Ok(Decoded::Known(call)) => Some(call),
                     Ok(Decoded::Unknown { domain, variant }) => {
@@ -569,9 +435,6 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 };
                 let request_len = buf.len();
                 {
-                    // Charge the guest stretch since the last (re-)arm against
-                    // the wall-clock backstop; host execution below is not
-                    // charged there (it pays in fuel instead).
                     let now = epoch_now();
                     let data = caller.data_mut();
                     data.dispatch_host_calls += 1;
@@ -597,8 +460,6 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 caller.data_mut().dispatch_host_wall += host_started.elapsed();
                 let bytes = mod_api::encode(&ret)
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
-                // Host work is metered in the guest's own currency: a call
-                // costs a base plus (deterministic sides) its bytes.
                 let cost = budget::host_call_fuel(caller.data().side, request_len, bytes.len());
                 let fuel = caller.get_fuel()?;
                 caller.set_fuel(fuel.saturating_sub(cost).max(1))?;
@@ -606,9 +467,6 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     caller.data().alloc.clone().ok_or_else(|| {
                         wasmtime::Error::msg("host_dispatch during instantiation")
                     })?;
-                // Host time is not the mod's fault: re-arm the deadline with
-                // the remaining guest budget before re-entering guest code
-                // (the reply-staging alloc below is already guest code).
                 let budget = {
                     let data = caller.data_mut();
                     if let Some((_, returned)) = &mut data.last_host_call {

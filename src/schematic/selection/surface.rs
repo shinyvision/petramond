@@ -42,7 +42,6 @@ impl FaceRect {
     }
 }
 
-/// One connected, coplanar piece of the selection boundary, including its holes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SelectionFace {
     pub axis: usize,
@@ -79,7 +78,6 @@ impl SelectionFace {
     }
 }
 
-/// Cached boundary geometry; its cost depends on box fragmentation, never volume.
 #[derive(Default)]
 pub struct SelectionSurface {
     pub(super) faces: Vec<SelectionFace>,

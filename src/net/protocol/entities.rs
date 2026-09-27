@@ -25,7 +25,6 @@ use crate::player::PlayerId;
 
 use super::{ItemStateRow, MobStateRow, PlayerStateRow};
 
-/// A replicated entity row with a stable identity.
 pub trait EntityRow: Clone {
     type Id: Copy + Eq + Ord + std::fmt::Debug;
     fn entity_id(&self) -> Self::Id;
@@ -52,21 +51,12 @@ impl EntityRow for PlayerStateRow {
     }
 }
 
-/// A selection of rows out of a table shared by every recipient of a tick
-/// window. The server builds each row ONCE per window no matter how many
-/// connections track the entity; a recipient's set is a refcount bump plus
-/// its own index list. On the wire it is just the selected rows, in order,
-/// and a decoded set owns its rows outright.
 pub struct RowSet<R> {
     table: Arc<[R]>,
     picks: Vec<u32>,
 }
 
 impl<R> RowSet<R> {
-    /// The rows of `table` at `picks`, in `picks` order.
-    ///
-    /// # Panics
-    /// If a pick is out of `table`'s range.
     pub fn select(table: Arc<[R]>, picks: Vec<u32>) -> Self {
         assert!(
             picks.iter().all(|&i| (i as usize) < table.len()),
@@ -89,10 +79,9 @@ impl<R> RowSet<R> {
 }
 
 impl<R: Clone> RowSet<R> {
-    /// Keep the rows `keep` accepts, letting it rewrite each in place — the
-    /// transport's id remap. A decoded set (sole owner of its table, picking
-    /// every row in order) is rewritten where it lies and loses rejected rows
-    /// from its picks alone; a shared selection detaches from its table.
+    /// Rewrite rows in place when `keep` accepts them; that's the transport id remap trick.
+    /// If we own the whole table in order, the rewrite happens in place and rejects just drop out
+    /// of picks. A shared selection detaches from the table.
     pub fn retain_mut(&mut self, mut keep: impl FnMut(&mut R) -> bool) {
         let whole = self.picks.len() == self.table.len()
             && self.picks.iter().enumerate().all(|(i, &p)| p as usize == i);
@@ -162,18 +151,10 @@ impl<'de, R: Deserialize<'de>> Deserialize<'de> for RowSet<R> {
     }
 }
 
-/// One entity kind's replication to one recipient for one tick window.
-/// Applied in field order: despawns, then spawns, then updates.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EntityLane<R, K> {
-    /// Ids that left the recipient's interest since its last batch — out of
-    /// range, or gone from the world. Sorted.
     pub despawned: Vec<K>,
-    /// Full rows of entities that entered the recipient's interest this
-    /// window: the client seeds them fresh (no interpolation from a previous
-    /// row, animations at full weight).
     pub spawned: RowSet<R>,
-    /// Rows of entities the recipient already tracks, as of this window.
     pub updated: RowSet<R>,
 }
 
@@ -187,8 +168,6 @@ impl<R, K> Default for EntityLane<R, K> {
     }
 }
 
-/// Plain rows become UPDATES — the client treats an update for an id it does
-/// not hold as a spawn, so a hand-built lane of rows reads naturally.
 impl<R, K> From<Vec<R>> for EntityLane<R, K> {
     fn from(rows: Vec<R>) -> Self {
         EntityLane {
@@ -200,12 +179,10 @@ impl<R, K> From<Vec<R>> for EntityLane<R, K> {
 }
 
 impl<R, K> EntityLane<R, K> {
-    /// Every row this lane carries: spawns first, then updates.
     pub fn iter(&self) -> impl Iterator<Item = &R> + '_ {
         self.spawned.iter().chain(self.updated.iter())
     }
 
-    /// How many rows (spawns + updates) this lane carries.
     pub fn len(&self) -> usize {
         self.spawned.len() + self.updated.len()
     }
@@ -216,9 +193,6 @@ impl<R, K> EntityLane<R, K> {
 }
 
 impl<R: Clone, K> EntityLane<R, K> {
-    /// The transport's id remap over both row lists (see
-    /// [`RowSet::retain_mut`]). A dropped spawn's later updates drop the same
-    /// way, and a despawn for an id the client never held is a no-op.
     pub fn retain_rows_mut(&mut self, mut keep: impl FnMut(&mut R) -> bool) {
         self.spawned.retain_mut(&mut keep);
         self.updated.retain_mut(&mut keep);
@@ -226,8 +200,6 @@ impl<R: Clone, K> EntityLane<R, K> {
 }
 
 impl<R: EntityRow> EntityLane<R, R::Id> {
-    /// Move `set` on by this lane as a store adopts it: despawns, then
-    /// spawns, then updates.
     pub fn apply_to(&self, set: &mut BTreeMap<R::Id, R>) {
         for id in &self.despawned {
             set.remove(id);
@@ -237,13 +209,11 @@ impl<R: EntityRow> EntityLane<R, R::Id> {
         }
     }
 
-    /// Fold the NEXT window's lane into this one, so applying the result
-    /// equals applying both in order: ids despawned by `newer` lose their
-    /// rows here, every row is the latest one per id, and an entity that
-    /// (re)entered interest anywhere in the span stays a spawn. How the
-    /// client collapses a backlog it cannot replay window by window.
+    /// Fold `newer`'s lane into this one, same effect as applying both in order.
+    /// Ids `newer` despawns disappear here too, and rows collapse to the latest per id. An id that
+    /// dropped out and came back during the span is still a spawn, not an update.
+    /// That's what lets a client skip past a backlog it never got to replay window by window.
     pub fn absorb(&mut self, newer: Self) {
-        // Per id: the newest row, and whether it entered interest in the span.
         let mut rows: BTreeMap<R::Id, (R, bool)> = BTreeMap::new();
         for row in self.spawned.iter() {
             rows.insert(row.entity_id(), (row.clone(), true));

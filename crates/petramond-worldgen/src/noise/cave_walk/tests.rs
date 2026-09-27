@@ -75,7 +75,6 @@ fn walks_are_bounded_and_independent_of_the_gather_window() {
                 (center[1] + y) as f64,
                 center[2] as f64,
             ];
-            // Positive distances can be culled; open space and its lining cannot.
             assert_eq!(small.at(p).min(0.4), large.at(p).min(0.4));
             open += usize::from(small.at(p) < 0.0);
         }

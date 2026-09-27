@@ -1,36 +1,30 @@
-//! Data-driven Blockbench (`.bbmodel`) BLOCKS — the chunk-meshed, world-placed kind,
-//! the counterpart to the legacy atlas-cube blocks rather than to mobs.
+//! Data-driven Blockbench (`.bbmodel`) blocks: the chunk-meshed, world-placed kind, counterpart
+//! to the legacy atlas-cube blocks rather than to mobs.
 //!
-//! A bbmodel block is authored like a mob (cube elements + per-face UVs + an embedded
-//! texture) but is a *block*: baked into the chunk mesh at remesh, lit at mesh-time, and
-//! broken/collided with per cell exactly like a legacy block. The only thing it can't
-//! share with the legacy packed path is its texturing — bbmodel faces carry arbitrary
-//! sub-rectangle UVs, which the tile-packed vertex + fixed atlas can't express — so model
-//! geometry rides a second, explicit-UV vertex stream in the chunk mesh and samples a
-//! combined `ModelAtlas` instead of the block atlas.
+//! A bbmodel block is authored like a mob (cubes, per-face UVs, an embedded texture) but behaves
+//! like a block. It is baked into the chunk mesh, lit at mesh time, and broken and collided per
+//! cell like a legacy block. Only the texturing differs: its faces carry arbitrary sub-rectangle
+//! UVs that the tile-packed vertex can't express, so model geometry uses a second, explicit-UV
+//! vertex stream and samples a combined `ModelAtlas`.
 //!
 //! # Three layers
 //!
-//! 1. [`BlockModel`] — the CACHED parse: cube geometry (model space) + the decoded
-//!    texture. This is the expensive step (`serde_json` + base64 + PNG decode), compiled
-//!    once into a `.llblock` (see [`crate::asset_cache`]) and reused.
-//! 2. `ModelAtlas` — all kinds' textures packed into one sheet, with a per-kind UV
-//!    transform, built once from the cached models. Shared by the off-thread mesher (UV
-//!    remap) and the renderer (GPU upload).
-//! 3. [`ModelInstance`] — the runtime bake derived from the cached model + its data row:
-//!    the cell footprint, the cubes mapped into footprint space (with atlas UVs) and
-//!    SPLIT per occupied cell, and each cell's collision + selection box. Cheap, so it
-//!    lives outside the cache — tweaking the footprint or collision needs no cache bump.
+//! 1. [`BlockModel`] is the cached parse: cube geometry plus the decoded texture. Parsing is
+//!    expensive, so it is compiled once into a `.llblock` (see [`crate::asset_cache`]).
+//! 2. `ModelAtlas` packs every kind's texture into one sheet with a per-kind UV transform. The
+//!    mesher uses it for UV remap and the renderer uploads it.
+//! 3. [`ModelInstance`] is the runtime bake from the cached model and its data row: the cell
+//!    footprint, the cubes split per occupied cell, and each cell's collision and selection box.
+//!    It is cheap, so it lives outside the cache and footprint tweaks need no cache bump.
 //!
 //! # Multi-block
 //!
-//! A model larger than one cell (the workbench is 2×2×1) declares its `cells` footprint
-//! in its data row; the bake fits the model into that cell box (uniform scale, X/Z
-//! centred, resting on the floor) and assigns each cube to the cell containing its
-//! centre. In the world every footprint cell holds the block id; the per-chunk
-//! `model_cells` map records authored cell offsets, and `model_facings` records placed
-//! orientation. Placement gates the whole footprint clear, breaking any cell breaks the
-//! group, and each cell meshes only its own cubes + collides with its own boxes.
+//! A model larger than one cell (the workbench is 2×2×1) declares a `cells` footprint in its data
+//! row. The bake scales the model uniformly into that box, centred on X/Z and resting on the
+//! floor, and gives each cube to the cell holding its centre. Every footprint cell holds the
+//! block id; the per-chunk `model_cells` map records authored offsets and `model_facings` the
+//! placed orientation. Placement needs the whole footprint clear, and breaking any cell breaks
+//! the group. Each cell meshes and collides with only its own cubes and boxes.
 
 use crate::facing::Facing;
 
@@ -71,25 +65,12 @@ use compiled::models;
 use geometry::{box_corners, cell_of, clip_to_cell, posed_cube_bounds, union_clip_to_cell};
 use placement::oriented_cell_instance;
 
-/// Canonical bbmodel orientation: Blockbench model fronts face `-Z` (North).
-/// Old model placements that predate per-cell facing read as this unrotated orientation.
 pub const DEFAULT_MODEL_FACING: Facing = Facing::North;
 
-/// The cell-KV key carrying a model block's PER-INSTANCE parts mask (4 bytes,
-/// little-endian): bit `i` shows the row's `parts[i]`.
-///
-/// It rides cell KV rather than the cell-state store for two reasons that are
-/// the same reason: the KV lane already replicates, persists, re-meshes its
-/// section on a write, and dies with the block — and `ShapeState` is four
-/// bytes wide and read for EVERY cell in the mesher's hot neighbour scan.
 pub const PARTS_KV_KEY: &str = "petramond:parts";
 
-/// How many optional parts one model row may declare — the width of the mask.
 pub const MAX_MODEL_PARTS: usize = 32;
 
-/// A model cell's per-cell state: its authored footprint offset plus the
-/// placed facing. Absence decodes to the footprint origin with the canonical
-/// facing (both encode to zero bytes).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ModelCellState {
     pub offset: [u8; 3],

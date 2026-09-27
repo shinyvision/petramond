@@ -1,18 +1,3 @@
-//! The per-tick riding pass — the server half of `mob::riding`.
-//!
-//! Runs inside the Mobs stage, right after the mobs moved: it applies the
-//! engine-owned dismount valves (sneak gesture, dead/vanished mount, dead,
-//! sleeping, spectator, or departed rider), publishes completed detach transitions,
-//! reconciles each session's `mount` mirror, and slaves every rider's player
-//! to its seat.
-//! Mount/dismount POLICY stays with mods (`MobMount`/`BlockMount`/`MobDismount`
-//! HostCalls write the same registry); this pass owns only the physical consequences.
-//!
-//! A mounted session's own movement integration is skipped in
-//! `tick_movement`; its movement INTENT still arrives every tick and is
-//! published on the world (`publish_player_inputs`) so a driving mod can read
-//! it back through the `PlayerInput` HostCall.
-
 use crate::events::PostEvent;
 use crate::mob::riding::{
     dismount_footing_safe, dismount_spot, player_body_free, player_body_known_free, seat_world_pos,
@@ -23,18 +8,10 @@ use petramond_math::math::Vec3;
 
 use super::game::ServerGame;
 
-/// Autosave may search farther than an interactive dismount, but remains
-/// strictly bounded per mounted session. A miss defers that player's write.
 const SAVE_DISMOUNT_RADIUS: i32 = 8;
 const SAVE_DISMOUNT_DY: [i32; 9] = [0, 1, -1, 2, -2, 3, -3, 4, -4];
 
 impl ServerGame {
-    /// Publish every session's movement intent AND state snapshot for this
-    /// tick on the world — the read models behind the `PlayerInput` and
-    /// `Players` HostCalls. Intents are decomposed into the player's own yaw
-    /// frame with the client's exact wish basis (forward = `(sin yaw, cos
-    /// yaw)`, right = `(-cos yaw, sin yaw)`), gameplay-gated like the intents
-    /// `tick_movement` integrates.
     pub fn publish_player_inputs(&mut self) {
         let inputs = self
             .sessions
@@ -60,8 +37,6 @@ impl ServerGame {
             })
             .collect();
         self.world.set_player_inputs(inputs);
-        // Session storage order changes with swap_remove joins/leaves; the
-        // roster SORTS by id so the ABI's "session-id order" stays true.
         let operators: Vec<bool> = (0..self.sessions.len())
             .map(|s| self.is_operator(s))
             .collect();
@@ -86,11 +61,6 @@ impl ServerGame {
                 held: sess.selected_item(),
                 held_count: sess.player.inventory.selected().map_or(0, |st| st.count),
                 off_held: sess.player.inventory.off_hand().map(|st| st.item),
-                // The mining LEVEL is read live (the same overlay state the
-                // remote rows derive the arm-swing level from; instant
-                // blocks read as not mining). The one-shots publish-and-
-                // clear: an edge lands on exactly one roster, one tick after
-                // its stage latched it, which the eased pose lane hides.
                 swing: mod_api::HandSwing {
                     mining: sess.sim.mining.overlay().is_some(),
                     ..std::mem::take(&mut sess.replication.swing_events)
@@ -103,12 +73,7 @@ impl ServerGame {
         self.world.set_player_roster(roster);
     }
 
-    /// The riding pass (see module docs). Order matters: valves first, then
-    /// publish completed detaches, reconcile mirrors (physical consequences),
-    /// then slave riders to the moved mobs.
     pub fn tick_riding(&mut self) {
-        // Engine dismount valves, session side: the sneak RISING EDGE while
-        // mounted is the get-off gesture; death and spectator shed the seat.
         for s in 0..self.sessions.len() {
             let id = self.sessions[s].id.0;
             let sneak = self.sessions[s].sneaking();
@@ -126,12 +91,6 @@ impl ServerGame {
             }
         }
 
-        // Registry-side valves: a mount whose target is gone (dead mob), or
-        // whose player has no session anymore (left), detaches. A pose ANCHOR
-        // has no target to die — the engine deliberately doesn't know what
-        // furniture it belongs to; the owning mod releases sitters when its
-        // block breaks, and the session-side valves above stay the safety
-        // net.
         let stale: Vec<u8> = self
             .world
             .riding()
@@ -152,9 +111,6 @@ impl ServerGame {
 
         self.publish_dismounted();
 
-        // Reconcile each session's physical mirror, then slave riders to their
-        // seats. Events come from the registry transition above, not from this
-        // later observation, so even sub-tick mount/dismount pairs are visible.
         for s in 0..self.sessions.len() {
             let id = self.sessions[s].id.0;
             let now = self.world.riding().mount_of(id);
@@ -168,9 +124,6 @@ impl ServerGame {
         }
     }
 
-    /// Move completed registry transitions onto the event bus. The remote
-    /// leave path also calls this before an id can be recycled, so a headless
-    /// server retains the notification while it has no sessions or ticks.
     pub fn publish_dismounted(&mut self) {
         let detached: Vec<_> = self.world.riding_mut().drain_dismounted().collect();
         for (player, mount) in detached {
@@ -181,9 +134,6 @@ impl ServerGame {
         }
     }
 
-    /// Detach one session before it is persisted and removed. The registry
-    /// transition is authoritative; the session mirror only decides whether
-    /// the body needs physical dismount placement before saving.
     pub fn detach_departing_session(&mut self, s: usize) {
         let id = self.sessions[s].id.0;
         self.world.riding_mut().dismount(id);
@@ -193,14 +143,6 @@ impl ServerGame {
         self.publish_dismounted();
     }
 
-    /// Clone one player's persistent state. Riding itself is transient, so a
-    /// mounted body must be encoded at a stream-final, collision-free detached
-    /// position rather than its seat-slaved transform. This moves only the
-    /// clone: autosave leaves the live attachment and player untouched.
-    ///
-    /// `None` means no such position was provable inside the bounded search.
-    /// The caller must defer this player's write, retaining the last complete
-    /// save (or letting a never-saved player use fresh-spawn restore policy).
     pub fn player_snapshot_for_save(
         &self,
         s: usize,
@@ -218,15 +160,11 @@ impl ServerGame {
         Some(snapshot)
     }
 
-    /// Pin one rider's player to its seat on the mount's post-tick pose. The
-    /// slaved body has no physics of its own: velocity zeroes, the fall
-    /// tracker re-anchors every tick (leaving a boat mid-air is a fresh fall
-    /// from there), and grounding is nominal.
     fn slave_rider_to_seat(&mut self, s: usize, m: Mount) {
         let pos = match m.target {
             MountTarget::Mob(mob_id) => {
                 let Some(mob) = self.world.mobs().get(mob_id) else {
-                    return; // vanished this tick; the next pass detaches
+                    return;
                 };
                 let d = crate::mob::def(mob.kind);
                 let Some(&seat) = d.seats.get(m.seat as usize) else {
@@ -245,18 +183,11 @@ impl ServerGame {
         sess.sim.pending_splash = 0.0;
     }
 
-    /// Stand a freshly dismounted player somewhere sensible: the first
-    /// collision-free spot beside where they sat (right, left, behind, ahead
-    /// of the facing, at seat height or one block up), preferring safe footing;
-    /// nowhere free = stay put (they'll swim or stand where the mount was).
-    /// Dead/spectator riders skip placement (respawn/noclip owns them).
     fn place_dismounted_player(&mut self, s: usize) {
         let sess = &self.sessions[s];
         if sess.player.health() <= 0 || sess.player.is_spectator() {
             return;
         }
-        // Solid entities — the just-left mount's hull first among them — are
-        // as blocking as terrain for the landing spot.
         let obstacles = self.world.mobs().solid_obstacles();
         if let Some(feet) = self.dismount_spot_for(&sess.player, &obstacles) {
             self.sessions[s].player.teleport(feet);
@@ -276,11 +207,6 @@ impl ServerGame {
         )
     }
 
-    /// Persistence first tries the ordinary predicted dismount geometry, then
-    /// expands through deterministic horizontal rings around the seat. Every
-    /// candidate must read only stream-final terrain and clear all dynamic
-    /// solids. Interactive dismount remains the deliberately smaller eight-
-    /// probe rule above; this search only chooses a detached save snapshot.
     fn save_dismount_spot_for(
         &self,
         player: &Player,

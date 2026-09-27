@@ -8,8 +8,6 @@ struct Node {
     end: usize,
 }
 
-/// Preorder bounds permit stack-free queries over arbitrarily shaped batches.
-/// Leaves retain exact ellipsoid evaluation; only disjoint subtrees are skipped.
 #[derive(Default)]
 pub(super) struct Index(Vec<Node>);
 
@@ -26,8 +24,6 @@ impl Index {
         let mut bounds = [[i32::MAX; 3], [i32::MIN; 3]];
         for cut in cuts.iter() {
             for (axis, (center, extent)) in cut.center.into_iter().zip(cut.extent).enumerate() {
-                // Outward integer rounding keeps boundary samples inside despite
-                // floating-point subtraction at an ellipsoid's support boundary.
                 bounds[0][axis] = bounds[0][axis].min((center - extent).floor() as i32);
                 bounds[1][axis] = bounds[1][axis].max((center + extent).ceil() as i32);
             }

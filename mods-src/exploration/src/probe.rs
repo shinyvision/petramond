@@ -36,31 +36,14 @@ use std::hash::Hash;
 
 use mod_sdk::*;
 
-/// A positional host query, reply parallel to the request.
 pub(crate) type Query<T> = fn(Vec<[i32; 3]>) -> Vec<T>;
 
-/// Run one batched host query, split into ABI-sized pieces by
-/// [`paged`], or `None` when the host answered short. A refused or truncated
-/// reply is not a positional answer, so nothing may decide from it.
-///
-/// Every real section fits in a single crossing — the split exists so a
-/// pathological one degrades into a second call instead of having the host
-/// REJECT the batch, which would stop the pack generating anything at all, or
-/// having a cap TRUNCATE it, which drops candidates by list position and lets a
-/// cell that is about to lose to a giant displace a legitimate floor.
 pub(crate) fn ask<T>(positions: Vec<[i32; 3]>, call: Query<T>) -> Option<Vec<T>> {
     let want = positions.len();
     let reply = paged(positions, call);
     (reply.len() == want).then_some(reply)
 }
 
-/// Positional terrain answers, keyed by cell and grown over several asks.
-///
-/// Answers are looked up by POSITION, never by reply index, so a later ask
-/// can never shift an earlier answer onto a different cell. A cell never
-/// asked about is UNKNOWN (`None`), and a refused batch makes every cell
-/// unknown: a caller that cannot see the world must not decide as if it
-/// were open.
 pub(crate) struct TerrainReads {
     query: Query<TerrainSpace>,
     answers: FxHashMap<[i32; 3], TerrainSpace>,
@@ -68,13 +51,10 @@ pub(crate) struct TerrainReads {
 }
 
 impl TerrainReads {
-    /// Reads answered by the host's `terrain_space_at`.
     pub(crate) fn new() -> TerrainReads {
         TerrainReads::with_query(terrain_space_at)
     }
 
-    /// Reads answered by `query` — the host in play, a synthetic terrain in
-    /// tests.
     pub(crate) fn with_query(query: Query<TerrainSpace>) -> TerrainReads {
         TerrainReads {
             query,
@@ -83,9 +63,6 @@ impl TerrainReads {
         }
     }
 
-    /// Ask about every cell not already answered, in one (split) crossing.
-    /// Duplicates and answered cells cost nothing. `false` when the host
-    /// answered short, after which every read answers `None`.
     pub(crate) fn ask(&mut self, cells: impl IntoIterator<Item = [i32; 3]>) -> bool {
         if self.failed {
             return false;
@@ -111,9 +88,6 @@ impl TerrainReads {
         }
     }
 
-    /// [`ask`](Self::ask) about only the cells outside the dispatching
-    /// section: inside it the snapshot is authoritative and a probe would be
-    /// a crossing bought for nothing.
     pub(crate) fn ask_unseen(
         &mut self,
         ctx: &GenCtx,
@@ -122,31 +96,24 @@ impl TerrainReads {
         self.ask(cells.into_iter().filter(|&c| ctx.block(c).is_none()))
     }
 
-    /// The answer for `c`, or `None` when it was never asked or the host
-    /// refused.
     pub(crate) fn space(&self, c: [i32; 3]) -> Option<TerrainSpace> {
         self.answers.get(&c).copied()
     }
 
-    /// Solid (`Some(true)`), open or fluid (`Some(false)`), or unknown.
     #[cfg(test)]
     pub(crate) fn solid(&self, c: [i32; 3]) -> Option<bool> {
         self.space(c).map(|s| s == TerrainSpace::Solid)
     }
 
-    /// Known ROCK: what a plant rests on or hangs from.
     pub(crate) fn rock(&self, c: [i32; 3]) -> bool {
         self.space(c) == Some(TerrainSpace::Solid)
     }
 
-    /// Known free ROOM. A fluid cell is neither rock nor room.
     pub(crate) fn free(&self, c: [i32; 3]) -> bool {
         self.space(c) == Some(TerrainSpace::Air)
     }
 }
 
-/// How far past the dispatched section a pass can be authorised from:
-/// `xz` blocks on every side, `down` below the floor and `up` above the roof.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct Pad {
     pub(crate) xz: i32,
@@ -155,7 +122,6 @@ pub(crate) struct Pad {
 }
 
 impl Pad {
-    /// The inclusive world box this pad spans around the section at `origin`.
     pub(crate) fn around(self, origin: [i32; 3]) -> ([i32; 3], [i32; 3]) {
         (
             [
@@ -172,9 +138,6 @@ impl Pad {
     }
 }
 
-/// Can biome `ours` own a cell within `pad` of the section at `origin`? One
-/// bounded crossing that does not grow with the candidate count, and
-/// conservative in the safe direction: `true` only means "do the real work".
 pub(crate) fn in_reach(
     ours: u8,
     origin: [i32; 3],
@@ -185,13 +148,9 @@ pub(crate) fn in_reach(
     biomes_in_box(lo, hi).contains(&ours)
 }
 
-/// A section needs a fact another worker is still deriving: the section is
-/// dispatched again once it is published.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Deferred;
 
-/// The shared memo's lease protocol, held as values so [`settle`] runs over
-/// a fake store in tests.
 #[derive(Copy, Clone)]
 pub(crate) struct Memo {
     pub(crate) claim: fn(&[u8]) -> MemoClaim,
@@ -199,19 +158,12 @@ pub(crate) struct Memo {
 }
 
 impl Memo {
-    /// The host's memo, through its paged blob layer: a settled fact is
-    /// bounded by [`MEMO_BLOB_MAX_BYTES`] rather than one entry's
-    /// [`MEMO_MAX_VALUE_BYTES`], so a large derivation still publishes.
     pub(crate) const HOST: Memo = Memo {
         claim: memo_blob_claim,
         put: publish_logged,
     };
 }
 
-/// [`memo_blob_put`], reporting a refusal. A lease holder that cannot publish
-/// leaves every other claimant deferred until the lease expires and then
-/// re-deriving the fact itself: the pack keeps generating, only slower, so
-/// the refusal is worth a line in the log rather than silence.
 fn publish_logged(key: &[u8], value: Vec<u8>) -> bool {
     let len = value.len();
     let stored = memo_blob_put(key, value);
@@ -224,10 +176,6 @@ fn publish_logged(key: &[u8], value: Vec<u8>) -> bool {
     stored
 }
 
-/// Settle one fact through the memo's lease protocol: a published value is
-/// decoded, a lease derives and publishes it, and a lease held elsewhere
-/// defers the section. A value that does not decode is re-derived and
-/// republished rather than trusted.
 pub(crate) fn settle<V>(
     memo: Memo,
     key: &[u8],
@@ -242,16 +190,11 @@ pub(crate) fn settle<V>(
     };
     Ok(published.unwrap_or_else(|| {
         let value = derive();
-        // A refused publication is reported by the store; the derived value
-        // is still the answer here, it just serves no one else.
         (memo.put)(key, encode(&value));
         value
     }))
 }
 
-/// Plain memo entries for many keys, split at the ABI cap by [`paged`]; the
-/// reply is parallel to `keys`, and a key the host did not answer reads as
-/// missing. `get_many` is [`memo_get_many`] in play.
 type MemoBatchLookup = fn(Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>>;
 
 pub(crate) fn lookup_many(get_many: MemoBatchLookup, keys: Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>> {
@@ -263,9 +206,6 @@ pub(crate) fn lookup_many(get_many: MemoBatchLookup, keys: Vec<Vec<u8>>) -> Vec<
     })
 }
 
-/// A bounded per-worker cache of settled facts, evicting oldest first.
-/// Eviction changes cost, never content: every value is a pure function of
-/// its key.
 pub(crate) struct Settled<K, V> {
     entries: FxHashMap<K, V>,
     order: VecDeque<K>,

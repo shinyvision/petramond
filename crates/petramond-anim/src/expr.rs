@@ -1,6 +1,5 @@
-//! The expression language animator graphs are written in: conditions,
-//! weights, play rates and procedural offsets as small formulas over the
-//! inputs a driver publishes.
+//! The formula language animator graphs use for conditions, weights, play
+//! rates and procedural offsets, over the inputs a driver publishes.
 //!
 //! ```text
 //! grounded && speed > 0.1 && !sneaking
@@ -9,24 +8,21 @@
 //! spring(look_yaw_velocity * -0.02, 0.08)
 //! ```
 //!
-//! Numbers are `f32`; a boolean is `1` or `0` and anything non-zero is true.
-//! A string literal is an interned id ([`intern`]), so a driver publishes a
-//! name as `intern("pickaxe")` and a formula compares it with `"pickaxe"`.
-//! Names resolve to input slots when a formula COMPILES, so a misspelled input
-//! is a load error, never a silent zero. Stateful functions (`smooth`,
-//! `spring`, `spring2`, `rise`, `hold`, `since`) keep per-instance state in
-//! slots the compiler hands out, one run of slots per call site. `&&`, `||`
-//! and `?:` evaluate every operand (no short-circuit), so a stateful call
-//! inside one advances on every evaluation.
+//! Numbers are `f32`. A boolean is `1` or `0`, and any non-zero value is true.
+//! A string literal is an interned id ([`intern`]): a driver publishes
+//! `intern("pickaxe")` and a formula compares it with `"pickaxe"`.
+//! Names resolve to input slots at compile time, so a misspelled input fails
+//! to load instead of reading zero. Stateful functions (`smooth`, `spring`,
+//! `spring2`, `rise`, `hold`, `since`) get their own state slots per call site.
+//! `&&`, `||` and `?:` evaluate every operand, so a stateful call inside one
+//! advances on every evaluation.
 
 use std::sync::{LazyLock, Mutex};
 
 use rustc_hash::FxHashMap;
 
-/// The deepest evaluation stack a formula may need.
 const STACK: usize = 16;
 
-/// The interned id of `name` — stable for this process.
 pub fn intern(name: &str) -> f32 {
     static NAMES: LazyLock<Mutex<FxHashMap<String, u32>>> =
         LazyLock::new(|| Mutex::new(FxHashMap::default()));
@@ -35,10 +31,8 @@ pub fn intern(name: &str) -> f32 {
     *names.entry(name.to_string()).or_insert(next) as f32
 }
 
-/// A pure function over its (up to five) arguments.
 type Body = fn(&[f32; 5]) -> f32;
 
-/// The pure functions, `(name, arity, body)`; a call op indexes this table.
 const FUNCS: &[(&str, usize, Body)] = &[
     ("min", 2, |a| a[0].min(a[1])),
     ("max", 2, |a| a[0].max(a[1])),
@@ -88,17 +82,11 @@ const FUNCS: &[(&str, usize, Body)] = &[
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Stateful {
-    /// `smooth(x, halflife)`: first-order lag.
     Smooth,
-    /// `spring(x, halflife)`: critically damped spring (no overshoot).
     Spring,
-    /// `spring2(x, frequency, damping)`: second-order system that may overshoot.
     Spring2,
-    /// `rise(x)`: 1 on the evaluation `x` turns true, else 0.
     Rise,
-    /// `hold(x, seconds)`: 1 while `x` is true and for `seconds` after.
     Hold,
-    /// `since(x)`: seconds since `x` was last true.
     Since,
 }
 
@@ -131,12 +119,10 @@ enum Op {
     And,
     Or,
     Select,
-    /// An index into [`FUNCS`].
     Call(u8),
     State(Stateful, u16),
 }
 
-/// A compiled formula.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Expr {
     ops: Box<[Op]>,
@@ -144,9 +130,6 @@ pub struct Expr {
 }
 
 impl Expr {
-    /// Compile `source`, resolving every name through `resolve` to an input
-    /// slot. Stateful call sites take slots from `state_base` upward; the
-    /// caller reserves [`state_slots`](Self::state_slots) of them.
     pub fn compile(
         source: &str,
         resolve: &dyn Fn(&str) -> Option<u16>,
@@ -177,7 +160,6 @@ impl Expr {
         Ok(expr)
     }
 
-    /// A constant formula.
     pub fn constant(value: f32) -> Expr {
         Expr {
             ops: Box::new([Op::Const(value)]),
@@ -185,12 +167,10 @@ impl Expr {
         }
     }
 
-    /// State slots this formula's stateful call sites occupy.
     pub fn state_slots(&self) -> usize {
         self.state
     }
 
-    /// The constant this formula always answers, if it has no inputs or state.
     pub fn as_constant(&self) -> Option<f32> {
         match *self.ops {
             [Op::Const(v)] => Some(v),
@@ -215,10 +195,6 @@ impl Expr {
         max as usize
     }
 
-    /// Evaluate over input values `vars`, advancing stateful call sites by
-    /// `dt` seconds in `state`, which holds at least the caller's reserved
-    /// [`state_slots`](Self::state_slots) past the compile-time base; a call
-    /// site past its end answers 0 (and asserts in debug builds).
     pub fn eval(&self, vars: &[f32], state: &mut [f32], dt: f32) -> f32 {
         let mut stack = [0.0f32; STACK];
         let mut sp = 0usize;
@@ -329,9 +305,6 @@ fn stateful_arity(s: Stateful) -> usize {
     }
 }
 
-/// One stateful call site's step. The springs integrate EXACTLY for a
-/// constant target over `dt`, so a frame hitch or a split frame cannot change
-/// where they end up.
 fn advance(s: Stateful, a: &[f32; 3], state: &mut [f32], dt: f32) -> f32 {
     let dt = dt.max(0.0);
     match s {
@@ -352,8 +325,6 @@ fn advance(s: Stateful, a: &[f32; 3], state: &mut [f32], dt: f32) -> f32 {
             state[0]
         }
         Stateful::Spring2 => {
-            // x'' = w² (target - x) - 2ζw x', integrated in fixed substeps
-            // small enough to stay stable at any frame rate.
             let w = std::f32::consts::TAU * a[1].max(0.0);
             let zeta = a[2].max(0.0);
             let steps = (dt / (1.0 / 240.0)).ceil().max(1.0) as usize;

@@ -1,6 +1,3 @@
-//! Self, remote-player, and environment state rows: HUD reads, player
-//! rows, env param shipping, and break-overlay presentation.
-
 use super::common::{game, game_on_empty_chunk};
 use super::pump_one_tick;
 use crate::game::presentation::GamePresentationScratch;
@@ -85,8 +82,6 @@ fn replicated_conditions_draw_on_local_and_remote_players_without_hud_effects() 
     assert_eq!(presentation.bodies[0].body.emitter_self_lit, 0.0);
 }
 
-/// The HUD reads the replicated self view, and after a damage tick's batch it
-/// matches session truth exactly.
 #[test]
 fn hud_health_matches_session_truth_after_a_damage_tick() {
     let mut game = game_on_empty_chunk();
@@ -107,11 +102,6 @@ fn hud_health_matches_session_truth_after_a_damage_tick() {
     assert_eq!(hud.current, petramond::player::MAX_HEALTH - 3);
 }
 
-// ---- Remote-player replication ----
-
-/// Every connected session's player row rides every recipient's batch: a
-/// second (remote-shaped) session's transform reaches session 0's
-/// `TickUpdate`, alongside session 0's own row.
 #[test]
 fn every_sessions_player_row_reaches_the_local_batch() {
     let mut game = game_on_empty_chunk();
@@ -136,8 +126,6 @@ fn every_sessions_player_row_reaches_the_local_batch() {
         .iter()
         .find(|p| p.id == s1_id)
         .expect("the second session's row rides the first session's batch");
-    // Server integrates movement on the tick (F2); without a fresh claim the
-    // idle session may fall a little under gravity — still the same session.
     assert!(
         (row.transform.pos - s1_pos).length() < 1.0,
         "second session stays near its spawn (got {:?}, want near {:?})",
@@ -152,8 +140,6 @@ fn every_sessions_player_row_reaches_the_local_batch() {
     );
 }
 
-/// A sleeping session's row carries the server-computed lying head yaw (the
-/// bed's base→pillow direction) and flags the tuck teleport as a snap.
 #[test]
 fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     use petramond_math::math::IVec3;
@@ -169,8 +155,6 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     let base = IVec3::new(7, 64, 7);
     assert!(game.server_world_mut().place_model_block(base, Block::Bed));
     game.server_player_mut().pos = WorldPos::new(3.5, 64.0, 7.5);
-    // Night gate: the core day/night system republishes only at tick END
-    // (After(Spawning)), so the flag survives until the Placement stage.
     game.server_world_mut()
         .world_kv_set("petramond:is_night".into(), vec![1]);
     game.session_mut().input_mut().look = Some(super::common::hit(base, IVec3::Y));
@@ -199,10 +183,6 @@ fn a_sleeping_sessions_row_carries_the_lying_head_yaw() {
     assert!(row.snap, "the tuck teleport must snap interpolation");
 }
 
-/// Fix: the day/night shader params are written into the SERVER world's
-/// environment, but the renderer reads the CLIENT replica's — the batch must
-/// carry them across. Driving full frames, the replica's param map converges
-/// on the server's exactly.
 #[test]
 fn shader_params_replicate_into_the_replica_environment() {
     let mut game = game();
@@ -234,9 +214,6 @@ fn shader_params_replicate_into_the_replica_environment() {
     );
 }
 
-/// The env rides a batch only when the map's VALUES changed since the last
-/// shipped copy: the first ticked window ships the full set, a windowless
-/// re-read ships `None`, and the next tick (day/night advanced) ships again.
 #[test]
 fn env_params_ship_on_change_and_none_when_static() {
     let mut game = game();
@@ -266,9 +243,6 @@ fn env_params_ship_on_change_and_none_when_static() {
     );
 }
 
-/// Remote break overlays: presentation collects the own crack (replicated
-/// self view) PLUS one per visible remote row with a mining target, each at
-/// its own stage; an invisible remote (spectator/dead) draws none.
 #[test]
 fn break_overlays_collect_own_and_visible_remote_miners() {
     use petramond::net::protocol::PlayerStateRow;
@@ -314,8 +288,8 @@ fn break_overlays_collect_own_and_visible_remote_miners() {
     let own_id = game.game.replica.entities.self_id();
     let rows = [
         row(1, Some((IVec3::new(3, 64, 3), 7)), true),
-        row(2, Some((IVec3::new(5, 64, 5), 2)), false), // hidden: no overlay
-        row(3, None, true),                             // not mining: no overlay
+        row(2, Some((IVec3::new(5, 64, 5), 2)), false),
+        row(3, None, true),
     ];
     game.game
         .replica

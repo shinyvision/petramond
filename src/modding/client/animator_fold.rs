@@ -1,18 +1,8 @@
-//! The local player's animator claims as this client presents them: the
-//! server's answer, with every key a client mod owns predicted by the
-//! server's own resolution — the LAST client mod in mod-id order holding a
-//! claim on the key wins it, and one that released its claim uncovers the
-//! claim beneath instead of erasing it.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::state::AnimatorOwnership;
 use crate::player::{AnimatorClaims, AnimatorParam, AnimatorPlay, RigId};
 
-/// Fold `replicated` with `stores` — each client mod's owned keys and its
-/// resolved claims, in mod-id order. A key any client mod owns is predicted
-/// (and absent when none of them holds a claim on it); every other key keeps
-/// the replicated answer.
 pub(super) fn fold<'a>(
     replicated: &AnimatorClaims,
     stores: impl Iterator<Item = (&'a AnimatorOwnership, &'a AnimatorClaims)>,
@@ -52,9 +42,6 @@ mod tests {
     use super::*;
     use crate::player::AnimatorClock;
 
-    /// Two client mods claim one slot: the later in mod-id order wins, and
-    /// once it releases, the earlier mod's claim shows — as the server
-    /// resolves it — never nothing, and never the replicated answer.
     #[test]
     fn a_released_later_mod_uncovers_the_earlier_mods_claim_on_the_same_key() {
         let play = |slot: u16, clip: u16| AnimatorPlay {

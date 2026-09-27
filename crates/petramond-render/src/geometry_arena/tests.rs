@@ -1,9 +1,6 @@
 use super::book::{Book, Placement};
 use super::*;
 
-/// The class function is the arena's whole memory policy: it must never
-/// round DOWN (that would hand out an allocation the caller overruns) and
-/// its waste must stay bounded, or terrain VRAM balloons silently.
 #[test]
 fn size_classes_cover_the_request_with_bounded_waste() {
     for unit in [4u64, 16, 20, 32] {
@@ -20,8 +17,6 @@ fn size_classes_cover_the_request_with_bounded_waste() {
     }
 }
 
-/// Same-class frees must be reusable by any same-class request — that is
-/// what keeps allocation O(1) with no fragmentation search.
 #[test]
 fn freed_allocations_are_reused_by_the_same_class() {
     assert_eq!(class_size(5000, 4), class_size(5100, 4));
@@ -67,9 +62,6 @@ fn an_oversized_request_gets_a_block_of_its_own() {
     assert!(p.capacity >= huge);
 }
 
-/// Emptied blocks are released — all but one spare, kept so the streaming
-/// frontier does not reallocate on every wobble — and the free entries into
-/// a released block are purged, so nothing hands out memory that is gone.
 #[test]
 fn emptied_blocks_are_released_past_one_spare() {
     let mut book = Book::new(4, BLOCK_BYTES);
@@ -77,7 +69,6 @@ fn emptied_blocks_are_released_past_one_spare() {
     let placed: Vec<Placement> = (0..6).map(|_| book.place(big)).collect();
     assert_eq!(book.block_count(), 3);
     let freed = |p: &Placement| (p.capacity, p.block, p.offset);
-    // Empty blocks 0 and 1 entirely; block 2 stays live.
     let released = book.reclaim(placed[..4].iter().map(freed).collect());
     assert_eq!(released, [1], "block 0 stays as the spare");
     assert_eq!(book.block_count(), 2);
@@ -86,10 +77,8 @@ fn emptied_blocks_are_released_past_one_spare() {
         2 * big,
         "only the spare's entries remain free"
     );
-    // The spare's space is reused before any new block opens.
     let again = book.place(big);
     assert_eq!((again.block, again.new_block), (0, None));
-    // With the spare now occupied, the next new block reuses the hole.
     book.place(big);
     let fresh = book.place(big);
     assert_eq!((fresh.block, fresh.new_block), (1, Some(BLOCK_BYTES)));
@@ -107,10 +96,6 @@ fn reclaiming_without_emptying_a_block_releases_nothing() {
     assert_eq!(book.free_bytes(), a.capacity);
 }
 
-/// Against a model of every live allocation over a long random mix of
-/// allocations and frees: live allocations never overlap, always fit their
-/// block and their request, and the free list only ever holds space no live
-/// allocation uses.
 #[test]
 fn a_random_workload_never_overlaps_live_allocations() {
     let mut book = Book::new(4, BLOCK_BYTES);
@@ -165,8 +150,6 @@ fn a_random_workload_never_overlaps_live_allocations() {
     assert!(live_bytes + book.free_bytes() <= book.reserved_bytes());
 }
 
-/// A four-byte-unit arena keeps the byte classes the per-buffer policy was
-/// tuned with.
 #[test]
 fn the_byte_arena_keeps_its_classes() {
     assert_eq!(class_size(1, 4), 512);
@@ -175,8 +158,6 @@ fn the_byte_arena_keeps_its_classes() {
     assert_eq!(class_size(1 << 20, 4), 1 << 20);
 }
 
-/// A vertex-stride arena only ever places allocations at whole-element
-/// offsets, so a draw can reach any of them by `base_vertex`.
 #[test]
 fn a_vertex_arena_places_only_whole_elements() {
     let mut book = Book::new(20, BLOCK_BYTES);

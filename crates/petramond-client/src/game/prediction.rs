@@ -1,11 +1,3 @@
-//! Client prediction ledger: pending request ids + undo snapshots, and the
-//! cells this client already presented a place/break for.
-//!
-//! The server remains authoritative; this module only tracks disposable
-//! local overlays until [`ActionOutcome`]s arrive. It is the single funnel
-//! for "which cells must not replay wire presentation": every predicted
-//! world edit's cells, plus every presented cell, until its outcome lands.
-
 use petramond::net::protocol::{ActionOutcome, ClientRequestId};
 use petramond_math::math::IVec3;
 use petramond_world::inventory::Inventory;
@@ -13,28 +5,16 @@ use rustc_hash::FxHashSet;
 
 use super::replicated::MenuView;
 
-/// Max in-flight predicted requests with snapshots; further local mutation
-/// freezes until the server catches up. Ids still allocate so the wire stays
-/// ordered.
 pub const LEDGER_CAP: usize = 32;
 
-/// What a pending request may need to restore on deny.
 #[derive(Clone, Debug)]
 pub enum PredictionSnapshot {
-    /// No local mutation to undo (P0 presentation / track-only).
     None,
-    /// Inventory-only prediction used by ordinary clicks and drops.
     Inventory(Inventory),
-    /// One atomic menu transport prediction. Both halves must roll back
-    /// together because a drag may span player inventory and an open block
-    /// container.
     Menu {
         inventory: Inventory,
         menu: MenuView,
     },
-    /// A predicted world mutation: optional pre-mutation inventory (place
-    /// hotbar decrement) plus every replica cell written, with the previous
-    /// block id. Multi-cell clears (door, model) list the full footprint.
     World {
         inventory: Option<Inventory>,
         cells: Vec<(IVec3, u16)>,
@@ -51,13 +31,7 @@ struct Pending {
 pub struct PredictionLedger {
     next_id: ClientRequestId,
     pending: Vec<Pending>,
-    /// When true, new local mutations are refused until the queue drains.
     frozen: bool,
-    /// Cells this client already presented place/break for (local
-    /// `WorldEvent`). Wire `BlockPlaced` / `BlockBroken` for these cells are
-    /// dropped until the matching outcome clears the entry — never re-play
-    /// sound/particles for an optimistic action. Observers' breaks never
-    /// enter this set.
     presented: FxHashSet<IVec3>,
 }
 
@@ -70,9 +44,6 @@ impl PredictionLedger {
         !self.frozen && self.predicted_len() < LEDGER_CAP
     }
 
-    /// In-flight entries holding a rollback snapshot. Track-only (`None`)
-    /// entries never count against the cap — a burst of presentation-only
-    /// jabs must not freeze real prediction.
     fn predicted_len(&self) -> usize {
         self.pending
             .iter()
@@ -80,9 +51,6 @@ impl PredictionLedger {
             .count()
     }
 
-    /// Always allocate a request id. When `snapshot` is not [`None`] and the
-    /// ledger is at capacity, the snapshot is dropped (track-only) and
-    /// `can_predict` stays false.
     pub fn begin(&mut self, snapshot: PredictionSnapshot) -> ClientRequestId {
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
@@ -99,12 +67,10 @@ impl PredictionLedger {
         id
     }
 
-    /// Allocate an id without a rollback snapshot (P0 presentation-only).
     pub fn begin_track_only(&mut self) -> ClientRequestId {
         self.begin(PredictionSnapshot::None)
     }
 
-    /// Cells covered by pending World snapshots.
     pub(super) fn predicted_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.pending.iter().flat_map(|p| match &p.snapshot {
             PredictionSnapshot::World { cells, .. } => {
@@ -114,28 +80,19 @@ impl PredictionLedger {
         })
     }
 
-    /// Record that this client presented a place/break at `cell`: the wire
-    /// copy of that event is suppressed until the cell's outcome arrives.
     pub fn mark_presented(&mut self, cell: IVec3) {
         self.presented.insert(cell);
     }
 
-    /// Every cell whose wire place/break presentation must be suppressed —
-    /// pending predicted edits plus already-presented cells. Also the cells
-    /// whose replica copy may differ from the server's vouched content.
     pub fn suppressed_cells(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.predicted_cells().chain(self.presented.iter().copied())
     }
 
-    /// Forget every presented cell, for tests that stage the set by hand.
     #[cfg(test)]
     pub fn clear_presented_for_test(&mut self) {
         self.presented.clear();
     }
 
-    /// Whether an inventory-mutating prediction stays pending past this
-    /// batch's `outcomes` — the batch's `SelfState` inventory snapshot then
-    /// predates that prediction and must not be adopted over it.
     pub fn awaits_inventory_authority(&self, outcomes: &[ActionOutcome]) -> bool {
         self.pending.iter().any(|p| {
             let holds_inventory = matches!(
@@ -151,8 +108,6 @@ impl PredictionLedger {
         })
     }
 
-    /// Whether a menu-mirror-mutating prediction stays pending past this
-    /// batch's `outcomes` — the batch's menu sync then predates it.
     pub fn awaits_menu_authority(&self, outcomes: &[ActionOutcome]) -> bool {
         self.pending.iter().any(|p| {
             matches!(&p.snapshot, PredictionSnapshot::Menu { .. })
@@ -160,15 +115,6 @@ impl PredictionLedger {
         })
     }
 
-    /// Apply one batch of outcomes: returns the deny snapshots to restore,
-    /// and clears the presentation suppress of every World cell whose pending
-    /// entry was answered (accept or deny).
-    ///
-    /// Rollbacks come back OLDEST-FIRST by construction — the pending list is
-    /// walked in allocation order, never the batch's emission order (the
-    /// server may emit an immediate deny for a newer id before a tick-time
-    /// deny for an older one). The caller applies them newest-first so the
-    /// oldest snapshot wins.
     pub fn reconcile(&mut self, outcomes: &[ActionOutcome]) -> Vec<PredictionSnapshot> {
         let mut rollbacks = Vec::new();
         let mut i = 0;

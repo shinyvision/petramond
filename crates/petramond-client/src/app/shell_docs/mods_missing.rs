@@ -1,17 +1,8 @@
-//! Missing Mods controller: the one "this needs content that is missing"
-//! screen, for a join the server refused (its mod list) and for a local
-//! world whose recorded world-affecting packs are not installed. Back (and
-//! Enter, and ESC) returns to where the player came from: the connect screen
-//! with the attempted address intact, or World Select. Only a local world
-//! can be opened anyway. Get missing opens the content browser filtered to
-//! the missing packs.
-
 use super::{ScreenCtx, ShellCommand};
 use crate::app::{App, AppScreen};
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
-/// A local world held at the door because packs it recorded are missing.
 pub(crate) struct MissingWorld {
     pub(crate) dir_name: String,
     pub(crate) seed: u32,
@@ -78,8 +69,6 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     }
 }
 
-/// The browser, filtered to what is missing; its Back (and a relaunch's)
-/// returns to where this screen's Back would.
 fn get_missing(ctx: &mut ScreenCtx) {
     let (ids, back) = match ctx.shell.missing_world.take() {
         Some(world) => (
@@ -103,9 +92,6 @@ fn get_missing(ctx: &mut ScreenCtx) {
 }
 
 impl App {
-    /// Open a local world, unless packs it recorded as changing what it holds
-    /// are missing: then the Missing Mods screen asks first. A missing
-    /// presentation-only pack never stops the open.
     pub(crate) fn open_world_checked(&mut self, dir_name: &str, seed: u32) {
         let settings = petramond::save::read_world_settings(dir_name);
         let missing: Vec<_> = petramond::modding::modset::missing(
@@ -129,7 +115,6 @@ impl App {
         self.set_screen(AppScreen::ModsMissing);
     }
 
-    /// Back out of Missing Mods to where the player came from.
     pub(crate) fn leave_mods_missing(&mut self) {
         if self.shell.missing_world.take().is_some() {
             self.set_screen(AppScreen::WorldSelect);

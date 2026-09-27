@@ -1,12 +1,3 @@
-//! Trunk placers — build a tree's trunk and return the foliage attach point(s)
-//! plus every log cell written (the support set the canopy's connectivity
-//! commit floods from — see `foliage::Canopy`).
-//!
-//! Draws happen here in the god file's order. `sample_height` consumes exactly
-//! one `next_i32` iff the height range is non-degenerate (matching e.g.
-//! `4 + next_i32(0,1)`), and consumes NOTHING for a fixed height (matching the
-//! literal-height oaks) — this no-extra-draw rule is load-bearing for parity.
-
 use crate::feature::FeatureCtx;
 use crate::rng::FeatureRng;
 use petramond_world::block::Block;
@@ -15,15 +6,12 @@ use petramond_world::mathh::IVec3;
 mod whorled;
 pub use whorled::WhorledTrunk;
 
-/// A placed trunk: where the foliage attaches, and every log cell written —
-/// the wood the canopy commit treats as leaf support.
 pub struct TrunkPlan {
     pub attach: Vec<IVec3>,
     pub logs: Vec<IVec3>,
 }
 
 pub trait TrunkPlacer: Send + Sync {
-    /// Place the trunk; return its plan. `height` is {min, max}.
     fn place(
         &self,
         ctx: &mut FeatureCtx,
@@ -33,9 +21,6 @@ pub trait TrunkPlacer: Send + Sync {
         rng: &mut FeatureRng,
     ) -> TrunkPlan;
 
-    /// Maximum horizontal wander of any log (and so of the attach column) from
-    /// the origin column. Part of the canopy reach fence `data::features`
-    /// validates at load, so foliage never reads outside the candidate window.
     fn max_lean(&self) -> i32 {
         0
     }
@@ -45,7 +30,6 @@ pub trait TrunkPlacer: Send + Sync {
     }
 }
 
-/// Draw a height: one `next_i32(min,max)` iff `min < max`, else `min` (no draw).
 #[inline]
 pub fn sample_height(height: (i32, i32), rng: &mut FeatureRng) -> i32 {
     if height.0 < height.1 {
@@ -55,7 +39,6 @@ pub fn sample_height(height: (i32, i32), rng: &mut FeatureRng) -> i32 {
     }
 }
 
-/// Straight vertical trunk (== `oak_simple` with dx = dz = 0).
 pub struct StraightTrunk;
 
 impl TrunkPlacer for StraightTrunk {
@@ -81,8 +64,6 @@ impl TrunkPlacer for StraightTrunk {
     }
 }
 
-/// Trunk with a single mid-height lean (== `oak_simple` Oak2 path).
-/// Draws height, then dx, then dz — matching the god file's argument order.
 pub struct LeaningTrunk;
 
 impl TrunkPlacer for LeaningTrunk {

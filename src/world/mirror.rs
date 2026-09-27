@@ -1,20 +1,8 @@
-//! In-process replication harness: ships a [`ServerWorld`]'s terrain into a
-//! [`ReplicaWorld`] through the same payload and delta seams a connection
-//! uses, for tools and tests that want the server's generation AND the
-//! replica's meshes in one process without running a session.
-//!
-//! This is what replaced the old single "combined" world role: a harness
-//! that composes both sides, so neither side ever carries the other's state.
-
 use crate::world::{ReplicaWorld, ServerWorld};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-/// What has been shipped so far: per-column payload revision and the set of
-/// installed sections. Columns ship before their sections, sections ship once
-/// their light is final (the same gate the terrain sender applies), and every
-/// later change rides the server's replication log.
 #[derive(Default)]
 pub struct ReplicaMirror {
     columns: FxHashMap<ChunkPos, u64>,
@@ -22,16 +10,11 @@ pub struct ReplicaMirror {
 }
 
 impl ReplicaMirror {
-    /// A mirror over `server`, whose replication capture it turns on (the
-    /// per-tick delta log is how later edits reach the replica).
     pub fn new(server: &mut ServerWorld) -> Self {
         server.set_replication_capture(true);
         Self::default()
     }
 
-    /// Bring `replica` up to date with `server`: unload what the server
-    /// evicted, install new/changed columns and newly light-final sections,
-    /// then apply this round's block, cell-KV, draw-set and light changes.
     pub fn sync(&mut self, server: &mut ServerWorld, replica: &mut ReplicaWorld) {
         self.unload_evicted(server, replica);
         let data = server.data();
@@ -130,9 +113,6 @@ mod tests {
     use crate::world::testutil::install_flat_floor;
     use petramond_world::block::Block;
 
-    /// The mirror is a faithful connection stand-in: terrain the server
-    /// finishes lands on the replica, a later edit reaches it through the
-    /// delta log, and an eviction takes the section off the replica again.
     #[test]
     fn a_mirrored_replica_follows_installs_edits_and_evictions() {
         let mut server = ServerWorld::new(0, 1);
@@ -140,9 +120,6 @@ mod tests {
         install_flat_floor(&mut server);
         let mut mirror = ReplicaMirror::new(&mut server);
 
-        // Fixture sections demand their first bake; pump until the floor is
-        // light-final and shipped. Both worlds run inline pools, so each pump
-        // finishes what the previous one submitted.
         let floor = SectionPos::from_world(0, 64, 0).expect("in range");
         for _ in 0..64 {
             if replica.data().sections.contains_key(&floor) {

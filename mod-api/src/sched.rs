@@ -1,9 +1,5 @@
-//! Scheduling vocabulary: where mod tick systems and worldgen hooks attach.
-
 use serde::{Deserialize, Serialize};
 
-/// The engine's fixed-tick stages, in execution order (mirrors the engine's
-/// stage list).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Stage {
     Mining,
@@ -20,26 +16,12 @@ pub enum Stage {
     Spawning,
 }
 
-/// Which side of a [`Stage`] a tick system attaches to. At the boundary between
-/// stage N and N+1, `After(N)` systems run before `Before(N+1)` systems.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum AttachSide {
     Before,
     After,
 }
 
-/// The worldgen pipeline's addressable stages, in execution order.
-///
-/// `Climate` assigns the per-column biome map; `Terrain` is the block fill plus
-/// cave carve; `Underground` scatters ores/blobs; `Vegetation` places
-/// single-block ground plants; `Trees` places the tree features. Features
-/// ([`WorldgenCall::RegisterWorldgenFeature`](crate::WorldgenCall::RegisterWorldgenFeature)) attach AFTER a stage (`Climate` is
-/// not a valid feature attach point — it is column-level, before any blocks
-/// exist); replacements ([`WorldgenCall::RegisterStageReplacement`](crate::WorldgenCall::RegisterStageReplacement)) substitute the
-/// engine stage itself.
-///
-/// [`WorldgenCall::RegisterWorldgenFeature`]: crate::WorldgenCall::RegisterWorldgenFeature
-/// [`WorldgenCall::RegisterStageReplacement`]: crate::WorldgenCall::RegisterStageReplacement
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum WorldgenStage {
     Climate,

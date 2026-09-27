@@ -49,10 +49,6 @@ fn a_mob_strike_damages_and_knocks_back_the_player_through_the_funnel() {
     assert!(!game.server_player().on_ground, "the pop reads as a launch");
 }
 
-/// The mob i-frame window is a pipeline COMPONENT (`petramond:immunity`): a
-/// request whose composed pipeline omits it (burn-style DoT) is neither
-/// blocked by an active window nor grants one, while the default pipeline
-/// both grants and is blocked.
 #[test]
 fn immunity_is_a_composable_pipeline_component() {
     use petramond::mob::{MobDamageFeedback, MobDamageFeedbackComponent};
@@ -74,7 +70,6 @@ fn immunity_is_a_composable_pipeline_component() {
     let attacker = game.session().id();
     let mob_id = game.server_world().mobs().instances()[0].id();
 
-    // A default-pipeline hit opens the window…
     assert!(game.sim_mut().damage_mob_through_pipeline(
         mob_id,
         1.0,
@@ -83,8 +78,6 @@ fn immunity_is_a_composable_pipeline_component() {
         None,
         &mut ev,
     ));
-    // …which blocks a second default hit, but NOT the DoT pipeline: it
-    // applies inside the window and grants nothing.
     assert!(!game.sim_mut().damage_mob_through_pipeline(
         mob_id,
         1.0,
@@ -108,8 +101,6 @@ fn immunity_is_a_composable_pipeline_component() {
         health - 4.0,
         "one default hit + three DoT ticks all landed"
     );
-    // The DoT hits granted no window: once the original expires, the next
-    // default hit lands on schedule.
     for _ in 1..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
         game.sim_mut().game_tick_step(&mut ev);
     }
@@ -258,8 +249,6 @@ fn mob_strikes_route_to_the_targeted_session_only() {
 
 #[test]
 fn a_cancelled_player_damage_pre_blocks_both_damage_and_knockback() {
-    // Any pre-handler cancellation must suppress the strike WHOLE — no health
-    // loss and no shove. That's why knockback is gated on the funnel verdict.
     let mut game = game();
     let mut ev = TickEvents::default();
     game.sim_mut()
@@ -294,9 +283,8 @@ fn a_spectator_takes_neither_damage_nor_knockback_from_mob_strikes() {
 
 #[test]
 fn a_mods_damage_player_action_routes_through_the_funnel() {
-    // A mod's DamagePlayer HostCall queues a DeferredAction; the drain must send it
-    // through Game::damage_player so handlers see it with a Mod source — and a
-    // registered player_damage_pre canceller can block it.
+    // A mod's DamagePlayer HostCall queues a DeferredAction. The drain has to go through
+    // Game::damage_player so handlers get a Mod source and player_damage_pre can still cancel it.
     use petramond::events::DeferredAction;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -342,7 +330,6 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
         game.sim_mut().tick_damage_immunity();
     }
 
-    // A priority -1 canceller runs first and blocks a later handler.
     game.sim_mut()
         .bus_mut()
         .on_player_damage_pre(-1, |_, _| Outcome::Cancel);
@@ -366,8 +353,6 @@ fn a_mods_damage_player_action_routes_through_the_funnel() {
 
 #[test]
 fn queued_mod_actions_apply_within_a_game_tick() {
-    // The wiring contract: an action sitting in the queue when a fixed tick
-    // runs is applied by that tick (at its first drain point), not lost.
     use petramond::events::DeferredAction;
 
     let mut game = game_on_empty_chunk();
@@ -391,9 +376,8 @@ fn queued_mod_actions_apply_within_a_game_tick() {
 fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() {
     let mut game = game_on_empty_chunk();
     game.local.cam.pos = WorldPos::new(8.0, 66.0, 8.0);
-    game.local.cam.pitch = 0.0; // level look, so the eye ray stays at constant y
+    game.local.cam.pitch = 0.0;
     let dir = game.local.cam.forward();
-    // An owl two metres ahead, feet dropped so the eye-level ray crosses its body.
     let mut feet = game.local.cam.pos + dir * 2.0;
     feet.y -= 0.35;
     assert!(game
@@ -402,7 +386,6 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         .spawn(Mob::Owl, feet, 0.0));
     let id = game.server_world().mobs().instances()[0].id();
 
-    // Targeting reads the REPLICATED rows: feed the store as a batch would.
     let rows = |game: &super::common::TestGame| -> Vec<petramond::net::protocol::MobStateRow> {
         game.server_world()
             .mobs()
@@ -449,7 +432,6 @@ fn closest_mob_targets_in_front_within_reach_skips_block_occluded_and_corpses() 
         None,
         "a nearer block (smaller max_dist) occludes the mob"
     );
-    // A corpse can't be targeted: the row replicates `dead` on the next batch.
     let cam_pos = game.local.cam.pos;
     assert!(game
         .server_world_mut()
@@ -571,7 +553,6 @@ fn a_mob_eases_into_and_out_of_its_gait() {
         .entities
         .mobs_mut()
         .apply_snapshot(&[row(false, 0.0)]);
-    // A step begins: the walk comes in from rest, never at full weight.
     game.replica
         .entities
         .mobs_mut()
@@ -583,8 +564,6 @@ fn a_mob_eases_into_and_out_of_its_gait() {
         weight > 0.0 && weight < 1.0,
         "eased in, not snapped: {weight}"
     );
-    // And ends mid-stride (the sim's clock resets with the gait): the walk
-    // fades from the stride it was in, not from the reset clock.
     game.replica
         .entities
         .mobs_mut()
@@ -638,8 +617,6 @@ fn fist_takes_four_hits_to_kill_an_owl() {
     );
 }
 
-/// Latch an attack click at the mob at `index`, the way an
-/// `Action(AttackClick)` message does — carrying the STABLE id.
 fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
     let id = game.server_world().mobs().instances()[index].id();
     common::aim_server_at_mob(game, index);
@@ -653,8 +630,7 @@ fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
 
 /// A swing FOLLOWS THROUGH before the hand may attack again, and the CLIENT
 /// predicts that gate: mashing the button animates one swing per arc, not one
-/// per frame (the prediction used to restart the arc every frame while the
-/// server's cooldown quietly ate the presses). The press that lands mid-swing
+/// per frame. The press that lands mid-swing
 /// is not thrown away — it is HELD, one deep, and fires by itself the frame
 /// the hand comes home.
 #[test]
@@ -680,8 +656,6 @@ fn a_mashed_attack_queues_one_swing_behind_the_follow_through() {
         1,
         "the whole follow-through is one swing, however hard it is mashed"
     );
-    // The button is up from here: the swing that follows is the QUEUED press,
-    // and it is the only one — a mash is one deep, not a stored volley.
     assert_eq!(
         frames(&mut game, recovery + 2, &idle),
         1,
@@ -703,13 +677,10 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let mut ev = TickEvents::default();
 
-    // A click resolves on the tick (the tick after it was registered).
     click_attack_at(&mut game, 0);
     game.sim_mut().tick_attack(0, &mut ev);
     assert!(ev.player_at(0).swung_hand, "the click lands on the tick");
 
-    // For the rest of the cooldown, a fresh click each tick lands nothing — even
-    // spamming can't beat the gate.
     for _ in 0..ATTACK_COOLDOWN_TICKS - 1 {
         ev.player(0).swung_hand = false;
         click_attack_at(&mut game, 0);
@@ -720,7 +691,6 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         );
     }
 
-    // The cooldown has now elapsed, so a pending click connects again.
     ev.player(0).swung_hand = false;
     click_attack_at(&mut game, 0);
     game.sim_mut().tick_attack(0, &mut ev);
@@ -729,19 +699,12 @@ fn attack_lands_next_tick_then_locks_out_for_the_cooldown() {
         "the cooldown elapsed, the next attack lands"
     );
 
-    // Only two fist hits (1 dmg each) landed across all those ticks, so the 4-health
-    // owl is still alive: the gate makes a spam-click instakill impossible.
     assert!(
         !game.server_world().mobs().instances()[0].is_dead(),
         "rate-limited, so the owl survives the burst"
     );
 }
 
-/// A registered `attack_attempt` handler's Cancel is a CLAIM: the engine's
-/// melee stands down (the crosshair's mob is untouched), yet the press was
-/// still a swing — the hand swings, the cooldown arms and the Attack edge
-/// latches — because whoever took the press owes the hit, not the gesture.
-/// A handler that passes leaves the engine's hit exactly as it was.
 #[test]
 fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
     let mut game = game();
@@ -792,7 +755,6 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
         "and the Attack edge latched for the swing facts"
     );
 
-    // Passing hands the press back to the engine's melee.
     claim.store(false, std::sync::atomic::Ordering::SeqCst);
     for _ in 0..ATTACK_COOLDOWN_TICKS {
         game.sim_mut().tick_attack(0, &mut ev);
@@ -806,10 +768,6 @@ fn a_claimed_attack_attempt_stands_the_melee_down_but_still_swings() {
     );
 }
 
-/// A mod-landed hit naming a player attacker IS that player's melee in its
-/// consequences: the attack source with an origin shoves the victim, where
-/// the mod's own damage (no attacker) only hurts. The distinction is the
-/// whole reason a `DamageMob` can name an attacker.
 #[test]
 fn a_mod_hit_landed_for_a_player_shoves_like_the_players_own_melee() {
     let mut game = game_on_empty_chunk();
@@ -897,9 +855,6 @@ fn a_newly_boarded_player_cannot_attack_their_mount_before_mirror_reconciliation
     let player_id = game.session().id().0;
     let health = game.server_world().mobs().instances()[0].health();
 
-    // Placement runs before Attack. A successful board therefore updates the
-    // authoritative registry while the session mirror remains stale until
-    // the later Riding pass.
     assert!(game.server_world_mut().riding_mut().mount(
         player_id,
         petramond::mob::riding::MountTarget::Mob(mob_id),
@@ -969,7 +924,6 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
         .spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let mob_id = game.server_world().mobs().instances()[0].id();
 
-    // A click message latches while playing...
     game.send_to_server(ClientToServer::Action(PlayerAction::AttackClick {
         mob: Some(mob_id),
         player: None,
@@ -979,9 +933,6 @@ fn opening_a_screen_drops_a_latched_action_so_it_cant_fire_behind_the_menu() {
         "the click latched while playing"
     );
 
-    // ...then a screen takes input focus before any tick ran (the next frame's
-    // PlayerUpdate reports gameplay=false). The latched press is dropped, so
-    // the tick that still runs behind the menu lands no attack.
     let update = common::player_update(&game, false);
     game.send_to_server(ClientToServer::PlayerUpdate(update));
     assert!(
@@ -1025,7 +976,6 @@ fn a_killed_mob_ragdolls_then_despawns() {
     );
     let player_pos = game.server_player().body_center();
     let player_body = game.server_player().body();
-    // 1.5 s ragdoll lifetime at 20 TPS = 30 ticks; run extra for margin.
     for _ in 0..50 {
         game.server_world_mut().tick_mobs(
             TICK_DT,
@@ -1096,9 +1046,6 @@ fn mobs_take_player_rule_fall_damage_when_they_land() {
 fn killing_owls_drops_loot_into_the_world() {
     let mut game = game_on_empty_chunk();
     let pos = WorldPos::new(8.0, 64.0, 8.0);
-    // Over many kills the owl table (50% sticks / 25% coal) virtually always yields
-    // something — this proves the death→loot path is wired, without pinning the
-    // (freely-editable) table contents.
     for _ in 0..40 {
         assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
         let id = game.server_world().mobs().instances().last().unwrap().id();

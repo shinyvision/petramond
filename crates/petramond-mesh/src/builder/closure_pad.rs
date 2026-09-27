@@ -1,9 +1,3 @@
-//! Lowering world-coordinate reads onto the mesher's only input: a
-//! [`SectionMeshPad`]. Callers without a live world's neighbour snapshots
-//! (schematic ghosts, fixtures) describe the world as closures; this samples
-//! them over the section's pad exactly as the live mesh pool assembles its
-//! pad, so every mesh — theirs and the player's — comes out of one mesher.
-
 use glam::IVec3;
 use petramond_world::block::{snow_cover_at, Block, ShapeState, SNOW_COVER_REACH};
 use petramond_world::chunk::{SectionPos, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
@@ -13,8 +7,6 @@ use super::pad::{
     biome_pad_idx, mesh_pad_idx, SectionMeshPad, BIOME_PAD, BIOME_PAD_RADIUS, SECTION_PAD,
 };
 
-/// The world around a section, as world-coordinate reads. Out-of-world and
-/// unloaded reads answer whatever the caller defines (air, open sky...).
 pub struct WorldReads<'r> {
     pub block: &'r dyn Fn(i32, i32, i32) -> u16,
     pub cell_state: &'r dyn Fn(i32, i32, i32) -> ShapeState,
@@ -23,11 +15,9 @@ pub struct WorldReads<'r> {
     pub skylight: &'r dyn Fn(i32, i32, i32) -> u8,
     pub blocklight: &'r dyn Fn(i32, i32, i32) -> LightRgb,
     pub loaded: &'r dyn Fn(i32, i32, i32) -> bool,
-    /// Whether a cell carries a dye tint (a transition exclusion).
     pub dyed: &'r dyn Fn(i32, i32, i32) -> bool,
 }
 
-/// An owned pad sampled from [`WorldReads`].
 pub(super) struct ClosurePad {
     blocks: Vec<u16>,
     fluid: Vec<u8>,
@@ -40,10 +30,6 @@ pub(super) struct ClosurePad {
 }
 
 impl ClosurePad {
-    /// Sample the pad of the section at `pos`. Skylight takes the world's
-    /// vertical bounds as the live pad does (open sky above, dark below); a
-    /// cell's transition exclusion is its dye tint or a snow blanket over it,
-    /// asked of the reads at full reach.
     pub(super) fn assemble(pos: SectionPos, reads: &WorldReads<'_>) -> Self {
         const PAD_VOL: usize = SECTION_PAD * SECTION_PAD * SECTION_PAD;
         let (ox, oy, oz) = pos.origin_world();

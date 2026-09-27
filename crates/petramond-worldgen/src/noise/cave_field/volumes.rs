@@ -1,5 +1,3 @@
-//! Immutable voxel tiles for positioned arithmetic fields.
-
 use super::*;
 use crate::data::excavations::effects::{Course, MaterialFilter};
 use crate::data::excavations::Bounds;
@@ -13,8 +11,6 @@ mod tile;
 use tile::build_tile;
 pub(in crate::noise::cave_field) use tile::{AnchorKey, ChunkAnchors, PlaneKey};
 
-/// A placement site's identity: the context, the excavation row by its salt
-/// (the hash of its unique name) and the spacing cell.
 pub(super) type SiteKey = (crate::cache::GenContext, u64, [i32; 2]);
 pub(super) type TileKey = (crate::cache::GenContext, [i32; 3]);
 
@@ -47,14 +43,10 @@ impl Site {
 pub(super) enum Cell {
     #[default]
     Untouched,
-    /// Terrain the field leaves alone at its exposed boundary: the walk
-    /// paints it as a shell, and a [`Seal`] may replace it.
     Surface,
     Fill(Fill),
 }
 
-/// What a field puts in a cell, if the terrain there is what the material's
-/// filter asks for.
 #[derive(Clone, Copy)]
 pub(super) struct Fill {
     pub block: u16,
@@ -62,19 +54,13 @@ pub(super) struct Fill {
     pub replace: MaterialFilter,
 }
 
-/// A boundary rule's outcome at a surface cell, applied once the walk knows
-/// the terrain there: `block` where `replace` accepts it.
 #[derive(Clone, Copy)]
 pub(super) struct Seal {
-    /// Column-major index in its tile: `(z * 16 + x) * 16 + y`.
     key: u16,
     pub block: u16,
     pub replace: MaterialFilter,
 }
 
-/// One cell of a course: `block` once the walk finds solid rock at the
-/// anchor `anchor_dy` cells away in the same column, unless the cell's own
-/// block is one the rule avoids (or remaps).
 #[derive(Clone, Copy)]
 pub(super) struct CourseCell {
     key: u16,
@@ -91,11 +77,7 @@ impl CourseCell {
 
 pub(super) struct Tile {
     cells: Option<Box<[Cell]>>,
-    /// One bit per 4³ sub-block holding any touched cell: the carve walk
-    /// skips lattice cells the field leaves alone exactly as it skips
-    /// provably solid rock.
     touched: u64,
-    /// Sorted by key.
     seals: Box<[Seal]>,
     courses: Box<[CourseCell]>,
 }
@@ -147,8 +129,6 @@ impl Tiles {
         }
     }
 
-    /// Whether the field touches any cell of the lattice cell at `lattice`
-    /// (world coordinates in lattice steps).
     #[inline]
     pub(super) fn touched(&self, lattice: [i32; 3]) -> bool {
         if self.tiles.is_empty() {
@@ -197,7 +177,6 @@ impl Tiles {
             })
     }
 
-    /// The boundary seal waiting at a surface cell, if any.
     #[inline]
     pub(super) fn seal_at(&self, [x, y, z]: [i32; 3]) -> Option<Seal> {
         let tile = self.tile([x, y, z])?;
@@ -208,7 +187,6 @@ impl Tiles {
             .map(|i| tile.seals[i])
     }
 
-    /// The course cells of one column within the section holding `y`.
     pub(super) fn column_courses(&self, x: i32, y: i32, z: i32) -> &[CourseCell] {
         let Some(tile) = self.tile([x, y, z]) else {
             return &[];

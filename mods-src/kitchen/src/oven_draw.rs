@@ -1,18 +1,3 @@
-//! What a placed oven SHOWS: the item it is cooking, sitting in the middle of
-//! its chamber, and the finished bake waiting in the mouth's threshold, a
-//! step forward.
-//!
-//! This is the draw-set surface (`set_block_draw`): prims the mod computes
-//! each tick, retained engine-side, costing no re-mesh. Both contents are
-//! drawn as their own ITEMS straight from the machine's slots, so what you
-//! see in the oven and what you take out of the panel are the same art and
-//! cannot drift apart when the art changes.
-//!
-//! A draw set does not survive a section unload, a reload, or a machine that
-//! stopped ticking mid-state — so nothing here is memoised. Every tick the
-//! oven submits what its slots hold right now; the engine drops an unchanged
-//! submission before it costs anything.
-
 use mod_sdk::*;
 
 /// The engine fits this model to its footprint with the default `fill` mode:
@@ -25,14 +10,9 @@ use mod_sdk::*;
 /// mapped through exactly that fit; the tests read the shipped model and
 /// fail if the fit or the seats drift.
 const MODEL_PX: f32 = 1.0 / 16.8;
-/// The posed bounds' minimum corner; `p − BOUNDS_MIN` is an authored point's
-/// model-space offset, in px.
 const BOUNDS_MIN: [f32; 3] = [-16.0, -16.0, 0.0];
-/// The Z centring slack the fit leaves (the model's depth is a hair shorter
-/// than its two-cell footprint; X exactly fills, so its slack is zero).
 const LO_Z: f32 = 0.047_619;
 
-/// An authored model-space point, in prim space (1.0 = one footprint cell).
 fn seat(at_px: [f32; 3]) -> [f32; 3] {
     [
         (at_px[0] - BOUNDS_MIN[0]) * MODEL_PX,
@@ -41,36 +21,16 @@ fn seat(at_px: [f32; 3]) -> [f32; 3] {
     ]
 }
 
-/// Where the bake sits: the middle of the chamber floor — the oven deck's
-/// stone (authored y 0), centred left-right, at the depth centre between the
-/// mouth and the back wall (authored px (0, 0, 11)).
 const COOK_SEAT_PX: [f32; 3] = [0.0, 0.0, 11.0];
-/// The full-size cooking item: 8 model px.
 const COOK_SCALE_PX: f32 = 8.0;
 
-/// Where the finished bake rests: the mouth's threshold — centred, a step
-/// forward of the cooking seat, sitting in the recess the mouth trims frame
-/// (authored px (0, 0, 3.25)) — like a loaf slid out to wait for pickup,
-/// entirely on the deck.
 const DONE_SEAT_PX: [f32; 3] = [0.0, 0.0, 3.25];
-/// The finished item: 6 model px, so it fits the gap between the deck's
-/// front edge and the cooking seat without overhanging either.
 const DONE_SCALE_PX: f32 = 6.0;
 
-/// A sprite item is a VERTICAL slab; this lays one flat on the stone.
 const LIE_FLAT: f32 = std::f32::consts::FRAC_PI_2;
-/// Clearance between a seated item and the stone under it, so it never
-/// z-fights the surface it rests on.
 const HAIR: f32 = 0.08 * MODEL_PX;
-/// A flat sprite item's half-thickness is half of its one-texel extrusion.
 const HALF_THICK: f32 = 1.0 / 32.0;
 
-/// The oven's draw set for the tick: what its slots show.
-///
-/// The input sits in the chamber's middle whether or not the fire is lit —
-/// it is in the oven either way — and rises a little with its cook progress,
-/// settling back as the progress regresses. The output waits a step forward
-/// in the mouth's threshold, reading as done and ready to take.
 pub fn contents(
     input: Option<&ItemStackData>,
     output: Option<&ItemStackData>,
@@ -78,8 +38,6 @@ pub fn contents(
 ) -> Vec<DrawPrim> {
     let mut out = Vec::new();
     if let Some(stack) = input {
-        // Rising with the bake, not popping from nothing: a fresh input
-        // draws at 85% and reaches full size as it finishes.
         let rise = 0.85 + 0.15 * progress.clamp(0.0, 1.0);
         out.push(item(stack, COOK_SEAT_PX, rise * COOK_SCALE_PX * MODEL_PX));
     }
@@ -135,10 +93,6 @@ mod tests {
         (take("from"), take("to"))
     }
 
-    /// Bounds of ONE cube posed by its static tilt, as the engine bakes them.
-    /// Only a single-axis Y tilt is shipped; a different rotation fails here
-    /// loudly rather than posing incorrectly — extend the math when the art
-    /// grows a second axis.
     fn posed_bounds(e: &json::Value) -> ([f32; 3], [f32; 3]) {
         let (from, to) = box_of(e);
         let Some(rot) = e.get("rotation") else {
@@ -182,9 +136,8 @@ mod tests {
         (mn, mx)
     }
 
-    /// The engine's fill fit, re-read from the shipped model: posed bounds →
-    /// uniform scale until the widest axis fills the footprint, X/Z centred,
-    /// floor-rested.
+    /// Same fit the engine does (widest axis fills the footprint, centered, on the floor), redone
+    /// from the shipped model's posed bounds.
     struct Fit {
         scale: f32,
         mn: [f32; 3],
@@ -224,12 +177,6 @@ mod tests {
         }
     }
 
-    /// THE SEATS ARE WATERMARKS ON THE MODEL'S FACE: the fit, re-derived from
-    /// the shipped `.bbmodel`, must put both items exactly where the
-    /// constants claim. The engine fits the art and the tests fit the art, so
-    /// a redraw that moves the chamber moves the seats with it — and one that
-    /// changes the fit without moving the constants fails loud instead of
-    /// baking a loaf in the chimney.
     #[test]
     fn the_seats_map_through_the_fit_the_engine_applies() {
         let fit = Fit::read();
@@ -243,25 +190,15 @@ mod tests {
                 );
             }
         }
-        // The oven floor is the deck's top plane, and everything the oven
-        // shows rests on it.
         let floor = fit.at([0.0, 0.0, 0.0])[1];
         assert!((fit.at([0.0, 0.0, 11.0])[1] - floor).abs() < 1e-5);
         assert!((fit.at(DONE_SEAT_PX)[1] - floor).abs() < 1e-5);
     }
 
-    /// The bake must sit INSIDE the chamber the model builds — between the
-    /// side walls' inner faces and behind the mouth plane, flat on the deck,
-    /// clear of the mouth trim — and the finished bake on the deck's front
-    /// sill: outboard of the trim, still on the deck, in front of the wall
-    /// rather than inside the chamber.
     #[test]
     fn the_seats_land_inside_the_chamber_the_model_builds() {
         let fit = Fit::read();
 
-        // The chamber features, straight off the model cubes: the walls at
-        // wall height standing on the deck (three of them), the mouth trims
-        // flanking the opening below the lintel, and the deck itself.
         let mut walls: Vec<([f32; 3], [f32; 3])> = Vec::new();
         let mut trims: Vec<([f32; 3], [f32; 3])> = Vec::new();
         let mut deck_top = f32::NAN;
@@ -317,7 +254,6 @@ mod tests {
         let mouth_left = fit.at([trim_left, 0.0, 0.0])[0];
         let mouth_right = fit.at([trim_right, 0.0, 0.0])[0];
 
-        // --- The bake: inside the chamber, on the floor, clear of the trim.
         let cook = seat(COOK_SEAT_PX);
         let half = COOK_SCALE_PX * MODEL_PX * 0.5;
         assert!(
@@ -344,8 +280,6 @@ mod tests {
             assert!(clear, "the bake never touches a mouth trim");
         }
 
-        // --- The finished bake: centred in the mouth's threshold, a step
-        // forward of the baking seat, entirely on the deck.
         let done = seat(DONE_SEAT_PX);
         let half_done = DONE_SCALE_PX * MODEL_PX * 0.5;
         assert!(
@@ -377,9 +311,6 @@ mod tests {
         }
     }
 
-    /// What the mod submits: empty slots clear the set, the input draws under
-    /// its own name in the chamber, the output on the sill, and only the
-    /// cooking item breathes with the progress.
     #[test]
     fn contents_follow_the_slots() {
         let raw = stack("kitchen:raw_mutton");

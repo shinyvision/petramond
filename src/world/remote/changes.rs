@@ -1,15 +1,3 @@
-//! Which keys of the presented world changed when: its REVISION counter and
-//! the keys in the order they last changed, so "everything that changed
-//! after revision `r`" costs what changed, not what is present.
-//!
-//! Every replica write seam stamps the key it writes with the revision the
-//! current frame will end on (`revision + 1`); the counter moves by exactly
-//! one at the end of a frame that stamped anything. A key's stamp moves it to
-//! the back of the order in O(1), and an unload unlinks it, so the order
-//! never holds more than the present keys and needs no tombstones. Removals
-//! are never journaled: `Presence` and `Population` are keys of their own,
-//! stamped whenever the terrain or entity key set moves.
-
 use mod_api::ClientStateKey;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -26,8 +14,6 @@ struct Node {
     next: u32,
 }
 
-/// Present keys ordered by the revision they last changed at, oldest first:
-/// an intrusive doubly linked list over a slab, indexed by key.
 #[derive(Default)]
 pub struct ChangeOrder {
     index: FxHashMap<ClientStateKey, u32>,
@@ -58,7 +44,6 @@ impl ChangeOrder {
         self.index.contains_key(key)
     }
 
-    /// The revision `key` last changed at, while it is present.
     pub fn changed_at(&self, key: &ClientStateKey) -> Option<u64> {
         self.index
             .get(key)
@@ -94,8 +79,6 @@ impl ChangeOrder {
         self.tail = i;
     }
 
-    /// `key` changed at `revision`: it moves to the back. Stamps never go
-    /// backwards, so the order stays sorted by `changed_at`.
     pub fn stamp(&mut self, key: ClientStateKey, revision: u64) {
         match self.index.get(&key) {
             Some(&i) => {
@@ -128,7 +111,6 @@ impl ChangeOrder {
         }
     }
 
-    /// `key` is no longer present.
     pub fn remove(&mut self, key: &ClientStateKey) -> bool {
         let Some(i) = self.index.remove(key) else {
             return false;
@@ -138,7 +120,6 @@ impl ChangeOrder {
         true
     }
 
-    /// Every present key that changed after `revision`, newest first.
     pub fn since(&self, revision: u64) -> impl Iterator<Item = ClientStateKey> + '_ {
         let mut at = self.tail;
         std::iter::from_fn(move || {
@@ -151,7 +132,6 @@ impl ChangeOrder {
         })
     }
 
-    /// Every present key, in change order.
     pub fn keys(&self) -> impl Iterator<Item = ClientStateKey> + '_ {
         let mut at = self.head;
         std::iter::from_fn(move || {
@@ -162,31 +142,21 @@ impl ChangeOrder {
     }
 }
 
-/// A presented world's revisions, and what this frame touched.
 pub struct Changes {
-    /// Where this world's revisions start: no other world's revision can
-    /// equal one of these.
     base: u64,
-    /// The revision the last finished frame left.
     revision: u64,
-    /// Something was stamped since the last frame ended.
     stamped: bool,
     order: ChangeOrder,
-    /// An events log wants this frame's touched and removed keys.
     collecting: bool,
     touched: Vec<ClientStateKey>,
     touched_set: FxHashSet<ClientStateKey>,
     removed: Vec<ClientStateKey>,
 }
 
-/// What one frame changed, handed to the events logs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FrameChanges {
-    /// The revision the frame ended on.
     pub revision: u64,
-    /// Every key a write seam wrote this frame, in first-write order.
     pub touched: Vec<ClientStateKey>,
-    /// Sections and columns that unloaded this frame.
     pub removed: Vec<ClientStateKey>,
 }
 
@@ -209,25 +179,19 @@ impl Changes {
             touched_set: FxHashSet::default(),
             removed: Vec::new(),
         };
-        // Present for the world's whole life, and never changed after.
         changes.stamp(ClientStateKey::Session);
         changes.stamp(ClientStateKey::Tables);
         changes
     }
 
-    /// Where this world's revisions start: which world a revision is of.
     pub fn base(&self) -> u64 {
         self.base
     }
 
-    /// The revision the last finished frame left: what a state taken now
-    /// describes at least.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// Whether this world issued `revision`: a base from another world, or
-    /// one ahead of this counter, was not.
     pub fn issued(&self, revision: u64) -> bool {
         (self.base..=self.revision).contains(&revision)
     }
@@ -236,8 +200,6 @@ impl Changes {
         &self.order
     }
 
-    /// Collect touched and removed keys for the frames to come (an events
-    /// log runs), or stop.
     pub fn set_collecting(&mut self, collecting: bool) {
         self.collecting = collecting;
         if !collecting {
@@ -247,7 +209,6 @@ impl Changes {
         }
     }
 
-    /// `key` changed this frame.
     pub fn stamp(&mut self, key: ClientStateKey) {
         self.order.stamp(key, self.revision + 1);
         self.stamped = true;
@@ -256,7 +217,6 @@ impl Changes {
         }
     }
 
-    /// `key` left the world this frame (an unload or a despawn).
     pub fn remove(&mut self, key: ClientStateKey) {
         if !self.order.remove(&key) {
             return;
@@ -272,8 +232,6 @@ impl Changes {
         }
     }
 
-    /// A section or column arrived: it, and the terrain key set when it is
-    /// new.
     pub fn stamp_terrain(&mut self, key: ClientStateKey) {
         if !self.order.contains(&key) {
             self.stamp(ClientStateKey::Presence);
@@ -281,7 +239,6 @@ impl Changes {
         self.stamp(key);
     }
 
-    /// A section or column unloaded.
     pub fn remove_terrain(&mut self, key: ClientStateKey) {
         if self.order.contains(&key) {
             self.stamp(ClientStateKey::Presence);
@@ -289,7 +246,6 @@ impl Changes {
         }
     }
 
-    /// End the frame: the counter moves when anything changed.
     pub fn end_frame(&mut self) -> FrameChanges {
         if std::mem::take(&mut self.stamped) {
             self.revision += 1;
@@ -312,20 +268,16 @@ pub fn column_key(pos: ChunkPos) -> ClientStateKey {
 }
 
 impl<S: WorldSide> World<S> {
-    /// The sections holding at least one draw set.
     pub fn draw_sections(&self) -> impl Iterator<Item = SectionPos> + '_ {
         self.draws.block_draw_sections.keys().copied()
     }
 
-    /// Section `pos` left the world. Only a replica keeps revisions: it is
-    /// the world a client presents.
     pub(in crate::world) fn unstamp_section(&mut self, pos: SectionPos) {
         if let Some(replica) = self.side.replica_mut() {
             replica.changes.remove_terrain(section_key(pos));
         }
     }
 
-    /// Column `pos` left the world, with every section in it.
     pub(in crate::world) fn unstamp_column(&mut self, pos: ChunkPos, cys: u32) {
         let Some(replica) = self.side.replica_mut() else {
             return;
@@ -340,7 +292,6 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ReplicaWorld {
-    /// The presented world's revisions.
     pub fn changes(&self) -> &Changes {
         &self.side.changes
     }
@@ -349,14 +300,10 @@ impl ReplicaWorld {
         &mut self.side.changes
     }
 
-    /// The pool this world's background work runs on.
     pub fn job_pool(&self) -> &std::sync::Arc<crate::worker::JobPool> {
         self.side.terrain.prediction_terrain.pool()
     }
 
-    /// Section `pos` is about to be written (installed, relit, edited,
-    /// drawn on, or unloaded). A column a section install creates arrives
-    /// with it.
     pub(in crate::world) fn stamp_section_write(&mut self, pos: SectionPos) {
         let changes = &mut self.side.changes;
         let column = column_key(pos.chunk_pos());
@@ -366,13 +313,10 @@ impl ReplicaWorld {
         changes.stamp_terrain(section_key(pos));
     }
 
-    /// Column `pos` is about to be written.
     pub(in crate::world) fn stamp_column_write(&mut self, pos: ChunkPos) {
         self.side.changes.stamp_terrain(column_key(pos));
     }
 
-    /// Cells were written outside the ingest seams (a local prediction and
-    /// its reconciliation): their sections, and their columns' heights.
     pub fn stamp_cells_written(
         &mut self,
         cells: impl IntoIterator<Item = petramond_math::math::IVec3>,

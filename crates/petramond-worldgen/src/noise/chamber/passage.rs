@@ -99,8 +99,6 @@ impl Passage {
                 .sum::<f64>()
                 .sqrt();
             let radius = self.radii[i] + t * (self.radii[i + 1] - self.radii[i]);
-            // Scale the vertical feather with the metric so its world reach
-            // remains bounded by the same box for flattened and tall passages.
             let feather = self.feather / self.flatten.max(1.0);
             let ramp = ((1.0 - (distance - radius).max(0.0) / feather) * (1.0 + 0.4 * knead))
                 .clamp(0.0, 1.0);

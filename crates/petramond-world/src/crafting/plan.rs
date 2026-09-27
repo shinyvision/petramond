@@ -1,5 +1,3 @@
-//! Deterministic inventory planning and atomic player-craft commit.
-
 use std::collections::VecDeque;
 
 use crate::inventory::{Inventory, TOTAL_SLOTS};
@@ -7,7 +5,6 @@ use crate::item::{ItemStack, ItemType};
 
 use super::{CraftingRecipe, IngredientSelector, IngredientUse};
 
-/// Why an authoritative CRAFT request did not mutate anything.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CraftFailure {
     OutputOccupied,
@@ -16,13 +13,8 @@ pub enum CraftFailure {
 
 #[derive(Debug)]
 pub struct CraftPlan {
-    /// One aggregated decrement per concrete inventory slot, in slot order.
     takes: Vec<(usize, u8)>,
-    /// Returned items in deterministic ingredient-row order.
     remainders: Vec<(ItemType, u16)>,
-    /// Instance-data variant the crafted output carries: the recipe's
-    /// `inherit` keys copied from the consumed ingredients (`NONE` when the
-    /// recipe inherits nothing or no ingredient carries the keys).
     output_variant: crate::item::VariantId,
 }
 
@@ -58,7 +50,6 @@ impl FlowNetwork {
         }
     }
 
-    /// Add a directed capacity edge and return its index in `from`'s edge list.
     fn add_edge(&mut self, from: usize, to: usize, capacity: u32) -> usize {
         let forward = self.edges[from].len();
         let reverse = self.edges[to].len();
@@ -144,12 +135,6 @@ impl FlowNetwork {
     }
 }
 
-/// Build a complete assignment without mutating `inventory`.
-///
-/// Ingredient rows and occupied inventory slots form a compact deterministic
-/// capacity network. Residual paths matter for overlapping tags: capacity
-/// initially assigned to a broad tag can be moved to another matching stack so
-/// a competing exact-item row still succeeds.
 pub fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<CraftPlan> {
     let required = recipe
         .ingredients()
@@ -242,11 +227,6 @@ pub fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<CraftPlan>
         })
         .collect();
 
-    // Inherit pass: each inherited instance-data key is copied from the
-    // consumed ingredient stacks onto the output. Consumed stacks that carry
-    // the key must AGREE on its value — a disagreement (two wool colors in
-    // one craft) is "the recipe does not match", so the browser and the
-    // authoritative commit refuse identically.
     let output_variant = if recipe.inherit().is_empty() {
         crate::item::VariantId::NONE
     } else {
@@ -289,10 +269,6 @@ pub fn plan(recipe: &CraftingRecipe, inventory: &Inventory) -> Option<CraftPlan>
     })
 }
 
-/// Whether one more full result of `recipe` fits `output`: the slot is empty,
-/// or already holds the same item with room for the whole result count. The
-/// browser's CRAFT enablement and the authoritative execution share this rule
-/// so repeat-crafting a stackable result never disables the button early.
 pub fn output_accepts(recipe: &CraftingRecipe, output: Option<ItemStack>) -> bool {
     let result = recipe.result();
     match output {
@@ -305,10 +281,6 @@ pub fn output_accepts(recipe: &CraftingRecipe, output: Option<ItemStack>) -> boo
     }
 }
 
-/// Execute one recipe into the transient output slot: an empty slot takes the
-/// full result; a same-item output stack merges it (stackable results craft
-/// repeatedly until the stack is full). The returned stacks are remainder
-/// overflow that the menu owner must route to its safe drop sink.
 pub fn craft(
     recipe: &CraftingRecipe,
     inventory: &mut Inventory,
@@ -318,9 +290,6 @@ pub fn craft(
         return Err(CraftFailure::OutputOccupied);
     }
     let plan = plan(recipe, inventory).ok_or(CraftFailure::MissingIngredients)?;
-    // A repeat-craft merges into the output stack, so the stack's variant
-    // must match what this craft would produce (a tint mismatch refuses like
-    // any other occupied output).
     if output
         .as_ref()
         .is_some_and(|stack| stack.variant != plan.output_variant)
@@ -417,8 +386,6 @@ mod tests {
         let mut inventory = Inventory::new();
         inventory.add(ItemStack::new(ItemType::OakPlanks, 1));
         inventory.add(ItemStack::new(ItemType::SprucePlanks, 1));
-        // Broad selector first deliberately grabs oak initially; the later
-        // exact requirement must push it onto spruce rather than fail.
         let recipe = recipe(vec![
             ingredient(
                 IngredientSelector::Tag(ItemTag::PLANKS),
@@ -553,8 +520,6 @@ mod tests {
             )])
             .unwrap();
 
-        // Agreement: both consumed stacks carry the same tint — the output
-        // inherits it.
         let mut inventory = Inventory::new();
         inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
         inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
@@ -562,7 +527,6 @@ mod tests {
         craft(&recipe, &mut inventory, &mut output).expect("agreeing craft");
         assert_eq!(output.unwrap().variant, red, "output inherits the tint");
 
-        // Disagreement: two colors in one craft = the recipe does not match.
         let mut inventory = Inventory::new();
         inventory.add(ItemStack::with_variant(ItemType::OakPlanks, 1, red));
         inventory.add(ItemStack::with_variant(
@@ -572,7 +536,6 @@ mod tests {
         ));
         assert!(plan(&recipe, &inventory).is_none(), "disagreement refuses");
 
-        // Plain ingredients inherit nothing.
         let mut inventory = Inventory::new();
         inventory.add(ItemStack::new(ItemType::OakPlanks, 2));
         let mut output = None;

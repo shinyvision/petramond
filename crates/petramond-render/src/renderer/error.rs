@@ -1,36 +1,15 @@
-//! How the renderer fails: typed bring-up errors instead of panics, and the
-//! runtime failures (device loss, out-of-memory) a host has to act on.
-//!
-//! wgpu reports device loss and uncaptured errors through callbacks that may
-//! run on any thread and at any point of a frame, so they land in a shared
-//! [`DeviceHealth`] record the frame loop and the host read back. Without the
-//! callbacks installed an uncaptured error reaches wgpu's default handler,
-//! which panics — a driver reset or one bad pack shader would take the whole
-//! game down instead of letting the host rebuild or report.
-
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Why a renderer could not be built.
 #[derive(Debug)]
 pub enum RenderInitError {
-    /// The window handle could not back a wgpu surface.
     CreateSurface(wgpu::CreateSurfaceError),
-    /// No adapter — not even the software fallback — can drive the target.
     NoAdapter(wgpu::RequestAdapterError),
-    /// The adapter refused the device the renderer needs.
     RequestDevice(wgpu::RequestDeviceError),
-    /// The chosen adapter cannot present to the surface.
     SurfaceUnsupported,
-    /// An offscreen renderer was asked for a colour format its frame
-    /// readback cannot decode as 8-bit RGBA.
     UnreadableFormat(wgpu::TextureFormat),
-    /// The pass table failed validation: a renderer bug, caught before the
-    /// first frame rather than as a validation error in the middle of one.
     PassGraph(String),
-    /// The loaded content (tiles, item icons, the uv table) overflows the
-    /// GPU's limits; the message names every overflow.
     ContentLimits(String),
 }
 
@@ -71,16 +50,9 @@ impl std::error::Error for RenderInitError {
     }
 }
 
-/// A failure the renderer cannot recover from on its own. Once one is
-/// recorded the renderer stops drawing; the host decides what happens next
-/// (see [`Renderer::failure`](super::Renderer::failure)).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RenderFailure {
-    /// The GPU device is gone (driver reset, GPU removed or hung). Every GPU
-    /// object this renderer holds is dead; build a new renderer — terrain
-    /// re-uploads through `sync_meshes` once the world re-queues it.
     DeviceLost(String),
-    /// The GPU ran out of memory for a frame or a resource.
     OutOfMemory(String),
 }
 
@@ -95,13 +67,8 @@ impl fmt::Display for RenderFailure {
 
 impl std::error::Error for RenderFailure {}
 
-/// Validation errors logged in full before the rest are only counted: a
-/// broken pipeline reports once per draw, and a log flooded at frame rate
-/// buries the first (useful) message.
 const LOGGED_VALIDATION_ERRORS: u32 = 16;
 
-/// The device's failure state, shared with its lost and uncaptured-error
-/// callbacks. Keeps the FIRST failure: later ones are usually consequences.
 #[derive(Clone, Default)]
 pub(super) struct DeviceHealth {
     failure: Arc<Mutex<Option<RenderFailure>>>,
@@ -109,14 +76,10 @@ pub(super) struct DeviceHealth {
 }
 
 impl DeviceHealth {
-    /// Route `device`'s lost and uncaptured-error callbacks into a fresh
-    /// health record.
     pub(super) fn watch(device: &wgpu::Device) -> Self {
         let health = Self::default();
         let lost = health.clone();
         device.set_device_lost_callback(move |reason, message| {
-            // The renderer never destroys its device, so `Destroyed` only
-            // arrives while the device is being torn down with the renderer.
             if reason == wgpu::DeviceLostReason::Destroyed {
                 return;
             }
@@ -129,7 +92,6 @@ impl DeviceHealth {
         health
     }
 
-    /// Record `failure` unless an earlier one is already recorded.
     pub(super) fn record(&self, failure: RenderFailure) {
         log::error!("renderer: {failure}");
         if let Ok(mut slot) = self.failure.lock() {
@@ -137,7 +99,6 @@ impl DeviceHealth {
         }
     }
 
-    /// The recorded failure, if any.
     pub(super) fn failure(&self) -> Option<RenderFailure> {
         self.failure.lock().ok().and_then(|slot| slot.clone())
     }
@@ -154,10 +115,6 @@ impl DeviceHealth {
                 } else if seen == LOGGED_VALIDATION_ERRORS {
                     log::error!("further wgpu validation errors are counted, not logged");
                 }
-                // A validation error is a renderer or pack-shader bug. Debug
-                // builds (and every test) keep wgpu's loud default so a bug
-                // fails where it happens; a release build logs and keeps
-                // drawing whatever still validates.
                 if cfg!(debug_assertions) {
                     panic!("wgpu validation error: {description}");
                 }
@@ -183,7 +140,6 @@ mod tests {
             health.failure(),
             Some(RenderFailure::DeviceLost("reset".into()))
         );
-        // Reading does not consume: a lost device stays lost.
         assert!(health.failure().is_some());
     }
 

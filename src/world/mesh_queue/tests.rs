@@ -50,7 +50,6 @@ fn mesh_job_uses_the_replicated_biome_tint_halo() {
     let mut world = ReplicaWorld::new(0, 0);
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
-    // The halo column generation captures and the ColumnPayload ships.
     let gen = petramond_worldgen::ChunkGenerator::new(0).generate_column_gen(pos.cx, pos.cz);
     world
         .data
@@ -86,8 +85,6 @@ fn stale_rejected_light_bake_requests_a_rebake() {
     world
         .light_bakes
         .request(0, pos, &world.data.sections, &world.data.columns);
-    // Invalidate the in-flight bake exactly as an edit / landing does. The
-    // result is drained on this thread, so the bump always beats it.
     world.mark_light_dirty_pos(pos);
 
     for _ in 0..2500 {
@@ -106,8 +103,6 @@ fn light_blocked_mesh_leaves_hot_dirty_queue() {
     let mut section = Section::new(pos.cx, pos.cy, pos.cz);
     section.set_block(0, 0, 0, Block::Dirt);
     world.insert_section_for_test(pos, section);
-    // Hold the dependency unresolved; a fast fixture bake can otherwise finish
-    // inside the pump before the mesh ever needs to wait.
     world.data.light_deferred.insert(pos);
 
     world.tick_mesh_budget(1);
@@ -156,7 +151,6 @@ fn all_air_transition_removes_stale_ghost_mesh() {
         "a solid section with missing neighbours meshes its exposed border"
     );
 
-    // Mine the section out entirely: all-air emits nothing.
     let before_revision = {
         let s = world.data.section_mut(center).unwrap();
         s.blocks_mut().fill(Block::Air.id());
@@ -191,8 +185,6 @@ fn all_air_transition_removes_stale_ghost_mesh() {
 
 #[test]
 fn loaded_opaque_neighbour_planes_seal_future_mesh_work() {
-    // Only exact loaded planes may seal; generated summaries can disagree
-    // with saved/player-carved terrain.
     let mut world = ReplicaWorld::new(0, 0);
     let center = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, center);
@@ -335,8 +327,6 @@ fn predicted_mine_relights_and_remeshes_the_opened_shaft_synchronously() {
 fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     use crate::world::replication::{LightPayload, SectionBytes};
 
-    // Reconciliation keeps the non-blocking path: retain the installed
-    // prediction mesh until the corrective bundle has exact light.
     let mut world = ReplicaWorld::new(0, 4);
     let pos = SectionPos::new(0, 0, 0);
     insert_solid_section(&mut world, pos);
@@ -374,8 +364,6 @@ fn reconciliation_is_async_and_never_overrides_authoritative_light() {
     }
     assert!(landed, "reconciliation terrain bundle did not land");
 
-    // If authoritative light lands while another correction is in flight,
-    // the bundle's mesh-revision fence must reject the stale local result.
     assert!(world.set_block_world(cell.x, cell.y, cell.z, Block::Stone));
     world.reconcile_predicted_edit(&[(cell, Block::Air.id())]);
     assert!(world.side.terrain.prediction_terrain.has_pending());
@@ -414,8 +402,6 @@ fn forced_repack_remesh_bypasses_sealed_parking() {
     assert!(!world.side.terrain.sealed_parked.contains(&center));
 }
 
-/// SEC-03: a mesh build that panics still reports, so its in-flight slot and
-/// cancel entry are released and the pipeline keeps admitting work.
 #[test]
 fn a_panicking_mesh_build_releases_its_in_flight_slot() {
     let mut world = ReplicaWorld::new(0, 0);

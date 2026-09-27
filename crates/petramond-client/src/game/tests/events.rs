@@ -1,7 +1,3 @@
-//! A server tick system's spatial sound commands reach the client's
-//! `GameEvents` intact. (The bus and stage-ordering contracts themselves are
-//! server behaviour, tested in `src/server/game/tests/events.rs`.)
-
 use super::common::game;
 use crate::game::{GameInput, SpatialSoundCommand};
 use petramond::events::{Attach, Stage};

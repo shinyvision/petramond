@@ -1,12 +1,3 @@
-//! Resident-memory census of a loaded world.
-//!
-//! Byte accounting for the stores that scale with view distance: section voxel
-//! cubes, light cubes, per-column 2D maps, retained CPU meshes and the streaming
-//! bookkeeping sets. Shared buffers (`Arc`) are counted ONCE per distinct
-//! allocation — a uniform all-air section pointing at the shared cube must not
-//! be billed 4 KiB it does not own, or the census would flatter every fix that
-//! increases sharing.
-
 use crate::world::{World, WorldSide};
 use std::collections::HashSet;
 
@@ -14,7 +5,6 @@ use std::collections::HashSet;
 pub struct MemoryCensus {
     pub sections: usize,
     pub columns: usize,
-    /// Distinct block cubes (shared uniform cubes counted once) and their bytes.
     pub block_cubes: usize,
     pub block_bytes: u64,
     pub skylight_cubes: usize,
@@ -23,7 +13,6 @@ pub struct MemoryCensus {
     pub blocklight_bytes: u64,
     pub fluid_cubes: usize,
     pub fluid_bytes: u64,
-    /// `size_of::<Section>()` × sections — the struct bodies themselves.
     pub section_structs: u64,
     pub sparse_state_bytes: u64,
     pub entity_bytes: u64,
@@ -31,18 +20,12 @@ pub struct MemoryCensus {
     pub column_bytes: u64,
     pub column_gen: usize,
     pub column_gen_bytes: u64,
-    /// Retained CPU section meshes (post-upload releases excluded from bytes).
     pub meshes: usize,
     pub meshes_released: usize,
     pub mesh_bytes: u64,
     pub mesh_capacity_bytes: u64,
-    /// Streaming/index sets and maps keyed by section or column.
     pub index_bytes: u64,
-    /// Per-stream used mesh bytes: opaque v/i, far v/i, transparent v/i,
-    /// translucent v/i, model v/i, contact v.
     pub mesh_streams: [u64; 11],
-    /// Worldgen memo entries held (shared memos) and the resident bytes of
-    /// every memo generation reads through (see `ServerWorld::worldgen_cache_report`).
     pub worldgen_cache_entries: usize,
     pub worldgen_cache_bytes: u64,
 }
@@ -66,13 +49,10 @@ impl MemoryCensus {
 }
 
 fn map_bytes<K, V>(len: usize) -> u64 {
-    // rustc-hash / std hashbrown: one (K,V) plus a control byte per slot, at
-    // ~87.5% max load. Close enough to bill an index set honestly.
     ((std::mem::size_of::<K>() + std::mem::size_of::<V>() + 1) as u64) * (len as u64) * 8 / 7
 }
 
 impl<S: WorldSide> World<S> {
-    /// Where this world's resident bytes are. See [`MemoryCensus`].
     pub fn memory_census(&self) -> MemoryCensus {
         let mut c = MemoryCensus::default();
         if let Some(server) = self.side.server() {

@@ -27,15 +27,11 @@ use super::vertex::{
 /// sky term without dimming torch light; the shader recombines with a
 /// per-channel `max(sky_term, block_term)`. Because the per-channel quantizer
 /// is monotone non-decreasing, `max(sky6, block6.luminance())` equals
-/// `quantize(max(sum_sky, sum_block))` for COLOURLESS light — the value the
-/// single channel used to hold — so white light is bit-identical to the
-/// pre-colour output.
+/// `quantize(max(sum_sky, sum_block))` for colourless light, so white light
+/// remains bit-identical after the sky and block terms are split.
 #[inline]
 pub(super) fn fold_light(sum_sky: u32, sum_block: [u32; 3], denom: u32) -> (u32, BlockLight6) {
     let sky6 = ((sum_sky * 63 + denom / 2) / denom).min(63);
-    // Nearly all daylit terrain reaches no emitter at all: one OR-and-test
-    // skips all three channel divides (and yields the canonical dark cell,
-    // which is what those divides would have produced).
     let block = if (sum_block[0] | sum_block[1] | sum_block[2]) == 0 {
         BlockLight6::DARK
     } else {
@@ -45,11 +41,6 @@ pub(super) fn fold_light(sum_sky: u32, sum_block: [u32; 3], denom: u32) -> (u32,
     (sky6, block)
 }
 
-/// Like [`fold_light`] but for the per-corner smooth-light mean over `cnt` cells
-/// (`1..=4`). The divisor `cnt * SKY_FULL` is one of four constants, so matching on
-/// `cnt` lets the compiler lower each arm's integer division to a multiply-shift —
-/// removing the last per-corner division from the emit hot loop. Byte-identical to
-/// `fold_light(sum_sky, sum_block, cnt * SKY_FULL)`.
 #[inline]
 pub(super) fn fold_light_smooth(sum_sky: u32, sum_block: [u32; 3], cnt: u32) -> (u32, BlockLight6) {
     #[inline(always)]
@@ -64,8 +55,6 @@ pub(super) fn fold_light_smooth(sum_sky: u32, sum_block: [u32; 3], cnt: u32) -> 
         .min(63)
     }
     let sky6 = quant(sum_sky, cnt);
-    // The torch-free common case (nearly all terrain) skips the block-channel
-    // divides entirely: a zero sum quantizes to exactly 0.
     let block = if (sum_block[0] | sum_block[1] | sum_block[2]) == 0 {
         BlockLight6::DARK
     } else {
@@ -100,9 +89,9 @@ pub(super) fn slab_corner_open(
     if state.is_empty() {
         return true;
     }
-    // The touching octant: along the normal, the half in front of the face
-    // plane; along a tangent axis, the half toward the front voxel when the
-    // cell is offset there (a/b != 0), else the half on the corner's side.
+    // Pick the touching octant. Along the normal it's the half in front of the face plane.
+    // Along a tangent it's the half toward the front voxel when the cell is offset there
+    // (a/b != 0), else the half on the corner's side.
     let hu = ((su > 0) != (a != 0)) as usize;
     let hv = ((sv > 0) != (b != 0)) as usize;
     let (u, v) = (face.ao_u(), face.ao_v());
@@ -123,19 +112,14 @@ pub(super) fn slab_corner_open(
     )
 }
 
-/// The light and tint of flat-lit geometry (plant planes, the torch pole):
-/// one value for every corner, no AO, no directional shade.
 #[derive(Copy, Clone)]
 pub(super) struct FlatLit {
     pub(super) tint: [f32; 3],
-    /// The cell's skylight, 0..=63.
     pub(super) sky6: u32,
     pub(super) block: BlockLight6,
 }
 
 impl FlatLit {
-    /// A flat-lit vertex at `pos` for `corner` of a quad textured with `tile`:
-    /// shade index 0 (top, no directional darkening), AO 3, no overlay.
     pub(super) fn vertex(self, pos: [f32; 3], tile: Tile, corner: u32) -> Vertex {
         Vertex {
             pos,
@@ -147,29 +131,19 @@ impl FlatLit {
     }
 }
 
-/// One cube-face quad to push: its geometry, its art, and its per-corner
-/// light.
 pub(super) struct FaceSpec {
     pub(super) face: Face,
-    /// The four corners, in [`Face::quad_box`] order.
     pub(super) corners: [[f32; 3]; 4],
     pub(super) base_tile: Tile,
-    /// The overlay lane's payload: an overlay tile index, or a fluid
-    /// surface's flow angle.
     pub(super) overlay: u32,
-    /// Whether the shader draws `overlay` as an overlay tile.
     pub(super) has_overlay: bool,
-    /// Explicit cell-local UVs per corner (the log remap); `None` maps the
-    /// tile by corner id.
     pub(super) cell_uvs: Option<[(u32, u32); 4]>,
     pub(super) uv_turn: u32,
     pub(super) tint: [f32; 3],
-    /// Per-corner `(ao, sky light, block light)`.
     pub(super) light: CornerLight,
     pub(super) dyed: bool,
 }
 
-/// Push one cube face and return the index of its first vertex.
 pub(super) fn push_cube_face(vbuf: &mut Vec<Vertex>, spec: &FaceSpec) -> u32 {
     let FaceSpec {
         face,
@@ -190,9 +164,6 @@ pub(super) fn push_cube_face(vbuf: &mut Vec<Vertex>, spec: &FaceSpec) -> u32 {
     } else {
         UV_MODE_NONE
     };
-    // A CELL_LOCAL face carries its full mapping in the explicit UV it packs
-    // (box sets, the log remap), so its turn bits stay zero — the shaders
-    // apply the packed turn to plain cube faces only.
     let packed_turn = if cell_uvs.is_some() { 0 } else { uv_turn };
     let start = vbuf.len() as u32;
     // The AO split must run along the darker diagonal. With an implied
@@ -239,12 +210,6 @@ mod fold_light_tests {
     use super::*;
     use petramond_world::chunk::SKY_FULL;
 
-    /// The light-channel split's terrain identity: per-channel quantization is
-    /// monotone, so for COLOURLESS light `max(sky6, block6)` reproduces the
-    /// pre-split single channel (`quantize(max(sums))`) exactly — the shader's
-    /// `max(sky_term, block_term)` at identity scale therefore matches the old
-    /// fold bit-for-bit. Also pins `fold_light_smooth`'s constant-divisor arms
-    /// to `fold_light` byte parity.
     #[test]
     fn split_channels_reproduce_the_max_folded_single_channel() {
         for cnt in 1u32..=4 {
@@ -266,10 +231,6 @@ mod fold_light_tests {
         }
     }
 
-    /// A coloured mean must be taken channel by channel: the fold may never
-    /// collapse the hue into a brightness and re-expand it. Two cells lit by
-    /// different colours average to the mean of each channel, and the canonical
-    /// dark cell survives the fast path.
     #[test]
     fn the_block_mean_is_taken_per_channel() {
         let denom = 2 * SKY_FULL as u32;
@@ -283,7 +244,6 @@ mod fold_light_tests {
         let (_, mixed) = fold_light(0, sum, denom);
         let q = |v: u32| ((v * 63 + denom / 2) / denom).min(63);
         assert_eq!(mixed.channels(), [q(sum[0]), q(sum[1]), q(sum[2])]);
-        // ... and that is NOT the same as averaging luminance and re-tinting.
         assert_ne!(mixed, BlockLight6::grey(mixed.luminance()));
         assert!(fold_light(0, [0; 3], denom).1.is_dark());
         assert!(fold_light_smooth(0, [0; 3], 3).1.is_dark());

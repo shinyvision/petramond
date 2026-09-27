@@ -40,7 +40,6 @@ fn rows(names: &[&str]) -> UiValue {
     ))
 }
 
-/// Everything expansion resolves, per instance, in arena order.
 fn summary(tree: &InstTree<'_>) -> Vec<String> {
     tree.insts
         .iter()
@@ -53,8 +52,6 @@ fn summary(tree: &InstTree<'_>) -> Vec<String> {
         .collect()
 }
 
-/// Expand `state` once, apply `change`, then re-expand reusing the first
-/// arena; returns (reused summary, fresh summary, instances adopted).
 fn reexpand(
     state: &mut UiState,
     hover: (Option<&str>, Option<&str>),
@@ -95,8 +92,6 @@ fn an_unrelated_change_reuses_everything_but_what_read_it() {
         s.set("title", UiValue::Str("Renamed".into()));
     });
     assert_eq!(reused, fresh);
-    // Only the root (rebuilt to re-home its children) and the title label
-    // re-expand; the panel, the list with its rows, and the anchor move over.
     assert_eq!(adopted, fresh.len() - 2, "{fresh:#?}");
 }
 

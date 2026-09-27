@@ -4,11 +4,8 @@ use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
 
-/// The single test player's id — most tests exercise one requester.
 const P0: PlayerId = PlayerId(0);
 
-/// A bodiless magnet anchor: the item tests want the pull, not a body
-/// for a flight to strike.
 fn anchor(id: PlayerId, pos: WorldPos) -> PlayerAnchor {
     PlayerAnchor {
         id,
@@ -25,16 +22,11 @@ fn drop_at(x: f32, z: f32) -> DroppedItem {
     )
 }
 
-/// The dropped-item environmental reaction seam (`items.json`
-/// `dropped_reaction`): a declaring item's dropped entity transforms its
-/// whole stack IN PLACE the first physics tick its center sits in water —
-/// count, identity, and age preserved, one fx record per entity, exactly
-/// once — while an identical entity on dry ground never transforms. Pack
-/// rows need the fixture registry, which the test builds and pins for
-/// itself.
+/// Checks `dropped_reaction` from items.json. Under water, the stack flips in place on its first
+/// tick: same count/identity/age, one fx record. Dry ground: nothing. Pack rows need the fixture
+/// registry, so we build our own here.
 #[test]
 fn dropped_reaction_transforms_the_stack_in_water() {
-    // A content-only fixture pack — no wasm build involved.
     let root = std::env::temp_dir().join(format!(
         "petramond-fixture-dropped-reaction-{}",
         std::process::id()
@@ -66,7 +58,6 @@ fn dropped_reaction_transforms_the_stack_in_water() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The assertions, against the fixture registry pinned above.
 fn dropped_reaction_inner() {
     let by_key = |key: &str| {
         ItemType::by_key(key).unwrap_or_else(|| panic!("fixture item '{key}' registered"))
@@ -80,7 +71,6 @@ fn dropped_reaction_inner() {
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
-    // A water cell over stone, and a dry stone shelf as the control.
     w.set_block_world(2, 63, 2, petramond_world::block::Block::Stone);
     w.set_block_world(2, 64, 2, petramond_world::block::Block::Water);
     w.set_block_world(4, 63, 4, petramond_world::block::Block::Stone);
@@ -108,7 +98,6 @@ fn dropped_reaction_inner() {
         "dry flour never transforms"
     );
 
-    // A second tick fires nothing: dough has no reaction row.
     let fx = w.tick_item_physics(0.05, &[]).fx;
     assert!(fx.is_empty(), "the transform fires exactly once");
     assert_eq!(w.item_entities()[0].stack.item, dough);
@@ -128,10 +117,6 @@ fn launched(pos: WorldPos, vel: Vec3, owner: Option<EntityRef>) -> DroppedItem {
     DroppedItem::launched(pos, ItemStack::new(ItemType::Dirt, 1), vel, owner)
 }
 
-/// The sweep is what makes a launched item a projectile: the first live
-/// body along this tick's motion is struck, the item is seated at the
-/// impact rather than flown through, and the strike is reported — not
-/// resolved — for the server to dispatch.
 #[test]
 fn a_flight_strikes_the_first_body_on_its_path_and_stops_there() {
     let mut w = open_world();
@@ -182,10 +167,6 @@ fn a_flight_stops_at_collidable_terrain_and_reports_the_face() {
     assert!(w.item_entities()[0].pos.x < 5.0);
 }
 
-/// The launcher is inside its own launch's first steps; sparing it is
-/// what lets the item leave at all. The grace is the BODY, not a tick
-/// count: once the item has been outside the launcher's box, a launch
-/// lobbed straight up comes back down on the launcher.
 #[test]
 fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
     let mut w = open_world();
@@ -197,8 +178,6 @@ fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
         body: Some(petramond_world::body::Body::new(feet, 0.3, 1.8)),
         ..Default::default()
     };
-    // Launched from the eye, straight out: inside the body this tick,
-    // outside the next.
     w.spawn_item(launched(
         feet + Vec3::new(0.0, 1.6, 0.0),
         Vec3::new(0.0, 0.0, 10.0),
@@ -216,9 +195,6 @@ fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
     };
     assert!(f.left_owner, "outside the launcher's box now");
 
-    // A slow launch with the launcher WALKING after it faster than it
-    // flies: every tick's segment meets the body, so it is never a hit and
-    // never "left" — the body passes over its own shot.
     w.item_entities_mut().clear();
     w.spawn_item(launched(
         feet + Vec3::new(0.0, 1.6, 0.0),
@@ -240,9 +216,6 @@ fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
         assert!(!f.left_owner, "tick {tick}: the body kept meeting it");
     }
 
-    // Launched from well above the launcher's head, straight down: the
-    // first tick is clear of the body, so from then on the launcher is a
-    // body like any other — the second tick strikes.
     w.item_entities_mut().clear();
     w.spawn_item(launched(
         feet + Vec3::new(0.0, 5.0, 0.0),
@@ -263,10 +236,6 @@ fn a_flight_spares_its_launcher_only_until_it_has_left_the_body() {
     assert_eq!(step.impacts[0].target, ImpactTarget::Player(me));
 }
 
-/// A lodged item restored from a save has an unverified anchor: the block
-/// may have gone while the section was out. It re-probes on its first
-/// ticked step — releasing if the anchor is empty, holding if it is not —
-/// but never through an unloaded column, which reads as empty.
 #[test]
 fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
     let mut w = open_world();
@@ -285,9 +254,9 @@ fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
         it
     };
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);
-    w.spawn_item(restored(4.8, IVec3::new(5, 64, 5))); // anchor holds
-    w.spawn_item(restored(7.8, IVec3::new(8, 64, 5))); // anchor is air
-    w.spawn_item(restored(15.8, IVec3::new(16, 64, 5))); // anchor column unloaded
+    w.spawn_item(restored(4.8, IVec3::new(5, 64, 5)));
+    w.spawn_item(restored(7.8, IVec3::new(8, 64, 5)));
+    w.spawn_item(restored(15.8, IVec3::new(16, 64, 5)));
 
     w.tick_item_physics(0.05, &[]);
     let items = w.item_entities();
@@ -337,7 +306,6 @@ fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
 
 #[test]
 fn lifetime_advances_and_despawns_at_the_limit() {
-    // No save attached, so the timer never pauses — it just counts up.
     let mut w = ServerWorld::new(0, 0);
     let mut item = drop_at(0.5, 0.5);
     item.ticks_lived = ITEM_LIFETIME_TICKS - 2;
@@ -355,7 +323,7 @@ fn lifetime_advances_and_despawns_at_the_limit() {
 fn pickup_waits_out_the_delay_then_collects() {
     let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
-    w.spawn_item(drop_at(0.5, 0.5)); // ticks_lived 0: inside the delay window
+    w.spawn_item(drop_at(0.5, 0.5));
     let mut collected = 0u32;
     w.dropped_items_mut()
         .request_pickups(P0, player, |s| s.count);
@@ -388,14 +356,12 @@ fn pickup_splits_off_only_the_part_that_fits() {
     let mut w = ServerWorld::new(0, 0);
     let player = WorldPos::new(0.5, 64.0, 0.5);
     let mut item = DroppedItem::new(player, ItemStack::new(ItemType::Dirt, 10), 1);
-    item.ticks_lived = 1234; // past the delay, with a partly-elapsed despawn timer
+    item.ticks_lived = 1234;
     let origin_pos = item.pos;
-    let origin_vel = item.vel; // the outward pop from `new`
+    let origin_vel = item.vel;
     w.spawn_item(item);
-    // The planned inventory can take only 6 of the 10.
     w.dropped_items_mut().request_pickups(P0, player, |_| 6);
 
-    // Two drops now: the reduced original and the requested split.
     assert_eq!(w.item_entities().len(), 2);
     let original = w
         .item_entities()
@@ -421,7 +387,6 @@ fn pickup_splits_off_only_the_part_that_fits() {
     );
     assert_eq!(split.stack.item, ItemType::Dirt);
     assert_eq!(split.ticks_lived, 1234, "split keeps the source lifetime");
-    // Spawned exactly on the original, with its velocity — not just nearby.
     assert_eq!(
         split.pos, origin_pos,
         "split spawns exactly where the original is"
@@ -448,9 +413,6 @@ fn pickup_replans_existing_request_before_splitting_more() {
     });
     assert_eq!(w.item_entities().len(), 2);
 
-    // Next tick has the same six slots still reserved by the already-requested
-    // split. The planner must keep that request instead of splitting six more
-    // from the original remainder.
     let mut remaining = 6;
     w.dropped_items_mut().request_pickups(P0, player, |s| {
         let count = remaining.min(s.count);
@@ -477,9 +439,6 @@ fn pickup_replans_existing_request_before_splitting_more() {
 
 #[test]
 fn a_split_drop_tracks_the_original_instead_of_drifting() {
-    // Regression: the split used to spawn at rest while the original kept its
-    // velocity, so once the magnet let go they fell on different arcs and
-    // landed apart. Cloning the physics state keeps them locked together.
     let mut w = ServerWorld::new(0, 0);
     let mut item = DroppedItem::new(
         WorldPos::new(0.5, 80.0, 0.5),
@@ -487,14 +446,12 @@ fn a_split_drop_tracks_the_original_instead_of_drifting() {
         7,
     );
     item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
-    item.vel = Vec3::new(3.0, 0.0, 1.0); // sideways drift a position-only split would lose
+    item.vel = Vec3::new(3.0, 0.0, 1.0);
     let player = WorldPos::new(0.5, 80.0, 0.5);
     w.spawn_item(item);
     w.dropped_items_mut().request_pickups(P0, player, |_| 6);
     assert_eq!(w.item_entities().len(), 2);
 
-    // Free physics with the magnet target far away (no pull): both drops must
-    // follow the same arc and stay in the exact same place.
     let far = WorldPos::new(1000.0, 80.0, 0.5);
     for _ in 0..30 {
         w.tick_item_physics(1.0 / 60.0, &[anchor(P0, far)]);
@@ -526,17 +483,14 @@ fn pickup_leaves_a_drop_with_no_room() {
     );
 }
 
-/// A drop that was not requested must not be magnetised: with the magnet off
-/// it falls under gravity rather than being sucked up to the player and pinned
-/// there with nowhere to go.
 #[test]
 fn magnet_skips_a_drop_that_was_not_requested() {
     let mut w = ServerWorld::new(0, 0);
     let target = WorldPos::new(0.5, 65.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
-    item.pos = WorldPos::new(0.5, 64.5, 0.5); // 0.5 below the target, within attract range
+    item.pos = WorldPos::new(0.5, 64.5, 0.5);
     item.vel = Vec3::ZERO;
-    item.ticks_lived = ITEM_PICKUP_DELAY_TICKS; // past the pickup delay
+    item.ticks_lived = ITEM_PICKUP_DELAY_TICKS;
     w.spawn_item(item);
 
     let before_y = w.item_entities()[0].pos.y;
@@ -548,8 +502,6 @@ fn magnet_skips_a_drop_that_was_not_requested() {
     );
 }
 
-/// Once requested, the same drop is magnetised up toward the player target
-/// above it.
 #[test]
 fn magnet_pulls_a_requested_drop() {
     let mut w = ServerWorld::new(0, 0);
@@ -572,15 +524,12 @@ fn magnet_pulls_a_requested_drop() {
     );
 }
 
-/// The magnet pulls a requested drop toward ITS requester, not whoever is
-/// nearest: player 1 stands closer on the -X side, but the drop reserved
-/// for player 0 flies +X toward player 0.
 #[test]
 fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
     let p1 = PlayerId(1);
     let mut w = ServerWorld::new(0, 0);
-    let p0_pos = WorldPos::new(1.2, 64.0, 0.5); // inside attract, farther
-    let p1_pos = WorldPos::new(0.1, 64.0, 0.5); // inside attract, nearer
+    let p0_pos = WorldPos::new(1.2, 64.0, 0.5);
+    let p1_pos = WorldPos::new(0.1, 64.0, 0.5);
     let mut item = drop_at(0.5, 0.5);
     item.pos = WorldPos::new(0.5, 64.0, 0.5);
     item.vel = Vec3::ZERO;
@@ -599,8 +548,6 @@ fn magnet_pulls_toward_the_requester_not_the_nearest_player() {
     );
 }
 
-/// A reservation whose owner is gone (left / died) is released by the
-/// per-tick sweep, so other players can claim the drop next tick.
 #[test]
 fn stale_requests_release_when_the_requester_is_gone() {
     let mut w = ServerWorld::new(0, 0);
@@ -620,10 +567,6 @@ fn stale_requests_release_when_the_requester_is_gone() {
     );
 }
 
-/// A drop over a floor section that has NOT arrived holds still, and falls
-/// the moment it has. The column IS loaded (the drop's own section is), so a
-/// column-level freeze would let it fall through the absent section and out
-/// of the world.
 #[test]
 fn a_drop_waits_for_the_section_under_it_to_arrive() {
     use petramond_world::chunk::ChunkPos;
@@ -634,12 +577,10 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
     let column = ChunkPos::new(0, 0);
     w.data.ensure_column(column);
     w.insert_empty_column_for_test(column);
-    // The drop's own section (cy 4) is loaded; the one under it (cy 3) is
-    // still in flight.
     let floor = SectionPos::new(0, 3, 0);
     w.side.gen.awaited_overlays.insert(floor);
     w.note_stream_nonfinal(floor);
-    let start = drop_at(2.5, 2.5).pos; // y = 64.5, the first row of cy 4
+    let start = drop_at(2.5, 2.5).pos;
     w.spawn_item(drop_at(2.5, 2.5));
     for _ in 0..40 {
         w.tick_item_physics(0.05, &[]);
@@ -662,11 +603,9 @@ fn a_drop_waits_for_the_section_under_it_to_arrive() {
 
 #[test]
 fn unloading_a_section_harvests_only_its_items() {
-    // take_items_in_section is what an unload uses to bundle a section's drops
-    // into its save record (and so pause their timers). drop_at puts y=64 → cy 4.
     let mut w = ServerWorld::new(0, 0);
-    w.spawn_item(drop_at(2.5, 2.5)); // section (0, 4, 0)
-    w.spawn_item(drop_at(20.5, 2.5)); // section (1, 4, 0)
+    w.spawn_item(drop_at(2.5, 2.5));
+    w.spawn_item(drop_at(20.5, 2.5));
     let taken = w
         .dropped_items_mut()
         .take_items_in_section(SectionPos::new(0, 4, 0));
@@ -678,29 +617,25 @@ fn unloading_a_section_harvests_only_its_items() {
 #[test]
 fn items_group_by_owning_section_for_flush() {
     let mut w = ServerWorld::new(0, 0);
-    w.spawn_item(drop_at(2.5, 2.5)); // (0, 4, 0)
-    w.spawn_item(drop_at(5.5, 9.5)); // (0, 4, 0)
-    w.spawn_item(drop_at(20.5, 2.5)); // (1, 4, 0)
+    w.spawn_item(drop_at(2.5, 2.5));
+    w.spawn_item(drop_at(5.5, 9.5));
+    w.spawn_item(drop_at(20.5, 2.5));
     let map = w.dropped_items_mut().items_by_section();
     assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
     assert_eq!(map[&SectionPos::new(1, 4, 0)].len(), 1);
 }
 
-/// Two compatible stacks within the merge radius collapse into one entity
-/// carrying both counts; the survivor keeps its own identity and pose.
 #[test]
 fn nearby_compatible_stacks_merge_into_one_entity() {
     let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(0.5, 0.5));
-    w.spawn_item(drop_at(1.2, 0.5)); // 0.7 away
+    w.spawn_item(drop_at(1.2, 0.5));
     w.dropped_items_mut().merge_nearby();
     assert_eq!(w.item_entities().len(), 1);
     assert_eq!(w.item_entities()[0].stack.count, 2);
     assert_eq!(w.item_entities()[0].stack.item, ItemType::Dirt);
 }
 
-/// Merging respects the max stack size: the overflow stays behind as its
-/// own entity instead of producing an oversized stack.
 #[test]
 fn merging_respects_the_max_stack_size() {
     let mut w = ServerWorld::new(0, 0);
@@ -720,7 +655,6 @@ fn merging_respects_the_max_stack_size() {
     assert_eq!(counts, vec![16, 64]);
 }
 
-/// Different item kinds never merge, even sharing a cell.
 #[test]
 fn different_items_do_not_merge() {
     let mut w = ServerWorld::new(0, 0);
@@ -732,18 +666,15 @@ fn different_items_do_not_merge() {
     assert_eq!(w.item_entities().len(), 2);
 }
 
-/// Drops farther than the merge radius stay separate even when compatible.
 #[test]
 fn drops_beyond_the_radius_do_not_merge() {
     let mut w = ServerWorld::new(0, 0);
     w.spawn_item(drop_at(0.5, 0.5));
-    w.spawn_item(drop_at(1.8, 0.5)); // 1.3 away
+    w.spawn_item(drop_at(1.8, 0.5));
     w.dropped_items_mut().merge_nearby();
     assert_eq!(w.item_entities().len(), 2);
 }
 
-/// A magnetised drop never merges (in or out): it is flying to a requester
-/// whose inventory already reserved those items.
 #[test]
 fn requested_drops_never_merge() {
     let mut w = ServerWorld::new(0, 0);
@@ -760,15 +691,13 @@ fn requested_drops_never_merge() {
     assert!(w.item_entities()[0].pickup_requested.is_some());
 }
 
-/// The merged pile keeps the OLDEST member's despawn timer, so merging
-/// never shortens an item's remaining life.
 #[test]
 fn merged_pile_keeps_the_most_remaining_lifetime() {
     let mut w = ServerWorld::new(0, 0);
     let mut old = drop_at(0.5, 0.5);
     old.ticks_lived = ITEM_LIFETIME_TICKS - 200;
     w.spawn_item(old);
-    w.spawn_item(drop_at(1.2, 0.5)); // fresh
+    w.spawn_item(drop_at(1.2, 0.5));
     w.dropped_items_mut().merge_nearby();
     assert_eq!(w.item_entities().len(), 1);
     assert_eq!(

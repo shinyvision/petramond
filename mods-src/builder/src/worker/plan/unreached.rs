@@ -1,6 +1,3 @@
-//! Work nothing reaches: what is cleared away around it, and cutting a way
-//! toward it.
-
 use crate::host::prelude::*;
 
 use super::{defer_task, Flow, Round};
@@ -13,9 +10,6 @@ use crate::worker::upkeep::open_block;
 use crate::worker::Job;
 use crate::worker::{pocket, wayin, Body, Ctx, Step, Task, TRACE};
 
-/// Mark what lies ON work the golem cannot reach: a block it could otherwise
-/// stand beside and dig is still hidden while earth covers it, and nothing
-/// the design says anything about is touched.
 pub(super) fn uncover(ctx: &mut Ctx, job: &mut Job, cells: &[[i32; 3]]) {
     let mut over: Vec<[i32; 3]> = Vec::new();
     for cell in cells {
@@ -44,8 +38,6 @@ pub(super) fn uncover(ctx: &mut Ctx, job: &mut Job, cells: &[[i32; 3]]) {
         }
     }
 }
-/// Mark the overgrowth within a few blocks of `cells` for cutting: foliage
-/// in cells the design does not govern.
 pub(super) fn trim_around(job: &mut Job, cells: &[[i32; 3]]) {
     let overgrowth = job.design.overgrowth();
     if overgrowth.is_empty() || cells.is_empty() {
@@ -65,8 +57,6 @@ pub(super) fn trim_around(job: &mut Job, cells: &[[i32; 3]]) {
     }
 }
 
-/// Cutting on toward work ground shuts the golem out of: the way in it began,
-/// or the nearest work it has found no way to.
 pub(super) fn digging_on(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -92,9 +82,6 @@ pub(super) fn digging_on(
     wayin::dig_toward(ctx, job, body, project, &cells)
 }
 
-/// Work no stance, pillar or roof course reaches: a door in the way is
-/// opened, a way is dug, what hides it is cleared, and otherwise it waits.
-/// `Some` when that is this tick's step.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn fall_out(
     ctx: &mut Ctx,
@@ -107,15 +94,9 @@ pub(super) fn fall_out(
     cells: &[[i32; 3]],
     digging: bool,
 ) -> Option<Flow> {
-    // A door shut between the golem and the work opens: no stance beyond it
-    // can be walked to while it stands closed.
     if let Some(step) = wayin::door_toward(ctx, job, body, cells) {
         return Some(Flow::Go(step));
     }
-    // Out of reach once may be the ground still to be laid under it; out of
-    // reach again is work with nothing beside it to stand on, and only
-    // digging will do. (Its own pace: one block dug, the next is weighed at
-    // once.)
     let again = matches!(task, Task::Unit(i) if job.crew.access.unreachable.contains(&i));
     if again {
         if let Some(step) = wayin::dig_toward(ctx, job, body, project, cells) {
@@ -124,23 +105,14 @@ pub(super) fn fall_out(
     }
     if let Task::Unit(i) = task {
         job.crew.access.unreachable.insert(i);
-        // Propped and still seen from nowhere: the prop is no face a click
-        // can use. It comes down, and the unit waits for the build to bring
-        // its face — nothing beside it is dug out for it either.
         if let Some(props) = job.crew.faces.unprop(i) {
             trace!("TRACE the props of Unit({i}) gave it no face: taking {props:?} down");
             job.crew.scaffolding.urgent.extend(props);
             job.crew.faces.hangs.insert(i);
         }
-        // Sealed in on every side, or hidden from all standing room in reach
-        // (a tunnel under a course laid too soon): a built neighbour comes
-        // back down to open a way in.
         if !digging && !job.crew.faces.hangs.contains(&i) {
             if let Some(o) = pocket::opener(ctx, job, i, body.cell, unseen) {
                 trace!("TRACE {task:?} sealed in: reopening Unit({o})");
-                // With what came down for it before: one put back as the next
-                // came down opened nothing, and the two were dug and laid in
-                // turn for ever.
                 let openers = job.crew.access.reopen.entry(i).or_default();
                 if !openers.contains(&o) {
                     openers.push(o);
@@ -148,30 +120,20 @@ pub(super) fn fall_out(
             }
         }
     }
-    // Natural overgrowth around work nothing reaches (a tree's canopy over a
-    // wall) is cut away, never the design's own.
     if matches!(task, Task::Unit(_)) {
         trim_around(job, cells);
         uncover(ctx, job, cells);
     }
-    // A support column that cannot be finished comes down and its unit is
-    // planned afresh, or one raised in a bad spot can block its own floor for
-    // good.
     if let Task::Support { unit, .. } = task {
         if let Some(props) = job.crew.faces.unprop(unit) {
             trace!("TRACE support for Unit({unit}) unreachable: taking {props:?} down");
             job.crew.scaffolding.urgent.extend(props);
         }
     }
-    // Cutting overgrowth back is a courtesy to the work, never work of its
-    // own: a clump nothing reaches stays.
     if let Task::Trim(cell) = task {
         job.crew.access.trims.remove(&cell);
         return None;
     }
-    // Scaffolding out of reach is tried again for a while (a course coming
-    // down may open a way) and then left standing: some can only be dug from
-    // inside a pit, and asking forever never finishes the build.
     if let Task::Scaffold(cell) = task {
         if job.crew.scaffolding.shunned.count(cell) < SCAFFOLD_TRIES {
             defer_task(ctx, job, task, SEALED_WAIT);
@@ -193,8 +155,6 @@ pub(super) fn fall_out(
     None
 }
 
-/// A way in half dug is finished before the golem walks off for materials:
-/// the trip is long, and the corridor is what the work waits on.
 pub(super) fn finish_way_in(
     ctx: &mut Ctx,
     _projects: &mut Projects,
@@ -211,8 +171,6 @@ pub(super) fn finish_way_in(
     Flow::Pass
 }
 
-/// Nothing to lay this tick: rather than stand about until the blocks it
-/// cannot reach come round again, the golem cuts on toward them.
 pub(super) fn dig_on(
     ctx: &mut Ctx,
     _projects: &mut Projects,

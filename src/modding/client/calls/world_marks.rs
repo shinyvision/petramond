@@ -1,10 +1,3 @@
-//! `ClientWorldMarksSet`: validate one of a mod's mark sets whole and retain
-//! it beside the others.
-//!
-//! A set is accepted whole or refused whole. Drawing part of one would hand
-//! the mod a picture it never asked for, and there is no render budget
-//! downstream to cut it short either.
-
 use mod_api::{ClientSprite, ClientWorldMark, HostRet};
 
 use crate::modding::client::state::ClientStoreData;
@@ -94,8 +87,6 @@ fn accept(mark: ClientWorldMark, mod_id: &str) -> Result<ClientWorldMark, String
     })
 }
 
-/// A finite point inside the world border on every axis: the render origin a
-/// mark is baked against is an `i32` cell, so y needs the bound x and z get.
 fn world_point(v: [f64; 3]) -> Result<[f64; 3], String> {
     let border = f64::from(petramond_world::border::WORLD_BORDER);
     let [x, y, z] = finite_pos(v, "mark point")

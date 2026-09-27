@@ -66,24 +66,14 @@ pub(super) type NodeFactory = fn(
     &[MobDef],
 ) -> Result<Box<dyn AiBehavior>, String>;
 
-/// One species row as written in `mobs.json`: a mirror of [`MobDef`] with owned
-/// strings/Vecs. Biome and companion references ride as name strings (resolved
-/// against this catalog's own tables); block/item references use their registry
-/// serde directly.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawMobDef {
-    /// Registry name: an engine mob name (override) or a namespaced `mod_id:name`
-    /// key (dynamic registration).
     mob: String,
     key: String,
-    /// Asset-relative `.bbmodel` path, resolved through the pack overlay.
     model: String,
     scale: f64,
     size: MobSize,
-    /// Spawn tags: the mob tag map every individual of this species is born
-    /// with (JSON bool/int/float/string → the typed [`MobTagValue`]). Must
-    /// carry a positive numeric `petramond:health` — health IS a tag.
     tags: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     data: serde_json::Map<String, serde_json::Value>,
@@ -100,23 +90,16 @@ struct RawMobDef {
     wander: RawWander,
     habitat: RawHabitat,
     avoid_fluids: bool,
-    /// Whether its walking is heard; omitted = silent.
     #[serde(default)]
     footsteps: bool,
-    /// Whether its walking is gameplay noise hearing AI reacts to; omitted =
-    /// it is.
     #[serde(default = "noisy")]
     step_noise: bool,
-    /// How strongly the body's own parts shade each other; omitted = fully.
     #[serde(default = "full")]
     self_ao: f32,
-    /// Whether it refuses to walk off ledges taller than its routes drop.
     #[serde(default)]
     edge_guard: bool,
-    /// Route-search tuning; omitted = the engine defaults.
     #[serde(default)]
     nav: super::nav::NavTuning,
-    /// Fluid behavior (see [`Buoyancy`]); omitted = `swim`.
     #[serde(default)]
     buoyancy: Buoyancy,
     #[serde(default)]
@@ -125,7 +108,6 @@ struct RawMobDef {
     gravity_scale: f32,
     #[serde(default)]
     air_control: bool,
-    /// Body collision role (see [`MobCollision`]); omitted = `soft`.
     #[serde(default)]
     collision: MobCollision,
     #[serde(default)]
@@ -135,20 +117,14 @@ struct RawMobDef {
     #[serde(default)]
     sounds: Vec<RawMobSound>,
     brain: Vec<RawBrainNode>,
-    /// Rider seat offsets in mob-local blocks (`+z` = facing, `+x` = right,
-    /// `y` = up from the feet). Empty/omitted = not rideable.
     #[serde(default)]
     seats: Vec<[f64; 3]>,
-    /// Carried item slots (see [`MobDef::container_slots`]); omitted = none.
     #[serde(default)]
     container_slots: usize,
-    /// Block-interaction reach from the eye; omitted = a player's reach.
     #[serde(default)]
     reach: Option<f64>,
-    /// Eye height above the feet; omitted = most of the body height.
     #[serde(default)]
     eye_height: Option<f64>,
-    /// Bones that hold items (see [`MobDef::hands`]); omitted = none.
     #[serde(default)]
     hands: Option<RawHands>,
 }
@@ -167,11 +143,9 @@ struct RawHands {
     main: String,
     #[serde(default)]
     off: Option<String>,
-    /// Where the fist closes, in model units of the rest pose.
     grip: [f32; 3],
     #[serde(default)]
     off_grip: Option<[f32; 3]>,
-    /// Degrees a held sprite is rolled about its own length.
     #[serde(default)]
     roll: f32,
 }
@@ -181,19 +155,13 @@ struct RawHands {
 struct RawSpawn {
     #[serde(default)]
     space: Option<Vec<Block>>,
-    /// Biome names (see [`Biome::from_name`]). Empty = never natural-spawned.
     biomes: Vec<String>,
     #[serde(default)]
     underground: Vec<String>,
     #[serde(default)]
     y: Option<[i32; 2]>,
-    /// Optional species-wide rarity in `(0, 1]`; omitted = 1 (as common as
-    /// any other species admitting the site). See [`SpawnRule::chance`].
     #[serde(default)]
     chance: Option<f64>,
-    /// Optional per-biome spawn chance in `(0, 1]`, keyed by a name from
-    /// `biomes`; unlisted biomes spawn at the species-wide chance. See
-    /// [`SpawnRule::chances`].
     #[serde(default)]
     chances: std::collections::BTreeMap<String, f64>,
     ground: Vec<Block>,
@@ -204,19 +172,12 @@ struct RawSpawn {
 struct RawWander {
     chance_per_tick: f64,
     radius: i32,
-    /// BLOCK TAG names whose members the wander AI refuses as a
-    /// destination's floor (see [`WanderTuning::avoid_ground`]). A tag
-    /// nothing lists resolves to nothing — cross-pack semantics, like
-    /// `BlocksByTag`: the tag may belong to a pack that isn't loaded.
     #[serde(default)]
     avoid_ground: Vec<String>,
     #[serde(default)]
     cohesion: Option<RawCohesion>,
 }
 
-/// Companion rides as a NAME string (not `Mob` serde): resolving it through the
-/// in-flight name table avoids the loader recursing into the very def table it is
-/// building.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawCohesion {
@@ -234,14 +195,10 @@ struct RawHabitat {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawMobSound {
-    /// Registry key from `sounds.json`.
     sound: String,
-    /// Semantic mob sound slot (`idle`, `hurt`, or `death`).
     category: MobSoundCategory,
-    /// Required for `idle`, rejected for one-shot categories.
     #[serde(default)]
     tick_interval: Option<u32>,
-    /// Symmetric variance around `tick_interval`; only meaningful for `idle`.
     #[serde(default)]
     tick_interval_variance: Option<u32>,
 }
@@ -285,17 +242,11 @@ enum RawMobDamageSound {
     Death,
 }
 
-/// The mob catalog as loaded: the id-ordered def rows plus the validated
-/// cross-pack brain extensions (a side table — the target rows' own `brain`
-/// lists stay their own; [`super::build_brain`] appends per spawn).
 pub(crate) struct LoadedMobs {
     pub defs: &'static [MobDef],
-    /// `(target, appended nodes)` in extension (layer) order.
     pub extensions: &'static [(Mob, &'static [BrainNode])],
 }
 
-/// Load the mob table from every `mobs.json` layer of `packs` (base + the enabled
-/// packs, later packs replacing rows by mob).
 pub(super) fn table(packs: &petramond_world::assets::PackSet) -> Result<LoadedMobs, String> {
     petramond_world::registry::read_catalog_labeled(packs, "mobs.json", "mob", |layers| {
         let labeled: Vec<(&str, String)> = layers
@@ -316,12 +267,8 @@ pub(super) fn parse_layers(texts: &[&str]) -> Result<LoadedMobs, String> {
     parse_layers_labeled(&labeled)
 }
 
-/// Each layer arrives with a source label (its pack path) so extension
-/// diagnostics can name the offending pack.
 fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String> {
     let texts: Vec<&str> = layers.iter().map(|(text, _)| *text).collect();
-    // One parse per layer: the parse hook feeds the catalog frame its rows
-    // and collects that layer's extensions aside, tagged with the layer index.
     let mut extensions: Vec<(usize, RawBrainExtension)> = Vec::new();
     let mut parse_li = 0usize;
     let mut keys = HashSet::new();
@@ -365,9 +312,6 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
         }
     }
 
-    // Brain validation needs the leaked `&'static MobDef` rows (node factories read
-    // row data), so it runs last: every factory must accept its params NOW, failing
-    // the load rather than the first spawn.
     for d in defs {
         for node in d.brain {
             node.validate(d, defs)
@@ -375,10 +319,6 @@ fn parse_layers_labeled(layers: &[(&str, String)]) -> Result<LoadedMobs, String>
         }
     }
 
-    // Extensions are FOREIGN injections, so a bad one degrades (skip + a
-    // warning naming its source layer) instead of failing the whole catalog
-    // while blaming the target row. Admission already refused everything
-    // checkable without the def table.
     let mut applied: Vec<(Mob, &'static [BrainNode])> = Vec::new();
     for (li, ext) in extensions {
         let source = &layers[li].1;
@@ -614,11 +554,6 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
     Ok(MobDamageFeedback { components })
 }
 
-/// Convert a row's spawn-tag map to the typed runtime map: JSON bool → `Bool`,
-/// integer → `Int`, other number → `Float`, string → `String` (arrays/objects
-/// are rejected — a tag is one value). `petramond:health` is required,
-/// positive, and normalized to `Float` however the row wrote it, so the
-/// damage pipeline reads one type.
 fn convert_spawn_tags(
     raw: serde_json::Map<String, serde_json::Value>,
 ) -> Result<&'static std::collections::BTreeMap<String, MobTagValue>, String> {
@@ -669,10 +604,6 @@ fn convert_spawn_tags(
     Ok(Box::leak(Box::new(tags)))
 }
 
-/// Resolve a row's spawn rule: the biome list, the optional species-wide
-/// rarity, the optional per-biome chance map (validated to name only listed
-/// biomes, values in `(0, 1]`, and aligned index-for-index with the biome
-/// list — see [`SpawnRule::chances`]), and the ground block list.
 fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     if let Some([lo, hi]) = raw.y {
         use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
@@ -737,10 +668,6 @@ fn convert_spawn(raw: RawSpawn) -> Result<SpawnRule, String> {
     })
 }
 
-/// Resolve BLOCK TAG names into the blocks carrying them, sorted + deduped.
-/// A tag nothing lists resolves to nothing rather than erroring (`BlocksByTag`
-/// semantics): the tag may belong to a pack that isn't loaded, and a mob row
-/// must not break when an optional pack's blocks are absent.
 fn resolve_block_tags(tags: Vec<String>) -> &'static [Block] {
     let mut out: Vec<Block> = Vec::new();
     for name in tags {
@@ -753,7 +680,6 @@ fn resolve_block_tags(tags: Vec<String>) -> &'static [Block] {
     Box::leak(out.into_boxed_slice())
 }
 
-/// The `tolerates` row: block names (registry serde) and condition names.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct RawTolerance {
@@ -794,8 +720,6 @@ fn convert_brain(rows: Vec<RawBrainNode>) -> Result<&'static [BrainNode], String
         };
         let inputs = behavior::ScriptedInputs::parse(&r.inputs)
             .map_err(|e| format!("brain node '{}': {e}", r.node))?;
-        // A missing `params` reads as JSON null; normalize to the empty object so
-        // factories see one shape.
         let params = if r.params.is_null() {
             serde_json::Value::Object(serde_json::Map::new())
         } else {

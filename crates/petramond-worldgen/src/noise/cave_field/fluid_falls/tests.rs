@@ -6,16 +6,12 @@ use petramond_world::fluid_math::{is_falling, is_source};
 const BAND: (i32, i32) = (-38, -11);
 const SURF: i32 = 70;
 
-/// Chunks nearest the origin first: valid fall geometry is rare even where
-/// every column rolls, so a test walks outward until it has what it needs.
 fn chunks_outward() -> Vec<(i32, i32)> {
     let mut chunks: Vec<(i32, i32)> = (-6..6).flat_map(|z| (-6..6).map(move |x| (x, z))).collect();
     chunks.sort_by_key(|&(x, z)| x * x + z * z);
     chunks
 }
 
-/// A synthetic fall row every column rolls, so a chunk or two exercises both
-/// placements whatever the shipped row is tuned to.
 fn falls_field(seed: u32) -> CaveField {
     let layer = format!(
         r#"{{"fluid_falls":[{{"fluid_fall":"test:lava","fluid":"petramond:lava",
@@ -25,10 +21,6 @@ fn falls_field(seed: u32) -> CaveField {
     CaveField::with_table(seed, underground::synthetic_table(&[&layer]))
 }
 
-/// A fall's source replaces ROCK of the cave model and touches the cave
-/// through its exit alone, so a generated source never hangs in open space
-/// or pours every way once the on-load kick arms it. The pour is one open
-/// column under the exit, inside the chunk, ending on rock.
 #[test]
 fn fall_sources_replace_enclosed_rock_and_pour_through_one_face() {
     let field = falls_field(0x1A7A_F000);
@@ -117,10 +109,9 @@ fn fall_sources_replace_enclosed_rock_and_pour_through_one_face() {
     );
 }
 
-/// The section stamp applies the rule to carved terrain: every still source
-/// it writes is enclosed by rock on five sides — another fall's source counts,
-/// being rock the cave left — and feeds exactly one pour, including sources
-/// whose pour lies in the section below.
+/// Every still source on carved terrain is walled by rock on five sides (another fall's source
+/// counts, since the cave left rock there) and feeds exactly one pour, even if that pour sits in
+/// the section below.
 #[test]
 fn stamped_fall_sources_are_enclosed_over_their_pours() {
     let field = falls_field(0x1A7A_F0FA);
@@ -178,7 +169,6 @@ fn stamped_fall_sources_are_enclosed_over_their_pours() {
                         (0, 0, 1),
                         (0, 0, -1),
                     ] {
-                        // A chunk edge is judged by the cave model, not here.
                         let Some((block, meta)) = at(x + dx, wy + dy, z + dz) else {
                             continue;
                         };

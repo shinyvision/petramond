@@ -15,52 +15,35 @@
 mod field_constants;
 use field_constants::SHEET_B_SALT;
 pub use field_constants::{FEATURE_SIZE, RAIN_RAMP, SHEET_B_ADVECT, SHEET_B_FEATURE, WRAP};
-/// Coverage at or above this starts to rain. Tuned against the TWO-SHEET
-/// sum distribution (rebalance 2026-07-17, offline stats harness): at a
+/// Coverage at or above this starts to rain. With the two-sheet
+/// sum distribution, at a
 /// fixed point it rains ~15% of the time in ~3-min showers grouped into
-/// ~20-min rainy spells, and never blankets outside a storm peak. (The
-/// single-sheet era used 0.45; the saturating sum sits higher.)
+/// ~20-min rainy spells, and never blankets outside a storm peak.
 pub const RAIN_START: f32 = 0.55;
-// Rain reaches full intensity at `RAIN_START + RAIN_RAMP * (1 - RAIN_START)`.
 
-/// Wind heading turns over roughly this many seconds.
 const WIND_TURN_PERIOD_S: f32 = 1200.0;
-/// Wind speed gusts over roughly this many seconds.
 const WIND_GUST_PERIOD_S: f32 = 420.0;
-/// Global calm/stormy cycle length in seconds.
 const STORM_PERIOD_S: f32 = 2400.0;
-/// Wind speed range in blocks/s. Changed to 0.75 / 2.0 for weather rebalance.
 const WIND_MIN: f32 = 0.75;
 const WIND_MAX: f32 = 2.0;
 
 /// One tick = 1/20 s; the clock is `petramond:clock` absolute ticks.
 const TICKS_PER_S: u64 = 20;
 /// Ticks per morph epoch: the field cross-fades between two seedings of
-/// itself over this window, so cloud shapes continuously REFORM while they
-/// drift — without it the whole sky translates as one rigid pattern
-/// (playtest 2026-07-17: "clouds move in a uniform straight line").
-/// 10 min, up from 5: with two sheets sliding over each other the morph is
-/// no longer the only source of shape change, and the faster morph was
-/// measurably capping shower length (rebalance 2026-07-17).
+/// itself over this window, so cloud shapes continuously reform while they
+/// drift. The two sheets also slide over each other; this 10-minute morph
+/// window preserves shower length while changing the cloud shapes.
 pub const EVOLVE_TICKS: u64 = 12000;
 
-/// Replicated field parameters. The server mod publishes these as shader
-/// params; the client mod reads them back; the shader receives them directly.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FieldParams {
-    /// Accumulated wind advection offset, already reduced modulo [`WRAP`].
     pub off: [f32; 2],
-    /// Global storm bias in [0, 1]: how much of the noise range is cloud.
     pub storm: f32,
-    /// World-seed mix for the lattice hashes.
     pub seed: u32,
-    /// Morph epoch (`clock / EVOLVE_TICKS`) and the blend fraction into the
-    /// next epoch: the field is `lerp(field_e, field_e+1, frac)`.
     pub epoch: u32,
     pub epoch_frac: f32,
 }
 
-/// The epoch/fraction pair for a clock value.
 pub fn epoch_at(clock_ticks: u64) -> (u32, f32) {
     (
         (clock_ticks / EVOLVE_TICKS) as u32,
@@ -68,8 +51,6 @@ pub fn epoch_at(clock_ticks: u64) -> (u32, f32) {
     )
 }
 
-/// murmur3 fmix32 — the 32-bit finalizer both this crate and clouds.wgsl use.
-/// Do not change one without the other.
 #[inline]
 pub fn fmix32(mut h: u32) -> u32 {
     h ^= h >> 16;
@@ -80,7 +61,6 @@ pub fn fmix32(mut h: u32) -> u32 {
     h
 }
 
-/// Lattice corner hash in [0, 1). `ix`/`iz` are PRE-WRAPPED lattice indices.
 #[inline]
 fn corner(ix: u32, iz: u32, seed: u32) -> f32 {
     let h = fmix32(ix.wrapping_mul(0x9E37_79B9) ^ iz.wrapping_mul(0x85EB_CA6B) ^ seed);
@@ -97,16 +77,12 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Periodic 2D value noise in [0, 1). `p` in lattice units; the lattice
-/// tiles every `period` cells (power of two, so `& (period - 1)` wraps).
 fn vnoise2(px: f32, pz: f32, period: u32, seed: u32) -> f32 {
     let fx = px.floor();
     let fz = pz.floor();
     let tx = smooth(px - fx);
     let tz = smooth(pz - fz);
     let mask = period - 1;
-    // rem_euclid before the cast keeps negatives correct; the mask wraps the
-    // +1 neighbours.
     let ix = (fx as i64).rem_euclid(period as i64) as u32;
     let iz = (fz as i64).rem_euclid(period as i64) as u32;
     let x1 = (ix + 1) & mask;
@@ -118,7 +94,6 @@ fn vnoise2(px: f32, pz: f32, period: u32, seed: u32) -> f32 {
     lerp(lerp(a, b, tx), lerp(c, d, tx), tz)
 }
 
-/// Periodic 1D value noise in [0, 1) over a `period`-cell lattice.
 fn vnoise1(t: f32, period: u32, seed: u32) -> f32 {
     let ft = t.floor();
     let tt = smooth(t - ft);
@@ -157,25 +132,18 @@ fn saturate(v: f32) -> f32 {
     v.clamp(0.0, 1.0)
 }
 
-/// Wrap a world coordinate or offset into [0, WRAP).
 #[inline]
 pub fn wrap_coord(v: f64) -> f32 {
     v.rem_euclid(WRAP as f64) as f32
 }
 
-/// Time-lane sample: reduce the clock in tick space, then evaluate a slow
-/// periodic 1D noise. `period_s` must divide the lattice tiling evenly, which
-/// it does by construction (the lattice is `TIME_CELLS` cells of `period_s`).
 fn time_lane(clock_ticks: u64, period_s: f32, seed: u32) -> f32 {
-    /// Cells in every time lattice; the lane repeats after
-    /// `period_s * TIME_CELLS` seconds (days–weeks: unobservable).
     const TIME_CELLS: u32 = 4096;
     let period_ticks = (period_s as u64) * TICKS_PER_S * TIME_CELLS as u64;
     let reduced = (clock_ticks % period_ticks) as f32 / TICKS_PER_S as f32;
     vnoise1(reduced / period_s, TIME_CELLS, seed)
 }
 
-/// Current wind velocity in blocks/s (already direction × speed).
 pub fn wind(clock_ticks: u64, seed: u32) -> [f32; 2] {
     let angle =
         std::f32::consts::TAU * time_lane(clock_ticks, WIND_TURN_PERIOD_S, seed ^ 0xA511_E9B3);
@@ -184,16 +152,10 @@ pub fn wind(clock_ticks: u64, seed: u32) -> [f32; 2] {
     [speed * angle.cos(), speed * angle.sin()]
 }
 
-/// Global calm↔stormy cycle in [0.35, 0.72]. The ceiling came down from the
-/// single-sheet era's 0.75: under the two-sheet SUM a high storm bias
-/// blankets the whole sky in rain, so the lane now stops a little earlier
-/// (rebalance 2026-07-17).
 pub fn storm(clock_ticks: u64, seed: u32) -> f32 {
     0.35 + 0.37 * time_lane(clock_ticks, STORM_PERIOD_S, seed ^ 0x94D0_49BB)
 }
 
-/// The field parameters for an accumulated advection offset at a clock
-/// value — the whole replicated state is a pure function of these three.
 pub fn field_params(off: [f64; 2], clock_ticks: u64, seed: u32) -> FieldParams {
     let (epoch, epoch_frac) = epoch_at(clock_ticks);
     FieldParams {
@@ -205,12 +167,6 @@ pub fn field_params(off: [f64; 2], clock_ticks: u64, seed: u32) -> FieldParams {
     }
 }
 
-/// One tick of advection: the offset after the wind blowing at `clock_ticks`
-/// carries it for 1/20 s, wrapped into [0, [`WRAP`]). The weather mod steps
-/// its offset through this once per tick the clock moves, and a consumer
-/// holding the previous tick's [`FieldRow`] replays the same step
-/// ([`FieldRow::params_at`]) — so both sides agree without either knowing
-/// when the other runs.
 pub fn advance_offset(off: [f64; 2], clock_ticks: u64, seed: u32) -> [f64; 2] {
     let w = wind(clock_ticks, seed);
     let wrap = f64::from(WRAP);
@@ -221,11 +177,7 @@ pub fn advance_offset(off: [f64; 2], clock_ticks: u64, seed: u32) -> [f64; 2] {
     ]
 }
 
-/// One cloud sheet: epoch-morphed fbm remapped by the storm bias to a
-/// [0, 1] coverage. `salt` separates the sheet's hash stream, `advect`
-/// scales the wind offset (INTEGER multiples only — wrap-exactness).
 fn sheet(x: f64, z: f64, p: &FieldParams, salt: u32, feature: f32, advect: f32) -> f32 {
-    // Wrapped in f64: an f32 world coordinate is too coarse far out.
     let qx = x.rem_euclid(f64::from(WRAP)) as f32 / feature;
     let qz = z.rem_euclid(f64::from(WRAP)) as f32 / feature;
     let ox = advect * p.off[0] / feature;
@@ -241,74 +193,40 @@ fn sheet(x: f64, z: f64, p: &FieldParams, salt: u32, feature: f32, advect: f32) 
     saturate((n - lo) / (1.0 - lo).max(1e-3))
 }
 
-/// Cloud coverage in [0, 1] at world xz. Denser = darker = closer to rain.
-///
-/// The SATURATING SUM of two independent sheets: sheet A (the original
-/// 512-block puffs, riding the wind) and sheet B (larger 1024-block systems
-/// advected at 2× the wind). Each sheet alone is thin fair-weather cloud;
-/// where the sheets slide into alignment the sum climbs through the rain
-/// band into storm — fronts FORM by convergence and dissolve again, instead
-/// of one static pattern deciding the weather (rebalance 2026-07-17).
 pub fn coverage(x: f64, z: f64, p: &FieldParams) -> f32 {
     let ca = sheet(x, z, p, 0, FEATURE_SIZE, 1.0);
     let cb = sheet(x, z, p, SHEET_B_SALT, SHEET_B_FEATURE, SHEET_B_ADVECT);
     saturate(ca + cb)
 }
 
-/// Rain intensity in [0, 1] from a coverage value: 0 below [`RAIN_START`],
-/// a full downpour from `RAIN_START + RAIN_RAMP * (1 - RAIN_START)` up.
 #[inline]
 pub fn rain_from_coverage(cov: f32) -> f32 {
     saturate((cov - RAIN_START) / ((1.0 - RAIN_START) * RAIN_RAMP))
 }
 
-/// Convenience: rain intensity at world xz.
 pub fn rain(x: f64, z: f64, p: &FieldParams) -> f32 {
     rain_from_coverage(coverage(x, z, p))
 }
 
-/// The core day/night clock's world-KV key (8-byte LE u64 absolute ticks) —
-/// the weather clock, and the clock a consumer advances a [`FieldRow`] to.
 pub const CLOCK_KEY: &str = "petramond:clock";
 
-/// Decode a [`CLOCK_KEY`] value. `None` on a malformed row — an unreadable
-/// clock means "no verifiable clock", never a clock of zero.
 pub fn decode_clock(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_le_bytes(bytes.try_into().ok()?))
 }
 
-/// Raw skylight (0..=63) at or above which a cell sits under DIRECT SKY for
-/// precipitation and sun purposes — rain lands there, the naked sun reaches
-/// it. Cross-mod interop vocabulary (farming's rain hydration, monsters'
-/// sunburn/douse), not per-mod balance data: retuning it moves every
-/// consumer's "open sky" line together.
 pub const DIRECT_SKY_MIN: u8 = 45;
 
-/// Everything a foreign server mod needs from the weather mod, in one row:
-/// the field parameters, the wind velocity, and the weather clock the row
-/// was published at. The weather mod publishes it every tick on the
-/// session-scoped `weather:field` mod event (see the `sdk` feature's `feed`
-/// module) — never into the persistent world KV, so a save carries no sky
-/// and a world without the weather mod simply hears none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FieldRow {
     pub params: FieldParams,
-    /// Wind velocity in blocks/s.
     pub wind: [f32; 2],
-    /// The weather clock value (`petramond:clock`, or the session tick in
-    /// clockless harnesses) this row was published at.
     pub clock: u64,
 }
 
 impl FieldRow {
-    /// The row layout's version, its first byte. Producer and consumers are
-    /// separately built mods: a consumer built against another layout must
-    /// hear "no weather", never misread lanes. Bump on any layout change.
     pub const VERSION: u8 = 1;
     pub const ENCODED_LEN: usize = 41;
 
-    /// Layout: [`Self::VERSION`], then LE clock u64, off_x f32, off_z f32,
-    /// storm f32, seed u32, epoch u32, epoch_frac f32, wind_x f32, wind_z f32.
     pub fn encode(&self) -> [u8; Self::ENCODED_LEN] {
         let mut out = [0u8; Self::ENCODED_LEN];
         out[0] = Self::VERSION;
@@ -329,9 +247,6 @@ impl FieldRow {
         out
     }
 
-    /// `None` on another layout version, a wrong-length row or non-finite
-    /// floats (a corrupt or foreign value must read as "no weather", never as
-    /// NaN rain).
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != Self::ENCODED_LEN || bytes[0] != Self::VERSION {
             return None;
@@ -361,11 +276,6 @@ impl FieldRow {
         floats.iter().all(|v| v.is_finite()).then_some(row)
     }
 
-    /// The field as the weather mod evaluates it at `clock`, from the row it
-    /// published on its previous tick: the same clock is the row itself; a
-    /// moved clock replays the producer's one advection step. A consumer
-    /// therefore reads the sky of whatever clock it sees, whether it runs
-    /// before or after the weather mod — no ordering contract between them.
     pub fn params_at(&self, clock: u64) -> FieldParams {
         if clock == self.clock {
             return self.params;
@@ -434,11 +344,6 @@ mod tests {
 
     #[test]
     fn advection_wraps_exactly_and_actually_moves_the_field() {
-        // The middle octave advects at 2x (shear), so the old rigid
-        // translation identity is gone BY DESIGN. What must still hold:
-        // a full-period offset shift is an exact identity (2x an integer
-        // multiple of the period is still one), and a partial shift really
-        // moves the pattern.
         let base = params([1000.0, 2000.0], 0.6);
         let mut wrapped = base;
         wrapped.off = [base.off[0] + WRAP, base.off[1] - WRAP];
@@ -463,8 +368,6 @@ mod tests {
     #[test]
     fn coverage_is_continuous_across_lattice_cell_edges() {
         let p = params([0.0, 0.0], 0.6);
-        // Walk across several base-lattice boundaries in small steps; the
-        // field must never jump more than the local slope allows.
         let mut prev = coverage(f64::from(FEATURE_SIZE) - 2.0, 100.0, &p);
         let mut x = f64::from(FEATURE_SIZE) - 2.0;
         while x < f64::from(FEATURE_SIZE) + 2.0 {
@@ -501,8 +404,7 @@ mod tests {
 
     #[test]
     fn time_lanes_are_smooth_and_exact_at_huge_clocks() {
-        // A clock deep into a world's life must still produce smooth wind.
-        let base: u64 = 20 * 3600 * 24 * 3650; // ten game-years of ticks
+        let base: u64 = 20 * 3600 * 24 * 3650;
         let mut prev = wind(base, 7);
         for step in 1..200u64 {
             let w = wind(base + step, 7);
@@ -516,7 +418,6 @@ mod tests {
 
     #[test]
     fn epoch_morph_is_continuous_at_the_boundary() {
-        // frac→1 of epoch e equals frac=0 of epoch e+1 exactly.
         let mut a = params([1200.0, 400.0], 0.6);
         a.epoch = 9;
         a.epoch_frac = 1.0;
@@ -533,7 +434,6 @@ mod tests {
                 "epoch seam at {x},{z}: {ca} vs {cb}"
             );
         }
-        // And epoch_at ticks over exactly at the period.
         assert_eq!(epoch_at(EVOLVE_TICKS * 7), (7, 0.0));
         let (e, f) = epoch_at(EVOLVE_TICKS * 7 + EVOLVE_TICKS / 2);
         assert_eq!(e, 7);

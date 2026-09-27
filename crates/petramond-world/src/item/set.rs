@@ -1,21 +1,7 @@
-//! A dense set of item kinds.
-//!
-//! The set covers the whole item id space as a bitset — small enough
-//! to live on a player, cheap enough to intersect per event. Progression uses
-//! it for "every item this player has ever held" and the recipe-unlock index
-//! for "any item that satisfies this ingredient", which makes an ingredient
-//! test one AND (see `crafting::unlock`).
-//!
-//! Ids are SESSION-SCOPED (packs register past the engine's frozen range), so
-//! a persisted set travels as registry names, never as these bits.
-
 use super::ItemType;
 
-/// One bit per possible item id, so the set can never miss a registered item
-/// (an out-of-range `insert` would silently drop a progression fact).
 const WORDS: usize = crate::registry::WIDE_ID_CAP / 64;
 
-/// A set of [`ItemType`]s, one bit per id.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ItemSet([u64; WORDS]);
 
@@ -28,7 +14,6 @@ impl Default for ItemSet {
 impl ItemSet {
     pub const EMPTY: ItemSet = ItemSet([0; WORDS]);
 
-    /// Add `item`; `true` when it was not already present.
     #[inline]
     pub fn insert(&mut self, item: ItemType) -> bool {
         let id = item.id() as usize;
@@ -39,7 +24,6 @@ impl ItemSet {
         fresh
     }
 
-    /// Whether the two sets share any member — the ingredient test.
     #[inline]
     pub fn intersects(&self, other: &ItemSet) -> bool {
         self.0.iter().zip(other.0.iter()).any(|(a, b)| a & b != 0)
@@ -50,7 +34,6 @@ impl ItemSet {
         self.0.iter().all(|w| *w == 0)
     }
 
-    /// Members in ascending id order.
     pub fn iter(&self) -> impl Iterator<Item = ItemType> + '_ {
         self.0.iter().enumerate().flat_map(|(w, word)| {
             let mut bits = *word;

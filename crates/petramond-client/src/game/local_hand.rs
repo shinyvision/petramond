@@ -12,21 +12,14 @@ use petramond::player::one_shot::OneShot;
 use petramond_world::block::Block;
 use petramond_world::inventory::Hand;
 
-/// A use click's predicted verdict, as far as the hand is concerned.
 #[derive(Copy, Clone, Debug, Default)]
 pub(super) struct UseJab {
-    /// Something consumes the click: the hand jabs.
     pub consumed: bool,
-    /// The OFF hand acted (the second pass of the two-pass ladder).
     pub off_hand: bool,
-    /// The consumer's own gesture is its presentation (an eat's raise), so
-    /// no jab plays.
     pub presents_itself: bool,
-    /// The click places: the place jab plays, not the interact one.
     pub places: bool,
 }
 
-/// One frame's hand one-shots, taken by event assembly.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct HandFrame {
     pub interacted: bool,
@@ -45,33 +38,15 @@ pub(super) struct LocalHand {
     use_jab: UseJab,
     swung: bool,
     threw: bool,
-    /// The block the LOCAL mining timer finished this frame (hand pop).
     broke: Option<Block>,
-    /// The block the place prediction committed this frame (hand pop).
     placed: Option<Block>,
-    /// The predicted place committed from the OFF hand (left-hand pop).
     placed_off_hand: bool,
-    /// Seconds of the swing still to FOLLOW THROUGH: the client's mirror of
-    /// the server's attack cooldown, armed by the same attribute-scaled
-    /// window. Without it a press predicted a swing the server's cooldown
-    /// was about to refuse, so a mash restarted the animation mid-arc while
-    /// the hits kept the server's pace.
     attack_recovery: f32,
-    /// A press held over the follow-through, ONE deep: it fires by itself
-    /// the frame the recovery ends, so a mash chains without having to land
-    /// on the beat.
     attack_queued: bool,
-    /// Hand-swing one-shots latched at event assembly for the client-mod
-    /// frame hook (the ABI's swing facts, `PlayerSnapshot::swing`). Its own
-    /// latch, deliberately: the app's hand events feed the animators and
-    /// drain at RENDER — a different clock — and a shared latch is
-    /// whoever-eats-first. `mining` is unused here (the level is read live
-    /// at dispatch).
     swing_events: mod_api::HandSwing,
 }
 
 impl LocalHand {
-    /// Latch this frame's use-click verdict.
     pub(super) fn latch_use(&mut self, jab: UseJab) {
         self.use_jab = UseJab {
             off_hand: jab.consumed && jab.off_hand,
@@ -79,28 +54,23 @@ impl LocalHand {
         };
     }
 
-    /// Latch a predicted attack swing.
     pub(super) fn latch_swing(&mut self) {
         self.swung = true;
     }
 
-    /// Latch a throw when the hand actually held something to throw.
     pub(super) fn latch_throw(&mut self, held_something: bool) {
         self.threw |= held_something;
     }
 
-    /// Latch a break the local mining timer finished.
     pub(super) fn latch_break(&mut self, block: Block) {
         self.broke = Some(block);
     }
 
-    /// Latch a place the prediction committed from `hand`.
     pub(super) fn latch_place(&mut self, block: Block, hand: Hand) {
         self.placed = Some(block);
         self.placed_off_hand = hand == Hand::Off;
     }
 
-    /// Advance the attack follow-through by one frame.
     pub(super) fn recover(&mut self, dt: f32) {
         self.attack_recovery = (self.attack_recovery - dt).max(0.0);
     }
@@ -145,11 +115,6 @@ impl LocalHand {
         true
     }
 
-    /// Take this frame's one-shots. `used_unpredicted` is the server's echo
-    /// of a consumed click whose shipped verdict was silent (a mod-consumed
-    /// use the replica could not foresee) — folding it in can never play
-    /// twice; `used_unpredicted_off` names its acting hand. An echoed
-    /// consumption never presents itself or places.
     pub(super) fn take_frame(
         &mut self,
         used_unpredicted: bool,
@@ -171,9 +136,6 @@ impl LocalHand {
         }
     }
 
-    /// Latch this frame's one-shots AGAIN for the client-mod frame hook: the
-    /// first gesture in `one_shots` order wins a hand (the ranking is
-    /// cosmetic — the edges share one button, so they almost never coincide).
     pub(super) fn latch_swing_events(
         &mut self,
         one_shots: impl IntoIterator<Item = (Hand, OneShot)>,
@@ -195,18 +157,15 @@ impl LocalHand {
         }
     }
 
-    /// Take the swing facts latched since the last client-mod frame hook.
     pub(super) fn take_swing_events(&mut self) -> mod_api::HandSwing {
         std::mem::take(&mut self.swing_events)
     }
 
-    /// The place latched this frame (not yet taken).
     #[cfg(test)]
     pub(super) fn placed(&self) -> Option<Block> {
         self.placed
     }
 
-    /// The break latched this frame (not yet taken).
     #[cfg(test)]
     pub(super) fn broke(&self) -> Option<Block> {
         self.broke

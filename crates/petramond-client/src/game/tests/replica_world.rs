@@ -1,9 +1,3 @@
-//! End-to-end contract tests for the client's replica world:
-//! the in-process pipe streams the server world into the replica world
-//! (columns before sections), per-tick deltas keep it converged (door toggles
-//! included), the open-chest set replicates, and terrain leaving the keep
-//! shape unloads from the replica.
-
 use super::super::tick::TICK_DT;
 use super::common::game;
 use crate::game::GameInput;
@@ -13,9 +7,6 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-/// A flat stone floor at y=64 in column (0,0) on the SERVER world, with the
-/// player (client + session) standing on it — the fixture the pipe then
-/// replicates.
 fn floored_game_at(feet: WorldPos) -> super::common::TestGame {
     let mut game = game();
     game.server_world_mut().clear_world();
@@ -38,7 +29,6 @@ fn place_player(game: &mut super::common::TestGame, feet: WorldPos) {
     game.server_player_mut().vel = Vec3::ZERO;
 }
 
-/// One frame that executes exactly one fixed tick (dt = TICK_DT).
 fn frame(game: &mut super::common::TestGame) {
     game.tick(TICK_DT, &GameInput::default());
 }
@@ -47,9 +37,6 @@ fn frame(game: &mut super::common::TestGame) {
 fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
 
-    // The first pumps stream the fixture into the replica. Sections ship only
-    // once the server's light bake lands (the light-final ship gate); with the
-    // inline test pool that completes inside the pump.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while game.replica.world.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(
@@ -74,7 +61,6 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         "the column data replicated (heightmap/biome/summaries)"
     );
 
-    // A post-join server edit reaches the replica through the delta pipe.
     assert!(game
         .server_world_mut()
         .set_block_world(8, 66, 8, Block::Dirt));
@@ -85,9 +71,6 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         "a block placed server-side shows up in the replica after the pump"
     );
 
-    // A door placed server-side replicates with its state, and a TOGGLE (no
-    // block-id change) flips the replica's door map — collision + resting
-    // swing angle read it.
     let door = IVec3::new(5, 65, 5);
     assert!(game
         .server_world_mut()
@@ -112,8 +95,6 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
         "the toggle updated the replica door map"
     );
 
-    // Terrain leaving the keep shape unloads from the replica (the far column
-    // gets a ColumnUnload once the anchor moves away).
     place_player(&mut game, WorldPos::new(328.5, 65.0, 328.5));
     for _ in 0..3 {
         frame(&mut game);
@@ -131,15 +112,11 @@ fn local_pipe_streams_terrain_into_the_replica_and_deltas_converge_it() {
     );
 }
 
-/// Light is server-owned end to end: a post-ship edit that changes light
-/// (a torch appearing) reaches the replica as a `LightData` rebake — the
-/// replica itself never marks light dirty or bakes.
 #[test]
 fn server_rebakes_replicate_as_light_data() {
     let mut game = floored_game_at(WorldPos::new(8.5, 65.0, 8.5));
     let torch = IVec3::new(6, 65, 6);
 
-    // Wait for the lit floor section to ship.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while game.replica.world.data().chunk_block(8, 64, 8) != Block::Stone.id() {
         assert!(std::time::Instant::now() < deadline, "the floor replicated");
@@ -157,9 +134,6 @@ fn server_rebakes_replicate_as_light_data() {
         "no emitter yet — block light is dark"
     );
 
-    // The server edit dirties light server-side only; the replica applies the
-    // delta immediately (block visible) and receives the light as LightData.
-    // (Emitters come from the torch placement map — mirror the place funnel.)
     assert!(game
         .server_world_mut()
         .set_block_world(torch.x, torch.y, torch.z, Block::Torch));

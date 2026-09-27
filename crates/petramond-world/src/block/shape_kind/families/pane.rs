@@ -1,12 +1,5 @@
-//! The glass pane (and any parameterized bar): post + neighbour-resolved arms.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A glass pane (or a parameterized bar): post + arms resolved from neighbours, all
-/// dimensions/rule/item-form from the connection params.
 pub struct PaneFamily;
 
 impl ShapeSim for PaneFamily {
@@ -19,7 +12,6 @@ impl ShapeSim for PaneFamily {
     }
 
     fn default_boxes(&self, p: &ShapeParams, _b: Block) -> &'static [Aabb] {
-        // The bare no-neighbour post.
         crate::connect::boxes_for_mask(conn(p).boxes, 0)
     }
 
@@ -54,8 +46,6 @@ impl ShapeSim for PaneFamily {
         lo: [f32; 3],
         hi: [f32; 3],
     ) -> bool {
-        // The mask-free POST: rails are thin and corner-distant, and a mask
-        // read would make the answer differ between the two meshers.
         let c = conn(p);
         lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
     }
@@ -67,7 +57,6 @@ impl ShapeRender for PaneFamily {
     }
 
     fn boxes(&self, ctx: &ShapeCtx<'_>, out: &mut Vec<ShapeBox>) {
-        // [top, bottom, side] tiles = [edge, edge, glass].
         let [edge_tile, _bottom, glass_tile] = ctx.block.tiles();
         let c = conn(ctx.params);
         let mask = crate::connect::ConnectionMask::from_cell(ctx.nb.shape_state(ctx.pos)).0;

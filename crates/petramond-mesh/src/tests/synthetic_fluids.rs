@@ -1,16 +1,9 @@
-//! Fluid meshing on SYNTHETIC rows: a pack staged into a registry of the
-//! test's own adds its own fluids and tiles, so nothing here depends on
-//! authored water or lava — and the fluids it adds are a third and fourth
-//! medium.
-
 use super::fluid::{assert_meshes_from_its_row, face_of, fluid_quads, medium_slot};
 use super::*;
 use crate::face::Face;
 use petramond_world::fluid_math::FALLING;
 
-/// An opaque medium with untinted tiles.
 const TAR: &str = "meshfluids:tar";
-/// A see-through medium with biome-tinted tiles.
 const MIST: &str = "meshfluids:mist";
 
 fn fluid_row(name: &str, alpha: f32, tiles: &str) -> String {
@@ -39,7 +32,6 @@ fn fluid_row(name: &str, alpha: f32, tiles: &str) -> String {
     )
 }
 
-/// A fresh mods root holding the `meshfluids` pack.
 fn stage() -> petramond_util::test_dirs::TestScratchDir {
     let root = petramond_util::test_dirs::TestScratchDir::new("mesh-fluids");
     let pack = root.join("mods/meshfluids");
@@ -103,10 +95,6 @@ fn tops_at(m: &ChunkMesh, fluid: Block, x: f32) -> usize {
         .count()
 }
 
-/// A FALLING cell fills its cell, so its opaque top is coplanar with a lid's
-/// underside and both write depth: it must not draw. A recessed source top
-/// sits below the lid and stays (both windings). A see-through top writes no
-/// depth and keeps drawing under a lid either way.
 fn an_opaque_top_under_a_lid_draws_only_when_recessed(opaque: Block, clear: Block) {
     let mut section = Section::new(0, 0, 0);
     section.set_fluid(4, 4, 4, opaque, FALLING);
@@ -126,14 +114,10 @@ fn an_opaque_top_under_a_lid_draws_only_when_recessed(opaque: Block, clear: Bloc
     }
 }
 
-/// Stone's face toward a FULL cell of an opaque medium is hidden like a face
-/// toward stone, by the exposure masks and by the per-face cull alike; a
-/// see-through medium hides nothing.
 fn only_a_full_opaque_medium_covers_the_faces_behind_it(opaque: Block, clear: Block) {
     for (fluid, covers) in [(opaque, true), (clear, false)] {
         let mut section = Section::new(0, 0, 0);
         section.set_block(4, 4, 4, Block::Stone);
-        // Capped from above, so the cell beside the stone is full.
         section.set_fluid(5, 4, 4, fluid, 0);
         section.set_fluid(5, 5, 4, fluid, 0);
         for m in [mesh(&section), mesh_per_face(&section)] {
@@ -153,7 +137,6 @@ fn only_a_full_opaque_medium_covers_the_faces_behind_it(opaque: Block, clear: Bl
     }
 }
 
-/// Whether a section needs biome tints derives from the tiles a row draws.
 fn biome_tinted_fluid_tiles_mark_the_section(plain: Block, tinted: Block) {
     for (fluid, expect) in [(plain, false), (tinted, true)] {
         let mut section = Section::new(0, 0, 0);

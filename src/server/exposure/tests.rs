@@ -5,8 +5,6 @@ use petramond_world::block::Block;
 use petramond_world::condition::ConditionId;
 use petramond_world::fluid::FluidDef;
 
-/// A shipped fluid whose contact both deals damage and applies a condition.
-/// The wiring under test is generic; which row supplies it is not.
 fn hazard() -> &'static FluidDef {
     Block::all()
         .iter()
@@ -31,7 +29,6 @@ fn contact_interval() -> u32 {
     hazard().contact.damage.unwrap().interval
 }
 
-/// The longest pulse interval any stage of the applied condition runs.
 fn pulse_interval() -> u32 {
     condition()
         .def()

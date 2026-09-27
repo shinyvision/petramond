@@ -19,8 +19,6 @@
 use super::*;
 
 impl SkyPass {
-    /// SKY: the full-screen background triangle at exactly the far plane.
-    /// The sky shader owns celestials and any day/night colour.
     pub(super) fn record_sky(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         pass.set_pipeline(self.pipe.get(ctx.samples));
         pass.set_bind_group(0, &self.bind, &[]);
@@ -28,20 +26,16 @@ impl SkyPass {
         pass.draw(0..3, 0..1);
     }
 
-    /// Whether any environment pass has inputs this frame. A dormant pass
-    /// costs nothing; with every pass dormant, neither does the chain.
     pub(super) fn environment_active(&self) -> bool {
         self.env_passes.iter().any(|env| !env.dormant)
     }
 
-    /// The max-of-2x2 downsample of the frame depth into `env_depth`.
     pub(super) fn record_env_downsample(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         pass.set_pipeline(&self.env_scaler.get(ctx.samples).down_pipe);
         pass.set_bind_group(0, &self.env_down_bind, &[]);
         pass.draw(0..3, 0..1);
     }
 
-    /// Every live environment pass, marched into the cleared half-res colour.
     pub(super) fn record_environment(&self, pass: &mut wgpu::RenderPass<'_>) {
         for env in self.env_passes.iter().filter(|env| !env.dormant) {
             pass.set_pipeline(&env.res.pipe);
@@ -51,7 +45,6 @@ impl SkyPass {
         }
     }
 
-    /// The depth-aware composite of the half-res result onto the world.
     pub(super) fn record_env_composite(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         let scaler = self.env_scaler.get(ctx.samples);
         pass.set_pipeline(scaler.comp_pipe.get(ctx.samples));

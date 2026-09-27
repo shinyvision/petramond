@@ -2,12 +2,6 @@ use machine_core::Burner;
 
 use super::*;
 
-/// A crucible that fills up and then goes cold must still be relightable.
-///
-/// Relight used to sit BEHIND the "is there something to melt" gate, and a
-/// full crucible can melt nothing — so coal did nothing, the metal
-/// hardened ten seconds later, and two minutes of smelting was gone with
-/// no way to get it back.
 #[test]
 fn a_full_cold_crucible_still_wants_fuel() {
     let full = State {
@@ -26,11 +20,6 @@ fn a_full_cold_crucible_still_wants_fuel() {
     );
 }
 
-/// The one bit has to follow the FIRE and nothing else. It used to carry a
-/// lever as well; the lever is a GUI widget now, and a mask that still set
-/// its bit would light a cube the model no longer has — which draws
-/// nothing and is therefore invisible until someone wonders why the forge
-/// looks cold while it is burning.
 #[test]
 fn the_fire_is_the_only_thing_the_mask_stages() {
     let spec = ForgingFurnaceSpec::default();
@@ -46,10 +35,6 @@ fn the_fire_is_the_only_thing_the_mask_stages() {
     assert_eq!(spec.parts_mask(&lit), PART_COALS);
 }
 
-/// THE STRIP IS A FUNCTION OF THE MACHINE, NOT OF THE CLICK. The lever
-/// walks 0..7 over twelve ticks and then stays down until the machine is
-/// idle again — a frame that lagged the pour or survived it would draw a
-/// handle the machine is not holding.
 #[test]
 fn the_lever_frame_follows_the_phase() {
     let mut state = State::default();
@@ -66,12 +51,10 @@ fn the_lever_frame_follows_the_phase() {
     assert_eq!(lever_frame(&state), 7, "the lever stays down while it sets");
 }
 
-/// THE POUR ROW FOLLOWS THE STREAM, NOT THE PHASE. The row carries the
-/// droplet emitter, and the phase outlives the visible stream by the
-/// whole set — keyed on the phase alone, droplets and spatter run for
-/// SET_TICKS over a basin the metal finished falling into long ago. The
-/// row holds while the tap is open or metal is airborne, and drops the
-/// moment the tail catches the head.
+/// Row follows the stream, not the phase. Row owns the droplet emitter.
+/// Phase runs longer than the visible stream by the whole set. Go by phase alone and
+/// droplets and spatter keep going for `SET_TICKS` after the metal has finished falling.
+/// Row stays up while the tap's open or metal's airborne, and drops as soon as tail catches head.
 #[test]
 fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
     let mut state = State::default();
@@ -80,7 +63,6 @@ fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
     state.phase = Phase::Pouring;
     assert!(pouring_visually(&state), "the tap is open");
 
-    // The phase ends; what is already falling keeps falling.
     state.phase = Phase::Setting;
     state.liquid = Liquid {
         head: 0.6,
@@ -92,7 +74,6 @@ fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
         "early Setting still has metal in the air"
     );
 
-    // Untapped, the tail falls until it catches the head and both reset.
     while state.liquid.head > state.liquid.tail {
         state.liquid.step(false, 0.0);
     }
@@ -103,7 +84,6 @@ fn the_pour_row_outlives_the_phase_exactly_as_long_as_the_stream_does() {
     );
 }
 
-/// A fire with `ticks` left of its current fuel item.
 fn burning(ticks: u32) -> Burner {
     Burner {
         remaining: ticks,
@@ -119,7 +99,6 @@ fn stack(item: &str) -> Option<ItemStackData> {
     })
 }
 
-/// A lit furnace with `item` in its metal slot, stepped one tick.
 fn one_melt_tick(state: &mut State, item: &str) {
     let casting = Casting::for_test(
         &[],
@@ -134,12 +113,6 @@ fn one_melt_tick(state: &mut State, item: &str) {
     ForgingFurnaceSpec::default().melt(state, &mut slots, &casting, &mut Caches::default());
 }
 
-/// THE TABLE IS STILL THE WHITELIST. The panel's metal slot now names the
-/// same `forge:metal` data key this table is built from, so the two agree
-/// by construction rather than by hand — but the slot is not the only way
-/// into the container (a mod write, a document that failed to load), and
-/// the crucible is where the decision has to hold. If this check ever
-/// stops being consulted a forge full of sand quietly produces iron.
 #[test]
 fn only_a_declared_metal_reaches_the_crucible() {
     let lit = || State {
@@ -156,11 +129,6 @@ fn only_a_declared_metal_reaches_the_crucible() {
     assert_eq!(iron.melt_progress, 1);
 }
 
-/// THE CRUCIBLE NEVER MIXES, and the comparison is against the CANONICAL
-/// metal. Both halves are silent when broken: mixing hands the player an
-/// item they cannot explain, and comparing the raw item instead means a
-/// second plate never matches the iron the first one became — the machine
-/// just ignores a full stack for no visible reason.
 #[test]
 fn a_loaded_crucible_takes_its_own_metal_and_nothing_else() {
     let holding_iron = || State {
@@ -178,17 +146,11 @@ fn a_loaded_crucible_takes_its_own_metal_and_nothing_else() {
     one_melt_tick(&mut same, "petramond:raw_iron");
     assert_eq!(same.melt_progress, 1);
 
-    // A plate declares `melts_to: raw_iron`, so it IS the metal already in
-    // there — keyed on the item name it would not be.
     let mut remelt = holding_iron();
     one_melt_tick(&mut remelt, "forge:iron_plate");
     assert_eq!(remelt.melt_progress, 1, "a plate melts back into its metal");
 }
 
-/// A CAST HEAD IS THE METAL IT WAS POURED FROM. Remelting one has to join
-/// a crucible of that metal and nothing else — otherwise a mistake at the
-/// casting table is a stack of heads the furnace silently ignores, or
-/// worse, dissolves into the wrong metal.
 #[test]
 fn a_cast_head_remelts_into_its_own_metal_only() {
     let mut same = State {

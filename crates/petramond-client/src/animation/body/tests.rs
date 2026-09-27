@@ -30,7 +30,6 @@ fn a_body_keeps_its_animator_while_it_stays_on_the_roster_drawn_or_not() {
         assert!(animator.play(slot, &PlaySpec::new(clip)).is_some());
     }
 
-    // Two frames that draw no body, with only player 7 still connected.
     bodies.retain([7]);
     bodies.retain([7]);
     let playing = |bodies: &BodyAnimators, key| {

@@ -1,13 +1,8 @@
-//! Schematic thumbnails: a native render of a scene through an isolated
-//! camera and depth target, read back and PNG-encoded wherever the caller
-//! runs it — never the frame thread.
-
 use super::Renderer;
 use crate::{schematic::Geometry, uniforms::Uniforms};
 use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
-/// Cloned device and pipeline handles, free to render on a worker.
 pub struct SchematicThumbnailer {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -30,7 +25,6 @@ impl SchematicThumbnailer {
             format: r.config.format,
         }
     }
-    /// Mesh `scene` and render it to PNG bytes. Blocks on the GPU readback.
     pub fn render(&self, scene: &petramond::schematic::Scene) -> Result<Vec<u8>, String> {
         self.render_geometry(&Geometry::build(scene))
     }

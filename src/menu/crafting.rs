@@ -12,14 +12,6 @@ pub enum CraftMenuFailure {
 }
 
 impl ContainerMenu {
-    /// Revalidate and execute one stable-key recipe against the authoritative
-    /// inventory. Selection is client-only; the session owns only this output.
-    /// `bulk` (shift-craft) repeats until ingredients run out or the output
-    /// stack fills; the first craft's failure is the request's outcome.
-    ///
-    /// A recipe the player has not UNLOCKED is not a recipe they have: it is
-    /// refused here, on the authoritative side, exactly like a wrong-station
-    /// or unknown key — the browser's hiding it is presentation.
     pub fn craft_recipe(
         &mut self,
         inventory: &mut Inventory,
@@ -46,8 +38,6 @@ impl ContainerMenu {
                 },
             )?;
         if bulk {
-            // Bounded: every round consumes ingredients and the output stack
-            // caps at the result's max stack size.
             while let Ok(more) =
                 petramond_world::crafting::craft(recipe, inventory, &mut self.craft_output)
             {
@@ -57,9 +47,6 @@ impl ContainerMenu {
         Ok(overflow)
     }
 
-    /// Take the real output. Shift moves it into inventory; otherwise primary
-    /// takes the whole compatible output and secondary follows the universal
-    /// half/one take rule. Failed fits are no-ops.
     pub(super) fn craft_take_output(
         &mut self,
         inventory: &mut Inventory,

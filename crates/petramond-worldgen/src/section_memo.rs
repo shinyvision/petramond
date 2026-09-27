@@ -1,16 +1,3 @@
-//! A section's terrain before features — filled and carved — memoized in the
-//! world's caches (`crate::cache`), because two consumers need exactly it:
-//! section generation, and the positional terrain queries a pack asks while
-//! placing content that spans sections. A pack probing a cell's floor shortly before its sections
-//! stream, or dressing a section just after, otherwise paid the fill and the
-//! carve twice. Solidity is kept separately and longer than the blocks: it is
-//! sixteen times smaller and is what the queries read.
-//!
-//! A cube is a function of its key alone: the column's biomes and raw density
-//! surfaces it fills from are read from the same context's surface tile, never
-//! taken from the caller, so no caller can file a cube computed from other
-//! inputs under the key.
-
 use std::sync::Arc;
 
 use petramond_world::block::Block;
@@ -27,9 +14,6 @@ pub(crate) struct Key {
     pos: [i32; 3],
 }
 
-/// Two bit planes per section-local cell index: what the terrain leaves
-/// there. `Air` is neither bit — the common case, and the one a reader
-/// usually wants.
 #[derive(Clone, Copy)]
 pub(crate) struct SpaceMask {
     solid: [u64; 64],
@@ -62,9 +46,6 @@ impl SpaceMask {
     }
 }
 
-/// What a generated block leaves a query standing in. Anything that is
-/// neither air nor a fluid OCCUPIES the cell, which is what every reader of
-/// this asks about.
 #[inline]
 pub(crate) fn space_of(id: u16) -> mod_api::TerrainSpace {
     let block = Block::from_id(id);
@@ -84,8 +65,6 @@ fn key(caves: &CaveField, sp: SectionPos) -> Key {
     }
 }
 
-/// The section's filled and carved blocks. `surface` must be the density
-/// system of the cave field's seed — a generator's own pair of sources.
 pub(crate) fn terrain_cube(
     surface: &SurfaceDensitySystem,
     caves: &CaveField,
@@ -101,9 +80,6 @@ pub(crate) fn terrain_cube(
     })
 }
 
-/// Every cell of section `sp` a fluid fall claims, by section-local index —
-/// the one walk the section stamp and the terrain mask share. Falls carry
-/// fluid meta an id cube cannot hold, so they are applied after the memo.
 pub(crate) fn section_falls(
     caves: &CaveField,
     sp: SectionPos,
@@ -124,9 +100,6 @@ pub(crate) fn section_falls(
     });
 }
 
-/// Stamp the fluid falls over a section's engine terrain, through the same
-/// claims [`space_mask`] applies. Writes through the setter, so the section's
-/// counters must already be current.
 pub(crate) fn stamp_falls(caves: &CaveField, sp: SectionPos, section: &mut Section) {
     section_falls(caves, sp, |cell, fall| {
         let (x, y, z) = petramond_world::chunk::section_local(cell);
@@ -136,8 +109,6 @@ pub(crate) fn stamp_falls(caves: &CaveField, sp: SectionPos, section: &mut Secti
     });
 }
 
-/// What the section's terrain leaves in each cell: [`terrain_cube`] with the
-/// fluid falls stamped over it.
 pub(crate) fn space_mask(
     surface: &SurfaceDensitySystem,
     caves: &CaveField,
@@ -162,7 +133,6 @@ pub(crate) fn space_mask(
     })
 }
 
-/// The mask when it is already known, without computing a section for it.
 pub(crate) fn space_mask_if_memoized(caves: &CaveField, sp: SectionPos) -> Option<Arc<SpaceMask>> {
     caves.caches().terrain.section_spaces.get(&key(caves, sp))
 }

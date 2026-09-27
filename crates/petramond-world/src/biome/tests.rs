@@ -1,9 +1,5 @@
 use super::{blended_fog_color, Biome, ENGINE_BIOME_COUNT, SKY_FOG_BLEND_SPAN_BLOCKS};
 
-/// The mod-facing biome vocabulary (`mod_api::biome`) mirrors this
-/// compiled table. Worldgen hooks hand mods raw biome ids; the ABI names
-/// are their only sanctioned addressing, so a drifted or missing entry
-/// must fail HERE, not in a mod at runtime.
 #[test]
 fn mod_api_biome_vocabulary_matches_the_engine_table() {
     assert_eq!(
@@ -18,8 +14,6 @@ fn mod_api_biome_vocabulary_matches_the_engine_table() {
     }
 }
 
-/// The named consts are the engine rows at their frozen ids: each const's
-/// key is its row's, and the shipped catalog holds exactly the engine range.
 #[test]
 fn engine_consts_name_their_frozen_rows() {
     let consts = [
@@ -62,7 +56,6 @@ fn engine_consts_name_their_frozen_rows() {
     }
 }
 
-/// Unregistered ids read as ocean rather than indexing past the catalog.
 #[test]
 fn unregistered_ids_fall_back_to_ocean() {
     assert_eq!(Biome::from_id(0), Biome::OCEAN);

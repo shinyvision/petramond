@@ -43,18 +43,12 @@ use crate::{
 
 use crate::Mod;
 
-/// The first id [`Handlers`] allocates. Typed ids live above every id a mod
-/// picks by hand, so the two can be mixed in one mod without colliding.
 pub const TYPED_ID_BASE: u32 = 0x8000_0000;
 
-/// A type-level registration key for an event. The callback still receives
-/// [`EventPayload`] so pre handlers can edit its mutable fields; dispatch
-/// checks that the payload has the registered kind before calling it.
 pub trait EventType {
     const KIND: EventKind;
 }
 
-/// Event keys for [`Registrar::on`]. Every [`EventKind`] has one marker.
 pub mod event_types {
     use super::{EventKind, EventType};
 
@@ -111,7 +105,6 @@ type EventFn<S> = Box<dyn FnMut(&mut S, &mut EventPayload) -> Outcome>;
 type AiNodeFn<S> = Box<dyn FnMut(&mut S, &AiNodeCtx) -> Option<AiNodeDecision>>;
 type BlockHookFn<S> = Box<dyn FnMut(&mut S, BlockHookKind, [i32; 3])>;
 
-/// Which kind of dispatch an id arrived on (for the once-only warnings).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Lane {
     Tick,
@@ -120,8 +113,6 @@ enum Lane {
     BlockHook,
 }
 
-/// A mod's typed registrations, and the dispatch from allocated ids back to
-/// them. `S` is the mod's own state, handed to every closure.
 pub struct Handlers<S> {
     ticks: Vec<TickFn<S>>,
     events: Vec<(EventKind, EventFn<S>)>,
@@ -130,7 +121,6 @@ pub struct Handlers<S> {
     warned: Vec<(Lane, u32)>,
 }
 
-/// The registration API passed to [`TypedMod::register`].
 pub type Registrar<S> = Handlers<S>;
 
 impl<S> Default for Handlers<S> {
@@ -145,7 +135,6 @@ impl<S> Default for Handlers<S> {
     }
 }
 
-/// The id for the `index`-th registration of one lane.
 fn typed_id(index: usize) -> u32 {
     u32::try_from(index)
         .ok()
@@ -153,13 +142,11 @@ fn typed_id(index: usize) -> u32 {
         .expect("too many typed handlers")
 }
 
-/// The lane index of a typed id, `None` for a raw (hand-picked) id.
 fn typed_index(id: u32) -> Option<usize> {
     id.checked_sub(TYPED_ID_BASE).map(|i| i as usize)
 }
 
 impl<S> Handlers<S> {
-    /// Register an event by type, avoiding a separate [`EventKind`] value.
     pub fn on<E: EventType>(
         &mut self,
         priority: i32,
@@ -168,7 +155,6 @@ impl<S> Handlers<S> {
         self.event(E::KIND, priority, f);
     }
 
-    /// Register a tick closure; an alias for [`Self::tick`].
     pub fn on_tick(
         &mut self,
         stage: Stage,
@@ -179,8 +165,6 @@ impl<S> Handlers<S> {
         self.tick(stage, attach, priority, f);
     }
 
-    /// Run `f` once per game tick at the `(stage, attach)` seam; systems at
-    /// one seam run in `(priority ascending, registration order)`.
     pub fn tick(
         &mut self,
         stage: Stage,
@@ -193,9 +177,6 @@ impl<S> Handlers<S> {
         self.ticks.push(Box::new(f));
     }
 
-    /// Handle every `event`. Pre events echo the (mutated) payload and the
-    /// returned [`Outcome`] can cancel; post events are observe-only. The
-    /// payload is always of kind `event` (see [`Mod::handle_event`]).
     pub fn event(
         &mut self,
         event: EventKind,
@@ -207,8 +188,6 @@ impl<S> Handlers<S> {
         self.events.push((event, Box::new(f)));
     }
 
-    /// Decide for mobs whose brain row names the node `key` (this mod's own
-    /// `mod_id:name`). Panics on a key this mod already registered.
     pub fn ai_node(
         &mut self,
         key: &str,
@@ -223,8 +202,6 @@ impl<S> Handlers<S> {
         self.ai_nodes.push((key.to_owned(), Box::new(f)));
     }
 
-    /// Handle behavior hooks on block rows whose `behavior` is `key` (this
-    /// mod's own `mod_id:name`). Panics on a key this mod already registered.
     pub fn block_hook(
         &mut self,
         key: &str,
@@ -239,7 +216,6 @@ impl<S> Handlers<S> {
         self.block_hooks.push((key.to_owned(), Box::new(f)));
     }
 
-    /// Log a dispatch nobody handles — once per (lane, id), not per tick.
     fn warn_unhandled(&mut self, lane: Lane, id: u32, what: &str) {
         if self.warned.contains(&(lane, id)) {
             return;
@@ -248,7 +224,6 @@ impl<S> Handlers<S> {
         crate::log(&format!("mod-sdk: {what} (id {id:#x}); ignoring it"));
     }
 
-    /// Dispatch a tick system. `false` = a raw id (the caller's own hook).
     fn dispatch_tick(&mut self, state: &mut S, id: u32) -> bool {
         let Some(index) = typed_index(id) else {
             return false;
@@ -260,7 +235,6 @@ impl<S> Handlers<S> {
         true
     }
 
-    /// Dispatch an event. `None` = a raw id (the caller's own hook).
     fn dispatch_event(
         &mut self,
         state: &mut S,
@@ -286,7 +260,6 @@ impl<S> Handlers<S> {
         Some(outcome)
     }
 
-    /// Dispatch an AI node. `None` = a raw id (the caller's own hook).
     fn dispatch_ai_node(
         &mut self,
         state: &mut S,
@@ -303,7 +276,6 @@ impl<S> Handlers<S> {
         })
     }
 
-    /// Dispatch a block hook. `false` = a raw id (the caller's own hook).
     fn dispatch_block_hook(
         &mut self,
         state: &mut S,
@@ -322,16 +294,10 @@ impl<S> Handlers<S> {
     }
 }
 
-/// A [`Mod`] that registers typed closures (see the module docs). Its
-/// [`Mod::init`] runs first, then [`register`](Self::register) — both inside
-/// the registration window.
 pub trait TypedMod: Mod + 'static {
     fn register(&mut self, on: &mut Handlers<Self>);
 }
 
-/// The [`Mod`] that [`register_typed_mod!`](crate::register_typed_mod) exports
-/// for a [`TypedMod`]: routes typed ids to their closures and everything else
-/// to the mod's own hooks.
 pub struct Typed<T: TypedMod> {
     state: T,
     handlers: Handlers<T>,
@@ -476,8 +442,6 @@ impl<T: TypedMod> Mod for Typed<T> {
     }
 }
 
-/// [`register_mod!`](crate::register_mod) for a [`TypedMod`]: exports the
-/// wasm entry points for [`Typed<T>`].
 #[macro_export]
 macro_rules! register_typed_mod {
     ($ty:ty) => {

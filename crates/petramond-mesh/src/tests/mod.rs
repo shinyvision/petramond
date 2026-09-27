@@ -6,34 +6,18 @@ use petramond_world::facing::Facing;
 use petramond_world::mathh::IVec3;
 use petramond_world::section::Section;
 
-// --- Fixtures ---------------------------------------------------------------
-//
-// Packed-vertex decoders, scene builders, and `build_section_mesh` wrappers
-// shared by the tests below. The wrappers answer every voxel lookup from the
-// section itself (air / no water / default stair+slab state outside it);
-// skylight and loadedness default to uniform full sky and everything-loaded
-// unless a test overrides them. `build_section_mesh` samples those reads into
-// the section's pad and meshes it exactly as the live world's mesh pool does,
-// so every suite exercises the production mesher.
-
-// Decoders read the ENCODER's own constants, so a layout change moves both
-// halves together instead of silently rotting the assertions.
 fn shade_idx(v: &Vertex) -> u32 {
     (v.packed >> super::vertex::SHADE_SHIFT) & 0x3
 }
 
-/// Word 1's SKY light — sky-only since the channel split; every scene in these
-/// tests is sky-lit (no emitters), so it also equals the total light.
 fn light6(v: &Vertex) -> u32 {
     (v.packed >> super::vertex::SKY_SHIFT) & 0x3F
 }
 
-/// AO bits.
 fn ao_idx(v: &Vertex) -> u32 {
     (v.packed >> super::vertex::AO_SHIFT) & 0x3
 }
 
-/// Tile id bits.
 fn tile_idx(v: &Vertex) -> u32 {
     v.packed & super::vertex::TILE_MASK
 }
@@ -42,13 +26,10 @@ fn uv_mode(v: &Vertex) -> u32 {
     (v.packed >> super::vertex::UV_MODE_SHIFT) & 0x7
 }
 
-/// The cell-local UV bits (packed2 6..11 / 11..16), only meaningful on
-/// UV_MODE_CELL_LOCAL vertices.
 fn cell_uv16(v: &Vertex) -> (u32, u32) {
     ((v.packed2 >> 6) & 0x1F, (v.packed2 >> 11) & 0x1F)
 }
 
-/// The vertex of face kind `shade` sitting exactly at `pos`, or panic.
 fn vert_at(verts: &[Vertex], shade: u32, pos: [f32; 3]) -> &Vertex {
     verts
         .iter()
@@ -67,11 +48,6 @@ fn in_section(wx: i32, wy: i32, wz: i32) -> bool {
     r.contains(&wx) && r.contains(&wy) && r.contains(&wz)
 }
 
-/// Clone `section` with every refinable cell's stored shape state RESOLVED —
-/// the standalone-fixture twin of the world's edit-time refine cascade
-/// (`World::refine_shape_states_around`; these fixtures write raw section
-/// cells with no world, so no cascade ever ran). Out-of-section neighbours
-/// read as air, matching the mesh wrappers' closures.
 pub(super) fn refined(section: &Section) -> Section {
     struct Nb<'a>(&'a Section);
     impl petramond_world::block::ShapeNeighborhood for Nb<'_> {
@@ -91,8 +67,6 @@ pub(super) fn refined(section: &Section) -> Section {
         }
     }
     let mut out = section.clone();
-    // Fixpoint sweeps: the refine dependency chain is two layers deep (see
-    // `world::shape_refine`), so three passes always settle.
     for _ in 0..3 {
         let mut writes = Vec::new();
         {
@@ -122,7 +96,6 @@ pub(super) fn refined(section: &Section) -> Section {
     out
 }
 
-/// A section at (0, 0, 0) with the given blocks set on empty air.
 fn section_with(blocks: &[((usize, usize, usize), Block)]) -> Section {
     let mut section = Section::new(0, 0, 0);
     for &((x, y, z), b) in blocks {
@@ -131,7 +104,6 @@ fn section_with(blocks: &[((usize, usize, usize), Block)]) -> Section {
     section
 }
 
-/// A section whose whole y=0 layer is `block` — a flat 16×16 floor.
 fn floor_section(block: Block) -> Section {
     let mut section = Section::new(0, 0, 0);
     for z in 0..SECTION_SIZE {
@@ -142,10 +114,6 @@ fn floor_section(block: Block) -> Section {
     section
 }
 
-/// The synthetic transition policy every mesh test runs under: dirt–grass
-/// and grass–sand transition, dirt–sand does not, and nothing else is a
-/// material. Pinning the mechanism here keeps the tests independent of the
-/// shipped catalog's tuning.
 fn test_rules() -> &'static petramond_world::texture_transition::Rules {
     static RULES: std::sync::LazyLock<petramond_world::texture_transition::Rules> =
         std::sync::LazyLock::new(|| {
@@ -160,8 +128,6 @@ fn test_rules() -> &'static petramond_world::texture_transition::Rules {
     &RULES
 }
 
-/// The context every mesh test builds under: the global block registry's
-/// dispatch tables and [`test_rules`].
 fn test_ctx() -> crate::MeshContext<'static> {
     crate::MeshContext {
         content: petramond_world::content::Content::current(),
@@ -170,8 +136,6 @@ fn test_ctx() -> crate::MeshContext<'static> {
     }
 }
 
-/// Mesh `section` standalone with overridable skylight and loadedness; all
-/// other lookups answer from the section itself.
 fn mesh_with(
     section: &Section,
     sky: impl Fn(i32, i32, i32) -> u8,
@@ -185,15 +149,12 @@ fn mesh_with(
     )
 }
 
-/// [`mesh_with`] under a caller-supplied block-light field as well.
 fn mesh_lit(
     section: &Section,
     sky: impl Fn(i32, i32, i32) -> u8,
     block_light: impl Fn(i32, i32, i32) -> petramond_world::light::LightRgb,
     loaded: impl Fn(i32, i32, i32) -> bool,
 ) -> ChunkMesh {
-    // Standalone fixtures never ran the edit-time refine cascade: resolve
-    // the stored shape states (fence masks, stair corners) before meshing.
     let section = &refined(section);
     let dyed = section.cell_tint_map();
     build_section_mesh(
@@ -237,26 +198,19 @@ fn mesh_lit(
     )
 }
 
-/// Mesh `section` standalone under uniform full skylight, everything loaded.
 fn mesh(section: &Section) -> ChunkMesh {
     mesh_with(section, |_, _, _| SKY_FULL, |_, _, _| true)
 }
 
-/// [`mesh`] with the exposure-mask fast path off: every cube face culled by
-/// asking its front cell. The fast path must reproduce it byte for byte, so
-/// a suite run through both pins both culls.
 fn mesh_per_face(section: &Section) -> ChunkMesh {
     let section = &refined(section);
     fixtures::standalone(section).mesh_per_face(section, SectionPos::new(0, 0, 0))
 }
 
-/// Mesh `section` standalone with a custom baked-skylight shape.
 fn mesh_with_sky(section: &Section, sky: impl Fn(i32, i32, i32) -> u8) -> ChunkMesh {
     mesh_with(section, sky, |_, _, _| true)
 }
 
-/// Mesh one section of a multi-section scene: blocks and skylight answer from
-/// world-coordinate closures (no stairs/slabs/water anywhere, all loaded).
 fn mesh_in_scene(
     section: &Section,
     pos: SectionPos,
@@ -280,8 +234,6 @@ fn mesh_in_scene(
     )
 }
 
-/// A section holding bottom-half stairs (plus companion blocks), meshed
-/// standalone under uniform full skylight.
 fn mesh_stairs(
     blocks: &[((usize, usize, usize), Block)],
     facings: &[((usize, usize, usize), Facing)],
@@ -293,7 +245,6 @@ fn mesh_stairs(
     mesh(&section)
 }
 
-/// Sampler over a computed skylight band, for the skylight unit tests.
 struct TestSky {
     band: Box<[u8]>,
     ylo: i32,
@@ -318,7 +269,6 @@ fn solo_skylight(c: &Chunk) -> TestSky {
     TestSky { band, ylo, yhi }
 }
 
-/// Fill the chunk's whole 16×16 footprint with `block` for every y in `ys`.
 fn fill_chunk_layers(c: &mut Chunk, ys: std::ops::RangeInclusive<usize>, block: Block) {
     for y in ys {
         for z in 0..CHUNK_SZ {
@@ -329,16 +279,12 @@ fn fill_chunk_layers(c: &mut Chunk, ys: std::ops::RangeInclusive<usize>, block: 
     }
 }
 
-/// Stone floor (y=0..=4) over the whole chunk, so test columns are not open
-/// below -- keeps the volumetric descent the only thing under study.
 fn floored_chunk() -> Chunk {
     let mut c = Chunk::new(0, 0);
     fill_chunk_layers(&mut c, 0..=4, Block::Stone);
     c
 }
 
-/// Build an opaque-walled vertical shaft of `fill` from y=1..=8 over a floor,
-/// so the only light path is straight down through `fill`.
 fn walled_shaft(fill: Block) -> Chunk {
     let mut c = Chunk::new(0, 0);
     fill_chunk_layers(&mut c, 0..=0, Block::Stone);
@@ -351,16 +297,12 @@ fn walled_shaft(fill: Block) -> Chunk {
     c
 }
 
-/// `roof` across the whole chunk at y=10 over a floored chunk, with one open
-/// shaft cell at (8, 10, 8).
 fn roof_with_open_shaft(roof: Block) -> Chunk {
     let mut c = floored_chunk();
     fill_chunk_layers(&mut c, 10..=10, roof);
     c.set_block(8, 10, 8, Block::Air);
     c
 }
-
-// --- Tests ------------------------------------------------------------------
 
 mod ao;
 mod block_light_color;

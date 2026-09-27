@@ -1,5 +1,3 @@
-//! Surface-terrain density primitives for the staged worldgen rewrite.
-
 pub mod lattice;
 pub mod noise;
 #[cfg(test)]

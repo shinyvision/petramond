@@ -15,12 +15,10 @@ fn idle_until_given_a_goal() {
 #[test]
 fn arriving_consumes_waypoints_then_goes_idle() {
     let mut nav = Navigator::new(1, 0.25, 0.9);
-    // Hand-build a 2-step path so we don't need a World: start (0,1,0) -> (1,1,0).
     nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 1, 0)];
     nav.index = 1;
     nav.goal = Some(IVec3::new(1, 1, 0));
     nav.path_reaches_goal = true;
-    // Standing on the waypoint: it's consumed and the nav goes idle.
     let on_wp = WorldPos::new(1.5, 1.0, 0.5);
     let (wish, jump) = nav.follow(on_wp, true);
     assert_eq!(wish, Vec3::ZERO);
@@ -42,23 +40,15 @@ fn steers_toward_a_distant_waypoint() {
 #[test]
 fn jumps_when_close_to_a_step_up() {
     let mut nav = Navigator::new(1, 0.22, 0.9);
-    // Waypoint one block up and just ahead.
     nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
     nav.index = 1;
     nav.goal = Some(IVec3::new(1, 2, 0));
     let (_wish, jump) = nav.follow(WorldPos::new(0.7, 1.0, 0.5), true);
     assert!(jump, "should jump for a nearby one-block step up");
-    // But not while airborne.
     let (_w2, jump_air) = nav.follow(WorldPos::new(0.7, 1.0, 0.5), false);
     assert!(!jump_air, "no jump while off the ground");
 }
 
-/// The hop-off-a-ledge rubber-band regression: a ballistic arc carries
-/// the body past waypoints — including between steered ticks — and the
-/// cursor must advance past every one of them (monotonic projection
-/// consumption, [`Navigator::advance_cursor`]) no matter how far beyond
-/// a centre the flight lands; steering back to a place the body has
-/// already been past must be impossible.
 #[test]
 fn a_ballistic_pass_advances_the_cursor_and_never_turns_the_mob_back() {
     let mut nav = Navigator::new(1, 0.35, 0.9);
@@ -74,21 +64,15 @@ fn a_ballistic_pass_advances_the_cursor_and_never_turns_the_mob_back() {
 
     let (wish, _) = nav.follow(WorldPos::new(0.6, 1.0, 0.5), true);
     assert!(wish.x > 0.9, "heads toward the waypoint: {wish:?}");
-    // The arc carries the body past TWO waypoint centres, unsteered,
-    // landing far outside any arrive window.
     for x in [0.9, 1.4, 2.0, 2.6] {
         nav.advance_cursor(WorldPos::new(x, 1.3, 0.5));
     }
-    // Steering resumes well past both — the wish must aim FORWARD.
     let (wish, _) = nav.follow(WorldPos::new(2.7, 1.0, 0.5), true);
     assert!(
         wish.x > 0.9,
         "passed waypoints were consumed mid-flight; no turning back: {wish:?}"
     );
 
-    // The same guarantee on a STEERED overshoot (the hushjaw backtrack
-    // shape): a fast walker that steps far past a waypoint centre in one
-    // tick keeps going forward, never orbits back to it.
     let mut nav = Navigator::new(1, 0.45, 0.9);
     nav.path = vec![
         IVec3::new(0, 1, 0),
@@ -107,10 +91,6 @@ fn a_ballistic_pass_advances_the_cursor_and_never_turns_the_mob_back() {
     );
 }
 
-/// Moving a lot is not going somewhere: a ballistic gait ping-ponging in
-/// a pocket its stride cannot resolve keeps raw displacement high every
-/// tick, so only GOAL-progress liveness can abandon the route (the
-/// 2026-08-17 rabbit cliff-edge trap). An honest approach never trips it.
 #[test]
 fn a_route_with_movement_but_no_goal_progress_is_abandoned() {
     let mut nav = Navigator::new(1, 0.35, 0.9);
@@ -118,8 +98,6 @@ fn a_route_with_movement_but_no_goal_progress_is_abandoned() {
     nav.index = 1;
     nav.goal = Some(IVec3::new(8, 1, 0));
     nav.path_reaches_goal = true;
-    // Ping-pong across a whole block each call — far beyond the raw
-    // displacement epsilon — while never getting nearer the goal.
     for call in 0..2 * GOAL_STALL_CALLS {
         if nav.is_idle() {
             break;
@@ -132,8 +110,6 @@ fn a_route_with_movement_but_no_goal_progress_is_abandoned() {
         "a movement-rich, progress-free route must be abandoned"
     );
 
-    // An honest (even slow) approach keeps the route alive well past the
-    // stall budget: the best-achieved goal distance keeps improving.
     let mut nav = Navigator::new(1, 0.35, 0.9);
     nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(200, 1, 0)];
     nav.index = 1;
@@ -175,9 +151,6 @@ fn vertical_bobbing_does_not_count_as_navigation_progress() {
 #[test]
 fn jump_trigger_accounts_for_body_width() {
     let mut nav = Navigator::new(1, 0.45, 0.9);
-    // Waypoint one block up in the adjacent cell. A wide mob standing in the lower
-    // cell is already close to the ledge with its front edge even though its centre
-    // is still a full block from the target centre.
     nav.path = vec![IVec3::new(0, 1, 0), IVec3::new(1, 2, 0)];
     nav.index = 1;
     nav.goal = Some(IVec3::new(1, 2, 0));
@@ -191,9 +164,6 @@ fn jump_trigger_accounts_for_body_width() {
 #[test]
 fn wide_mob_does_not_turn_before_clearing_a_corner() {
     let mut nav = Navigator::new(1, 0.45, 0.9);
-    // The route turns north at (1,1,0). A sheep-width body at x=1.25 would still
-    // clip a block in the inner corner if it started the turn, so it must keep
-    // steering east until much closer to the waypoint centre.
     nav.path = vec![
         IVec3::new(0, 1, 0),
         IVec3::new(1, 1, 0),
@@ -209,8 +179,6 @@ fn wide_mob_does_not_turn_before_clearing_a_corner() {
     assert!(!jump);
 }
 
-/// A single chunk with a solid grass floor at `y = 63`, so footholds sit at
-/// `y = 64` across it — enough terrain for `find_path` to route over.
 fn flat_world() -> ServerWorld {
     use petramond_world::chunk::{Chunk, ChunkPos};
     let mut world = ServerWorld::new(0, 2);
@@ -308,10 +276,8 @@ fn open_door_still_blocks_the_swung_edge() {
 
 #[test]
 fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
-    // The regression this rework exists for: a ladder's block row has NO
-    // collision (its 1/16 panel resolves per-facing at the world level), so
-    // cell navigation used to read its cell as fully open and walk mobs
-    // straight into the panel forever. The edge gate sweeps the real body
+    // A ladder's block row has no collision because its 1/16 panel resolves
+    // per-facing at the world level. The edge gate sweeps the real body
     // AABB: crossing the panel's face is refused, while the open 15/16 of
     // the same cell stays routable.
     let mut world = flat_world();
@@ -323,13 +289,10 @@ fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
         world.set_block_world(x, 64, ladder.z, Block::Stone);
         world.set_block_world(x, 65, ladder.z, Block::Stone);
     }
-    // `Block::Ladder` faces north: its panel hugs the z = 2 face of its cell.
     world.set_block_world(ladder.x, ladder.y, ladder.z, Block::Ladder);
     let start = IVec3::new(4, 64, 0);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    // Entering the ladder cell from the open side is fine — the cell is NOT
-    // a blanket wall.
     nav.update_goal_when_supported(Some(ladder), start, &world, true, &NavInputs::none());
     assert_eq!(
         nav.path().last(),
@@ -338,8 +301,6 @@ fn a_ladder_panel_blocks_only_the_edge_it_physically_blocks() {
         nav.path()
     );
 
-    // Crossing the panel's face is refused: the far side is unreachable and
-    // the best-effort route never steps through the panel.
     let mut nav = Navigator::new(1, 0.25, 0.9);
     let goal = IVec3::new(4, 64, 2);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
@@ -369,18 +330,15 @@ fn a_touching_body_ahead_veers_the_wish_to_a_side() {
     }]);
     let contacts = [EntityRef::Mob(2)];
 
-    // Dead ahead: the wish veers sideways (id-picked side), keeping forward speed.
     let out = Unstick::default().steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
     assert!(out.z.abs() > 0.5, "veers sideways around the body: {out:?}");
     assert!(out.x > 0.0, "keeps forward progress: {out:?}");
 
-    // No contact (and no running commitment): the wish passes through untouched.
     assert_eq!(
         Unstick::default().steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
         wish
     );
 
-    // The brain's target is never dodged.
     assert_eq!(
         Unstick::default().steer(
             wish,
@@ -395,7 +353,6 @@ fn a_touching_body_ahead_veers_the_wish_to_a_side() {
         wish
     );
 
-    // A body BEHIND the travel direction is not ours to dodge.
     let behind = MobSnapshot::from_mobs([AiMob {
         id: 2,
         kind: crate::mob::Mob::Sheep,
@@ -431,7 +388,6 @@ fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
     let veered = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
     assert!(veered.z.abs() > 0.5, "the contact tick veers: {veered:?}");
 
-    // Contact gone: the commitment keeps the SAME veer, no snap-back.
     for _ in 0..UNSTICK_HOLD_TICKS {
         assert_eq!(
             latch.steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
@@ -439,15 +395,12 @@ fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
             "the committed side holds through contact flicker"
         );
     }
-    // Commitment exhausted: the wish runs straight again.
     assert_eq!(
         latch.steer(wish, pos, 1, 0.45, &[], None, &blocking, &[]),
         wish,
         "the veer expires once the contact has stayed gone"
     );
 
-    // A body slightly to the OTHER side of the new travel line must not
-    // flip the committed side while the commitment is live.
     let mut latch = Unstick::default();
     let first = latch.steer(wish, pos, 1, 0.45, &contacts, None, &blocking, &[]);
     let other_side = MobSnapshot::from_mobs([AiMob {
@@ -464,9 +417,6 @@ fn the_veer_commits_to_its_side_instead_of_flip_flopping() {
 
 #[test]
 fn a_one_high_block_wall_is_routable_but_a_one_high_fence_wall_is_not() {
-    // Ordinary one-block steps stay jumpable; a fence of the same height
-    // must never route, or no fenced pen would hold (the by-design pen
-    // rule in `nav_solid_fn`/`nav_support_fn`).
     let start = IVec3::new(4, 64, 0);
     let goal = IVec3::new(4, 64, 2);
 
@@ -532,15 +482,12 @@ fn a_climb_under_a_partial_shape_overhead_is_refused() {
         navigation_step_gate(&world.cursor(), d.path_params(), d.size.height)(from, to)
     };
     assert!(climbs(&world));
-    // Above the head where the body stands, clear of both standing poses.
     world.set_block_world(4, 66, 1, Block::GlassPane);
     assert!(!climbs(&world));
 }
 
 #[test]
 fn a_climb_is_refused_where_the_real_rise_is_more_than_one_block() {
-    // A chest top stands 1/8 below the foothold cell above it: one cell up
-    // onto a full cube from there is a rise no jump makes.
     let mut world = flat_world();
     world.set_block_world(4, 64, 1, Block::Chest);
     world.set_block_world(5, 64, 1, Block::Stone);
@@ -551,15 +498,12 @@ fn a_climb_is_refused_where_the_real_rise_is_more_than_one_block() {
     };
     world.set_block_world(5, 65, 1, Block::Stone);
     assert!(!climbs(&world));
-    // The same climb onto another chest top rises exactly one block.
     world.set_block_world(5, 65, 1, Block::Chest);
     assert!(climbs(&world));
 }
 
 #[test]
 fn a_route_probe_cut_short_is_undecided_never_closed() {
-    // A worker planning walls reads Closed as "this wall seals a room"; a
-    // long detour the node cap cut short must not look like one.
     let mut world = flat_world();
     for x in 0..11 {
         world.set_block_world(x, 64, 1, Block::Stone);
@@ -578,8 +522,6 @@ fn a_route_probe_cut_short_is_undecided_never_closed() {
 
 #[test]
 fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
-    // Ledges, a stair flight, a slab, a fence and a one-way drop: what a
-    // flood memoizes or works out in reverse must stay what a probe walks.
     let mut world = flat_world();
     for x in 0..12 {
         for z in 4..6 {
@@ -622,9 +564,6 @@ fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
                 for z in min.z..=max.z {
                     let cell = IVec3::new(x, y, z);
                     let (a, b) = if toward { (cell, start) } else { (start, cell) };
-                    // A probe inside the box searches what the floods keep:
-                    // the same verdict for the same expansions as one that
-                    // reads the world afresh.
                     let probe = |world: &ServerWorld| {
                         world.route_probe_budget().refill();
                         let route = route_probe(world, kind, a, b, blocked, 4000);
@@ -644,9 +583,6 @@ fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
             }
         }
     };
-    // What one flood learned of the cells is kept for the next: a planned
-    // block, then real changes (a wall raised on the way, a fence gone, a
-    // floor block dug) must each be seen by the floods after them.
     for toward in [false, true] {
         agrees(&world, &[], toward);
         agrees(
@@ -669,8 +605,8 @@ fn a_walk_region_agrees_with_a_route_probe_for_every_cell_of_its_box() {
 
 #[test]
 fn a_walk_region_floods_one_way_drops_by_direction() {
-    // A ledge two blocks up: a body drops off it but cannot climb onto it,
-    // so the ground is reached FROM the ledge and never walks TO it.
+    // Ledge two blocks up - can drop off but not climb back up.
+    // So ground is reached FROM ledge but never TO it.
     let mut world = flat_world();
     for x in 5..9 {
         for z in 0..4 {
@@ -731,9 +667,6 @@ fn a_walk_region_floods_one_way_drops_by_direction() {
 
 #[test]
 fn mob_can_reach_answers_the_fence_honestly() {
-    // The `MobCanReach` HostCall's engine seam: a cell beyond a fence
-    // line is not reachable, a cell on the mob's own side is — the
-    // honesty gate mod destination policies (grazing) build on.
     let mut world = flat_world();
     for x in 0..12 {
         world.set_block_world(x, 64, 1, Block::OakFence);
@@ -756,14 +689,11 @@ fn mob_can_reach_answers_the_fence_honestly() {
 
 #[test]
 fn a_step_beside_the_fence_opens_the_route_over_it() {
-    // The pen rule's honest exception: with a block placed in front of the
-    // fence, the mob may jump onto it and walk over the fence top.
     let mut world = flat_world();
     for x in 0..12 {
         world.set_block_world(x, 64, 1, Block::OakFence);
     }
     world.set_block_world(4, 64, 0, Block::Dirt);
-    // The mob starts beside the step on the ground, goal beyond the fence.
     let start = IVec3::new(3, 64, 0);
     let goal = IVec3::new(4, 64, 2);
     let mut nav = Navigator::new(1, 0.25, 0.9);
@@ -783,11 +713,6 @@ fn a_step_beside_the_fence_opens_the_route_over_it() {
 
 #[test]
 fn an_offset_body_deflects_along_a_partial_shapes_face_instead_of_pressing_in() {
-    // The walking-against-the-trough bug: a sheep that wandered flush
-    // against a partial-collision block (here a chest) gets a waypoint
-    // past it. The raw wish from its OFFSET position presses the body
-    // diagonally into the shape; steered following must drop the blocked
-    // axis and walk cleanly along the face instead.
     let mut world = flat_world();
     world.set_block_world(4, 64, 1, Block::Chest);
     let mut nav = Navigator::new(2, 0.45, 1.4);
@@ -795,8 +720,6 @@ fn an_offset_body_deflects_along_a_partial_shapes_face_instead_of_pressing_in() 
     nav.index = 1;
     nav.goal = Some(IVec3::new(5, 64, 0));
     nav.path_reaches_goal = true;
-    // Body centre at z = 0.95: its 0.9-wide body overlaps the chest's
-    // row, so heading straight east grinds into the chest's west face.
     let pos = WorldPos::new(3.5, 64.0, 0.95);
 
     let (raw, _) = nav.follow(pos, true);
@@ -820,9 +743,6 @@ fn an_offset_body_deflects_along_a_partial_shapes_face_instead_of_pressing_in() 
 
 #[test]
 fn steering_never_deflects_the_final_approach_to_a_wall_adjacent_waypoint() {
-    // The probe is capped at the remaining distance: a waypoint whose far
-    // side is a wall must still be walked INTO the arrive window, or mobs
-    // hover forever one body-length short of wall-adjacent destinations.
     let mut world = flat_world();
     world.set_block_world(5, 64, 0, Block::Stone);
     world.set_block_world(5, 65, 0, Block::Stone);
@@ -840,11 +760,6 @@ fn steering_never_deflects_the_final_approach_to_a_wall_adjacent_waypoint() {
 
 #[test]
 fn no_diagonal_step_cuts_past_a_partial_shapes_corner() {
-    // The gate's sweep is axis-ordered, but a mob walks a diagonal as a
-    // straight line — which can clip a partial shape's corner the L-shaped
-    // sweep cleared. Diagonals near body-level partial shapes are refused
-    // outright, so the route around a trough/chest is honest cardinal
-    // steps a real body can walk.
     let mut world = flat_world();
     world.set_block_world(4, 64, 1, Block::Chest);
     let start = IVec3::new(3, 64, 1);
@@ -893,10 +808,6 @@ fn routes_bend_around_another_mobs_body() {
 
 #[test]
 fn a_blocked_corridor_is_rounded_rather_than_pushed_through() {
-    // A 1-wide corridor with a sheep standing in it and a gap in one wall
-    // before AND after her: squeezing past her body costs one crowded cell
-    // (200), the gap detour costs a handful of flat steps (~40). The route
-    // must take the gap, not the shove.
     let mut world = flat_world();
     for x in 0..12 {
         if x != 3 && x != 5 {
@@ -933,9 +844,6 @@ fn a_blocked_corridor_is_rounded_rather_than_pushed_through() {
 
 #[test]
 fn a_truly_blocked_crowd_still_resolves_by_paying_the_cost() {
-    // The other half of the contract: no detour at all (sealed corridor)
-    // must never deadlock the search — the mob squeezes through as a last
-    // resort instead of freezing.
     let mut world = flat_world();
     for x in 0..12 {
         world.set_block_world(x, 64, 0, Block::Stone);
@@ -969,8 +877,6 @@ fn a_truly_blocked_crowd_still_resolves_by_paying_the_cost() {
 
 #[test]
 fn the_locked_target_is_never_avoided() {
-    // A zombie chasing prey must path TO it, not around it: the current
-    // target is exempt from entity avoidance.
     let world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
@@ -1048,15 +954,11 @@ fn players_are_soft_obstacles_unless_targeted() {
 
 #[test]
 fn re_paths_a_held_goal_when_the_world_changes() {
-    // Hold one goal while the world changes underneath: the navigator must keep the
-    // first route until REPATH_TICKS elapse, then refresh it to route around new
-    // terrain — the whole point of periodic re-pathing.
     let mut world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
 
-    // Initial path: a straight run along z = 1, passing through (4, 64, 1).
     nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     let stale: Vec<IVec3> = nav.path().to_vec();
     let blocked = IVec3::new(4, 64, 1);
@@ -1065,13 +967,9 @@ fn re_paths_a_held_goal_when_the_world_changes() {
         "the open route runs straight through {blocked:?}"
     );
 
-    // Drop a 2-high wall across that cell (its foothold + the cell above it), so the
-    // straight route is no longer walkable — a detour via z = 0 / z = 2 remains.
     world.set_block_world(blocked.x, blocked.y, blocked.z, Block::Stone);
     world.set_block_world(blocked.x, blocked.y + 1, blocked.z, Block::Stone);
 
-    // For the first REPATH_TICKS-1 held ticks the stale route is kept verbatim (no
-    // per-tick re-pathing — holding a goal stays cheap).
     for _ in 0..REPATH_TICKS - 1 {
         nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
         assert_eq!(
@@ -1081,7 +979,6 @@ fn re_paths_a_held_goal_when_the_world_changes() {
         );
     }
 
-    // The REPATH_TICKS-th held tick refreshes the route, which now avoids the wall.
     nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_ne!(
         nav.path(),
@@ -1097,19 +994,13 @@ fn re_paths_a_held_goal_when_the_world_changes() {
 
 #[test]
 fn fast_wide_mob_consumes_overflown_waypoints_instead_of_orbiting() {
-    // The hushjaw jitter regression: half_width 0.45 tightens arrive_xz to
-    // 0.05 m while 4.8 m/s walks 0.24 m per tick — the mob can overfly a
-    // waypoint it can never land inside. Overshoot consumption must let it
-    // walk a straight route with ZERO 180° turn-backs; without it this
-    // exact setup orbits the first waypoint forever (measured: 1990
-    // reversals in 2000 ticks).
     let mut nav = Navigator::new(2, 0.45, 1.4);
     nav.path = (0..=8).map(|x| IVec3::new(x, 1, 0)).collect();
     nav.index = 1;
     nav.goal = Some(IVec3::new(8, 1, 0));
     nav.path_reaches_goal = true;
 
-    let step = 4.8 * 0.05; // hushjaw speed × tick dt
+    let step = 4.8 * 0.05;
     let mut pos = WorldPos::new(0.5, 1.0, 0.5);
     let mut last_dir: Option<Vec3> = None;
     let mut reversals = 0;
@@ -1139,9 +1030,6 @@ fn fast_wide_mob_consumes_overflown_waypoints_instead_of_orbiting() {
 
 #[test]
 fn overshoot_does_not_consume_a_waypoint_still_being_approached() {
-    // The wide-corner contract's counterpart: while the distance to the
-    // waypoint is still SHRINKING, overshoot must not fire — a wide mob
-    // keeps clearing the corner exactly as before.
     let mut nav = Navigator::new(1, 0.45, 0.9);
     nav.path = vec![
         IVec3::new(0, 1, 0),
@@ -1150,8 +1038,6 @@ fn overshoot_does_not_consume_a_waypoint_still_being_approached() {
     ];
     nav.index = 1;
     nav.goal = Some(IVec3::new(1, 1, 1));
-    // Two approaching ticks toward the corner waypoint (1,1,0): both must
-    // keep steering east at it, not consume it early.
     for x in [1.1_f32, 1.25] {
         let (wish, _) = nav.follow(WorldPos::new(f64::from(x), 1.0, 0.5), true);
         assert!(
@@ -1163,10 +1049,6 @@ fn overshoot_does_not_consume_a_waypoint_still_being_approached() {
 
 #[test]
 fn changed_goal_repath_preserves_the_current_waypoint_when_still_valid() {
-    // A chased target crossing a cell boundary CHANGES the goal several
-    // times a second. The refresh must keep steering at the waypoint the
-    // mob is mid-stride toward (when it remains a valid immediate step),
-    // not snap laterally between equal-cost first steps.
     let world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let old_waypoint = IVec3::new(2, 64, 1);
@@ -1178,7 +1060,6 @@ fn changed_goal_repath_preserves_the_current_waypoint_when_still_valid() {
     nav.index = 1;
     nav.goal = Some(first_goal);
     nav.path_reaches_goal = true;
-    // Past the one-cell drift hold, so the moved goal is re-searched now.
     nav.since_path = plan::GOAL_DRIFT_REPATH_TICKS;
 
     nav.update_goal_when_supported(Some(moved_goal), start, &world, true, &NavInputs::none());
@@ -1212,7 +1093,6 @@ fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint
     nav.goal = Some(first_goal);
     nav.path_reaches_goal = true;
 
-    // Goal = own cell: a hold, not a route.
     nav.update_goal_when_supported(Some(start), start, &world, true, &NavInputs::none());
     assert!(nav.is_idle(), "holding position is arrival, never a detour");
     assert!(
@@ -1221,8 +1101,6 @@ fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint
         nav.path()
     );
 
-    // Goal behind the mob: the direct route, whose first step is not the
-    // old (now hairpin) waypoint.
     let mut nav = Navigator::new(1, 0.45, 1.3);
     nav.path = vec![start, old_waypoint, IVec3::new(5, 64, 5), first_goal];
     nav.index = 1;
@@ -1237,9 +1115,6 @@ fn a_goal_at_or_behind_the_mob_never_stitches_a_u_turn_through_the_kept_waypoint
 
 #[test]
 fn same_goal_repath_preserves_the_current_waypoint_when_still_valid() {
-    // A periodic refresh can find an equally-good path whose first step is a
-    // different lateral cell. The mob should not snap sideways on the refresh tick
-    // if the waypoint it was already walking toward is still a valid immediate step.
     let world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let old_waypoint = IVec3::new(2, 64, 1);
@@ -1411,17 +1286,12 @@ fn held_goal_does_not_repath_while_airborne() {
 
 #[test]
 fn re_path_does_not_reset_the_stuck_tally() {
-    // A mob that never moves stays stuck across re-paths: the stuck counter must keep
-    // climbing through a refresh (not reset to zero each interval), so a wedged mob
-    // still abandons its goal instead of re-pathing into the same wall forever.
     let world = flat_world();
     let start = IVec3::new(1, 64, 1);
     let goal = IVec3::new(8, 64, 1);
     let mut nav = Navigator::new(1, 0.25, 0.9);
     nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
-    // Drive enough held ticks to cross several re-path intervals AND the stuck limit,
-    // following from a fixed position each tick so no progress is ever made.
     let wedged = WorldPos::new(1.5, 64.0, 1.5);
     let mut gave_up = false;
     for _ in 0..STUCK_TICKS + REPATH_TICKS {

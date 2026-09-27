@@ -1,8 +1,3 @@
-//! Document tree panel: classic left-aligned tree rows with per-depth
-//! indentation, collapse triangles on containers, click-to-select,
-//! drag-to-reorder with above/below/into drop zones, and a right-click
-//! context menu (add child, delete, duplicate, wrap).
-
 use crate::app::App;
 use crate::doc_edit::{self, NodePath};
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2};
@@ -29,8 +24,6 @@ enum Action {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     ui.label(egui::RichText::new("Document").strong());
 
-    // An external selection must be reachable: expand its ancestors before
-    // rendering so scroll_to_me can find the row.
     if app.tree_scroll_to_sel {
         if let Some(sel) = app.sel.clone() {
             for cut in 0..sel.len() {
@@ -42,8 +35,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let doc = app.proj.document.clone();
     let mut action = None;
     row(ui, app, &doc.root, Vec::new(), 0, &mut action);
-    // External selections (canvas, validation…) scroll their row into view
-    // exactly once.
     app.tree_scroll_to_sel = false;
 
     match action {
@@ -111,7 +102,6 @@ fn label_of(node: &Node) -> String {
     s
 }
 
-/// Where a dragged row would land relative to the hovered row.
 #[derive(Copy, Clone, PartialEq)]
 enum Zone {
     Above,
@@ -125,7 +115,6 @@ fn drop_zone(rect: Rect, pointer_y: f32, is_container: bool, is_root: bool) -> Z
     }
     let rel = ((pointer_y - rect.top()) / rect.height()).clamp(0.0, 1.0);
     if is_container {
-        // Top third = above, bottom third = below, middle third = reparent in.
         if rel < 1.0 / 3.0 {
             Zone::Above
         } else if rel > 2.0 / 3.0 {
@@ -153,8 +142,6 @@ fn row(
     let has_children = !node.children.is_empty();
     let collapsed = app.tree_collapsed.contains(&path);
 
-    // ONE full-width widget that senses click AND drag (a separate drag-only
-    // overlay would swallow clicks in egui's hit test — the round-2 bug).
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), ROW_H),
         Sense::click_and_drag(),
@@ -205,8 +192,6 @@ fn row(
         response.scroll_to_me(Some(egui::Align::Center));
     }
 
-    // Collapse triangle: registered after the row so it wins clicks in its
-    // little rect (it only senses click; drags still start the row's dnd).
     if is_container && has_children {
         let tri_rect = Rect::from_min_size(
             Pos2::new(rect.left() + indent - 4.0, rect.top()),
@@ -218,9 +203,6 @@ fn row(
         }
     }
 
-    // Drop target with above/below/into zones from the pointer's vertical
-    // position; the caret draws at the actual insertion position (below the
-    // LAST child's row inserts after it).
     if let Some(from) = response.dnd_hover_payload::<NodePath>() {
         if *from != path && !doc_edit::is_same_or_descendant(&from, &path) {
             let pointer_y = ui
@@ -316,13 +298,11 @@ fn apply_drop(app: &mut App, from: NodePath, parent: NodePath, index: usize) {
     if from.is_empty() || doc_edit::is_same_or_descendant(&from, &parent) {
         return;
     }
-    // Only containers take children.
     let ok =
         doc_edit::node_at(&app.proj.document.root, &parent).is_some_and(|n| n.kind.is_container());
     if !ok {
         return;
     }
-    // Same-slot moves are no-ops and don't deserve an undo entry.
     if parent.as_slice() == &from[..from.len() - 1] {
         let cur = *from.last().unwrap();
         if index == cur || index == cur + 1 {

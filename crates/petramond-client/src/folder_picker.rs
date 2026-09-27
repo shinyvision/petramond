@@ -1,18 +1,12 @@
-//! The OS folder picker a player chooses a mod's folder in: the desktop
-//! portal on Linux, the native dialog elsewhere. Each picker waits on its own
-//! thread, so the game keeps drawing behind it.
-
 use std::sync::Arc;
 
 use petramond::modding::client::files::folders::{install_chooser, FolderRequest};
 
-/// Make the OS picker the one every client mod's folder choice opens.
 pub fn install() {
     install_chooser(Some(Arc::new(pick)));
 }
 
 fn pick(request: FolderRequest) {
-    // A thread that never starts drops the request, which cancels it.
     let _ = std::thread::Builder::new()
         .name("folder-picker".into())
         .spawn(move || {

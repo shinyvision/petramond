@@ -7,8 +7,6 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// v1 → v2 doubles every byte; v2 → v3 appends a marker. A v1 body runs
-/// both steps in order, a v2 body only the last, and a current body none.
 const DEMO: Format = Format::new("demo record", 3, &[double, mark]);
 
 fn double(body: &[u8]) -> Result<Vec<u8>, RecordError> {

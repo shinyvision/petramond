@@ -103,9 +103,8 @@ fn flooded_carving_matches_across_sections_and_keeps_water_contained() {
     assert_eq!(actual, expected);
 }
 
-/// Pools are positional, so the cubic section carve and one tall column
-/// batch derive the same cells, and every generated fluid cell is held by the
-/// cave alone — no air beside or under it for the on-load kick to pour into.
+/// Pools are positional, so section carve and column batch hit the same cells.
+/// No fluid cell has air next to or under it for the on-load kick to pour into.
 #[test]
 fn pools_match_across_sections_and_are_held_by_the_cave() {
     let table = underground::synthetic_table(&[r#"{"fluid_pools":[{"fluid_pool":"test:lava",

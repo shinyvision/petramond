@@ -1,16 +1,9 @@
-//! Options → Graphics controller: the view-distance slider (4..=48 chunks,
-//! applied live on release — replica, streaming request, and fog together)
-//! plus particles, anti-aliasing and screen shake. Both sliders preview their
-//! readout while dragged and apply on release.
-
 use super::{ScreenCtx, ShellCommand};
 use petramond::save::client::{AntiAliasing, ParticlesMode};
 use petramond_ui::{UiEvent, UiState, UiValue};
 
-/// The view-distance slider's range in chunks.
 const VIEW_DISTANCE_RANGE: std::ops::RangeInclusive<i32> = 4..=48;
 
-/// The readout for an anti-aliasing mode.
 pub(super) fn anti_aliasing_label(mode: AntiAliasing) -> &'static str {
     match mode {
         AntiAliasing::Off => "Off",

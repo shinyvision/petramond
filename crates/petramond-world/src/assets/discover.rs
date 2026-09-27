@@ -1,12 +1,3 @@
-//! Pack discovery and admission: walk the `mods/` roots, validate each pack's
-//! manifest and files, resolve the load order, and enforce the id budget.
-//! Produces the [`PackSet`] every content loader reads through.
-//!
-//! A shipped pack wins every collision: an installed directory sharing a
-//! shipped pack's directory name or id is refused — a shadow would be a
-//! deletion by another name, and content packs cannot be deleted. Hidden
-//! directories (`.staging`) are never packs.
-
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,49 +5,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use super::{Integration, LaunchEntry, Pack, PackRoots, PackSet, LAUNCH_LABEL_MAX};
 use crate::pack_manifest::{self as manifest, PackMeta};
 
-/// Where a pack was found.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PackOrigin {
-    /// Shipped with the game: never written, never deleted by it.
     Shipped,
-    /// In the installed root, where the player (or the game) put it.
     Installed,
 }
 
-/// A pack's display and dependency data, as its manifest and files state
-/// them: what a refused pack still shows, and what admission computes once.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackHeader {
-    /// The pack's display name (`pack.json` `name` — the only required field).
     pub name: String,
-    /// The pack's namespace id (`None` = content-only point-file override pack).
     pub id: Option<String>,
-    /// The pack's declared version string, for the save's mod-set record
-    /// (`mods.json` — see `modding::modset`).
     pub version: Option<String>,
-    /// Human-readable description from `pack.json`, used by shell presentation.
     pub description: String,
-    /// Short row copy for compact shell lists. Falls back to `description`.
     pub summary: Option<String>,
-    /// Absolute path of the pack's icon PNG (for mod lists), when it ships one.
     pub icon: Option<PathBuf>,
-    /// The pack ids this pack requires.
     pub dependencies: Vec<String>,
-    /// The pack can change a world: it ships server logic (`wasm`), or it or
-    /// any of its integration overlays states a row in a catalog whose rows
-    /// change what a world holds (patch rows included). Client logic and
-    /// presentation catalogs alone never do.
     pub touches_world: bool,
 }
 
-/// A pack directory discovery found and did not admit, and why. The pack is
-/// logged and left out whole — packs never load partially.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PackRefusal {
-    /// The pack's directory name (its identity before a manifest is trusted).
     pub dir_name: String,
     pub dir: PathBuf,
-    /// Its manifest, when that much parsed.
     pub header: Option<PackHeader>,
     pub origin: PackOrigin,
     pub reason: String,
@@ -73,16 +43,12 @@ struct PackManifest {
     description: String,
     #[serde(default)]
     summary: Option<String>,
-    /// Pack-relative path of the pack's icon PNG, if any.
     #[serde(default)]
     icon: Option<String>,
-    /// Pack-relative path of the compiled mod logic, if any.
     #[serde(default)]
     wasm: Option<String>,
-    /// Pack-relative path of presentation-only client logic, if any.
     #[serde(default)]
     client_wasm: Option<String>,
-    /// A title-screen launch entry, honoured only beside `client_wasm`.
     #[serde(default)]
     launch: Option<LaunchManifest>,
     #[serde(default)]
@@ -97,7 +63,6 @@ struct LaunchManifest {
     icon: String,
 }
 
-/// One pack directory that passed admission, awaiting load order.
 struct Candidate {
     dir_name: String,
     dir: PathBuf,
@@ -106,8 +71,6 @@ struct Candidate {
     header: PackHeader,
 }
 
-/// Collects refusals while logging each one as it happens. A pack is refused
-/// once: the first reason stands.
 #[derive(Default)]
 struct Refusals(Vec<PackRefusal>);
 
@@ -144,8 +107,6 @@ impl Refusals {
     }
 }
 
-/// The roots in priority order, each with the origin its packs have: the
-/// shipped roots, then the installed one.
 fn origin_roots(roots: &PackRoots) -> Vec<(PathBuf, PackOrigin)> {
     let shipped = roots
         .mods
@@ -158,16 +119,10 @@ fn origin_roots(roots: &PackRoots) -> Vec<(PathBuf, PackOrigin)> {
     shipped.chain(installed).collect()
 }
 
-/// Whether the launch environment's discovery reads the installed root —
-/// under a `PETRAMOND_MODS` override it does not, and anything installed
-/// there would never load.
 pub fn installed_root_active() -> bool {
     PackRoots::from_env().installed.is_some()
 }
 
-/// The ids of the packs in the launch environment's SHIPPED roots, read
-/// straight from their manifests without running discovery (the startup
-/// apply runs before it).
 pub fn shipped_pack_ids() -> BTreeSet<String> {
     let mut ids = BTreeSet::new();
     for root in PackRoots::from_env().mods {
@@ -185,15 +140,10 @@ pub fn shipped_pack_ids() -> BTreeSet<String> {
 
 static DISCOVERY_STARTED: AtomicBool = AtomicBool::new(false);
 
-/// Whether this process has discovered packs from the installed root (the
-/// first discovery that reads it sets this; nothing may rename a pack
-/// directory there after that).
 pub fn discovery_started() -> bool {
     DISCOVERY_STARTED.load(Ordering::Acquire)
 }
 
-/// The directories under `root` that are pack candidates: visible
-/// directories with a `pack.json`, by directory name.
 fn pack_dirs(root: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return Vec::new();
@@ -211,7 +161,6 @@ fn pack_dirs(root: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// The `integrations/<name>/` subdirectories under a pack dir, by name.
 fn integration_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir.join("integrations")) else {
         return Vec::new();
@@ -225,8 +174,6 @@ fn integration_dirs(dir: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// The directories whose catalogs a pack contributes given the installed id
-/// set: its own, plus each integration whose target is installed.
 fn catalog_dirs(dir: &Path, installed: &BTreeSet<String>) -> Vec<PathBuf> {
     let mut dirs = vec![dir.to_path_buf()];
     dirs.extend(
@@ -251,16 +198,10 @@ fn header_of(dir: &Path, m: &PackManifest, touches_world: bool) -> PackHeader {
     }
 }
 
-/// Admit one pack directory: its manifest parses, the logic it declares is
-/// there, and every namespaced key it states — its integrations' included —
-/// carries its own id. The one admission rule: discovery runs it on every
-/// candidate, and an installer runs it on what it staged, so a pack that
-/// would be refused at startup is refused before it is installed.
 pub fn admit_pack_dir(dir: &Path) -> Result<PackHeader, String> {
     admit(dir).map(|(header, _)| header).map_err(|(_, why)| why)
 }
 
-/// Why a pack was refused, with its manifest's header when that much parsed.
 type Refusal = (Option<Box<PackHeader>>, String);
 
 fn admit(dir: &Path) -> Result<(PackHeader, PackManifest), Refusal> {
@@ -293,8 +234,6 @@ fn admit(dir: &Path) -> Result<(PackHeader, PackManifest), Refusal> {
         Ok(world) => touches_world |= world,
         Err(e) => return refuse(e),
     }
-    // An integration's rows are the pack's own statements, so they obey the
-    // pack's namespace whether or not the target is installed.
     for (target, sub) in integration_dirs(dir) {
         match manifest::registration_keys(&sub) {
             Ok(more) => keys.extend(more),
@@ -327,9 +266,6 @@ pub(super) fn discover(roots: &PackRoots) -> PackSet {
 fn discover_from(roots: Vec<(PathBuf, PackOrigin)>) -> (Vec<Pack>, Vec<PackRefusal>) {
     let mut refusals = Refusals::default();
     let mut found: Vec<Candidate> = Vec::new();
-    // Shipped candidates first (a shipped root earlier in the list shadows a
-    // later shipped copy of the same directory: the dev tree over the exe
-    // dir), then the installed root, which may not collide with them.
     let mut shipped_names = BTreeSet::new();
     let mut shipped_ids = BTreeSet::new();
     for (root, origin) in roots {
@@ -337,8 +273,6 @@ fn discover_from(roots: Vec<(PathBuf, PackOrigin)>) -> (Vec<Pack>, Vec<PackRefus
             if origin == PackOrigin::Shipped && found.iter().any(|c| c.dir_name == dir_name) {
                 continue;
             }
-            // Per-pack validation that needs the pack's files. A violating
-            // pack is disabled whole — never a partial load.
             let (header, m) = match admit(&dir) {
                 Ok(admitted) => admitted,
                 Err((header, reason)) => {
@@ -372,7 +306,6 @@ fn discover_from(roots: Vec<(PathBuf, PackOrigin)>) -> (Vec<Pack>, Vec<PackRefus
     }
     found.sort_by(|a, b| a.dir_name.cmp(&b.dir_name));
 
-    // Load-order resolution: manifest validity, dependency cascade, topo sort.
     let metas: Vec<PackMeta> = found
         .iter()
         .map(|c| PackMeta {
@@ -435,10 +368,6 @@ fn discover_from(roots: Vec<(PathBuf, PackOrigin)>) -> (Vec<Pack>, Vec<PackRefus
     (packs, refusals.0)
 }
 
-/// The launch entry a manifest declares, if the pack can honour it: only a
-/// pack with an id and a `client_wasm` has anything to start, the label is
-/// one short line, and the icon is a file inside the pack. A refused entry is
-/// logged and dropped; the pack itself loads as ever.
 fn launch_entry(name: &str, dir: &Path, m: &PackManifest) -> Option<LaunchEntry> {
     let launch = m.launch.as_ref()?;
     let refuse = |why: &str| {
@@ -490,12 +419,6 @@ fn enforce_id_budget(
 ) -> Vec<usize> {
     use crate::pack_manifest::{ID_CAP, ID_CAPPED_CATALOGS};
 
-    // One catalog read per pack, reused for both capped catalogs. Admission
-    // already parsed these files; a second read here keeps the budget rule
-    // where the rest of the load-order policy lives. An integration's rows
-    // cost the SHIPPING pack, and are costed against the packs found rather
-    // than the final order — a target dropped below simply leaves the
-    // estimate slightly generous.
     let installed: BTreeSet<String> = found.iter().filter_map(|c| c.manifest.id.clone()).collect();
     let per_pack: Vec<Vec<(&'static str, Vec<String>)>> = order
         .iter()
@@ -546,9 +469,6 @@ fn enforce_id_budget(
     if dropped.is_empty() {
         return order;
     }
-    // Re-resolve so the dependency cascade takes the dropped packs' dependents
-    // with them, instead of leaving a pack running against content that is no
-    // longer there.
     let survivors: Vec<usize> = order
         .iter()
         .copied()
@@ -592,9 +512,6 @@ mod tests {
         dir
     }
 
-    /// A shipped pack wins every collision: an installed directory that
-    /// takes its id under another name is refused (and says why, keeping its
-    /// header), and hidden directories are never packs.
     #[test]
     fn installed_packs_never_shadow_shipped_ones_and_hidden_dirs_are_not_packs() {
         let root = scratch("shadow");
@@ -643,9 +560,6 @@ mod tests {
         assert!(refused[0].reason.contains("content pack 'forge'"));
     }
 
-    /// Whether a pack can change a world is derived from what it ships:
-    /// server logic, or any world-catalog row (a patch row too), its
-    /// integrations' included — never client logic and presentation alone.
     #[test]
     fn touching_the_world_is_derived_from_the_packs_files() {
         let root = scratch("touches");

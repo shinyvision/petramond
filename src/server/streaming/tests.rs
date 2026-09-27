@@ -17,8 +17,6 @@ fn count_terrain(msgs: &[ServerToClient]) -> usize {
         .count()
 }
 
-/// What a live client does: answer every `StreamBatchEnd` with an ack.
-/// Feed the result into the next pump's inbox.
 fn acks(out: &PumpOutput) -> Vec<(PlayerId, ClientToServer)> {
     out.remote
         .iter()
@@ -29,7 +27,7 @@ fn acks(out: &PumpOutput) -> Vec<(PlayerId, ClientToServer)> {
                     (
                         *id,
                         ClientToServer::StreamBatchAck {
-                            messages_per_second: 1e9, // server clamps
+                            messages_per_second: 1e9,
                         },
                     )
                 })
@@ -44,9 +42,6 @@ fn batch_markers(msg: &ServerToClient) -> bool {
     )
 }
 
-/// The first air cell carrying skylight inside section `sp` — an edit
-/// target where a stone fill genuinely changes the section's light.
-/// `None` for a section with no lit air (ocean/cave-band interiors).
 fn find_lit_air(world: &crate::world::ServerWorld, sp: SectionPos) -> Option<(i32, i32, i32)> {
     let (ox, oy, oz) = sp.origin_world();
     (0..16)
@@ -57,10 +52,6 @@ fn find_lit_air(world: &crate::world::ServerWorld, sp: SectionPos) -> Option<(i3
         })
 }
 
-/// The allowance shuts off below the reserve and the section budget never
-/// exceeds the flat cap (the local pipe's `usize::MAX` room included) —
-/// the two edges that keep pacing from either starving a healthy client
-/// or overflowing a slow one.
 #[test]
 fn stream_allowance_pauses_below_the_reserve_and_terrain_stays_capped() {
     assert_eq!(stream_allowance(0), 0);
@@ -77,24 +68,13 @@ fn stream_allowance_pauses_below_the_reserve_and_terrain_stays_capped() {
     );
 }
 
-/// A remote session whose outbound queue reports no room gets NOTHING but
-/// tick updates — no terrain, no light — while other recipients keep
-/// streaming, and the pause must not mark the paused session's diff as
-/// done: once room returns, the withheld terrain ships. This is the
-/// anti-kick contract — streaming paces itself to the connection instead
-/// of overflowing its bounded queue.
 #[test]
 fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
-    // Inline pool: gen/light finish inside the pump that queued them, so
-    // loops stay compute-bound (no sleep-wait on background workers).
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
     let player = crate::server::session_build::spawn_player(server.world.data().seed);
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
-    // Starve the remote queue until the LOCAL session has received
-    // terrain — the world demonstrably had shippable sections, and the
-    // starved session got only tick updates.
     let deadline = Instant::now() + TEST_HARD_DEADLINE;
     let mut local_terrain = 0usize;
     while local_terrain == 0 {
@@ -110,7 +90,6 @@ fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
         }
     }
 
-    // Room returns: the withheld terrain ships to the remote session.
     let mut remote_terrain = 0usize;
     let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
     while remote_terrain == 0 {
@@ -125,10 +104,6 @@ fn starved_sessions_pause_streaming_and_resume_without_losing_any() {
     }
 }
 
-/// The ack window (1.20.2 design): exactly ONE batch ships before the
-/// first ack; a client that stops acking gets tick updates and nothing
-/// else (sent LESS, never kicked); an ack reopens the window and widens
-/// it, so streaming resumes.
 #[test]
 fn stream_batches_window_on_acks_and_stall_without_them() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
@@ -136,7 +111,6 @@ fn stream_batches_window_on_acks_and_stall_without_them() {
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
-    // Pump WITHOUT acking until the first batch lands.
     let deadline = Instant::now() + TEST_HARD_DEADLINE;
     let mut batches = 0usize;
     while batches == 0 {
@@ -151,7 +125,6 @@ fn stream_batches_window_on_acks_and_stall_without_them() {
     }
     assert_eq!(batches, 1, "the pre-ack window is exactly one batch");
 
-    // Still no acks: the window is full — only tick updates flow.
     for _ in 0..50 {
         let out = server.pump_tagged(0.01, &mut Vec::new(), &[(remote_id, SERVER_QUEUE_MSGS)]);
         for (_, msgs) in &out.remote {
@@ -162,7 +135,6 @@ fn stream_batches_window_on_acks_and_stall_without_them() {
         }
     }
 
-    // One ack: the window reopens and the next batch ships.
     let mut inbox = vec![(
         remote_id,
         ClientToServer::StreamBatchAck {
@@ -183,11 +155,6 @@ fn stream_batches_window_on_acks_and_stall_without_them() {
     }
 }
 
-/// Unload bursts pace like everything else: a sweep dropping thousands
-/// of a session's sent sections at once (server-side eviction, keep-shape
-/// exit) must clip to the per-pump allowance instead of overflowing the
-/// queue — and every clipped unload must still arrive, re-found by later
-/// plans' diffs, because a lost unload leaks replica memory forever.
 #[test]
 fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
@@ -195,8 +162,6 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
-    // Fake a big sent set far outside any keep shape: the next executed
-    // plan wants ALL of it dropped at once.
     let mut awaiting: FxHashSet<SectionPos> = (0..3000)
         .map(|i| SectionPos::new(1000 + i, 0, 1000))
         .collect();
@@ -231,10 +196,9 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
     }
 }
 
-/// Light refreshes defer per connection: a rebake landing while a
-/// session's queue is starved must reach it AFTER the queue drains (the
-/// global ship log is drained once per pump — without the carryover the
-/// refresh would be lost and the replica's light permanently stale).
+/// Light refreshes defer per connection: a rebake landing while a session's queue is starved must
+/// reach it after the queue drains. Ship log gets drained once per pump, so without carryover
+/// the refresh gets lost and the replica's light stays stale for good.
 #[test]
 fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
@@ -242,13 +206,6 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
     let s = server.add_session_for_test(player);
     let remote_id = server.sessions[s].id;
 
-    // Stream normally (acking like a live client) until the remote
-    // session holds a section with an editable LIT AIR cell. Which
-    // section ships first is gen/light job completion order — load
-    // scheduling — and a skylight-carrying payload can hold no lit air
-    // at all (an ocean or cave-band interior), so selection must keep
-    // streaming until a usable edit target shipped, not grab the first
-    // skylit payload.
     let deadline = Instant::now() + TEST_HARD_DEADLINE;
     let mut lit: Option<(SectionPos, (i32, i32, i32))> = None;
     let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
@@ -291,11 +248,6 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
         .contains(&lit)
     {
         assert!(Instant::now() < deadline, "the rebake never landed");
-        // `inbox` CARRIES phase 1's final acks into this first starved
-        // pump: a window slot widowed by an undelivered ack would stay
-        // full (`unacked == max`) and the deferred ship below could
-        // never start. Zero headroom still blocks every batch, so the
-        // no-LightData assertion below is unaffected.
         let out = server.pump_tagged(0.01, &mut inbox, &[(remote_id, 0)]);
         assert!(
             out.remote
@@ -306,7 +258,6 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
         );
     }
 
-    // The queue drains: the deferred refresh ships.
     let mut remote_relit = false;
     let mut inbox: Vec<(PlayerId, ClientToServer)> = Vec::new();
     while !remote_relit {

@@ -1,10 +1,5 @@
 use super::*;
 
-/// The ladder-test fixture: a floor top at y=64, a solid wall filling x>=2, and
-/// west-facing ladders (panel toward -X, hanging on that wall) covering the
-/// whole wall — every cell (1, 64..=70, *) — so strafing along the wall stays
-/// on the ladder. The player stands in front of the wall and walks +X into the
-/// ladder's face.
 mod ladder_fixture {
     use crate::world::Climb;
     use petramond_math::facing::Facing;
@@ -17,15 +12,10 @@ mod ladder_fixture {
         (x == 1 && (64..=70).contains(&y)).then_some(Climb::Panel(Facing::West))
     }
 
-    /// A FREE-hanging climbable — a vine curtain, which declares no
-    /// `panel_facing` and so offers no wall to press into. Unlike the ladder
-    /// fixture this fills every column over the floor, so walking cannot carry
-    /// the body out of the climbable cells and confound the test.
     pub fn vine(_x: i32, y: i32, _z: i32) -> Option<Climb> {
         (64..=70).contains(&y).then_some(Climb::Free)
     }
 
-    /// Bare ground, no wall — the vine hangs in open air.
     pub fn ground(_x: i32, y: i32, _z: i32) -> bool {
         y < 64
     }
@@ -36,7 +26,7 @@ fn walking_into_a_ladder_climbs_at_the_climb_speed_sprint_or_not() {
     use ladder_fixture::{ladder, solid};
     let climb_run = |sprint: bool| {
         let input = Input {
-            wishdir: Vec3::new(1.0, 0.0, 0.0), // toward the wall the ladder hangs on
+            wishdir: Vec3::new(1.0, 0.0, 0.0),
             jump: false,
             sprint,
             sneak: false,
@@ -59,7 +49,6 @@ fn walking_into_a_ladder_climbs_at_the_climb_speed_sprint_or_not() {
         "steady climb runs at exactly the climb speed, got {}",
         walked.vel.y
     );
-    // Sprinting must not climb any faster (the climb speed derives from base WALK).
     let sprinted = climb_run(true);
     assert!(
         (sprinted.pos.y - walked.pos.y).abs() < 1e-3,
@@ -99,8 +88,6 @@ fn jump_on_a_ladder_climbs_instead_of_jumping() {
 #[test]
 fn sideways_movement_on_a_ladder_is_halved_and_grips() {
     use ladder_fixture::{ladder, solid};
-    // Climb (walking into the wall) while strafing along it: lateral speed must
-    // cap at the halved climb-lateral speed, never full walk.
     let strafe_climb = Input {
         wishdir: Vec3::new(1.0, 0.0, 1.0).normalize(),
         jump: false,
@@ -120,8 +107,6 @@ fn sideways_movement_on_a_ladder_is_halved_and_grips() {
     );
     assert!(pl.pos.y > 65.0, "still climbing while strafing");
 
-    // Release input mid-climb: the grip stops sideways drift almost at once
-    // (well inside a quarter second), instead of the airy coast.
     for _ in 0..15 {
         pl.update_core_climb(1.0 / 60.0, &solid, &ladder, Input::default());
     }
@@ -135,13 +120,9 @@ fn sideways_movement_on_a_ladder_is_halved_and_grips() {
 #[test]
 fn a_ladder_catches_a_fall_and_lowers_it_gently() {
     use ladder_fixture::{ladder, solid};
-    // Free-fall from above the ladder column: the grab clamps the descent to the
-    // climb speed and the landing measures no meaningful fall.
     let mut pl = p(WorldPos::new(1.5, 74.0, 0.5));
     let mut min_vy_on_ladder = f32::INFINITY;
     for _ in 0..600 {
-        // The grab clamps on frames that START on the ladder (the probe runs
-        // before the vertical step), so measure those frames' resulting speed.
         let on_ladder = ladder(1, pl.pos.y.floor() as i32, 0).is_some();
         pl.update_core_climb(1.0 / 60.0, &solid, &ladder, Input::default());
         if on_ladder {
@@ -159,11 +140,6 @@ fn a_ladder_catches_a_fall_and_lowers_it_gently() {
     );
 }
 
-/// A FREE-hanging climbable (a vine curtain) has no wall behind it, so the jump
-/// button is its only ascent. The trap this pins: `Block::panel_facing` defaults
-/// to North on rows that declare none, so routing the grip through it would
-/// silently make walking one arbitrary compass direction climb a vine — which is
-/// why the no-jump half pushes all four ways.
 #[test]
 fn a_free_hanging_climbable_ascends_on_jump_and_on_no_other_input() {
     use ladder_fixture::{ground, vine};

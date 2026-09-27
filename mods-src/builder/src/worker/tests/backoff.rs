@@ -1,5 +1,3 @@
-//! The three ways work is set aside.
-
 use crate::worker::backoff::{Struck, Tries, Until};
 use crate::worker::Task;
 

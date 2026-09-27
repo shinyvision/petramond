@@ -7,9 +7,6 @@ fn world_with_chunk() -> TestWorld {
     TestWorld::with_chunk(1, Chunk::new(0, 0))
 }
 
-/// Lay a straight +x run of `len` leaves from `start`, then a log — so the log
-/// sits exactly `len` face-steps from `start` through leaves. Stays inside the
-/// 16-wide chunk for `start.x + len <= 15`.
 fn leaf_run_to_log(w: &mut TestWorld, start: IVec3, len: i32) {
     for i in 0..len {
         w.set_block_world(start.x + i, start.y, start.z, Block::OakLeaves);
@@ -52,13 +49,9 @@ fn isolated_leaf_is_unsupported() {
 
 #[test]
 fn a_decaying_leaf_breaks_naturally_so_its_drop_can_roll() {
-    // A leaf cut off from wood doesn't vanish silently: it breaks as a NATURAL
-    // break, so `Game` plays the burst and rolls the leaf's drop table — the 10%
-    // sapling. Here we assert the decay is recorded as a natural break (the drop
-    // hand-off), independent of the probabilistic roll itself.
     let mut w = world_with_chunk();
     let p = IVec3::new(8, 70, 8);
-    w.set_block_world(p.x, p.y, p.z, Block::OakLeaves); // isolated → unsupported
+    w.set_block_world(p.x, p.y, p.z, Block::OakLeaves);
     LEAVES.random_tick(&mut w, p);
     assert_eq!(
         w.data.block_if_loaded(p.x, p.y, p.z),

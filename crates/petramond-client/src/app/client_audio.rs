@@ -1,11 +1,3 @@
-//! The app's sound orchestration: the audio engine, the soundtrack director,
-//! and the client-owned bookkeeping that turns a frame's game events and
-//! presentation snapshot into plays — positional world cues, spatial sound
-//! commands, mob idle cadence and footsteps.
-//!
-//! Never part of the deterministic simulation: the sim ships events, and this
-//! decides when and where they are heard.
-
 use std::collections::HashMap;
 
 use petramond::mob::MobSoundCategory;
@@ -20,57 +12,30 @@ use crate::animation::FootstepSource;
 use crate::game::presentation::MobPresentation;
 use crate::game::{GameEvents, MobSoundEvent, SpatialSoundCommand, WorldEvent};
 
-/// The first client-local spatial handle: the top half of the handle space,
-/// disjoint from the server-issued spatial sound handles.
 const MOB_SOUND_HANDLE_START: u64 = 1 << 63;
 
-/// Ticks between one body's footsteps, walking and sprinting. The gait comes
-/// from presentation (which sees the body's real speed); the cadence is here.
 const FOOTSTEP_INTERVAL_TICKS: u64 = 10;
 const SPRINT_FOOTSTEP_INTERVAL_TICKS: u64 = 7;
 
-/// Client-owned idle sound scheduling for one live mob.
 #[derive(Default)]
 pub(super) struct MobSoundState {
     pub(super) next_idle_tick: u64,
     pub(super) sequence: u64,
 }
 
-/// The app-lifetime half of sound: the engine and the soundtrack. Everything
-/// that schedules or buffers a session's world sounds lives in the session's
-/// [`SessionSounds`], which the per-frame calls borrow — so a new session can
-/// never inherit the last one's cadences, cues or handle pool.
 pub(super) struct ClientAudio {
-    /// Client-side sound engine: plays the sim's sounds, never part of the
-    /// deterministic simulation.
     audio: Audio,
-    /// WHEN the soundtrack plays. Owns the gap between pieces and the choice
-    /// of the next one; `audio` owns the streaming.
     music: MusicDirector,
 }
 
-/// The session-scoped sound bookkeeping between game events and plays, owned
-/// by [`super::session::Session`] and dropped with it.
 pub(super) struct SessionSounds {
-    /// Spatial sound commands emitted by ticks since the last render, applied
-    /// against the same mob presentation snapshot the renderer uses.
     spatial_commands: Vec<SpatialSoundCommand>,
-    /// This render's interpolated mob positions, for pinning mob sounds.
     mob_positions: Vec<(u64, WorldPos)>,
-    /// Gameplay-originated mob sound events waiting for the next presentation
-    /// snapshot, where they can be pinned to interpolated mob positions.
     mob_events: Vec<MobSoundEvent>,
-    /// Positional world-event one-shots (block place/break, doors, chest
-    /// lids, foreign pickups) waiting for the next render's spatial listener.
     world_cues: Vec<(Sound, WorldPos)>,
-    /// Idle sound scheduling per live mob session id.
     mob_states: HashMap<u64, MobSoundState>,
-    /// Footstep cadence per walking body: the tick its next step is due.
-    /// Retired with the bodies themselves each frame.
     footstep_next_tick: HashMap<u64, u64>,
-    /// Reused per-frame scratch for client-mod loop gains (rain/wind beds).
     loop_gains: Vec<(Sound, f32)>,
-    /// The next client-local spatial handle (wrapping within the top half).
     next_handle: u64,
 }
 
@@ -99,8 +64,6 @@ impl ClientAudio {
         }
     }
 
-    /// [`play`](Self::play) for the viewer's own interface (a menu click):
-    /// always on the device, never part of an offline mixdown.
     pub(super) fn play_interface(&mut self, sound: Sound) {
         self.audio.play_interface(sound);
     }
@@ -109,8 +72,6 @@ impl ClientAudio {
         self.audio.set_volumes(master, sound, music);
     }
 
-    /// The engine itself, for the media host: taps on the world's sound,
-    /// the offline mix a stepped clock pulls, and what the device plays.
     pub(super) fn engine(&self) -> &Audio {
         &self.audio
     }
@@ -119,40 +80,26 @@ impl ClientAudio {
         &mut self.audio
     }
 
-    /// Drop every playing spatial voice: the presented world or moment they
-    /// belong to has gone.
     pub(super) fn clear_spatial(&mut self) {
         self.audio.clear_spatial();
     }
 
-    /// Stop the local mining loop (menus, pause, released buttons).
     pub(super) fn stop_mining_loop(&mut self, now: f64) {
         self.audio.set_loop(None, now);
     }
 
-    /// One frame of session-level audio: spatial sounds freeze exactly when
-    /// the world does, and the soundtrack belongs to the session — a frozen
-    /// world lets the current track finish but schedules no new one.
     pub(super) fn update_session(&mut self, in_session: bool, world_frozen: bool, dt: f32) {
         self.audio.set_spatial_paused(world_frozen);
         self.music
             .update(&mut self.audio, in_session, world_frozen, dt);
     }
 
-    /// The session ended: silence every voice it started in the engine — the
-    /// mining loop, the client-mod ambience beds and every positional voice.
-    /// Its scheduling state died with its [`SessionSounds`].
     pub(super) fn end_session(&mut self, now: f64) {
         self.audio.set_loop(None, now);
         self.audio.stop_gain_loops();
         self.audio.clear_spatial();
     }
 
-    /// Queue one frame's game-event sounds: the mining loop follows
-    /// `mining_block`, mod sounds play at once (attenuated by distance to the
-    /// `listener` when positional), and spatial commands, mob sounds and
-    /// positional world cues buffer in `sounds` for the next render, where
-    /// the spatial listener exists.
     pub(super) fn queue_game_events(
         &mut self,
         sounds: &mut SessionSounds,
@@ -164,8 +111,6 @@ impl ClientAudio {
         let mining_sound = mining_block.and_then(|b| b.sound(BlockSoundAction::Dig));
         self.audio.set_loop(mining_sound, now);
 
-        // Mod-emitted sounds (the non-lossy tick queue): each plays once,
-        // attenuated by distance to the player when positional.
         for s in &events.sounds {
             let gain = match (s.pos, listener) {
                 (Some(pos), Some(ear)) => s.sound.distance_gain((pos - ear).length()),
@@ -178,9 +123,6 @@ impl ClientAudio {
             .extend(events.spatial_sounds.iter().copied());
         sounds.mob_events.extend(events.mob_sounds.iter().copied());
 
-        // World-anchored one-shots play POSITIONALLY, from the replicated
-        // events (every observer hears them at the event's place — including
-        // the local player's own actions).
         sounds
             .world_cues
             .extend(events.world_events.iter().filter_map(world_cue));
@@ -193,11 +135,6 @@ impl ClientAudio {
         }
     }
 
-    /// One render's positional audio against this frame's presentation: pin
-    /// mob sounds to the interpolated `mobs`, apply the buffered spatial
-    /// commands and cues, advance footsteps and idle cadence on the live
-    /// world clock (`current_tick` — menus and multiplayer pause keep it
-    /// moving), and ease the client-mod ambience loops `loop_gains` fills.
     pub(super) fn render_world(
         &mut self,
         sounds: &mut SessionSounds,
@@ -221,8 +158,6 @@ impl ClientAudio {
             self.play_mob_sound(sounds, spec.sound, event.mob_id, listener, initial);
         }
         sounds.mob_events = mob_events;
-        // Positional world-event one-shots: fire-and-forget spatial plays off
-        // the same client-local wrapping handle pool the mob sounds use.
         let mut cues = std::mem::take(&mut sounds.world_cues);
         for (sound, pos) in cues.drain(..) {
             let handle = sounds.alloc_handle();
@@ -292,14 +227,6 @@ impl ClientAudio {
         }
     }
 
-    /// Sound one footstep per walking body whose cadence is due.
-    ///
-    /// The presentation already decided WHO is walking and on WHAT; this owns
-    /// only the cadence and the play. A body first seen walking steps
-    /// IMMEDIATELY — its entry is seeded due. The map is keyed on the body,
-    /// so a player who pauses resumes ON the same cadence instead of
-    /// retriggering; entries die with the bodies (`footsteps` lists standing
-    /// players too, which makes that retire exact).
     pub(super) fn tick_footsteps(
         &mut self,
         sounds: &mut SessionSounds,
@@ -326,8 +253,6 @@ impl ClientAudio {
             let Some(sound) = ground.sound(BlockSoundAction::Step) else {
                 continue;
             };
-            // Fire-and-forget at the FEET, so a remote's steps arrive from
-            // their body.
             let handle = sounds.alloc_handle();
             self.audio.play_spatial_randomized(
                 handle,
@@ -342,7 +267,6 @@ impl ClientAudio {
             .retain(|id, _| footsteps.iter().any(|s| s.id == *id));
     }
 
-    /// Idle cadence per live mob, on the live world clock.
     pub(super) fn tick_idle_mob_sounds(
         &mut self,
         sounds: &mut SessionSounds,
@@ -396,7 +320,6 @@ impl ClientAudio {
         );
     }
 
-    /// Everything played non-positionally since the last call.
     #[cfg(test)]
     pub(super) fn take_played_for_test(&mut self) -> Vec<Sound> {
         self.audio.take_played_for_test()
@@ -404,7 +327,6 @@ impl ClientAudio {
 }
 
 impl SessionSounds {
-    /// Record this render's interpolated mob positions.
     fn set_mob_positions(&mut self, mobs: &[MobPresentation], tick_alpha: f32) {
         self.mob_positions.clear();
         self.mob_positions.extend(
@@ -431,8 +353,6 @@ impl SessionSounds {
         self.world_cues.len()
     }
 
-    /// The next spatial handle — every client-local spatial play allocates
-    /// exactly one, so tests count plays by it.
     #[cfg(test)]
     pub(super) fn next_handle(&self) -> u64 {
         self.next_handle
@@ -454,7 +374,6 @@ impl SessionSounds {
     }
 }
 
-/// The frame facts [`ClientAudio::render_world`] reads.
 pub(super) struct WorldAudioFrame<'a> {
     pub listener: SpatialListener,
     pub mobs: &'a [MobPresentation],
@@ -463,7 +382,6 @@ pub(super) struct WorldAudioFrame<'a> {
     pub current_tick: u64,
 }
 
-/// The positional cue a world event is heard as, if any.
 fn world_cue(ev: &WorldEvent) -> Option<(Sound, WorldPos)> {
     match *ev {
         WorldEvent::BlockPlaced { pos, block } => block
@@ -482,17 +400,11 @@ fn world_cue(ev: &WorldEvent) -> Option<(Sound, WorldPos)> {
         )),
         WorldEvent::ChestOpened { pos } => Some((Sound::ChestOpen, cell_centre(pos))),
         WorldEvent::ChestClosed { pos } => Some((Sound::ChestClose, cell_centre(pos))),
-        // The local player's own pickup keeps its non-positional sound
-        // (`events.picked_up_item`); other players' pickups are heard at
-        // their body.
         WorldEvent::ItemPickedUp { pos, by_self } => (!by_self).then_some((Sound::ItemPickup, pos)),
-        // Particles only. A burst's SOUND is the producer's business through
-        // the ordinary sound channel.
         WorldEvent::EmitterBurst { .. } => None,
     }
 }
 
-/// A cell's audible centre.
 fn cell_centre(pos: IVec3) -> WorldPos {
     WorldPos::block_center(pos)
 }

@@ -1,19 +1,3 @@
-//! Per-session fault isolation.
-//!
-//! A panic while applying one session's message, or inside one session's
-//! share of a tick stage, is contained to that session: it is logged, the
-//! session is marked faulted and skipped for the rest of the pump, and at
-//! the pump's end it is evicted through the ordinary leave path (its player
-//! saved) and its connection kicked ([`PumpOutput::kicked`]). Everyone else
-//! keeps playing.
-//!
-//! What stays fatal: a panic outside any session's share (the world tick,
-//! entity stages, streaming) and any fault in a listen server's LOCAL
-//! session, whose host cannot be kicked from its own world — those unwind to
-//! the server thread's crash policy (`server::handle`) unchanged.
-//!
-//! [`PumpOutput::kicked`]: super::PumpOutput::kicked
-
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 use crate::events::tick::TickEvents;
@@ -21,11 +5,8 @@ use crate::player::PlayerId;
 
 use super::ServerGame;
 
-/// A faulted session removed at the end of a pump: its id and, when the
-/// leave path completed, its name.
 pub type Evicted = (PlayerId, Option<String>);
 
-/// The readable part of a panic payload.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
     payload
         .downcast_ref::<&str>()
@@ -35,9 +16,6 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
 }
 
 impl ServerGame {
-    /// Run `f` as session `s`'s work, containing a panic to that session
-    /// (see the module docs). `None` = it panicked and the session is now
-    /// faulted.
     pub(super) fn isolated<R>(
         &mut self,
         s: usize,
@@ -63,8 +41,6 @@ impl ServerGame {
         }
     }
 
-    /// Run one stage's per-session work for every healthy session in roster
-    /// order, each isolated.
     pub(super) fn for_each_session(
         &mut self,
         what: &str,
@@ -79,9 +55,6 @@ impl ServerGame {
         }
     }
 
-    /// Remove every faulted session through the leave path. A leave path
-    /// that itself panics drops the session without saving it — its state is
-    /// what failed.
     pub(super) fn evict_faulted(&mut self) -> Vec<Evicted> {
         let mut evicted = Vec::new();
         for id in self.sessions.take_faulted() {
@@ -113,8 +86,6 @@ impl ServerGame {
 mod tests {
     use crate::net::protocol::ClientToServer;
 
-    /// A remote session whose work panics is kicked; the world and the other
-    /// sessions carry on, and the kick is reported for the transport.
     #[test]
     fn a_panicking_session_is_kicked_not_the_server() {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);
@@ -146,8 +117,6 @@ mod tests {
         );
     }
 
-    /// The listen server's own session cannot be kicked: its fault stays
-    /// fatal, exactly as before.
     #[test]
     fn a_local_session_fault_still_unwinds() {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);

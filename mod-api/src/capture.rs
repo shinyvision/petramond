@@ -1,116 +1,53 @@
-//! The capture format: what the engine writes into a mod's files when it
-//! captures a presented world (`ClientWorldStateWrite`, `ClientWorldEventsBegin`)
-//! and reads back when it presents one (`ClientPresentationApply`).
-//!
-//! A capture file is whatever the mod makes of it. The engine appends
-//! self-delimiting RECORDS where the mod asks, and never reads outside the
-//! ranges a mod hands it back. This module is the ONE implementation of the
-//! container's layout: the engine's writer and reader call it, and mods read
-//! with it too (`mod_sdk::capture`). It is pure: no host calls, and no
-//! allocation beyond the decoded value.
-//!
-//! All integers are little-endian.
-//!
-//! A RECORD is a 40-byte head, then its pieces and its envelope:
-//!
-//! | Offset | Size | Field |
-//! | --- | --- | --- |
-//! | 0 | 4 | magic `PMCR` |
-//! | 4 | 2 | `format` ([`CAPTURE_FORMAT`]) |
-//! | 6 | 1 | `kind`: 1 State, 2 Frame |
-//! | 7 | 1 | `flags`: bit 0 = complete |
-//! | 8 | 8 | `len`: the whole record, head included (0 while incomplete) |
-//! | 16 | 8 | `envelope_at`: the envelope's offset from the record's start |
-//! | 24 | 8 | `envelope_len` |
-//! | 32 | 4 | `envelope_crc`: CRC-32 of the envelope bytes |
-//! | 36 | 4 | reserved, 0 |
-//!
-//! A Frame record is head · envelope · pieces, written in one write. A State
-//! record is head · pieces · envelope; it is streamed, so its head is written
-//! incomplete first and rewritten in place once the envelope has landed.
-//!
-//! A PIECE is a 40-byte head and one body, addressable and checkable on its
-//! own: `[piece offset, 40 + body_len]` is a range a mod may keep and hand
-//! back to a presentation.
-//!
-//! | Offset | Size | Field |
-//! | --- | --- | --- |
-//! | 0 | 4 | magic `PMCP` |
-//! | 4 | 2 | `format` |
-//! | 6 | 2 | `protocol`: the opaque bodies' encoding |
-//! | 8 | 1 | `kind` ([`ClientPieceKind`]) |
-//! | 9 | 1 | `flags`: bit 0 = provisional |
-//! | 10 | 2 | reserved, 0 |
-//! | 12 | 4 | `body_len` |
-//! | 16 | 4 | `body_crc`: CRC-32 of the body bytes as stored |
-//! | 20 | 12 | key: a section's `x, y, z` (i32), a column's `x, z`, an entity's id (u64), a player's id (u8), a batch piece's tick (u64); zeros otherwise |
-//! | 32 | 8 | `vocabulary`: [`fnv1a64`] of the postcard encoding of the id tables |
-//!
-//! A body is exactly one protocol frame, `[u32 len][u8 flags, bit 0 zlib][bytes]`.
-//! DOCUMENTED bodies ([`ClientPieceKind::documented`]) are never compressed and
-//! decode with [`decode_documented`]. The other bodies are the engine's own
-//! replication encodings: opaque to mods by design, so no engine change to a
-//! section ever becomes a mod-ABI break.
-//!
-//! A reader stops at a TORN record: bit 0 clear, `len` past the end of the
-//! bytes, an envelope failing its CRC, or a listed piece failing its own.
-//! Writes are not fsynced one by one, so a complete head may reach the disk
-//! before its body; the CRCs are what catch that.
-
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::PlayerId;
 
-/// The container version: heads, envelopes and documented bodies.
 pub const CAPTURE_FORMAT: u16 = 1;
 pub const CAPTURE_RECORD_MAGIC: [u8; 4] = *b"PMCR";
 pub const CAPTURE_PIECE_MAGIC: [u8; 4] = *b"PMCP";
 pub const CAPTURE_RECORD_HEAD_LEN: usize = 40;
 pub const CAPTURE_PIECE_HEAD_LEN: usize = 40;
 
-/// Bytes of a protocol frame's own header (`[u32 len][u8 flags]`).
 const FRAME_HEADER_LEN: usize = 5;
 const FRAME_FLAG_ZLIB: u8 = 1;
-/// Bytes of an envelope entry's header (`[u64 len][u32 crc]`).
 const ENTRY_HEADER_LEN: usize = 12;
 
-/// CRC-32 (ISO-HDLC, zlib's own check).
 pub fn crc32(bytes: &[u8]) -> u32 {
     crc32fast::hash(bytes)
 }
 
-/// FNV-1a, 64-bit: how a piece names the id vocabulary it was written under.
 pub fn fnv1a64(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
         (hash ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
 
-/// Why capture bytes did not read.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum CaptureFormatError {
-    /// Fewer bytes than the structure needs.
-    Short { need: u64, have: u64 },
-    /// Not a capture record, piece or entry: foreign bytes.
+    Short {
+        need: u64,
+        have: u64,
+    },
     Magic,
-    /// Another container version; this code reads [`CAPTURE_FORMAT`] only.
-    Format { found: u16 },
-    /// A record or piece kind this format does not define.
-    Kind { found: u8 },
-    /// A record whose head was never completed.
+    Format {
+        found: u16,
+    },
+    Kind {
+        found: u8,
+    },
     Incomplete,
-    /// A length reaching past the bytes given.
-    PastEnd { len: u64, have: u64 },
-    /// Bytes that fail their CRC.
-    Crc { stored: u32, computed: u32 },
-    /// A body that is not one well-formed protocol frame.
+    PastEnd {
+        len: u64,
+        have: u64,
+    },
+    Crc {
+        stored: u32,
+        computed: u32,
+    },
     Frame,
-    /// A documented body stored compressed.
     Compressed,
-    /// A value that does not decode.
     Decode(String),
-    /// A walker stopped here: the absolute offset of the record or entry, and why.
     At {
         offset: u64,
         error: Box<CaptureFormatError>,
@@ -144,7 +81,6 @@ impl core::fmt::Display for CaptureFormatError {
 
 impl std::error::Error for CaptureFormatError {}
 
-/// What a record holds.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum CaptureRecordKind {
@@ -162,64 +98,38 @@ impl CaptureRecordKind {
     }
 }
 
-/// A record's head, as [`parse_record_head`] reads it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CaptureRecordHead {
     pub kind: CaptureRecordKind,
     pub complete: bool,
-    /// The whole record, head included; 0 while incomplete.
     pub len: u64,
-    /// The envelope's offset from the record's start.
     pub envelope_at: u64,
     pub envelope_len: u64,
     pub envelope_crc: u32,
 }
 
-/// A piece's kind. The values are the head's `kind` byte. Kinds 1–14 are
-/// STATE pieces, one [`ClientStateKey`] each; kinds 20–25 occur only in
-/// Frame records.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ClientPieceKind {
-    /// Opaque: the engine's section payload.
     Section = 1,
-    /// Opaque: the column's own state.
     Column = 2,
-    /// Documented: [`ClientPresence`].
     Presence = 3,
-    /// Documented: [`ClientPopulation`].
     Population = 4,
-    /// Documented: [`ClientCapturedSession`].
     Session = 5,
-    /// Opaque: the id vocabulary.
     Tables = 6,
-    /// Documented: [`ClientCapturedClock`].
     Clock = 7,
-    /// Opaque: the mob's row.
     Mob = 8,
-    /// Opaque: the dropped item's row.
     Item = 9,
-    /// Opaque: the player's row.
     Player = 10,
-    /// Documented: `Vec<`[`ClientRosterEntry`]`>`.
     Roster = 11,
-    /// Documented: [`ClientCapturedEnv`].
     Environment = 12,
-    /// Opaque: the spatial loops sounding, the local dig cell, the open containers.
     Activity = 13,
-    /// Opaque: the local player's own state.
     Viewer = 14,
-    /// Opaque: one applied message that is neither a tick batch nor a full arrival.
     Message = 20,
-    /// Opaque: a tick batch's block, cell-KV and draw deltas.
     BatchWorld = 21,
-    /// Opaque: a tick batch's mob, item and player rows.
     BatchRows = 22,
-    /// Opaque: the rest of a tick batch's world content.
     BatchRest = 23,
-    /// Opaque: the local predictions presented that frame.
     Cues = 24,
-    /// Opaque: the locally presented view in full.
     View = 25,
 }
 
@@ -251,12 +161,10 @@ impl ClientPieceKind {
         })
     }
 
-    /// Whether this kind states one key's content.
     pub fn is_state(self) -> bool {
         (self as u8) < 20
     }
 
-    /// Whether this kind's body is documented ([`decode_documented`]).
     pub fn documented(self) -> bool {
         use ClientPieceKind::*;
         matches!(
@@ -265,25 +173,20 @@ impl ClientPieceKind {
         )
     }
 
-    /// Whether this kind's key bytes hold a batch tick.
     pub fn is_batch(self) -> bool {
         use ClientPieceKind::*;
         matches!(self, BatchWorld | BatchRows | BatchRest)
     }
 }
 
-/// One stated thing in a presented world.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClientStateKey {
     Section([i32; 3]),
     Column([i32; 2]),
-    /// Which terrain exists.
     Presence,
-    /// Which entities exist.
     Population,
     Session,
     Tables,
-    /// The newest applied batch's tick and the day clock.
     Clock,
     Mob(u64),
     Item(u64),
@@ -295,7 +198,6 @@ pub enum ClientStateKey {
 }
 
 impl ClientStateKey {
-    /// The piece kind that states this key.
     pub fn kind(self) -> ClientPieceKind {
         match self {
             Self::Section(_) => ClientPieceKind::Section,
@@ -315,7 +217,6 @@ impl ClientStateKey {
         }
     }
 
-    /// The 12 key bytes of this key's piece head.
     pub fn key_bytes(self) -> [u8; 12] {
         let mut out = [0u8; 12];
         match self {
@@ -335,7 +236,6 @@ impl ClientStateKey {
         out
     }
 
-    /// The key a state piece's head names; `None` for a frame-only kind.
     pub fn from_head(kind: ClientPieceKind, key: [u8; 12]) -> Option<Self> {
         let i32_at = |at: usize| i32::from_le_bytes(key[at..at + 4].try_into().expect("4 bytes"));
         let u64_at = || u64::from_le_bytes(key[0..8].try_into().expect("8 bytes"));
@@ -359,13 +259,10 @@ impl ClientStateKey {
     }
 }
 
-/// A piece's head, as [`parse_piece_head`] reads it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CapturePieceHead {
-    /// The opaque bodies' encoding (the engine's protocol version).
     pub protocol: u16,
     pub kind: ClientPieceKind,
-    /// The piece holds an unconfirmed local prediction.
     pub provisional: bool,
     pub body_len: u32,
     pub body_crc: u32,
@@ -374,19 +271,16 @@ pub struct CapturePieceHead {
 }
 
 impl CapturePieceHead {
-    /// The key a state piece states; `None` for a frame-only kind.
     pub fn state_key(&self) -> Option<ClientStateKey> {
         ClientStateKey::from_head(self.kind, self.key)
     }
 
-    /// The tick of the batch a `Batch*` piece belongs to.
     pub fn batch(&self) -> Option<u64> {
         self.kind
             .is_batch()
             .then(|| u64::from_le_bytes(self.key[0..8].try_into().expect("8 bytes")))
     }
 
-    /// The whole piece's length, head included.
     pub fn piece_len(&self) -> u64 {
         CAPTURE_PIECE_HEAD_LEN as u64 + u64::from(self.body_len)
     }
@@ -428,8 +322,6 @@ fn check_crc(bytes: &[u8], stored: u32) -> Result<(), CaptureFormatError> {
     }
 }
 
-/// Read a record head from the first 40 bytes. An incomplete head reads, with
-/// `complete: false`; a walker treats it as torn.
 pub fn parse_record_head(bytes: &[u8]) -> Result<CaptureRecordHead, CaptureFormatError> {
     if bytes.len() < CAPTURE_RECORD_HEAD_LEN {
         return Err(short(CAPTURE_RECORD_HEAD_LEN, bytes.len()));
@@ -450,7 +342,6 @@ pub fn parse_record_head(bytes: &[u8]) -> Result<CaptureRecordHead, CaptureForma
     })
 }
 
-/// Read a piece head from the first 40 bytes.
 pub fn parse_piece_head(bytes: &[u8]) -> Result<CapturePieceHead, CaptureFormatError> {
     if bytes.len() < CAPTURE_PIECE_HEAD_LEN {
         return Err(short(CAPTURE_PIECE_HEAD_LEN, bytes.len()));
@@ -499,8 +390,6 @@ pub fn write_piece_head(head: &CapturePieceHead) -> [u8; 40] {
     out
 }
 
-/// Check a whole piece (head and body in `piece`, nothing after it required)
-/// against its CRC, and answer its head and its body: one protocol frame.
 pub fn check_piece(piece: &[u8]) -> Result<(CapturePieceHead, &[u8]), CaptureFormatError> {
     let head = parse_piece_head(piece)?;
     let end = CAPTURE_PIECE_HEAD_LEN + head.body_len as usize;
@@ -515,7 +404,6 @@ pub fn check_piece(piece: &[u8]) -> Result<(CapturePieceHead, &[u8]), CaptureFor
     Ok((head, body))
 }
 
-/// Split one protocol frame into its flags and its bytes.
 pub fn split_frame(frame: &[u8]) -> Result<(u8, &[u8]), CaptureFormatError> {
     if frame.len() < FRAME_HEADER_LEN {
         return Err(CaptureFormatError::Frame);
@@ -527,7 +415,6 @@ pub fn split_frame(frame: &[u8]) -> Result<(u8, &[u8]), CaptureFormatError> {
     Ok((frame[4], &frame[FRAME_HEADER_LEN..]))
 }
 
-/// A documented body's frame: `value` postcard-encoded, never compressed.
 pub fn encode_documented<T: Serialize>(value: &T) -> Result<Vec<u8>, CaptureFormatError> {
     let body =
         postcard::to_allocvec(value).map_err(|e| CaptureFormatError::Decode(format!("{e}")))?;
@@ -539,8 +426,6 @@ pub fn encode_documented<T: Serialize>(value: &T) -> Result<Vec<u8>, CaptureForm
     Ok(frame)
 }
 
-/// A documented piece's body (Presence, Population, Session, Clock, Roster,
-/// Environment): the whole piece, head and body, in.
 pub fn decode_documented<T: DeserializeOwned>(piece: &[u8]) -> Result<T, CaptureFormatError> {
     let (head, body) = check_piece(piece)?;
     if !head.kind.documented() {
@@ -555,7 +440,6 @@ pub fn decode_documented<T: DeserializeOwned>(piece: &[u8]) -> Result<T, Capture
     postcard::from_bytes(bytes).map_err(|e| CaptureFormatError::Decode(format!("{e}")))
 }
 
-/// Check the envelope against its head's CRC, then decode it.
 pub fn decode_envelope(
     head: &CaptureRecordHead,
     envelope: &[u8],
@@ -572,8 +456,6 @@ pub fn decode_envelope(
     })
 }
 
-/// Where a record's envelope lies inside `record` (the record's bytes from its
-/// head on), checked against the record's length.
 fn envelope_span(
     head: &CaptureRecordHead,
     have: usize,
@@ -594,10 +476,6 @@ fn envelope_span(
     Ok(start..end)
 }
 
-/// Walk the records in `bytes`, which start at absolute file offset `base`.
-/// Each item is a record's absolute offset and head, its envelope checked.
-/// The walk stops at the first torn or foreign record and says where
-/// ([`CaptureFormatError::At`]); it never reads a record's pieces.
 pub fn records(
     bytes: &[u8],
     base: u64,
@@ -641,8 +519,6 @@ pub fn records(
     })
 }
 
-/// The envelope of a whole record (`record` = its bytes from the head on),
-/// checked and decoded.
 pub fn record_envelope(record: &[u8]) -> Result<ClientEnvelope, CaptureFormatError> {
     let head = parse_record_head(record)?;
     if !head.complete {
@@ -652,8 +528,6 @@ pub fn record_envelope(record: &[u8]) -> Result<ClientEnvelope, CaptureFormatErr
     decode_envelope(&head, &record[span])
 }
 
-/// One envelope-file entry's bytes: `[u64 len][u32 CRC-32 of the entry
-/// bytes][postcard ClientEnvelopeEntry]`, `len` counting the postcard bytes.
 pub fn write_envelope_entry(entry: &ClientEnvelopeEntry) -> Result<Vec<u8>, CaptureFormatError> {
     let body =
         postcard::to_allocvec(entry).map_err(|e| CaptureFormatError::Decode(format!("{e}")))?;
@@ -664,9 +538,6 @@ pub fn write_envelope_entry(entry: &ClientEnvelopeEntry) -> Result<Vec<u8>, Capt
     Ok(out)
 }
 
-/// Walk an envelope file's entries in `bytes`, which start at absolute file
-/// offset `base`: each item is an entry's absolute offset and the entry. The
-/// walk stops at the first torn entry and says where.
 pub fn envelope_entries(
     bytes: &[u8],
     base: u64,
@@ -713,9 +584,6 @@ pub fn envelope_entries(
     })
 }
 
-// --- Envelopes ------------------------------------------------------------
-
-/// A pose in the presented world: `pos` is the EYE.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct ClientPose {
     pub pos: [f64; 3],
@@ -723,40 +591,26 @@ pub struct ClientPose {
     pub pitch: f32,
 }
 
-/// One piece as an envelope lists it. `range` is RELATIVE to its record's
-/// start, so a record copied byte for byte into another file stays valid.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientPieceInfo {
     pub kind: ClientPieceKind,
-    /// State pieces.
     pub key: Option<ClientStateKey>,
-    /// `Batch*` pieces.
     pub batch: Option<u64>,
-    /// `[offset, len]`, relative to its record.
     pub range: [u64; 2],
-    /// The piece's `body_crc`, so a mod checking a record needs no piece heads.
     pub crc: u32,
     pub provisional: bool,
 }
 
-/// A State record's envelope.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientStateEnvelope {
-    /// The presented world's revision the state describes.
     pub revision: u64,
-    /// The `ChangedSince` base actually used; `None` = complete.
     pub since: Option<u64>,
-    /// The newest applied batch.
     pub tick: u64,
-    /// The fractional tick the last frame presented.
     pub presented_tick: f64,
     pub pieces: Vec<ClientPieceInfo>,
-    /// `Keys` asked for these; they are not present.
     pub absent: Vec<ClientStateKey>,
 }
 
-/// The local eye as a frame presented it: bob and speed-coupled FOV
-/// included. The hurt shake, hands and motion are in the `View` piece.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct ClientCapturedView {
     pub player: PlayerId,
@@ -767,23 +621,15 @@ pub struct ClientCapturedView {
     pub fov_y: f32,
 }
 
-/// A Frame record's envelope.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientFrameEnvelope {
-    /// Records this log wrote before this one.
     pub seq: u64,
-    /// The presented world's revision after this frame.
     pub revision: u64,
     pub presented_tick: f64,
-    /// Ticks of the tick batches this frame applied.
     pub batches: Vec<u64>,
     pub view: Option<ClientCapturedView>,
-    /// Every piece, in apply order.
     pub pieces: Vec<ClientPieceInfo>,
-    /// Changed this frame without being stated in full. Never entities: every
-    /// `BatchRows` piece states every row of its batch.
     pub touched: Vec<ClientStateKey>,
-    /// Sections and columns unloaded this frame.
     pub removed: Vec<ClientStateKey>,
 }
 
@@ -793,19 +639,12 @@ pub enum ClientEnvelope {
     Frame(ClientFrameEnvelope),
 }
 
-/// One entry of an envelope file: the record's absolute `[offset, len]` and
-/// its envelope.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientEnvelopeEntry {
     pub record: [u64; 2],
     pub envelope: ClientEnvelope,
 }
 
-// --- Documented bodies ----------------------------------------------------
-
-/// Which terrain exists. For each column, bit `i` of `sections` (u64 words,
-/// least significant bit first) means section `cy_min + i` is present. A
-/// column that is present with no loaded section has empty `sections`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientPresence {
     pub cy_min: i32,
@@ -819,7 +658,6 @@ pub struct ClientColumnPresence {
 }
 
 impl ClientColumnPresence {
-    /// Whether section `cy` of this column is present, given the presence's `cy_min`.
     pub fn has_section(&self, cy_min: i32, cy: i32) -> bool {
         let Ok(i) = usize::try_from(i64::from(cy) - i64::from(cy_min)) else {
             return false;
@@ -830,7 +668,6 @@ impl ClientColumnPresence {
     }
 }
 
-/// Which entities exist.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientPopulation {
     pub mobs: Vec<u64>,
@@ -838,7 +675,6 @@ pub struct ClientPopulation {
     pub players: Vec<PlayerId>,
 }
 
-/// The session the world was presented in: what decoding and hosting it needs.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientCapturedSession {
     pub seed: u32,
@@ -865,29 +701,18 @@ pub struct ClientRosterEntry {
     pub name: String,
 }
 
-/// Every shader param as REPLICATED, before any mod's override.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientCapturedEnv {
     pub params: Vec<(String, [f32; 4])>,
 }
 
-// --- Capture and presentation calls ---------------------------------------
-
-/// Which keys a `ClientWorldStateWrite` states.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ClientStateSelect {
-    /// Every present key.
     All,
-    /// Every present key whose content changed after this revision, plus
-    /// `Presence`/`Population` when their key set moved. A revision this
-    /// world never issued is served as `All` (`since: None`).
     ChangedSince(u64),
-    /// Exactly these keys, each once; one not present goes to `absent`.
     Keys(Vec<ClientStateKey>),
 }
 
-/// An accepted `ClientWorldStateWrite`: the file ticket its record completes
-/// on, and the revision the state describes (known at the call).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ClientStateTicketData {
     pub write: u64,
@@ -902,38 +727,25 @@ pub enum ClientEventsPhase {
     Failed,
 }
 
-/// Where an events log stands. A few numbers: the engine keeps no envelopes
-/// for a mod.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ClientEventsReport {
     pub phase: ClientEventsPhase,
     pub error: Option<String>,
-    /// Records queued so far.
     pub frames: u64,
-    /// The file offset up to which this log's records have been handed to the OS.
     pub written_through: u64,
-    /// Bytes of this log's frames queued but not yet written.
     pub backlog_bytes: u64,
 }
 
-/// Where the presentation stands (`ClientPresentationState`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ClientPresentationStateData {
     pub opening: bool,
     pub open: bool,
     pub owner: Option<String>,
-    /// The presented position, fractional ticks.
     pub position: f64,
-    /// The newest tick batch released into the world.
     pub released_through: Option<u64>,
-    /// No apply pending, and every batch the position needs is released, or
-    /// the queued events are exhausted.
     pub ready: bool,
-    /// Applies not yet landed, in issue order; the first is being prepared.
     pub pending: Vec<u64>,
-    /// The last apply that LANDED (0 = none yet).
     pub applied: u64,
-    /// Every queued events range has been released.
     pub exhausted: bool,
     pub error: Option<String>,
 }

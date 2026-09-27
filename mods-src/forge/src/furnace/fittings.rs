@@ -6,8 +6,6 @@ use crate::schema::UpgradeSpec;
 
 pub const KEY: &str = "forge:fittings";
 pub const INFO_KEY: &str = "petramond:info";
-/// The `kind` each `forge:upgrades` row names, in bit order — also the order
-/// of [`keys::fittings::TABLE`], which holds each fitting's page keys.
 pub const KINDS: [&str; 4] = ["quench", "counterweight", "chute", "stoker"];
 
 #[derive(Default)]
@@ -73,8 +71,6 @@ impl Fittings {
             .find(|r| r.index == index && bits & (1 << index) != 0)
     }
 
-    /// Buy the fitting at `index` (its [`KINDS`] position) for the clicking
-    /// player: only a shipped, not-yet-fitted row the player can pay for.
     pub fn buy(&self, anchor: [i32; 3], index: usize) {
         let Some(row) = self.rows.iter().find(|r| r.index == index) else {
             return;
@@ -92,8 +88,6 @@ impl Fittings {
         let Some(plan) = purchase_plan(&inventory, &row.cost) else {
             return;
         };
-        // A GUI dispatch is synchronous on the owning tick: nothing may change
-        // inventory between this plan and its exact-variant takes.
         for stack in plan {
             let data: Vec<_> = stack
                 .data
@@ -187,7 +181,6 @@ impl Fittings {
 }
 
 impl Upgrade {
-    /// A row from its spec; `None` when its `kind` is not one of [`KINDS`].
     fn from_spec(spec: &UpgradeSpec) -> Option<Self> {
         let number = |value: Option<f64>, fallback: u32| {
             value.unwrap_or(f64::from(fallback)).max(1.0) as u32
@@ -210,8 +203,6 @@ impl Upgrade {
     }
 }
 
-/// Plan exact-variant takes over a private inventory copy, so duplicate cost
-/// rows cannot count the same material twice and a short purchase spends nothing.
 fn purchase_plan(
     inventory: &[Option<ItemStackData>],
     cost: &[(String, u8)],

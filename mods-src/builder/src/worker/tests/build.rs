@@ -1,6 +1,3 @@
-//! What the golem builds with and on: its scaffolding, supports under work
-//! with nothing beside it, pockets it must not seal, pillars, and tools.
-
 use std::collections::BTreeMap;
 
 use super::{at_work, unit, working};
@@ -141,8 +138,6 @@ fn a_support_column_rises_from_the_ground_under_work_with_nothing_beside_it() {
     assert!(!support::props_up([7, 0, 5], &open));
 }
 
-/// Stone on three sides of `[5, 0, 5]` and over it: the design fills it and
-/// the one open side.
 fn pocket_site(sealed: bool) -> (Session, crate::project::ProjectId, u64) {
     let (mut session, id) = Session::site(
         "Pocket",
@@ -196,8 +191,6 @@ fn work_sealed_in_has_a_built_neighbour_taken_down_to_reach_it() {
     });
 }
 
-/// A tower of stone seven high with its top still to lay: from the ground
-/// no body reaches it.
 #[test]
 fn a_pillar_is_found_for_work_no_ground_reaches() {
     let tower: Vec<([i32; 3], &str)> = (0..7).map(|y| ([0, y, 0], "petramond:stone")).collect();

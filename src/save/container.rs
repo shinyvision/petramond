@@ -18,12 +18,8 @@ use crate::save::wire::Wire;
 use petramond_world::container::{Container, MAX_CONTAINER_SLOTS};
 use petramond_world::section::CellMap;
 
-/// A container's slots whose items could not be resolved, as
-/// `(slot index, slot as stored)`.
 pub type KeptSlots = Vec<(u8, DiskSlot)>;
 
-/// Append a `u16`-length-prefixed list of `(local index, container)`
-/// records; an empty slot with a kept item writes the kept item.
 pub fn put_containers(
     buf: &mut Vec<u8>,
     containers: &CellMap<Container>,
@@ -61,9 +57,6 @@ pub fn put_containers(
     });
 }
 
-/// Read the list written by [`put_containers`]: the containers with every
-/// resolvable slot live, and the slots kept aside per cell. `None` on
-/// truncated input.
 pub fn get_containers(
     r: &mut Reader,
     pal: &Palette,
@@ -121,9 +114,6 @@ mod tests {
         assert!(kept.is_empty());
     }
 
-    /// An item this world cannot resolve loads as an empty slot, is kept
-    /// aside, and goes back into its slot on save — unless the slot was
-    /// filled meanwhile.
     #[test]
     fn an_unresolvable_item_is_kept_until_its_slot_is_filled() {
         let pal = Palette::identity();
@@ -165,7 +155,7 @@ mod tests {
     #[test]
     fn truncated_input_is_none() {
         let mut buf = Vec::new();
-        put_u16(&mut buf, 1); // claims one container, provides no body
+        put_u16(&mut buf, 1);
         let mut r = Reader::new(&buf);
         assert!(get_containers(&mut r, &Palette::identity()).is_none());
     }

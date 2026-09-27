@@ -1,10 +1,3 @@
-//! What the open panel SHOWS: the enlarged tool stage, the result preview,
-//! the Augment button's enabled state, and per socket cell its chrome, ghost
-//! icon, admission mask and tooltip.
-//!
-//! Publishing only — every value here is derived from the slots the step just
-//! settled, so the panel can never show a stale tool.
-
 use mod_sdk::*;
 
 use machine_core::StepCtx;
@@ -14,27 +7,12 @@ use crate::augments::{condition_word, level_word, repairable, Entry, LEVEL_MAX};
 use crate::keys::anvil as keys;
 
 impl AnvilSpec {
-    /// Publish the panel: the enlarged tool (a composited LAYER LIST on one
-    /// item-view hook), the stage hint, the result PREVIEW (stat delta lines
-    /// aggregated over every staged fit), the Augment button's enabled
-    /// state, and each socket cell's chrome (lock / cover frame index) and
-    /// ghost (the grayed material icon of an installed augment, `~`-dimmed).
-    /// Published every open tick so the panel can never show a stale tool —
-    /// values persist in the state map until overwritten, and an empty
-    /// string both blanks and HIDES its label (`visible` binds the same
-    /// key).
     pub(super) fn publish_stage(&self, ctx: &StepCtx<'_>, slots: &[Option<ItemStackData>]) {
         let tool_stack = slots[SLOT_TOOL].as_ref().filter(|s| s.count > 0);
         let tool_name = tool_stack.map(|s| s.item.as_str()).unwrap_or("");
         let tool = self.tool_in(slots);
         let staged = self.staged(slots);
 
-        // The stage previews the RESULT: the tool's sprite, then exactly
-        // what the engine composites in the world (the stack's own stamped
-        // art list), then the overlays the staged materials WOULD apply — so
-        // inserting a diamond shows the augmented tool before the player
-        // commits. A staged fit never collides with an installed one:
-        // `staged` only fits open, free cells.
         let mut layers = vec![tool_name.to_owned()];
         let applied = tool_stack
             .and_then(|s| s.data.iter().find(|(k, _)| k == OVERLAY_DATA_KEY))
@@ -49,8 +27,6 @@ impl AnvilSpec {
             }
         }
 
-        // The one state the player cannot see from the slots themselves: a
-        // valid material that is short of its cost.
         let hint = if tool_stack.is_none() {
             "Add a tool".to_owned()
         } else {
@@ -60,8 +36,6 @@ impl AnvilSpec {
             }
         };
 
-        // The preview shows for every staged fit, affordable or not — the
-        // hint covers the shortfall; only the button gates on the cost.
         let (speed_mult, damage_mult, knockback_mult) =
             staged
                 .iter()
@@ -72,8 +46,6 @@ impl AnvilSpec {
                         k * fit.knockback_mult,
                     )
                 });
-        // A behaviour grant is a preview line too — a stat panel that shows
-        // only the -20% half of the gold inlay reads as a downgrade.
         let gentle = staged
             .iter()
             .filter_map(|(_, fit, _)| fit.gentle)
@@ -121,15 +93,8 @@ impl AnvilSpec {
                 .as_ref()
                 .and_then(|(_, _, _, rec)| rec.entry_at(socket));
             let (frame, ghost, acc) = match state {
-                // An occupied socket takes its own material (repair, while
-                // short of full) and the socket gem (mount upgrade, while
-                // short of Legendary); the step adjudicates exact identity
-                // and sweeps a mismatch home.
                 CellState::Occupied(id) => {
                     let acc = entry.map_or(ACC_NONE, |e| {
-                        // A pristine augment refuses its material outright —
-                        // the mask says so on both mirrors, so the repair
-                        // gesture only ever lands where it will act.
                         let repair = if repairable(e.cond, e.lvl) {
                             ACC_AUGMENT
                         } else {
@@ -161,9 +126,6 @@ impl AnvilSpec {
             ctx.publish(cell.st, GuiValue::I32(frame));
             ctx.publish(cell.ghost, GuiValue::Str(ghost));
             ctx.publish(cell.acc, GuiValue::I32(acc));
-            // The socket tooltip (the engine's injected slot tip, keyed by
-            // the CONTAINER cell index): mount level + augment name on the
-            // level's colour, the condition word on its own.
             let tip = match state {
                 CellState::Occupied(_) => entry.map(|e| self.socket_tip(e)).unwrap_or_default(),
                 _ => String::new(),
@@ -172,11 +134,6 @@ impl AnvilSpec {
         }
     }
 
-    /// The two tooltip lines for an occupied socket, in the injected slot
-    /// tip's span format (newline-separated lines of tab-separated spans):
-    /// ONLY the level and condition WORDS carry colour — `"Great"` green
-    /// then `" Diamond Tip"` plain, `"Condition: "` plain then `"Worn"`
-    /// yellow (Rachel, 2026-08-10).
     pub(super) fn socket_tip(&self, e: &Entry) -> String {
         let (lvl, lvl_col) = level_word(e.lvl);
         let (cond, cond_col) = condition_word(e.cond, e.lvl);
@@ -191,15 +148,10 @@ impl AnvilSpec {
     }
 }
 
-/// One `palette|text` span. The three separators are STRUCTURAL in the tip
-/// format — a `|` opens the text, a tab the next span, a newline the next
-/// line — and a display name is row data this pack does not own, so the text
-/// half is stripped of all three rather than trusted.
 fn span(palette: &str, text: &str) -> String {
     format!("{palette}|{}", text.replace(['|', '\t', '\n'], ""))
 }
 
-/// The theme palette entry a tooltip colour word paints with.
 fn palette_entry(color: &str) -> &'static str {
     match color {
         "white" => "text",
@@ -211,7 +163,6 @@ fn palette_entry(color: &str) -> &'static str {
     }
 }
 
-/// `"Speed +50%"` from a multiplier — empty (which hides the label) at 1.0.
 fn delta_line(label: &str, mult: f32) -> String {
     let delta = ((mult - 1.0) * 100.0).round() as i32;
     if delta == 0 {

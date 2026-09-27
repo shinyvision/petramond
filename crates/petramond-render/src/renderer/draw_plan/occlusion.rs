@@ -17,25 +17,19 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 
-/// One loaded column's section connectivity, densely by `cy`.
 struct ColumnVisibility {
     min_cy: i32,
     first: u32,
     len: u32,
 }
 
-/// The entry-face bit that stands for "any face": a fully connected section
-/// is expanded once, whichever face the flood reaches it through.
 const ANY_ENTRY: u8 = 1 << 6;
 
 pub(crate) struct SectionOcclusion {
     columns: FxHashMap<ChunkPos, ColumnVisibility>,
     visibility: Vec<SectionVisibility>,
-    /// `(min, max)` section `cy` over every loaded column; inverted when none.
     cy_bounds: (i32, i32),
-    /// The last flood's reached sections.
     visible: FxHashSet<SectionPos>,
-    /// Entry faces each reached section was already expanded through.
     entered: FxHashMap<SectionPos, u8>,
     queue: VecDeque<(SectionPos, Option<Face>)>,
 }
@@ -53,7 +47,6 @@ impl Default for SectionOcclusion {
     }
 }
 
-/// The face a step through `exit` enters the neighbour by.
 fn opposite(face: Face) -> Face {
     match face {
         Face::PosX => Face::NegX,
@@ -65,9 +58,6 @@ fn opposite(face: Face) -> Face {
     }
 }
 
-/// Whether a sight line from `camera` can step from `pos` through `exit`: it
-/// only moves AWAY from the camera's section along the step's axis (or out of
-/// the camera's own slab).
 fn moves_away(camera: SectionPos, pos: SectionPos, exit: Face) -> bool {
     let glam::IVec3 {
         x: dx,
@@ -80,7 +70,6 @@ fn moves_away(camera: SectionPos, pos: SectionPos, exit: Face) -> bool {
 }
 
 impl SectionOcclusion {
-    /// Forget every column (the column set is rebuilt next).
     pub fn clear(&mut self) {
         self.columns.clear();
         self.visibility.clear();
@@ -89,8 +78,6 @@ impl SectionOcclusion {
         self.entered.clear();
     }
 
-    /// Record one column's installed sections (`(cy, visibility)` pairs within
-    /// `cy_span`); sections it lacks inside the span stay fully connected.
     pub fn insert_column(
         &mut self,
         pos: ChunkPos,
@@ -115,7 +102,6 @@ impl SectionOcclusion {
         self.cy_bounds = (self.cy_bounds.0.min(min_cy), self.cy_bounds.1.max(max_cy));
     }
 
-    /// A section's connectivity; fully connected when nothing is recorded.
     fn visibility_at(&self, pos: SectionPos) -> SectionVisibility {
         let Some(column) = self.columns.get(&ChunkPos::new(pos.cx, pos.cz)) else {
             return SectionVisibility::ALL;
@@ -127,9 +113,6 @@ impl SectionOcclusion {
         self.visibility[(column.first + offset as u32) as usize]
     }
 
-    /// Flood from `camera` through the sections `admit` lets in (the view
-    /// volume). False when there is nothing to cull against — no column is
-    /// loaded — and every admitted section should be drawn.
     pub fn flood(&mut self, camera: SectionPos, admit: impl Fn(SectionPos) -> bool) -> bool {
         self.visible.clear();
         self.entered.clear();
@@ -137,8 +120,6 @@ impl SectionOcclusion {
         if self.columns.is_empty() {
             return false;
         }
-        // Straight sight lines never leave the loaded band vertically and
-        // come back; the camera itself may sit above or below it.
         let lo = self.cy_bounds.0.min(camera.cy);
         let hi = self.cy_bounds.1.max(camera.cy);
         self.visible.insert(camera);
@@ -179,7 +160,6 @@ impl SectionOcclusion {
         true
     }
 
-    /// Whether the last flood reached `pos`.
     #[inline]
     pub fn is_visible(&self, pos: SectionPos) -> bool {
         self.visible.contains(&pos)

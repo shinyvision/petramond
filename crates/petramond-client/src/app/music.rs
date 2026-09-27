@@ -1,42 +1,11 @@
-//! The music director: WHEN a soundtrack piece plays.
-//!
-//! The same split the footstep and mob-idle cadences use — presentation owns
-//! the schedule, the audio engine owns the playback. [`Audio`] knows how to
-//! stream one track and how loud it should be; everything about the rhythm of
-//! a session's music — the quiet gap, which piece comes next, never the same
-//! piece twice running — lives here.
-//!
-//! The clock is the WALL clock, not the game tick: music is not part of the
-//! world. It keeps its place behind a pause menu (where the world's own sounds
-//! freeze), and a track already playing plays on.
-
 use petramond_audio::{Audio, MusicTrack};
 
-/// The quiet gap before the FIRST track of a session. Shorter than the gaps
-/// that follow, so a new world is scored fairly soon after you land in it
-/// rather than after a full silence.
 const FIRST_GAP: (f64, f64) = (25.0, 75.0);
-/// The quiet gap between tracks. Music is a punctuation mark on a long session,
-/// not a radio station: the silence between pieces is most of the experience,
-/// and the world's own sounds are what carries it.
 const GAP: (f64, f64) = (180.0, 420.0);
 
-/// Per-session music scheduling state.
 pub struct MusicDirector {
-    /// Seconds of quiet still owed before the next track. `None` = no gap
-    /// rolled yet (no session, or a track is playing and the next gap is
-    /// rolled when it ends).
-    ///
-    /// A countdown rather than a wall-clock deadline, because the clock this
-    /// schedule runs on is UNPAUSED session time: a paused game simply does
-    /// not tick it down, which is both the pause rule and the reason a long
-    /// pause cannot bank a track for the instant you resume.
     remaining: Option<f64>,
-    /// The piece that played last, never picked twice running while any other
-    /// is available.
     last: Option<MusicTrack>,
-    /// xorshift64 state for track choice and gap length — presentation-only
-    /// randomness, seeded from the wall clock, never the worldgen RNG.
     rng: u64,
 }
 
@@ -49,31 +18,17 @@ impl MusicDirector {
         }
     }
 
-    /// Drive the music channel for this frame. `in_session` is whether a world
-    /// is loaded at all, `paused` whether the game is actually frozen behind a
-    /// shell screen, and `dt` the frame's seconds.
-    ///
-    /// Call it EVERY frame regardless of the open screen: an inventory, a
-    /// container or a chat box is still a running session, and music that
-    /// stopped because you opened a chest would be a bug. A PAUSED game is the
-    /// one exception, and only for STARTING: a track already playing is left
-    /// to finish, but no new one is scheduled while the world is frozen.
     pub fn update(&mut self, audio: &mut Audio, in_session: bool, paused: bool, dt: f32) {
         if !in_session {
-            // Leaving a world takes its music with it — faded, not cut — and
-            // the next session starts its own schedule from silence.
             audio.stop_music();
             self.remaining = None;
             self.last = None;
         } else if audio.music_playing().is_some() {
-            // A playing track owns the channel and is allowed to finish,
-            // paused or not; the next gap is rolled once it ends.
             self.remaining = None;
         } else if !paused {
             match self.remaining {
                 None => self.remaining = Some(self.gap(self.last.is_none())),
                 Some(left) => {
-                    // A stalled or very long frame must not burn a whole gap.
                     let left = left - dt.clamp(0.0, 1.0) as f64;
                     if left > 0.0 {
                         self.remaining = Some(left);
@@ -83,28 +38,19 @@ impl MusicDirector {
                                 self.last = Some(track);
                             }
                         }
-                        // Re-rolled whether or not the track started: a
-                        // missing or broken file must not stall the channel
-                        // forever, and a track that DID start clears this the
-                        // next frame.
                         self.remaining = Some(self.gap(false));
                     }
                 }
             }
         }
-        // Runs even while paused: that is what lets a playing track stream on
-        // to its end and keeps the volume slider live.
         audio.update_music(dt);
     }
 
-    /// A random gap, from the opening range on a fresh session.
     fn gap(&mut self, first: bool) -> f64 {
         let (lo, hi) = if first { FIRST_GAP } else { GAP };
         lo + self.next_unit() * (hi - lo)
     }
 
-    /// A random track other than the one that just played. With a single track
-    /// loaded, that one repeats — the alternative is silence.
     fn pick(&mut self) -> Option<MusicTrack> {
         let count = petramond_audio::music_registry::defs().len();
         if count == 0 {
@@ -113,8 +59,6 @@ impl MusicDirector {
         if count == 1 {
             return Some(MusicTrack(0));
         }
-        // Pick among the OTHERS by drawing from `count - 1` and stepping over
-        // the last played, which is uniform over them and cannot loop.
         let pick = (self.next_rng() % (count as u64 - 1)) as u8;
         let track = match self.last {
             Some(last) if pick >= last.0 => MusicTrack(pick + 1),
@@ -123,7 +67,6 @@ impl MusicDirector {
         Some(track)
     }
 
-    /// The quiet still owed before the next track (tests).
     #[cfg(test)]
     fn remaining(&self) -> Option<f64> {
         self.remaining
@@ -139,7 +82,6 @@ impl MusicDirector {
         x
     }
 
-    /// Next value in `[0, 1)`.
     fn next_unit(&mut self) -> f64 {
         (self.next_rng() >> 11) as f64 / (1u64 << 53) as f64
     }
@@ -172,10 +114,6 @@ mod tests {
         }
     }
 
-    /// The pick must never repeat the last piece and must still be able to
-    /// reach every OTHER one — the "step over the last" index arithmetic is
-    /// exactly the kind of off-by-one that silently drops a track from the
-    /// rotation (or, worse, plays one twice running) without failing anything.
     #[test]
     fn the_next_track_is_never_the_last_and_every_other_is_reachable() {
         let count = petramond_audio::music_registry::defs().len();
@@ -204,16 +142,11 @@ mod tests {
         }
     }
 
-    /// A paused game must not schedule music. The countdown is the whole
-    /// mechanism — a paused frame that ticks it down would eventually start a
-    /// track behind the pause menu, and a paused frame that let it reach zero
-    /// would bank one for the instant you resume.
     #[test]
     fn a_paused_game_holds_the_gap_and_starts_nothing() {
         let mut audio = Audio::new();
         let mut d = director(0x5EED_1234_ABCD_9876);
 
-        // One unpaused frame rolls the opening gap; the next counts it down.
         d.update(&mut audio, true, false, 0.0);
         let rolled = d.remaining().expect("a gap is owed");
         d.update(&mut audio, true, false, 1.0);
@@ -223,7 +156,6 @@ mod tests {
             "an unpaused second should spend a second of the gap: {rolled} -> {ticked}"
         );
 
-        // Paused frames spend none of it, however many and however long.
         for _ in 0..100 {
             d.update(&mut audio, true, true, 1.0);
         }
@@ -233,7 +165,6 @@ mod tests {
             "the pause must not count toward the gap"
         );
 
-        // And a pause entered before any gap was rolled schedules nothing.
         let mut fresh = director(0x1111_2222_3333_4445);
         for _ in 0..100 {
             fresh.update(&mut audio, true, true, 1.0);
@@ -245,8 +176,6 @@ mod tests {
         );
     }
 
-    /// Gaps must land inside their declared range — an inverted or overflowing
-    /// range would either spam tracks back to back or never play one at all.
     #[test]
     fn gaps_stay_inside_their_range() {
         let mut d = director(0x1234_5678_9ABC_DEF1);

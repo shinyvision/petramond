@@ -1,35 +1,21 @@
-//! Minecarts and rails: the pack's policy over three engine seams.
+//! Minecarts/rails split across three engine seams.
 //!
-//! - **Rails are box-shaped block rows** — one row per form
-//!   (`vehicles:rail_ns`, `rail_curve_ne`, `rail_slope_w`, …, and the booster
-//!   twins), each a single authored plane: flat at one texel for the level
-//!   forms, tilted 45° about the cell centre for the slopes. A placed rail
-//!   arrives as the item's straight row; the `block_placed` handler runs the
-//!   connection rule ([`crate::rail`]) over the neighbourhood and swaps the
-//!   placed cell — and any neighbour that turns to meet it — to the resolved
-//!   rows (`swap_block`). Breaking a rail changes nothing around it.
-//! - **The cart is a mob** with an empty brain, a single seat and a spawn
-//!   tag that lets the tick enumerate every live cart (`mobs_with_tag`).
-//!   Its whole state is on the mob: pose from the snapshot, signed speed in
-//!   the `vehicles:cart_speed` tag (persisted with the mob, so a saved cart
-//!   resumes its roll). The tick integrates one step of [`crate::cart`] and
-//!   hands the engine the resulting pose through `mob_kinematic`; the
-//!   engine presents it, seats the rider, blocks players and pushes sheep.
-//! - **Off the rails** the cart is the engine's body: it flies off a track
-//!   end with the speed it left at, lands by gravity, skids to a halt under
-//!   `mob_drive`, and snaps back onto the first rail its feet come to rest
-//!   on. A rider can push a derailed cart along the ground back to a rail.
-//! - **The rolling sound** is one looping spatial play per moving cart,
-//!   pinned to the mob (`sound_play_on_mob` on the pack's `loop` row) and
-//!   retuned every tick its speed moves (`sound_set`): louder the faster it
-//!   rolls, silent when parked, and it travels with the cart past whoever
-//!   is standing by the track. The engine replays a live loop to a player
-//!   who joins mid-ride and ends it with the mob; the pack only starts,
-//!   retunes and stops.
-//! - **Placing** is an `interact_attempt` on a rail while holding the cart
-//!   item; **boarding** an `interact_attempt` on the cart; a **punch**
-//!   (`mob_damage_pre`) shoves the cart away from the puncher along its rail
-//!   and still counts toward breaking it (the row's loot drops the item).
+//! - Rails are one block row per form (rail_ns, rail_curve_ne, rail_slope_w, booster twins). Place
+//!   one and the connection rule runs on neighbours, swapping placed + turning cells via
+//!   `swap_block`. Break one and neighbours don't change.
+//! - Cart is a mob - empty brain, one seat, spawn tag so `mobs_with_tag` finds it. State lives on
+//!   the mob: pose from snapshot, signed speed in `vehicles:cart_speed` tag, survives saves. Tick
+//!   steps `crate::cart`, hands pose to `mob_kinematic`. Engine does presenting, seating, blocking
+//!   players, pushing sheep.
+//! - Off rails it's just the engine's body. Flies off the track end at exit speed, falls, skids
+//!   under `mob_drive`, snaps onto the first rail its feet rest on. Riders can shove a derailed
+//!   cart back onto a rail.
+//! - Rolling sound is one looping spatial play per moving cart, pinned to the mob, retuned every
+//!   tick - louder with speed, silent parked. Engine replays for players joining mid-ride and stops
+//!   it with the mob; pack only starts/retunes/stops.
+//! - Placing: `interact_attempt` on a rail while holding the cart item. Boarding:
+//!   `interact_attempt` on the cart. Punch (`mob_damage_pre`) shoves the cart along its rail and
+//!   still counts toward breaking it; the row's loot drops the item.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,26 +26,15 @@ use crate::keys;
 use crate::rail::{resolve_placement, Form, Rail, RailMap};
 use crate::track::{dot2, xz, yaw_facing, Path, RAIL_TOP};
 
-/// A block collision box in its own cell space.
 type LocalBox = ([f32; 3], [f32; 3]);
 
-/// Signed speed along the facing (m/s), persisted with the mob.
 const SPEED_TAG: &str = "vehicles:cart_speed";
-/// The wheels' looping clip in `minecart.bbmodel` and the authored wheel
-/// diameter in blocks (4 px) it rolls at.
 const ROLL_ANIM: &str = "roll";
 const WHEEL_DIAMETER: f32 = 4.0 / 16.0;
-/// Rail rows are read in a box this many cells around a cart or a placed
-/// rail: two rings, so the connection rule sees a neighbour's own links and
-/// a top-speed cart can chain through the cells it crosses in one tick.
 const RAIL_REACH: i32 = 2;
-/// Speed changes smaller than this are not written back to the tag.
 const SPEED_EPS: f32 = 1e-3;
-/// How far the rolling loop's volume must move before the live play is
-/// retuned.
 const ROLL_VOLUME_EPS: f32 = 0.02;
 
-/// One batched read of the cells in a cube around a centre.
 struct CellBox {
     min: [i32; 3],
     side: i32,
@@ -73,9 +48,6 @@ impl CellBox {
             .expect("one box per centre")
     }
 
-    /// One box around each of `centers`, from ONE batched read of all their
-    /// cells (split only at the host's per-call cap) — a rail network costs
-    /// a call per few dozen carts per tick, not a call per cart.
     fn around_each(centers: &[[i32; 3]], reach: i32) -> Vec<Self> {
         let side = 2 * reach + 1;
         let per_box = (side * side * side) as usize;
@@ -116,7 +88,6 @@ impl CellBox {
     }
 }
 
-/// A cell box answering the pure rail rules.
 struct RailBox<'a> {
     table: &'a BTreeMap<u16, Rail>,
     cells: &'a CellBox,
@@ -134,20 +105,10 @@ impl RailMap for RailBox<'_> {
 pub struct Minecarts {
     cart_item: Option<ItemId>,
     cart_kind: Option<MobId>,
-    /// Every rail row (by block id) → its form, and the reverse for the swaps.
     rails: BTreeMap<u16, Rail>,
     rows: BTreeMap<(Form, bool), BlockId>,
-    /// Carts whose wheel clip has been activated, and the rate it plays at.
-    /// Transient: a reloaded cart's wheels start again on its first tick.
     rolling: BTreeMap<u64, f32>,
-    /// Carts whose rolling loop is playing: the session sound handle and
-    /// the volume it was last set to. Transient like `rolling`; a cart that
-    /// leaves the live list (broken, unloaded) has its loop stopped.
     humming: BTreeMap<u64, (u64, f32)>,
-    /// A block id's cell-local collision boxes — the registry's answer,
-    /// cached per id, so the wall test costs no host call once a block has
-    /// been seen. Empty for anything a body passes through (air, plants, a
-    /// rail).
     collision: BTreeMap<u16, Vec<LocalBox>>,
 }
 
@@ -172,8 +133,6 @@ impl Minecarts {
         self.rows.get(&(form, booster)).copied()
     }
 
-    /// A rail was placed by a player: resolve its form from the neighbours
-    /// and swap every row the connection rule changed.
     pub fn on_block_placed(&mut self, pos: [i32; 3], block: BlockId) {
         let Some(placed) = self.rails.get(&block.0).copied() else {
             return;
@@ -197,8 +156,6 @@ impl Minecarts {
         }
     }
 
-    /// A use click on a live mob: a cart seats the player in its free seat.
-    /// Act-based claim: nothing seated consumes nothing.
     pub fn on_interact_mob(&self, mob_id: u64, kind: MobId, player: PlayerId) -> Outcome {
         if self.is_cart(kind) && self.board(mob_id, player) {
             Outcome::Cancel
@@ -207,9 +164,6 @@ impl Minecarts {
         }
     }
 
-    /// A use click on a block: on a rail while holding a cart, place one
-    /// there facing away from the player. Act-based claim: nothing spawned
-    /// consumes nothing.
     pub fn on_interact_block(&self, block: Option<[i32; 3]>) -> Outcome {
         let (Some(cell), Some(item)) = (block, self.cart_item) else {
             return Outcome::Continue;
@@ -221,7 +175,6 @@ impl Minecarts {
         let Some(rail) = get_block(cell).and_then(|b| self.rails.get(&b.0).copied()) else {
             return Outcome::Continue;
         };
-        // Mid-rail, nose along the track and away from the player.
         let path = Path::of(rail.form);
         let mid = path.len() * 0.5;
         let p = path.point(mid);
@@ -254,8 +207,6 @@ impl Minecarts {
         mob_mount(mob_id, player, seat)
     }
 
-    /// A hit on a cart shoves it away from the puncher along its rail; the
-    /// damage itself still lands (six punches break a cart into its item).
     pub fn on_mob_damage(&mut self, mob_id: u64, kind: MobId, origin: Option<[f64; 3]>) {
         if !self.is_cart(kind) {
             return;
@@ -272,11 +223,8 @@ impl Minecarts {
         write_speed(mob_id, state.speed + cart::punch(&state, origin));
     }
 
-    /// One step for every live cart.
     pub fn tick(&mut self) {
         let carts = mobs_with_tag(keys::CART_TAG, None);
-        // Every cart's pre-tick state, so a contact resolves the same from
-        // both sides whichever cart steps first.
         let before: Vec<Cart> = carts
             .iter()
             .map(|m| Cart {
@@ -287,8 +235,6 @@ impl Minecarts {
             })
             .collect();
         let contacts = ContactGrid::new(&before);
-        // Every cart's rail box in one batched read: stepping moves bodies,
-        // never blocks, so the whole tick reads the same terrain.
         let centers: Vec<[i32; 3]> = carts.iter().map(|m| cell_of(m.pos)).collect();
         let boxes = CellBox::around_each(&centers, RAIL_REACH);
         let mut seen = BTreeSet::new();
@@ -310,20 +256,15 @@ impl Minecarts {
             };
             match cart::step(&map, state, body, Controls { push }, &blocked) {
                 Step::Railed(next) | Step::Derailed(next) => {
-                    // A cart never banks: roll stays level on every rail.
                     if !mob_kinematic(m.id, next.pos, next.yaw, next.pitch, 0.0) {
                         continue;
                     }
-                    // Against the PERSISTED speed: a contact may have
-                    // rewritten `state` before the step.
                     if (next.speed - start.speed).abs() > SPEED_EPS {
                         write_speed(m.id, next.speed);
                     }
                     self.present(m.id, next.speed);
                 }
                 Step::Off => {
-                    // The engine's body: airborne it flies; on the ground it
-                    // skids out under its wheels, or a rider walks it along.
                     if !m.on_ground {
                         self.present(m.id, 0.0);
                         continue;
@@ -354,16 +295,11 @@ impl Minecarts {
         });
     }
 
-    /// What a cart at `speed` looks and sounds like this tick: the wheels
-    /// turn at it, and the rolling loop follows it.
     fn present(&mut self, id: u64, speed: f32) {
         self.roll(id, speed);
         self.hum(id, speed);
     }
 
-    /// Keep the rolling loop at the cart's speed: start it when the cart
-    /// gets going, retune it as the speed moves, stop it when the cart
-    /// parks.
     fn hum(&mut self, id: u64, speed: f32) {
         let volume = cart::roll_volume(speed);
         match self.humming.get(&id).copied() {
@@ -385,8 +321,6 @@ impl Minecarts {
         }
     }
 
-    /// Keep the wheels turning at the cart's speed: activate the clip once,
-    /// then retune its rate only when the speed moved.
     fn roll(&mut self, id: u64, speed: f32) {
         let rate = cart::wheel_roll_rate(speed, WHEEL_DIAMETER);
         match self.rolling.get(&id) {
@@ -405,8 +339,6 @@ impl Minecarts {
     }
 }
 
-/// Ask the registry, once per block id, for the collision of every block the
-/// batched read holds — so the closures over the read never cross the ABI.
 fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox) {
     for block in cells.blocks.iter().flatten() {
         if block.0 == BlockId::AIR.0 || collision.contains_key(&block.0) {
@@ -417,9 +349,6 @@ fn learn_collision(collision: &mut BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox
     }
 }
 
-/// Whether any terrain collision overlaps the world-space `probe` — from
-/// the batched read and the learnt per-id boxes; unloaded and unknown cells
-/// read as open.
 fn blocked_by(collision: &BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox, probe: Aabb) -> bool {
     let (lo, hi) = probe;
     let span = |i: usize| (lo[i].floor() as i32)..=((hi[i] - 1e-4).floor() as i32);
@@ -447,9 +376,6 @@ fn blocked_by(collision: &BTreeMap<u16, Vec<LocalBox>>, cells: &CellBox, probe: 
     })
 }
 
-/// The driver's push along the cart's facing: forward input pushes the cart
-/// the way the rider is LOOKING, so a rider facing backwards over the tail
-/// still drives toward what they see.
 fn rider_push(mob_id: u64, cart_yaw: f32) -> f32 {
     let Some(riders) = mob_riders(mob_id) else {
         return 0.0;

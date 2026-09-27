@@ -1,5 +1,3 @@
-//! Quart-resolution habitat columns, independent of excavation and voxel tiles.
-
 use std::sync::Arc;
 
 use super::CaveField;
@@ -22,9 +20,6 @@ impl Column {
         field.underground.region_id(self.candidates, self.height, y)
     }
 
-    /// [`Self::id`] at `y`, and the last height up to `y_max` over which that
-    /// answer provably holds: the regional rule reads Y only through its
-    /// aligned quart block and each candidate row's height band.
     pub(super) fn id_span(self, field: &CaveField, y: i32, y_max: i32) -> (Option<u8>, i32) {
         let id = self.id(field, y);
         let mut end = (y.div_euclid(4) + 1) * 4 - 1;
@@ -95,7 +90,6 @@ impl CaveField {
             return Column::default();
         }
         let pos = [x, z].map(|v| v.div_euclid(16));
-        // A habitat region reads no excavation.
         let key = (self.context().without_excavations(), pos);
         let hash =
             (pos[0] as u32 as u64) ^ (pos[1] as u32 as u64).rotate_left(32) ^ self.seed as u64;
@@ -109,7 +103,6 @@ impl CaveField {
         tile[(z.rem_euclid(16) / 4 * 4 + x.rem_euclid(16) / 4) as usize]
     }
 
-    /// The candidate columns of one 16×16 tile's sixteen quarts.
     fn region_tile(&self, pos: [i32; 2]) -> Tile {
         std::array::from_fn(|i| {
             let quart = [pos[0] * 4 + (i % 4) as i32, pos[1] * 4 + (i / 4) as i32];
@@ -131,7 +124,6 @@ impl CaveField {
         })
     }
 
-    /// Habitat identity before excavation can claim any additional volume.
     pub(super) fn base_biome_at(&self, [x, y, z]: [i32; 3]) -> u8 {
         self.region_column(x, z)
             .id(self, y)

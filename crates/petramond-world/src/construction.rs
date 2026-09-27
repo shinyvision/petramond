@@ -1,12 +1,3 @@
-//! Construction: what paid survival building makes of a portable description
-//! of a cell — the items it costs, whether the world already holds it, and
-//! the whole-object write that builds it.
-//!
-//! A [`Record`] is the portable half of a cell (its row, shape state and the
-//! data its item carries in). Families own everything shape-specific through
-//! the placement seam: the authored intent of a state, the object a record
-//! anchors, and the support that object needs. Nothing here names a family.
-
 use std::collections::BTreeMap;
 
 use crate::block::{Block, CellPart, Construction, ShapeNeighborhood, ShapeState};
@@ -15,8 +6,6 @@ use crate::mathh::IVec3;
 use crate::world::data::WorldData;
 use crate::world::placement::{ConstructionWrites, PlacementPlan};
 
-/// What one cell should hold: its row, its shape state, and the cell data a
-/// paid item carries into it (the row's `petramond:carry` keys, per part).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Record {
     pub block: Block,
@@ -24,46 +13,33 @@ pub struct Record {
     pub data: BTreeMap<String, Vec<u8>>,
 }
 
-/// What a record asks of construction on its own.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Plan {
-    /// The cell must be empty: clearance, paid in work, never in items.
     Air,
-    /// Part of an object anchored at this cell, which builds it.
     Member(IVec3),
-    /// An object this cell anchors: the items it costs and every write.
     Unit {
         cost: Vec<ItemStack>,
         writes: PlacementPlan,
     },
-    /// Items cannot build this, and why.
     Unsupported(String),
 }
 
-/// A record measured against the world.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
-    /// The world already holds it.
     Satisfied,
-    /// Build it with these writes, paying `missing` (a partly built cell —
-    /// one slab of two — pays only its missing parts).
     Place {
         missing: Vec<ItemStack>,
         writes: PlacementPlan,
     },
-    /// A block occupies a cell the record needs empty or replaceable.
     Clear {
         at: IVec3,
         block: Block,
     },
-    /// A member cell waiting for the object anchored at this cell.
     Pending(IVec3),
     Unsupported(String),
 }
 
 impl Record {
-    /// The cell at `pos` as the world holds it: every carried key the row (or
-    /// each of its parts) declares, and nothing private.
     pub fn at(world: &WorldData, pos: IVec3) -> Self {
         let block = world.physics_block(pos.x, pos.y, pos.z);
         let state = ShapeNeighborhood::shape_state(world, pos);
@@ -79,8 +55,6 @@ impl Record {
         Self { block, state, data }
     }
 
-    /// A record of `block` in `state` keeping only the cell data its item
-    /// carries: private or machine state in `kv` is dropped here, never built.
     pub fn portable(block: Block, state: ShapeState, kv: &BTreeMap<String, Vec<u8>>) -> Self {
         let mut record = Self {
             block,
@@ -106,8 +80,6 @@ impl Record {
         record
     }
 
-    /// The record construction actually builds: a row declaring another
-    /// construction form (a running machine, a grown plant) builds as that.
     pub fn built(&self) -> Self {
         match self.block.construction() {
             Some(Construction::Form(form)) => Self {
@@ -120,10 +92,6 @@ impl Record {
     }
 }
 
-/// The item that pays for one `block`: the row's explicit rule, else the item
-/// linked to the row, else the item linked to a sibling orientation row
-/// (`rotate_y`), else the item that places it as a wall-facing or flipped
-/// variant. Engine-generated creative items never pay.
 pub fn paying_item(block: Block) -> Result<ItemType, String> {
     let payable = |item: ItemType| item != ItemType::Air && !item.creative_only();
     match block.construction() {
@@ -158,8 +126,6 @@ pub fn paying_item(block: Block) -> Result<ItemType, String> {
     })
 }
 
-/// The item whose placement commits `block` as one of its variant rows: a
-/// wall-facing sibling, a flipped run, or a sampled decorative variant.
 fn placed_as_variant(block: Block) -> Option<ItemType> {
     PLACED_BY
         .current()
@@ -168,8 +134,6 @@ fn placed_as_variant(block: Block) -> Option<ItemType> {
         .flatten()
 }
 
-/// Block id → the item whose placement commits it as a variant row, derived
-/// per content registry from its item and block rows.
 pub(crate) static PLACED_BY: crate::content::Slot<Vec<Option<ItemType>>> =
     crate::content::Slot::new(
         crate::content::stage::CONSTRUCTION,
@@ -195,7 +159,6 @@ fn derive_placed_by(_: &crate::content::ContentRegistry) -> Result<Vec<Option<It
     Ok(table)
 }
 
-/// The parts of the cell at `pos` holding `block`, or its one whole part.
 fn parts_or_whole(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> Vec<(CellPart, Block)> {
     let k = block.shape_kind_def();
     k.sim
@@ -203,8 +166,6 @@ fn parts_or_whole(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> Vec<(
         .unwrap_or_else(|| vec![(0, block)])
 }
 
-/// A neighbourhood holding one record at one cell and nothing anywhere else:
-/// what a family answers about a record before it is in any world.
 struct Lone<'a> {
     pos: IVec3,
     record: &'a Record,
@@ -228,7 +189,6 @@ impl ShapeNeighborhood for Lone<'_> {
     }
 }
 
-/// What `record` at `pos` asks of construction.
 pub fn plan(record: &Record, pos: IVec3) -> Plan {
     let record = record.built();
     let block = record.block;
@@ -257,8 +217,6 @@ pub fn plan(record: &Record, pos: IVec3) -> Plan {
     }
 }
 
-/// The items `parts` of `record` cost, each carrying that part's data; equal
-/// stacks merge.
 fn cost_of(record: &Record, parts: &[(CellPart, Block)]) -> Result<Vec<ItemStack>, String> {
     let mut cost: Vec<ItemStack> = Vec::new();
     for &(part, part_block) in parts {
@@ -275,8 +233,6 @@ fn cost_of(record: &Record, parts: &[(CellPart, Block)]) -> Result<Vec<ItemStack
     Ok(cost)
 }
 
-/// The instance data a part's paying item must carry: the record's entries
-/// for that part under the part block's carried keys.
 fn part_variant(record: &Record, part: CellPart, part_block: Block) -> Result<VariantId, String> {
     let mut map = variant::VariantMap::new();
     for &key in part_block.carry() {
@@ -290,8 +246,6 @@ fn part_variant(record: &Record, part: CellPart, part_block: Block) -> Result<Va
     variant::intern(&map).map_err(|e| format!("the carried item data cannot be represented: {e}"))
 }
 
-/// Measure `record` at `pos` against `world`. The caller gates terrain
-/// finality: every cell of the object must be stream-final.
 pub fn status(world: &WorldData, pos: IVec3, record: &Record) -> Status {
     let want = record.built();
     match plan(&want, pos) {
@@ -353,8 +307,6 @@ fn unit_status(
     }
 }
 
-/// A single-cell record of several parts over a cell already holding some
-/// of them (and nothing else): build the rest, keeping what stands.
 fn partial_parts(
     world: &WorldData,
     pos: IVec3,
@@ -394,8 +346,6 @@ fn partial_parts(
         return None;
     }
     let missing: Vec<_> = want_parts.iter().copied().filter(|p| !present(p)).collect();
-    // What stands must be the record with some parts yet to lay: the same
-    // parts lying another way are in the way, not a start.
     let standing: Vec<CellPart> = have_parts.iter().map(|&(part, _)| part).collect();
     let (kept_block, kept_state) = k
         .sim
@@ -418,18 +368,11 @@ fn partial_parts(
     })
 }
 
-/// Whether the cell at `pos` already holds `want`: the same row (or a row
-/// declaring `want`'s row as its construction form — a machine that has since
-/// been lit), the same authored intent once `want` is refined against the
-/// cell's actual neighbours, and — at an object's anchor — the same carried
-/// data.
 fn cell_matches(world: &WorldData, pos: IVec3, want: &Record, with_data: bool) -> bool {
     holds(world, pos, want.block, want.state)
         && (!with_data || Record::at(world, pos).data == want.data)
 }
 
-/// Whether the cell at `pos` of `nb` holds `block` with `state`'s authored
-/// intent, both read against the neighbours `nb` gives them.
 fn holds(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block, state: ShapeState) -> bool {
     let held = nb.block(pos);
     if held != block && held.construction() != Some(Construction::Form(block)) {
@@ -443,15 +386,10 @@ fn holds(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block, state: ShapeState
     intent(held, nb.shape_state(pos)) == intent(block, state)
 }
 
-/// The item a click lays to build `part` of `record`, carrying that part's
-/// data.
 pub fn part_stack(record: &Record, part: CellPart, part_block: Block) -> Option<ItemStack> {
     cost_of(record, &[(part, part_block)]).ok()?.pop()
 }
 
-/// Whether `step` — what one click of `paid` would write — is a click's worth
-/// of the object `want` builds for `record`: the whole object as recorded, or
-/// one more of a cell's parts (a slab of two) with nothing the record lacks.
 pub fn advances(
     world: &WorldData,
     step: &PlacementPlan,
@@ -471,7 +409,6 @@ pub fn advances(
     let laid = after.block(want.anchor);
     let k = laid.shape_kind_def();
     let have_parts = k.sim.parts(&k.params, &after, want.anchor, laid);
-    // The click filled one part, and is paid with that part's item.
     let filled = step.anchor_part();
     let filled_block = match &have_parts {
         Some(parts) => parts.iter().find(|(part, _)| *part == filled).map(|p| p.1),
@@ -488,8 +425,6 @@ pub fn advances(
         .writes
         .iter()
         .all(|w| cell_of(step, w.cell) && holds(&after, w.cell, w.block, w.state));
-    // Short of the whole, some of the record's parts: the cell stands as the
-    // record would with only those laid.
     whole
         || have_parts.is_some_and(|have| {
             let keep: Vec<CellPart> = have.iter().map(|&(part, _)| part).collect();
@@ -500,9 +435,6 @@ pub fn advances(
         })
 }
 
-/// Whether some face of the object `writes` builds rests against a block
-/// outside it — the face a placement clicks against. Replaceable neighbours
-/// (air, plants, fluids) offer none.
 pub fn has_placement_face(world: &WorldData, writes: &PlacementPlan) -> bool {
     const FACES: [IVec3; 6] = [
         IVec3::X,
@@ -521,7 +453,6 @@ pub fn has_placement_face(world: &WorldData, writes: &PlacementPlan) -> bool {
     })
 }
 
-/// The world with a plan's writes laid over it.
 struct Planned<'a> {
     world: &'a WorldData,
     writes: &'a PlacementPlan,

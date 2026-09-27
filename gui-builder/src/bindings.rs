@@ -1,9 +1,3 @@
-//! The per-kind data catalog from `assets/ui/bindings.json`: which `UiState`
-//! keys the game populates for each document kind (bindable), what fields
-//! each list item carries, and which widget ids the game reacts to. Feeds the
-//! inspector's binding pickers, the Screen-data panel, and preview
-//! sample-state seeding. Missing file = features hide gracefully.
-
 use crate::assets::AssetRoots;
 use petramond_ui::{UiMap, UiState, UiValue};
 use serde::Deserialize;
@@ -17,23 +11,18 @@ pub struct Catalog {
 
 #[derive(Debug, Default)]
 pub struct KindInfo {
-    /// key -> (type, item fields, doc). BTreeMap keeps picker order stable.
     pub state: BTreeMap<String, StateKey>,
-    /// widget id -> behavior description.
     pub handles: BTreeMap<String, String>,
     pub notes: Option<String>,
 }
 
 #[derive(Debug)]
 pub struct StateKey {
-    /// `f32` | `i32` | `bool` | `str` | `list` (anything else = open-ended).
     pub ty: String,
-    /// For `list` keys: item field name -> type.
     pub item: BTreeMap<String, String>,
     pub doc: String,
 }
 
-/// Which `Bindings` field a picker is for (determines the key-type filter).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BindField {
     Text,
@@ -42,19 +31,12 @@ pub enum BindField {
     Visible,
     Items,
     Selected,
-    /// Image-name override (`bind.image`): string keys only.
     Image,
-    /// Sprite-sheet frame index (`bind.frame`): numeric keys.
     Frame,
-    /// Item-view (`bind.item`, hook nodes): string keys only.
     Item,
-    /// Bound absolute position (`bind.abs_x`/`abs_y`): numeric keys.
     Abs,
 }
 
-/// Whether a catalog key of `ty` is offerable for `field`: `items` wants
-/// lists, `selected` an i32, enabled/visible bools, `image` a str, `frame` a
-/// number, text/value any scalar.
 pub fn field_matches(field: BindField, ty: &str) -> bool {
     match field {
         BindField::Items => ty == "list",
@@ -128,10 +110,6 @@ impl Catalog {
         })
     }
 
-    /// Load and merge `ui/bindings.json` from every asset layer, base first:
-    /// a pack documents its own kinds, and a later layer's entry for a kind
-    /// replaces an earlier one. `None` = no layer ships one; a broken layer
-    /// is reported and skipped.
     pub fn load(roots: &AssetRoots) -> Option<Catalog> {
         let mut merged: Option<Catalog> = None;
         for path in roots.all("ui/bindings.json") {
@@ -158,7 +136,6 @@ impl Catalog {
 }
 
 impl KindInfo {
-    /// The catalog keys (with docs) offerable for one bind field.
     pub fn keys_for(&self, field: BindField) -> Vec<(&str, &str)> {
         self.state
             .iter()
@@ -167,8 +144,6 @@ impl KindInfo {
             .collect()
     }
 }
-
-// ---- sample seeding ---------------------------------------------------------------
 
 const ORDINALS: [&str; 3] = ["First", "Second", "Third"];
 
@@ -188,9 +163,6 @@ fn seed_scalar(ty: &str, index: usize) -> Option<UiValue> {
     })
 }
 
-/// A plausible preview value for every state key of a kind: str -> "Sample
-/// text", bool -> true, i32 -> 0, f32 -> 0.5, list -> 3 items with all item
-/// fields filled ("First item"/"Second item"/"Third item" for strings).
 pub fn seed_values(info: &KindInfo) -> Vec<(String, UiValue)> {
     let mut out = Vec::new();
     for (name, key) in &info.state {
@@ -207,7 +179,7 @@ pub fn seed_values(info: &KindInfo) -> Vec<(String, UiValue)> {
         } else {
             match seed_scalar(&key.ty, usize::MAX) {
                 Some(v) => v,
-                None => continue, // open-ended type: nothing sensible to seed
+                None => continue,
             }
         };
         out.push((name.clone(), value));
@@ -215,9 +187,6 @@ pub fn seed_values(info: &KindInfo) -> Vec<(String, UiValue)> {
     out
 }
 
-/// Non-destructively fill `state` with seeds for every catalog key the
-/// author hasn't set — opened projects get preview data without dirtying
-/// their file.
 pub fn apply_seeds(state: &mut UiState, info: &KindInfo) {
     for (key, value) in seed_values(info) {
         if state.get(&key).is_none() {
@@ -263,7 +232,6 @@ mod tests {
             c.kind("somemod:wheel").is_none(),
             "mod kinds are open-ended"
         );
-        // The real repo file, when present, must parse too.
         if let Some(real) = Catalog::load(&AssetRoots::new(None, Vec::new())) {
             assert!(real.kind("petramond:world_select").is_some());
         }
@@ -284,18 +252,15 @@ mod tests {
             names(BindField::Visible),
             vec!["has_selection", "no_worlds"]
         );
-        // bind.image takes str keys only.
         assert_eq!(names(BindField::Image), vec!["filter_text"]);
         assert!(
             field_matches(BindField::Image, "str"),
             "item icon fields qualify"
         );
         assert!(!field_matches(BindField::Image, "i32"));
-        // bind.frame takes numeric keys (it truncates/clamps into the sheet).
         assert_eq!(names(BindField::Frame), vec!["world_sel"]);
         assert!(field_matches(BindField::Frame, "f32"));
         assert!(!field_matches(BindField::Frame, "str"));
-        // text/value take any scalar, never the list.
         assert_eq!(
             names(BindField::Text),
             vec!["filter_text", "has_selection", "no_worlds", "world_sel"]
@@ -308,7 +273,7 @@ mod tests {
         let c = Catalog::parse(SAMPLE).unwrap();
         let ws = c.kind("petramond:world_select").unwrap();
         let mut state = UiState::new();
-        state.set("world_sel", UiValue::I32(2)); // author's own value survives
+        state.set("world_sel", UiValue::I32(2));
         apply_seeds(&mut state, ws);
 
         assert_eq!(state.get_i32("world_sel"), Some(2));

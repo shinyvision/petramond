@@ -1,5 +1,3 @@
-//! Running the step the golem is in, and deciding the next.
-
 use crate::host::prelude::*;
 
 use super::tuning::body::{COURSE_SETTLE_TICKS, STANCE_OFF_CENTRE};
@@ -24,8 +22,6 @@ pub(super) fn act_out(
         Phase::Emerging => lifecycle::emerge(projects, job, body),
         Phase::Burrowing => lifecycle::burrow(projects, job, body),
         Phase::Working | Phase::Returning => {
-            // A golem someone is talking to stays where it is, as a held
-            // one does.
             let asked = ctx
                 .asked
                 .iter()
@@ -54,12 +50,9 @@ pub(super) fn act_out(
                 job.crew.step = Step::Plan;
                 return;
             }
-            // Deciding, turning to the work and starting on it are one moment,
-            // not three ticks. (Placements still wait out their aim.)
             for _ in 0..3 {
                 let before = job.crew.step;
                 let step = run(ctx, projects, job, body, before);
-                // Standing about with nothing to show for it: say what it waits on.
                 if matches!(step, Step::Plan)
                     && matches!(before, Step::Plan)
                     && ctx.now > job.crew.pace.progress_at + IDLE_NOTE
@@ -131,9 +124,6 @@ fn run(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body, step:
                 .off_centre()
                 .iter()
                 .all(|d| d.abs() < STANCE_OFF_CENTRE);
-            // Settle to the centre when laying right beside the body, or when
-            // the work is not in sight: a stance is chosen for what its cell's
-            // middle sees.
             let settle = !centred && {
                 let cells = plan::task_cells(job, task);
                 beside || !plan::sees_from_here(job, task, body, &cells)

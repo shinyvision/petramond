@@ -2,7 +2,6 @@ use super::*;
 use crate::host::fake::rows::LEAVES;
 use crate::testing::{Session, ASSET};
 
-/// A wall along x at z = 0 on a floor, with a two-cell object at x = 2.
 fn wall_around(lintel: bool) -> (Design, usize) {
     let mut design = Design::new([0; 32], [0, 0, 0], 0);
     let block = |footprint| Plan::Build {
@@ -39,8 +38,6 @@ fn wall_around(lintel: bool) -> (Design, usize) {
     (design, door)
 }
 
-/// A closed 5x4x5 hut on a floor, with a one-block hedge a cell outside
-/// its east wall and an eave jutting out over the hedge.
 #[test]
 fn a_house_keeps_its_rooms_and_the_space_over_its_hedge_empty() {
     let mut design = Design::new([0; 32], [0, 0, 0], 0);
@@ -86,8 +83,6 @@ fn a_tall_object_framed_by_wall_is_a_way_in() {
     assert!(!design.passage(door), "no lintel: an object on a wall top");
 }
 
-/// A two-layer strip: a pane, a stone and leaves on the ground, a stone
-/// and a torch over the first two, and nothing over the leaves.
 const STRIP: [([i32; 3], &str); 5] = [
     ([0, 0, 0], "petramond:glass_pane"),
     ([1, 0, 0], "petramond:stone"),
@@ -96,7 +91,6 @@ const STRIP: [([i32; 3], &str); 5] = [
     ([1, 1, 0], "petramond:torch"),
 ];
 
-/// The strip stored `per` cells to a section.
 fn strip(per: usize) -> Session {
     let session = Session::flat(8);
     session
@@ -126,8 +120,6 @@ fn a_schematic_compiles_the_sections_each_call_is_given() {
     assert_eq!((design.min, design.max), ([10, 0, 5], [12, 1, 5]));
 }
 
-/// Layer by layer; within a layer clearance, then whole blocks, then what
-/// hangs on them, then what only lives beside them.
 #[test]
 fn units_go_bottom_up_whole_blocks_before_what_hangs_on_them() {
     let design = compiled(0);
@@ -135,12 +127,12 @@ fn units_go_bottom_up_whole_blocks_before_what_hangs_on_them() {
     assert_eq!(
         order,
         vec![
-            [11, 0, 5], // stone
-            [10, 0, 5], // pane
-            [12, 0, 5], // leaves
-            [12, 1, 5], // the empty cell over the leaves
-            [10, 1, 5], // stone
-            [11, 1, 5], // torch
+            [11, 0, 5],
+            [10, 0, 5],
+            [12, 0, 5],
+            [12, 1, 5],
+            [10, 1, 5],
+            [11, 1, 5],
         ]
     );
     let at = |pos| design.units[design.unit_at(pos).expect("a unit there")];

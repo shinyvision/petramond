@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Half-open integer bounds. Selection geometry contains no world data.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SelectionBox {
     pub lo: [i32; 3],
@@ -61,7 +60,6 @@ impl SelectionBox {
         }
     }
 
-    /// Enumerate only when an operation actually needs voxel coordinates.
     pub fn cells(self) -> impl Iterator<Item = [i32; 3]> {
         (self.lo[0]..self.hi[0]).flat_map(move |x| {
             (self.lo[1]..self.hi[1])

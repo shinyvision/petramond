@@ -1,12 +1,3 @@
-//! Trapdoors at the world level: the per-cell state lookup the position-aware
-//! collision/selection reads, plus the open/close toggle.
-//!
-//! A trapdoor is ONE cell holding a [`TrapdoorState`]; placement and breaking
-//! need nothing of their own (the generic single-cell paths already write and
-//! clear the cell state). Like the door it is NOT chunk-meshed — it is drawn as
-//! its animated block model and its collision is read live from the state, so a
-//! toggle needs no remesh.
-
 #[cfg(test)]
 use crate::world::ServerWorld;
 use crate::world::{World, WorldSide};
@@ -14,28 +5,18 @@ use petramond_math::math::IVec3;
 use petramond_world::trapdoor::TrapdoorState;
 
 impl<S: WorldSide> World<S> {
-    /// The trapdoor state at world `pos`, or `None` when no trapdoor is
-    /// recorded there or the cell is unloaded.
     #[inline]
     pub fn trapdoor_state_at(&self, wx: i32, wy: i32, wz: i32) -> Option<TrapdoorState> {
         let (c, lx, ly, lz) = self.data.chunk_at_world(wx, wy, wz)?;
         c.trapdoor_state(lx, ly, lz)
     }
 
-    /// Toggle a trapdoor open/closed. Collision follows the logical state (read
-    /// live), so the player falls through the instant it opens; the visual
-    /// swing is eased separately by the renderer. No remesh — a trapdoor is not
-    /// chunk-meshed. Returns the NEW open state, or `None` if `pos` isn't one.
     pub fn toggle_trapdoor(&mut self, pos: IVec3) -> Option<bool> {
         let mut state = self.trapdoor_state_at(pos.x, pos.y, pos.z)?;
         state.open = !state.open;
         if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.set_trapdoor_state(lx, ly, lz, state);
         }
-        // A toggle rewrites the cell state with NO block-id write, so it never
-        // passes the announce choke point — log its delta explicitly (the new
-        // open bit reaches replicas with it) and invalidate the nav caches the
-        // same way: an opened hatch is a way down NOW.
         self.record_block_delta(pos.x, pos.y, pos.z);
         self.push_nav_change(pos);
         Some(state.open)
@@ -62,17 +43,12 @@ mod tests {
             open: false,
             top,
         };
-        // The GENERIC commit every family's placement lands through — not a
-        // bespoke writer — so this covers the path a real place click takes.
         assert!(w.commit_placement(&PlacementPlan::single(pos, TRAPDOOR, state.to_cell()), true));
         (w, pos)
     }
 
     #[test]
     fn a_placed_trapdoor_reaches_the_render_gather() {
-        // The gather walks the block-entity section index, so a placed panel
-        // that never enters that index is invisible however correct its state
-        // is — the failure mode a shape drawn outside the chunk mesh has.
         for top in [false, true] {
             let (w, pos) = world_with_a_trapdoor(top);
             let mut rows = Vec::new();
@@ -84,9 +60,6 @@ mod tests {
         }
     }
 
-    /// The state a click on `hit`'s `normal` face, landing `spot_y` up that
-    /// face, plans — through the shared placement ladder, so this is the rule
-    /// the server write and the client ghost both run.
     fn clicked(normal: IVec3, spot_y: f32, player_facing: Facing) -> TrapdoorState {
         let mut w = ServerWorld::new(1, 4);
         w.clear_world();
@@ -111,9 +84,6 @@ mod tests {
 
     #[test]
     fn a_wall_click_hinges_on_that_wall_in_the_half_it_landed_in() {
-        // Clicking a block's east face builds to its east, so the block is
-        // WEST of the panel and the panel hinges west — never on wherever the
-        // placer happens to be looking from, and never on a rotation key.
         for (normal, hinge) in [
             (IVec3::X, Facing::West),
             (IVec3::NEG_X, Facing::East),
@@ -130,8 +100,6 @@ mod tests {
 
     #[test]
     fn a_horizontal_click_has_no_wall_so_the_face_picks_the_half() {
-        // Landing on a block's top lays the panel on the floor above it;
-        // landing under one hangs it from that cell's ceiling.
         assert!(!clicked(IVec3::Y, 0.9, Facing::North).top);
         assert!(clicked(IVec3::NEG_Y, 0.1, Facing::North).top);
     }

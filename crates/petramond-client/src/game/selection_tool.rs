@@ -1,6 +1,3 @@
-//! The region selection tool: two-corner boxes, single cells, and face
-//! extrusion over a geometry-only [`Selection`].
-
 mod extrude;
 
 use super::world_tool::{ToolContext, ToolOverlay, WorldTool};
@@ -9,8 +6,6 @@ use petramond::player::RayFilter;
 use petramond::schematic::{Selection, PLACEMENT_REACH};
 use petramond_world::world::raycast;
 
-/// The [`world_tool`](petramond_world::item::ItemType::world_tool) name of
-/// the tool that selects and captures regions.
 pub const SELECTION_TOOL: &str = "schematic";
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +24,6 @@ impl SelectionMode {
 pub struct SelectionTool {
     pub selection: Selection,
     mode: SelectionMode,
-    /// The first corner of a box being defined, and whether it removes.
     corner: Option<([i32; 3], bool)>,
     target: Option<[i32; 3]>,
     face_edit: extrude::FaceEdit,
@@ -54,7 +48,6 @@ impl SelectionTool {
         self.corner = Some((corner, false));
     }
 
-    /// Empty the selection as one undoable edit.
     pub fn clear(&mut self) {
         self.cancel();
         self.selection.clear();
@@ -96,7 +89,6 @@ impl WorldTool for SelectionTool {
             ctx.world.data(),
         )
         .map(|(h, _)| h.block.to_array());
-        // Removal picks the selection's own geometry, so selected air erases.
         let selected = self.selection.raycast(eye, forward, PLACEMENT_REACH);
         let removing = self.corner.is_some_and(|(_, remove)| remove);
         self.target = if removing { selected.or(hit) } else { hit };

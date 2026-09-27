@@ -7,7 +7,7 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
     assert_eq!(pl.health(), MAX_HEALTH, "starts at full health");
     assert!(pl.apply_damage(3, Immunity::PLAYER));
     assert_eq!(pl.health(), MAX_HEALTH - 3);
-    assert!(!pl.apply_damage(0, Immunity::PLAYER)); // non-positive is a no-op
+    assert!(!pl.apply_damage(0, Immunity::PLAYER));
     assert_eq!(pl.health(), MAX_HEALTH - 3);
     assert!(
         !pl.apply_damage(1000, Immunity::PLAYER),
@@ -16,17 +16,14 @@ fn health_damage_and_restore_clamp_to_the_valid_range() {
     for _ in 0..petramond_world::damage::PLAYER_DAMAGE_IFRAME_TICKS {
         pl.tick_damage_immunity();
     }
-    assert!(pl.apply_damage(1000, Immunity::PLAYER)); // never below zero
+    assert!(pl.apply_damage(1000, Immunity::PLAYER));
     assert_eq!(pl.health(), 0);
-    pl.set_health(1000); // restore clamps to the max
+    pl.set_health(1000);
     assert_eq!(pl.health(), MAX_HEALTH);
     pl.set_health(-5);
     assert_eq!(pl.health(), 0);
 }
 
-/// Damage-over-time is EXEMPT from the immunity window in both directions: a
-/// burn tick lands while an ordinary hit's window is open, and it opens no
-/// window of its own — so it can never shield the victim from a real hit.
 #[test]
 fn damage_over_time_neither_checks_nor_grants_the_immunity_window() {
     use petramond_world::damage::Immunity;
@@ -61,15 +58,10 @@ fn damage_over_time_neither_checks_nor_grants_the_immunity_window() {
 #[test]
 fn status_effects_fire_on_interval_boundaries_and_expire() {
     use petramond_world::effect::{Effect, EffectBehavior};
-    // Derive the cadence from the loaded row — the contract under test is the
-    // boundary/expiry behavior, never the freely-editable interval/amount.
     let EffectBehavior::Regen { interval, .. } = Effect::Regeneration.def().behavior else {
         panic!("regeneration is an interval-heal behavior");
     };
 
-    // The player owns WHEN a behavior fires (Game applies the consequences,
-    // so damage can route through its funnel): boundaries land every
-    // `interval` ticks, including one at expiry.
     let mut pl = p(WorldPos::new(0.0, 64.0, 0.0));
     pl.apply_effect(Effect::Regeneration, interval * 2);
     let mut fired = 0;
@@ -83,15 +75,12 @@ fn status_effects_fire_on_interval_boundaries_and_expire() {
     assert_eq!(fired, 2, "the expiry tick is itself a boundary");
     assert!(pl.effects().is_empty(), "the effect expired");
 
-    // Re-applying overwrites the duration (in place); zero removes.
     pl.apply_effect(Effect::Regeneration, 10);
     pl.apply_effect(Effect::Regeneration, interval * 5);
     assert_eq!(pl.effects()[0].remaining, interval * 5);
     pl.apply_effect(Effect::Regeneration, 0);
     assert!(pl.effects().is_empty(), "zero ticks removes the effect");
 
-    // The heal primitive the regen consequence lands through clamps at full
-    // and never resurrects — respawn owns that transition.
     pl.set_health(MAX_HEALTH);
     pl.heal(5);
     assert_eq!(pl.health(), MAX_HEALTH, "healing clamps at full");

@@ -1,8 +1,3 @@
-//! The region selection as it is drawn: the union's green outline, the amber
-//! pending box, the hovered or dragged face, and the brightness lift on the
-//! selected world surfaces. Everything uploads on change only; none of it
-//! scales with the selected volume.
-
 use super::{dynamic_draw, Renderer};
 use glam::{IVec3, Mat4};
 use petramond::schematic::{Selection, SelectionFace};
@@ -158,8 +153,6 @@ impl Renderer {
             .unwrap_or(&self.binds.uniform)
     }
 
-    /// Show `selection` with its pending two-corner box and active face;
-    /// `None` hides the whole overlay.
     pub fn set_selection_overlay(
         &mut self,
         selection: Option<&Selection>,

@@ -1,7 +1,3 @@
-//! Designs crossing the wire for operator edits: a paste names its design by
-//! digest and holds its place in the queue while the archive arrives, and a
-//! selection capture goes back to the client as a blob.
-
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -11,16 +7,12 @@ use crate::schematic::{archive, CreativeReply, Schematic, SelectionBox};
 use crate::server::game::ServerGame;
 use crate::server::schematics::Wanted;
 
-/// Where a queued paste's design stands.
 pub(in crate::server) enum Design {
-    /// The world holds it.
     Held(Digest),
-    /// The client is uploading it.
     Arriving(Digest),
     Decoding(JoinHandle<Result<Schematic, String>>),
 }
 
-/// A design ready to paste.
 pub(super) enum Decoded {
     Asset(Arc<Asset>),
     Uploaded(Schematic),
@@ -36,8 +28,6 @@ impl Decoded {
 }
 
 impl ServerGame {
-    /// Queue a paste of `digest`. It takes its queue slot now, so an edit
-    /// requested after it cannot overtake a design still arriving.
     pub(in crate::server) fn request_placement(
         &mut self,
         s: usize,
@@ -73,8 +63,6 @@ impl ServerGame {
             });
     }
 
-    /// An uploaded design's bytes arrived whole: decode them for the paste
-    /// waiting on them.
     pub(in crate::server) fn placement_design_arrived(
         &mut self,
         s: usize,
@@ -91,8 +79,6 @@ impl ServerGame {
         }
     }
 
-    /// The design at the head of the queue: `None` while it is still on its
-    /// way.
     pub(super) fn poll_design(
         &mut self,
         s: usize,
@@ -143,8 +129,6 @@ impl ServerGame {
         Ok(())
     }
 
-    /// Send a finished capture to the client. Returns whether the queue may
-    /// advance: a capture still running holds the requests behind it.
     pub(super) fn poll_capture(&mut self, s: usize) -> bool {
         let session = &mut self.sessions[s];
         let Some(job) = session.sim.creative.capture.as_ref() else {

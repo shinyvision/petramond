@@ -1,6 +1,3 @@
-//! Planning against the fake world: the stages one at a time where they
-//! decide something alone, and whole plans for the golem's usual moments.
-
 use super::sealing::{as_walls, swings_open};
 use super::verdict::{settle_verdict, viability, Viable};
 use super::*;
@@ -11,10 +8,8 @@ use crate::testing::{short_of_stone, Session, CHEST_AT, HOME};
 use crate::worker::tests::{at_work, unit, working};
 use crate::worker::tuning::waits::{FACELESS_SPACING, SEALED_WAIT};
 
-/// In front of the middle of the row, in reach of all of it.
 const AT: [i32; 3] = [1, 0, -2];
 
-/// One plan for the golem as it stands now.
 fn plan_now(session: &mut Session, id: ProjectId, golem: u64) -> Step {
     let body = session.body(golem);
     at_work(session, id, |ctx, projects, job| {
@@ -26,7 +21,6 @@ fn phase(session: &mut Session, id: ProjectId) -> Phase {
     session.builder.projects.get(id).unwrap().phase()
 }
 
-/// The row with its two ends built, and a golem in front of it.
 fn middle_left(at: [i32; 3]) -> (Session, ProjectId, u64) {
     let (mut session, id) = Session::row();
     session.world.set([0, 0, 0], STONE);
@@ -113,7 +107,6 @@ fn work_in_sight_is_done_from_where_the_golem_stands() {
     );
 }
 
-/// The nearer block would stand between the golem and the one behind it.
 #[test]
 fn the_block_behind_goes_in_before_the_one_in_front_of_it() {
     let (mut session, id, golem) = working(AT);
@@ -218,7 +211,6 @@ fn with_everything_built_the_golem_winds_down_and_heads_home() {
         }
     );
 
-    // What it carries goes back in the chests before it goes.
     session
         .world
         .give(ContainerAddress::Mob(golem), "petramond:dirt", 5);

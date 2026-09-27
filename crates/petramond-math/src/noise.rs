@@ -1,5 +1,3 @@
-//! Fixed-permutation simplex fields for reproducible spatial recipes.
-
 mod cellular;
 pub use cellular::{cellular2, Cell2};
 
@@ -50,12 +48,10 @@ fn contribution(p: [f64; 3], gradient: i32, radius: f64) -> f64 {
     square * square * (g[0] * p[0] + g[1] * p[1] + g[2] * p[2])
 }
 
-/// Two-dimensional simplex noise with the standard fixed permutation.
 pub fn simplex2(x: f64, z: f64) -> f64 {
     simplex2_permutation(&PERM, x, z)
 }
 
-/// Two-dimensional simplex noise with a caller-supplied permutation.
 pub fn simplex2_permutation(permutation: &[u8; 256], x: f64, z: f64) -> f64 {
     let perm = |i: i32| i32::from(permutation[(i & 255) as usize]);
     let skew = (x + z) * (0.5 * (3.0_f64.sqrt() - 1.0));
@@ -77,7 +73,6 @@ pub fn simplex2_permutation(permutation: &[u8; 256], x: f64, z: f64) -> f64 {
     70.0 * sum
 }
 
-/// Three-dimensional simplex noise with the standard fixed permutation.
 pub fn simplex3(p: [f64; 3]) -> f64 {
     let skew = (p[0] + p[1] + p[2]) / 3.0;
     let cell = p.map(|v| (v + skew).floor() as i32);
@@ -104,12 +99,10 @@ pub fn simplex3(p: [f64; 3]) -> f64 {
     32.0 * sum
 }
 
-/// Spatial sampling in block coordinates, offset by one period.
 pub fn scaled_simplex2(x: f64, z: f64, scale: f64) -> f64 {
     simplex2((x + scale) / scale, (z + scale) / scale)
 }
 
-/// Spatial sampling in block coordinates, offset by one period.
 pub fn scaled_simplex3(p: [f64; 3], scale: f64) -> f64 {
     simplex3(p.map(|v| (v + scale) / scale))
 }

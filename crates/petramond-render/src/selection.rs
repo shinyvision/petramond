@@ -11,7 +11,6 @@ impl OutlineVertices {
     }
 }
 
-/// The line-segment endpoints for a selection outline, relative to `render_origin`.
 pub(super) fn outline_vertices(shape: SelectionShape, render_origin: IVec3) -> OutlineVertices {
     match shape {
         SelectionShape::Box { origin, min, max } => {
@@ -35,10 +34,6 @@ pub(super) fn outline_vertices(shape: SelectionShape, render_origin: IVec3) -> O
     }
 }
 
-/// The 24 line-segment endpoints (12 edges) of a wireframe box. Inflated outward
-/// by `INFLATE` so visible front edges sit a hair nearer the camera than the
-/// block surface and pass the LessEqual depth test (no z-fighting); back edges
-/// remain occluded by the block itself.
 fn box_outline_vertices(min: Vec3, max: Vec3) -> OutlineVertices {
     let mut out = OutlineVertices {
         vertices: Vec::new(),
@@ -281,18 +276,10 @@ fn push_box_edges(out: &mut OutlineVertices, min: Vec3, max: Vec3) {
     }
 }
 
-/// The 12 edges of a posed box, `transform`-mapped from its model-local
-/// `[min, max]` and offset by the cell corner `base`. Mirrors
-/// [`box_outline_vertices`]'s edge layout but over a (possibly tilted) box, so a
-/// floor torch outlines a straight pole and a wall torch a leaning one — the
-/// same transform the mesher draws it with.
 fn posed_outline_vertices(base: Vec3, transform: Mat4, min: Vec3, max: Vec3) -> OutlineVertices {
-    // Inflate in the box's LOCAL frame so the wireframe sits a hair outside it
-    // on every face after the pose (same purpose as box `INFLATE`).
     const INFLATE: f32 = 0.003;
     let lo = (min - Vec3::splat(INFLATE)).to_array();
     let hi = (max + Vec3::splat(INFLATE)).to_array();
-    // Corner for (x_hi?, y_hi?, z_hi?), transformed then cell-offset.
     let c = |xh: bool, yh: bool, zh: bool| {
         let local = Vec3::new(
             if xh { hi[0] } else { lo[0] },

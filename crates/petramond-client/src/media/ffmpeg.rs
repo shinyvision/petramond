@@ -1,16 +1,9 @@
-//! Finding the encoder, and asking it what it can write.
-//!
-//! ffmpeg is the machine's, not the game's: it is looked up (never assumed at
-//! a path), and its own listings say which containers and codecs this
-//! machine can write.
-
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use mod_api::ClientMediaCapabilities;
 
-/// `PETRAMOND_FFMPEG` when set, else `ffmpeg` on `PATH`.
 pub fn find() -> Option<PathBuf> {
     if let Some(explicit) = std::env::var_os("PETRAMOND_FFMPEG") {
         let path = PathBuf::from(explicit);
@@ -19,7 +12,6 @@ pub fn find() -> Option<PathBuf> {
     find_in(&std::env::var_os("PATH")?)
 }
 
-/// The first `ffmpeg` executable in a `PATH`-style list.
 pub fn find_in(path_list: &OsStr) -> Option<PathBuf> {
     let names: &[&str] = if cfg!(windows) {
         &["ffmpeg.exe"]
@@ -46,8 +38,6 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// What `ffmpeg` can write: its version line and its muxer and encoder
-/// lists. `None` (or an encoder that cannot be run) = nothing at all.
 pub fn capabilities(ffmpeg: Option<&Path>) -> ClientMediaCapabilities {
     let asked = ffmpeg.and_then(|path| {
         let version = run(path, &["-version"])?;
@@ -99,8 +89,6 @@ fn run(ffmpeg: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// The `(flags, name)` rows of an `ffmpeg -muxers` / `-encoders` listing:
-/// every row after the header's `--` rule.
 pub(super) fn listed(text: &str) -> impl Iterator<Item = (String, String)> + '_ {
     text.lines()
         .skip_while(|line| !line.trim_start().starts_with("--"))

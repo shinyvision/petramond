@@ -1,30 +1,3 @@
-//! Wander: the idle-roaming behavior.
-//!
-//! Each game tick, while the mob has no active path, there's a small chance it picks
-//! a new random destination — a standable navigation foothold within a radius — and
-//! hands it to the navigator. While the navigator is still walking the mob there,
-//! wander simply keeps requesting that same destination (so the brain doesn't repath
-//! every tick). When the mob arrives (or the navigator gives up), wander goes quiet
-//! until its next random roll. Fluid-averse mobs that are already in fluid skip the
-//! random roll and immediately look for a dry exit, falling back to fluid-surface
-//! wandering if no dry destination is sampled.
-//!
-//! Destinations are filtered by the species' [`Habitat`]: avoided biomes are never
-//! targeted (bar a bounded escape hatch so a hemmed-in mob still moves), and among
-//! the rest preferred biomes win out — so, e.g., an owl hugs forest and drifts back
-//! toward it after straying.
-//!
-//! Every pick must be REACHABLE (2026-07-20): a free mob's sampled spot is
-//! verified with a bounded pathfinding probe and re-rolled when the route
-//! doesn't actually arrive — up to [`REACH_ATTEMPTS`] failures, after which
-//! the pick is cancelled. A CONFINED mob (see `mob::confined`) skips sampling
-//! entirely and draws from its cached region of reachable cells; a region
-//! smaller than 2×2 never wanders. Both rules exist for the same reason: the
-//! pathfinder answers an unreachable goal with a best-effort partial route,
-//! which walks the mob to the nearest wall cell and parks it there — penned
-//! sheep spent their lives pressed against the fence chasing pasture they
-//! could never reach.
-
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::biome::Biome;
@@ -35,67 +8,30 @@ use super::super::confined::ConfinedRegion;
 use super::super::path::{body_or_floor_touches, is_navigation_foothold_with, PathParams};
 use super::super::{Habitat, WanderCohesion, WanderTuning};
 
-/// How many random offsets to try when picking a destination before giving up for
-/// this tick (keeps the search cheap; it only runs on the occasional roll).
 const PICK_ATTEMPTS: u32 = 24;
 
-/// Reachability probes allowed per pick: a sampled destination the pathfinder
-/// cannot actually reach (beyond a fence, over a wall) re-rolls; after this
-/// many failed probes the pick is cancelled — the mob keeps whatever reachable
-/// fallback it already saw, or stays put until the next wander roll. Without
-/// this gate an unreachable pick walks the mob to the nearest wall cell and
-/// parks it there (the sheep-hugging-the-fence bug).
 const REACH_ATTEMPTS: u32 = 5;
 
-/// A confined region smaller than 2×2 (fewer reachable cells than this) never
-/// wanders: there is nowhere meaningful to go, and endlessly re-pathing inside
-/// a one-block box is just jitter.
 const MIN_REGION_WANDER_CELLS: usize = 4;
 
-/// How many consecutive probe-exhausted picks shrink the wander horizon (each
-/// step halves the radius, floored at [`MIN_BACKOFF_RADIUS`]). A pick that
-/// cancels on unreachable probes is EVIDENCE the far part of the disc is
-/// walled off — a mob near the wall of an enclosure too large to read as
-/// confined, a cliff base, a shore — so instead of going quiet (the lethargy
-/// failure mode of a flat retry cap), the next roll looks CLOSER, where
-/// samples are likelier reachable: the free-mob analogue of a confined mob's
-/// region-picking. Any successful pick resets the horizon.
 const MAX_BACKOFF_STEPS: u8 = 2;
 const MIN_BACKOFF_RADIUS: i32 = 3;
 
-/// The wander radius after `steps` consecutive exhausted picks.
 fn backoff_radius(radius: i32, steps: u8) -> i32 {
     (radius >> steps.min(MAX_BACKOFF_STEPS) as i32).max(MIN_BACKOFF_RADIUS.min(radius))
 }
 
-/// After this many avoided-biome candidates have been passed over in one pick, the
-/// avoid rule lifts for the rest of that pick — so a mob boxed in by avoided terrain
-/// isn't frozen, it just settles for the best it can reach.
 const AVOID_ESCAPE: u32 = 5;
 
-/// Same idea for fluid (for a fluid-averse species): re-roll a fluid destination this
-/// many times, then accept a wet one rather than refuse to move. Crossing fluid on
-/// the way to a dry destination is unaffected — that's the pathfinder's call.
 const FLUID_ESCAPE: u32 = 3;
 
-/// Same idea for avoided GROUND (`WanderTuning::avoid_ground` — the
-/// cave-mouth rule: surface animals steering off stone/ore/marble floors):
-/// re-roll a destination whose floor is avoided this many times, then accept
-/// one rather than refuse to move — a mob standing amid avoided ground (it
-/// fell into a cave) must still wander, including back out. Crossing such
-/// ground en route is unaffected, like fluid.
 const GROUND_ESCAPE: u32 = 5;
 
 pub struct WanderAi {
     tuning: WanderTuning,
-    /// The species' biome affinity, consulted when choosing a destination.
     habitat: &'static Habitat,
-    /// Whether to steer destinations away from fluid (with the bounded re-roll above).
     avoid_fluids: bool,
-    /// The destination currently being walked to (if any).
     current: Option<IVec3>,
-    /// Consecutive picks that exhausted their reachability probes — drives
-    /// the horizon back-off (see [`backoff_radius`]). Reset by any success.
     exhausted_picks: u8,
 }
 
@@ -113,12 +49,9 @@ impl WanderAi {
 
 impl AiBehavior for WanderAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
-        // Still walking to the current destination: keep requesting it (no repath).
         let goal = if self.current.is_some() && !ctx.nav_idle {
             self.current
         } else {
-            // Idle (arrived / gave up / never had one): drop the old target, and on
-            // the occasional roll pick a fresh standable destination.
             self.current = None;
             let escape_fluid = self.avoid_fluids && ctx.in_fluid.is_some();
             if escape_fluid || ctx.rng.next_f32() < self.tuning.chance_per_tick {
@@ -141,28 +74,17 @@ impl AiBehavior for WanderAi {
     }
 }
 
-/// The outcome of one destination pick: the goal (if any), and whether the
-/// pick died by exhausting its reachability probes — the hemmed-in signal
-/// that shrinks the next pick's horizon.
 struct Pick {
     goal: Option<IVec3>,
     exhausted: bool,
 }
 
-/// Pick a random standable destination within `radius` of the mob, honoring the
-/// `habitat` (see [`Picker`]), or `None` if nothing suitable turned up in a few
-/// tries. Samples a horizontal offset (inside the radius), classifies that column's
-/// biome, and — for columns that clear the avoid filter — finds the foothold in the
-/// column nearest the mob's level.
 fn pick_destination(
     ctx: &mut AiCtx,
     tuning: WanderTuning,
     habitat: &Habitat,
     avoid_fluids: bool,
 ) -> Pick {
-    // A confined mob's world IS its region: pick from the cells it can
-    // actually reach instead of sampling (and pathing toward) open ground
-    // beyond the walls. Region picks never probe, so they never exhaust.
     if let Some(region) = ctx.confined_region {
         return Pick {
             goal: pick_region_destination(ctx, tuning, habitat, avoid_fluids, region),
@@ -193,14 +115,11 @@ fn pick_destination(
             continue;
         }
         let (x, z) = (ctx.cell.x + dx, ctx.cell.z + dz);
-        // Unloaded columns can't be judged (and have no real blocks to stand on).
         let biome = match ctx.world.data().column_biome(x, z) {
             Some(id) => Biome::from_id(id),
             None => continue,
         };
         let fit = classify_biome(biome, habitat);
-        // The avoid rule is about the *biome* of the spot, so reject before the
-        // (more expensive) foothold scan — and count it toward the escape hatch.
         if picker.reject_avoided(fit) {
             continue;
         }
@@ -217,21 +136,13 @@ fn pick_destination(
             continue;
         };
         let dest = IVec3::new(x, y, z);
-        // A body already standing there is not a destination: the pathfinder's
-        // soft entity costs bend the ROUTE around a crowd, but only this veto
-        // keeps the mob from picking a GOAL inside it.
         if body_occupied(ctx, dest) {
             continue;
         }
         let wet = body_or_floor_touches(dest, path_params, &fluid);
-        // For a fluid-averse species (not currently escaping fluid), re-roll a
-        // destination that sits in fluid — up to the escape hatch, after which
-        // a wet spot is accepted rather than refusing.
         if avoid_fluids && !escape_fluid && picker.reject_fluid(wet) {
             continue;
         }
-        // Avoided ground (the cave-mouth rule): re-roll a destination whose
-        // floor the species steers off — same escape-hatch semantics.
         if picker.reject_ground(floor_avoided(ctx, tuning.avoid_ground, dest)) {
             continue;
         }
@@ -240,12 +151,6 @@ fn pick_destination(
                 continue;
             }
         }
-        // The expensive gate comes LAST: the spot must be genuinely reachable.
-        // Fences and walls read solid to the pathfinder, and it answers an
-        // unreachable goal with a best-effort partial route — which would walk
-        // the mob to the nearest wall cell and park it there. A bounded number
-        // of failed probes cancels the pick: the mob is likely hemmed in, and
-        // more probes would just be a slow way to stand still.
         match super::super::nav::destination_reachable(
             ctx.world,
             ctx.cell,
@@ -254,10 +159,6 @@ fn pick_destination(
             ctx.head_height,
             ctx.reach,
         ) {
-            // The tick's shared probe budget is spent: this pick is DEFERRED,
-            // not cancelled — the roll comes round again next tick, and
-            // guessing "unreachable" here would spend the horizon backoff on
-            // a spot nobody probed.
             None => break,
             Some(false) => {
                 unreachable_seen += 1;
@@ -279,10 +180,6 @@ fn pick_destination(
             };
         }
     }
-    // No preferred foothold turned up: fall back to the first allowed one we saw (a
-    // neutral biome, or — once an escape hatch tripped — an avoided / wet one). If
-    // the mob is actively escaping fluid and sampled no dry target, use the first
-    // wet surface so it still swims instead of idling in place.
     let goal = picker.into_fallback().or(wet_fallback);
     Pick {
         exhausted: goal.is_none() && unreachable_seen >= REACH_ATTEMPTS,
@@ -290,13 +187,6 @@ fn pick_destination(
     }
 }
 
-/// Pick a wander destination for a CONFINED mob: sample straight from the
-/// region's reachable cells — never beyond the walls, and no pathfinding
-/// probes needed (membership IS reachability). The species' biome and fluid
-/// preferences still apply through the shared [`Picker`]; herd cohesion does
-/// not (the pen is the herd's whole world, and chasing a companion beyond the
-/// fence would just re-create the fence-hugging this branch removes). A
-/// region smaller than 2×2 never wanders at all.
 fn pick_region_destination(
     ctx: &mut AiCtx,
     tuning: WanderTuning,
@@ -352,8 +242,6 @@ fn pick_region_destination(
     picker.into_fallback().or(wet_fallback)
 }
 
-/// Whether the FLOOR under foothold `dest` — the block the feet would rest
-/// on — is one the species steers off (`WanderTuning::avoid_ground`).
 fn floor_avoided(ctx: &AiCtx, avoid: &[Block], dest: IVec3) -> bool {
     !avoid.is_empty()
         && avoid.contains(&Block::from_id(ctx.world.data().chunk_block(
@@ -363,9 +251,6 @@ fn floor_avoided(ctx: &AiCtx, avoid: &[Block], dest: IVec3) -> bool {
         )))
 }
 
-/// The navigation foothold Y in column `(x, z)` closest to `y0`, scanning outward
-/// up to `radius` cells either way, or `None` if the column has no foothold in
-/// range. Fluid surface cells count here, matching the pathfinder.
 #[allow(clippy::too_many_arguments)]
 fn nearest_navigation_foothold_y(
     x: i32,
@@ -396,9 +281,6 @@ fn companion_within_cell(ctx: &AiCtx, rule: WanderCohesion, cell: IVec3, radius:
     )
 }
 
-/// Whether another active entity's body already covers the arrival footprint
-/// at `dest` — wandering there would just press into them. Read from the tick
-/// snapshot (self excluded): a best-effort veto, not a reservation.
 fn body_occupied(ctx: &AiCtx, dest: IVec3) -> bool {
     let center = WorldPos::block_min(dest) + Vec3::new(0.5, 0.0, 0.5);
     let hit = |pos: WorldPos, hw: f32, height: f32| {
@@ -452,7 +334,6 @@ fn companion_within(ctx: &AiCtx, rule: WanderCohesion, pos: WorldPos, radius: i3
     })
 }
 
-/// How a candidate column's biome sits with the species' [`Habitat`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum BiomeFit {
     Preferred,
@@ -460,8 +341,6 @@ enum BiomeFit {
     Avoided,
 }
 
-/// Classify `biome` against `habitat`. Preference wins over avoidance if a biome
-/// somehow appears in both lists (they're meant to be disjoint).
 fn classify_biome(biome: Biome, habitat: &Habitat) -> BiomeFit {
     if habitat.prefer.contains(&biome) {
         BiomeFit::Preferred
@@ -472,15 +351,11 @@ fn classify_biome(biome: Biome, habitat: &Habitat) -> BiomeFit {
     }
 }
 
-/// Turns the stream of footholds wander samples into one chosen destination, encoding
-/// the destination policy: a preferred-biome foothold is taken at once; the first
-/// allowed-but-unpreferred one is held as a fallback; avoided-biome and (for a
-/// fluid-averse mob) in-fluid spots are skipped until their respective escape hatches
-/// have been passed over enough times, after which the rule lifts (so a mob boxed in
-/// by avoided terrain or fluid still gets to move).
+/// Take preferred biome right away. Keep the first allowed-but-unpreferred spot as a fallback.
+/// Skip avoided biomes and, for fluid-averse mobs, fluid spots until they've been passed over
+/// enough times; then the rule lifts, or a boxed-in mob would never move.
 ///
-/// Pure (no world / RNG), so the policy is unit-tested directly; the caller feeds it
-/// the candidates it samples from the world.
+/// No world/RNG, so unit-tested directly. Caller samples the world and hands candidates in.
 struct Picker {
     avoid_escape: u32,
     avoided_seen: u32,
@@ -504,9 +379,6 @@ impl Picker {
         }
     }
 
-    /// Should this candidate be skipped for sitting in an avoided biome? Counts the
-    /// skip toward the escape hatch; once `avoid_escape` are counted the rule lifts
-    /// and avoided biomes stop being rejected here (they become fallback-eligible).
     fn reject_avoided(&mut self, fit: BiomeFit) -> bool {
         if fit == BiomeFit::Avoided && self.avoided_seen < self.avoid_escape {
             self.avoided_seen += 1;
@@ -516,9 +388,6 @@ impl Picker {
         }
     }
 
-    /// Should this candidate be skipped for being in fluid? Counts the skip toward the
-    /// fluid escape hatch; once `fluid_escape` are counted the rule lifts and wet spots
-    /// become fallback-eligible. Only consulted for fluid-averse species.
     fn reject_fluid(&mut self, in_fluid: bool) -> bool {
         if in_fluid && self.fluid_seen < self.fluid_escape {
             self.fluid_seen += 1;
@@ -528,10 +397,6 @@ impl Picker {
         }
     }
 
-    /// Should this candidate be skipped for standing on avoided ground? Counts
-    /// the skip toward the ground escape hatch; once `ground_escape` are
-    /// counted the rule lifts and such floors become fallback-eligible — a mob
-    /// surrounded by avoided ground still moves.
     fn reject_ground(&mut self, avoided: bool) -> bool {
         if avoided && self.ground_seen < self.ground_escape {
             self.ground_seen += 1;
@@ -541,9 +406,6 @@ impl Picker {
         }
     }
 
-    /// Offer a standable candidate that already cleared the avoid filter. A preferred
-    /// biome is returned to take at once; anything else is kept as the fallback (first
-    /// one wins) and `None` keeps the search going for a preferred spot.
     fn offer(&mut self, dest: IVec3, fit: BiomeFit) -> Option<IVec3> {
         if fit == BiomeFit::Preferred {
             return Some(dest);
@@ -621,7 +483,6 @@ mod tests {
         assert_eq!(classify_biome(Biome::FOREST, &h), BiomeFit::Preferred);
         assert_eq!(classify_biome(Biome::PLAINS, &h), BiomeFit::Avoided);
         assert_eq!(classify_biome(Biome::DESERT, &h), BiomeFit::Avoided);
-        // A biome on neither list is fair game, just not favored.
         assert_eq!(classify_biome(Biome::TAIGA, &h), BiomeFit::Neutral);
     }
 
@@ -639,9 +500,7 @@ mod tests {
         let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         let neutral = IVec3::new(1, 0, 0);
         let preferred = IVec3::new(2, 0, 0);
-        // A neutral spot is only remembered, not taken...
         assert_eq!(p.offer(neutral, BiomeFit::Neutral), None);
-        // ...but a preferred one is taken on the spot, leaving the neutral as fallback.
         assert_eq!(p.offer(preferred, BiomeFit::Preferred), Some(preferred));
         assert_eq!(p.into_fallback(), Some(neutral));
     }
@@ -662,13 +521,10 @@ mod tests {
     #[test]
     fn picker_rejects_avoided_until_the_escape_hatch_lifts_it() {
         let mut p = Picker::new(3, FLUID_ESCAPE, GROUND_ESCAPE);
-        // The first 3 avoided candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
             assert!(p.reject_avoided(BiomeFit::Avoided));
         }
-        // ...after which the rule lifts and avoided candidates stop being rejected.
         assert!(!p.reject_avoided(BiomeFit::Avoided));
-        // Now an avoided spot is fallback-eligible (treated like a neutral one).
         let spot = IVec3::new(7, 0, 0);
         assert_eq!(p.offer(spot, BiomeFit::Avoided), None);
         assert_eq!(p.into_fallback(), Some(spot));
@@ -858,8 +714,6 @@ mod tests {
             !companion_within(&ctx, rule, mobs[0].pos, 5),
             "a free sheep should not count a confined sheep as a herd companion"
         );
-        // With no free companion seen at the origin, the mob is treated as already
-        // lonely and cohesion does not constrain its destination.
         assert!(
             !reject_for_cohesion(&ctx, rule, false, IVec3::new(20, 64, 0), 5),
             "without a free companion, cohesion does not constrain the destination"
@@ -889,8 +743,6 @@ mod tests {
         );
     }
 
-    /// The real confinement fill for the tests below, so region-driven picks
-    /// are exercised against exactly what the instance refresh would cache.
     fn region_for(world: &ServerWorld, start: IVec3) -> crate::mob::confined::ConfinedRegion {
         let params = PathParams::for_body(2, 0.45);
         let cursor = world.cursor();
@@ -916,8 +768,6 @@ mod tests {
 
     #[test]
     fn a_confined_mob_wanders_only_within_its_region() {
-        // 5×5 fence pen: the wander radius (10) reaches far beyond it, but a
-        // confined mob draws destinations from its region, never outside.
         let world = flat_grass_world(|chunk| {
             for i in 5..=11 {
                 for (x, z) in [(5, i), (11, i), (i, 5), (i, 11)] {
@@ -948,7 +798,6 @@ mod tests {
 
     #[test]
     fn a_region_smaller_than_two_by_two_never_wanders() {
-        // 1×2 interior: room to exist, no room worth pacing.
         let world = flat_grass_world(|chunk| {
             for x in 4..=7 {
                 for z in 4..=6 {
@@ -980,10 +829,6 @@ mod tests {
 
     #[test]
     fn a_free_mob_never_picks_an_unreachable_destination() {
-        // The mob is walled in but (with no cached region on the ctx —
-        // detection hasn't run yet / just got invalidated) doesn't know it:
-        // sampled spots beyond the stone walls must be rejected by the
-        // reachability probe, so any goal that comes back lies inside.
         let world = flat_grass_world(|chunk| {
             for i in 5..=11 {
                 for (x, z) in [(5, i), (11, i), (i, 5), (i, 11)] {
@@ -1017,9 +862,6 @@ mod tests {
 
     #[test]
     fn an_exhausted_pick_reports_itself_and_the_horizon_backs_off() {
-        // The hemmed-in signal must be distinguishable from "no candidates at
-        // all", and the back-off must halve toward its floor and reset never
-        // below the species' own radius.
         let world = flat_grass_world(|chunk| {
             for x in 7..=9 {
                 for z in 7..=9 {
@@ -1051,8 +893,6 @@ mod tests {
 
     #[test]
     fn a_mob_sealed_into_one_cell_cancels_the_wander() {
-        // Nothing but the cell it stands on is reachable: five failed probes
-        // cancel the pick instead of walking the mob into a wall forever.
         let world = flat_grass_world(|chunk| {
             for x in 7..=9 {
                 for z in 7..=9 {
@@ -1081,11 +921,9 @@ mod tests {
     #[test]
     fn picker_rejects_fluid_until_the_escape_hatch_lifts_it() {
         let mut p = Picker::new(AVOID_ESCAPE, 3, GROUND_ESCAPE);
-        // The first 3 wet candidates are rejected (counting toward the hatch)...
         for _ in 0..3 {
             assert!(p.reject_fluid(true));
         }
-        // ...after which fluid stops being rejected and a wet spot is fallback-eligible.
         assert!(!p.reject_fluid(true));
         let wet = IVec3::new(4, 0, 0);
         assert_eq!(p.offer(wet, BiomeFit::Neutral), None);
@@ -1102,21 +940,14 @@ mod tests {
         for _ in 0..3 {
             assert!(p.reject_ground(true));
         }
-        // After the hatch, avoided floors stop being rejected and become
-        // fallback-eligible — a mob surrounded by rock still moves.
         assert!(!p.reject_ground(true));
         let rocky = IVec3::new(5, 0, 0);
         assert_eq!(p.offer(rocky, BiomeFit::Neutral), None);
         assert_eq!(p.into_fallback(), Some(rocky));
-        // A clear floor is never rejected.
         let mut p = Picker::new(AVOID_ESCAPE, FLUID_ESCAPE, GROUND_ESCAPE);
         assert!(!p.reject_ground(false));
     }
 
-    /// The cave-mouth rule end to end: with grass available, a species that
-    /// avoids stone floors never wanders onto the stone half of its disc —
-    /// while a mob standing amid nothing but stone still picks somewhere to
-    /// go (the escape hatch; it must be able to wander back out of a cave).
     #[test]
     fn wander_steers_off_avoided_floors_but_never_freezes_on_them() {
         static AVOID_STONE: &[Block] = &[Block::Stone];
@@ -1126,7 +957,6 @@ mod tests {
             avoid_ground: AVOID_STONE,
             cohesion: None,
         };
-        // East half of the disc is stone floor, west half grass.
         let world = flat_grass_world(|chunk| {
             for z in 0..CHUNK_SZ {
                 for x in 8..CHUNK_SX {
@@ -1155,7 +985,6 @@ mod tests {
         }
         assert!(picked > 0, "grass destinations are still picked");
 
-        // All-stone floor: the hatch lifts and the mob still moves.
         let world = flat_grass_world(|chunk| {
             for z in 0..CHUNK_SZ {
                 for x in 0..CHUNK_SX {

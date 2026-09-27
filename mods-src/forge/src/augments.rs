@@ -1,46 +1,29 @@
-//! The augment VOCABULARY: the data keys tools, materials and the socket gem
-//! carry, and the `forge:augments` RECORD that rides an augmented stack.
+//! Data keys for tools/materials/socket gem, plus the `forge:augments` record on an augmented
+//! stack.
 //!
-//! THE RECORD IS `"<carved>|<id[@cond][^lvl]>,…"`, one instance-data value on
-//! an ordinary tool stack:
+//! Format: `"<carved>|<id[@cond][^lvl]>,..."`, stored as instance data on a plain tool stack.
 //!
-//! - `<carved>` — how many LOCKABLE sockets this tool has had carved open.
-//! - then one entry per socket cell, POSITIONALLY: the installed augment's
-//!   IDENTITY (a fit's canonical overlay item name), its CONDITION in quanta
-//!   (omitted = full for the level, `@0` = broken) and the socket's mount
-//!   upgrade LEVEL (omitted = Basic). A pre-wear record and a fresh stamp are
-//!   byte-identical, and the panel's grayed icon sits in the exact cell the
-//!   material went into because the record says which cell that was.
+//! - `<carved>`: how many lockable sockets have been carved open.
+//! - one entry per socket cell, in order: augment id (a fit's canonical overlay item name),
+//!   condition in quanta (missing = full, `@0` = broken), mount level (missing = Basic). A record
+//!   before wear and a freshly stamped one are byte-identical. The grayed icon lands in the right
+//!   cell because the record tracks cell position.
 //!
-//! Bytes this build cannot re-encode faithfully REFUSE ([`Record::parse`]
-//! answers `None`): a decoration or format we would rewrite wrong is a stack
-//! from a richer pack set, and taking no further changes is the only answer
-//! that cannot corrupt it.
+//! If bytes don't re-encode faithfully, [`Record::parse`] returns `None` and we leave them alone.
+//! It could be a stack from a richer pack set, and rewriting it risks corrupting it.
 //!
-//! It all lives here because it is the CONTRACT between two peer policies
-//! that must not know about each other: the anvil WRITES the record (carve,
-//! install, repair, upgrade, wear) while gold's nondestructive mining READS
-//! it off a held stack to find its gentle grant. Both depend on this module;
-//! neither depends on the other.
+//! Lives here because it's the contract between the anvil (writes: carve, install, repair, upgrade,
+//! wear) and gold's nondestructive mining (reads it off a held stack for its gentle grant). Both
+//! depend on this module, not on each other.
 
-/// This pack's own record of the carved sockets and installed augments (see
-/// the module docs and [`Record`]).
 pub(crate) const AUGMENTS_KEY: &str = "forge:augments";
 
-/// A socket's mount can be upgraded this many times past Basic.
 pub(crate) const LEVEL_MAX: u8 = 3;
 
-/// Condition is stored in QUANTA: one quantum is 1% of the fit's BASE
-/// maximum, so the stored value space stays tiny (0..=250) no matter how
-/// large a fit's advertised maximum is — every distinct stored value mints
-/// an interned variant, and the intern table never evicts, so per-point
-/// storage of a 3000-point pool would exhaust it on a long-lived server.
-/// Full condition for a socket at level `lvl`; upgrades add 50% of base.
 pub(crate) fn quanta_max(lvl: u8) -> u16 {
     100 + 50 * lvl as u16
 }
 
-/// The mount level's display word and its tooltip palette color.
 pub(crate) fn level_word(lvl: u8) -> (&'static str, &'static str) {
     match lvl {
         0 => ("Basic", "white"),
@@ -50,9 +33,6 @@ pub(crate) fn level_word(lvl: u8) -> (&'static str, &'static str) {
     }
 }
 
-/// The condition's display word and its tooltip palette color: Broken at
-/// exactly zero (the augment stops contributing), then even quintiles of
-/// the CURRENT (level-scaled) maximum.
 pub(crate) fn condition_word(cond: u16, lvl: u8) -> (&'static str, &'static str) {
     if cond == 0 {
         return ("Broken", "red");
@@ -67,17 +47,10 @@ pub(crate) fn condition_word(cond: u16, lvl: u8) -> (&'static str, &'static str)
     }
 }
 
-/// Repair is REFUSED while the condition still reads Pristine — topping up
-/// the top band would waste most of a material's quanta; the gesture opens
-/// at Excellent or lower (Rachel, 2026-08-10). Derived from the same
-/// banding as the word the player sees.
 pub(crate) fn repairable(cond: u16, lvl: u8) -> bool {
     condition_word(cond, lvl).0 != "Pristine"
 }
 
-/// One socket's slice of the record: the installed augment identity (empty
-/// = open and empty), its CONDITION in quanta, and the socket's mount
-/// upgrade level.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Entry {
     pub id: String,
@@ -94,8 +67,6 @@ impl Entry {
         }
     }
 
-    /// `id[@cond][^lvl]` — omitted cond = full for the level, omitted lvl =
-    /// Basic. A plain identity (every pre-wear record) parses as pristine.
     fn parse(s: &str) -> Option<Entry> {
         let (rest, lvl) = match s.split_once('^') {
             Some((r, l)) => (r, l.trim().parse::<u8>().ok()?),
@@ -145,9 +116,6 @@ impl Entry {
     }
 }
 
-/// The parsed `forge:augments` record: how many lockable sockets have been
-/// carved, plus one [`Entry`] per socket cell (the list may be shorter than
-/// the machine's cell count).
 #[derive(Default, Clone, PartialEq, Debug)]
 pub(crate) struct Record {
     pub carved: u8,
@@ -155,10 +123,6 @@ pub(crate) struct Record {
 }
 
 impl Record {
-    /// Parse the record value. `None` for bytes this build cannot reason
-    /// about (not UTF-8, a foreign/older format without the `|`, or entry
-    /// decorations we cannot re-encode faithfully): such a record takes no
-    /// further changes.
     pub fn parse(bytes: &[u8]) -> Option<Record> {
         let s = std::str::from_utf8(bytes).ok()?;
         let (carved, ids) = s.split_once('|')?;
@@ -171,7 +135,6 @@ impl Record {
         Some(Record { carved, entries })
     }
 
-    /// The record on a stack's instance data — absent key = a fresh tool.
     pub fn of_stack(data: &[(String, Vec<u8>)]) -> Option<Record> {
         match data.iter().find(|(k, _)| k == AUGMENTS_KEY) {
             None => Some(Record::default()),
@@ -189,9 +152,6 @@ impl Record {
         format!("{}|{}", self.carved, ids)
     }
 
-    /// The installed identities, in socket order — broken augments INCLUDED:
-    /// a broken fang still occupies its socket (repair it, never re-stage
-    /// a second one) and still draws its art.
     pub fn installed(&self) -> impl Iterator<Item = &str> {
         self.entries
             .iter()
@@ -214,7 +174,6 @@ impl Record {
         &mut self.entries[socket]
     }
 
-    /// Install `id` at `socket`, pristine for the socket's mount level.
     pub(crate) fn set_id(&mut self, socket: usize, id: &str) {
         let e = self.entry_mut(socket);
         e.id = id.to_owned();

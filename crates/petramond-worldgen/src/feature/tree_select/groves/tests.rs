@@ -11,7 +11,6 @@ fn lattice() -> GroveLattice {
     }
 }
 
-/// A 68-block window centred near `(x, z)`, as a placement pass would open.
 fn window_around(x: i32, z: i32) -> Window {
     Window {
         x_min: x - 34,

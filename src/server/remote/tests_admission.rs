@@ -1,6 +1,3 @@
-//! Admission and authentication: the bounded thread-free pre-join set, and
-//! the identity proof every join must carry.
-
 use super::admission::{MAX_PENDING_PER_IP, PRE_JOIN_MAX_FRAME};
 use super::tests::{headless, joins_as};
 use super::*;
@@ -24,7 +21,6 @@ fn connect(port: u16) -> TcpStream {
     stream
 }
 
-/// `Hello` → the connection's challenge.
 fn hello(stream: &mut TcpStream) -> JoinChallenge {
     write_msg(
         stream,
@@ -66,9 +62,6 @@ fn rejected(reply: ServerToClient) -> JoinRejectReason {
     }
 }
 
-/// A flood of unauthenticated sockets from one address costs at most
-/// `MAX_PENDING_PER_IP` pending entries (and no threads); the rest are
-/// closed on arrival instead of queuing.
 #[test]
 fn pending_connections_are_capped_per_address() {
     let mut hub = RemoteHub::default();
@@ -100,8 +93,6 @@ fn pending_connections_are_capped_per_address() {
     hub.shutdown();
 }
 
-/// A frame header announcing more than the pre-join cap drops the
-/// connection before any of that body is buffered.
 #[test]
 fn oversize_pre_join_frames_drop_the_connection() {
     let mut hub = RemoteHub::default();
@@ -135,9 +126,6 @@ fn oversize_pre_join_frames_drop_the_connection() {
     hub.shutdown();
 }
 
-/// A join must prove possession of the key it claims, against THIS
-/// connection's challenge; names are validated at the edge; one identity
-/// holds at most one session.
 #[test]
 fn joins_without_a_valid_identity_proof_are_refused() {
     let server = headless("", 5, 2);
@@ -145,7 +133,6 @@ fn joins_without_a_valid_identity_proof_are_refused() {
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
     let (alice, mallory) = (identity(), identity());
 
-    // Mallory claims Alice's key but can only sign with her own.
     let mut s = connect(port);
     let challenge = hello(&mut s);
     let forged = mallory.sign_join(&challenge);
@@ -154,7 +141,6 @@ fn joins_without_a_valid_identity_proof_are_refused() {
         JoinRejectReason::BadProof
     );
 
-    // A genuine proof captured from another connection does not replay.
     let mut s = connect(port);
     let _ = hello(&mut s);
     let replayed = alice.sign_join(&challenge);
@@ -163,7 +149,6 @@ fn joins_without_a_valid_identity_proof_are_refused() {
         JoinRejectReason::BadProof
     );
 
-    // A valid proof with an invalid name.
     let mut s = connect(port);
     let challenge = hello(&mut s);
     let proof = alice.sign_join(&challenge);
@@ -172,7 +157,6 @@ fn joins_without_a_valid_identity_proof_are_refused() {
         JoinRejectReason::InvalidName(_)
     ));
 
-    // The real Alice joins; a second session of the same identity is refused.
     let mut first = connect(port);
     client_handshake(
         &mut first,
@@ -199,9 +183,6 @@ fn joins_without_a_valid_identity_proof_are_refused() {
     host.shutdown_and_join();
 }
 
-/// The heart of the identity model: a player's save follows their key. An
-/// impostor asking for the same display name gets a suffixed name and a
-/// fresh player — never the original's inventory.
 #[test]
 fn a_display_name_never_unlocks_another_identitys_save() {
     let dir = std::env::temp_dir().join(format!("petramond-impostor-{}", std::process::id()));

@@ -1,35 +1,24 @@
 //! Player spawn selection.
 //!
-//! Goal: drop the player onto a *random* solid block on the surface near the
-//! world origin. Concretely we pick a uniformly random column within
-//! [`SEARCH_RADIUS`] of a centre whose top solid block is exposed to the sky
-//! (dry land), then stand the player on top of it.
+//! Drop the player on a random solid surface block near the world origin. Pick a uniformly
+//! random dry-land column within [`SEARCH_RADIUS`] of a centre and stand the player on top.
 //!
-//! **Random, not deterministic.** Unlike the rest of worldgen (which is a pure
-//! function of the seed), the spawn point is drawn from OS entropy on every call
-//! — a fresh location each launch, and a different location for each player when
-//! several share one world (future multiplayer). The terrain stays fully
-//! seed-deterministic; only *where on it* the player lands is random. The random
-//! core `find_spawn_rng` takes an explicit `rng_seed` so tests stay
-//! reproducible; [`find_spawn`] feeds it real entropy.
+//! Random, not deterministic. The rest of worldgen is a pure function of the seed, but spawn
+//! draws from OS entropy each call, so it differs per launch and per player (future
+//! multiplayer). Terrain stays seed-deterministic; only where the player lands is random.
+//! `find_spawn_rng` takes an explicit `rng_seed` for reproducible tests; [`find_spawn`] feeds it
+//! real entropy.
 //!
-//! **The standing-ground predicate.** A column's `surf` is its top *solid*
-//! surface height from the live surface-density region. The chunk filler floods
-//! every density-air cell at or below `SEA_LEVEL` to water, so `surf >=
-//! SEA_LEVEL` means the top solid block has no sea water above it. This excludes
-//! oceans and lakes while accepting beaches (`surf == SEA_LEVEL`), plains, and
-//! mountains. The surface voxel must also survive the cave carve: a column whose
-//! surface is a cave mouth has no floor at `surf`, and a player stood there
-//! drops into the cave.
+//! Standing-ground predicate: `surf` is a column's top solid height. The chunk filler floods
+//! density-air at or below `SEA_LEVEL` to water, so `surf >= SEA_LEVEL` means no sea water on
+//! top. That excludes oceans and lakes but accepts beaches, plains and mountains. The surface
+//! voxel must also survive the cave carve, otherwise it's a cave mouth with no floor.
 //!
-//! **Choosing the centre.** We first find the nearest dry-land column to the
-//! origin (an outward chunk-ring walk). If it lies within [`SEARCH_RADIUS`] the
-//! origin has land in range, so we randomise within a disk centred on the
-//! origin. If the nearest land is farther — the origin is in the middle of a
-//! large ocean — we move the radius onto that nearest coast and randomise there.
-//! That nearest-land column is also the guaranteed fallback if rejection
-//! sampling somehow comes up empty (e.g. a tiny island where almost every random
-//! point lands in water).
+//! Choosing the centre: find the nearest dry-land column to the origin first (outward
+//! chunk-ring walk). If it's within [`SEARCH_RADIUS`], randomise in a disk around the origin. If
+//! it's farther (origin is mid-ocean), move the radius to that nearest coast instead. That
+//! nearest-land column is also the fallback if rejection sampling comes up empty, e.g. a tiny
+//! island where most random points land in water.
 
 use petramond_math::detmath;
 use petramond_world::chunk::SEA_LEVEL;
@@ -39,46 +28,27 @@ use super::density::surface::SurfaceDensitySystem;
 use super::feature::cached_feature_region;
 use super::noise::cave_field::CaveField;
 
-/// Radius (blocks) of the disk a spawn is drawn from, around the origin (or the
-/// nearest coast when the origin is open ocean).
 pub const SEARCH_RADIUS: i32 = 500;
 
-/// Hard backstop (blocks) for the nearest-coast walk when the origin is in open
-/// ocean. Far beyond any ocean this generator produces; only guards against an
-/// unbounded scan on a degenerate all-water seed.
 const MAX_COAST_RADIUS: i32 = 4096;
 
-/// How many random points to try before giving up on a centre and falling back
-/// to the nearest-land column. Only ever exhausted when a centre is nearly
-/// surrounded by water (e.g. a tiny island), so the cost is bounded and rare.
 const MAX_ATTEMPTS: u32 = 256;
 
 const CHUNK: i32 = 16;
 
-/// Pick a random dry-land surface block to spawn on, using fresh OS entropy.
-/// Returns the **solid surface block** `(x, surf_y, z)`; stand the player's feet
-/// at `surf_y + 1`. See the module docs for centre selection and the ocean
-/// fallback.
-///
 pub fn find_spawn(seed: u32) -> IVec3 {
     let world = SpawnWorld::new(seed);
     find_spawn_rng(&world, os_random_u64())
 }
 
-/// [`find_spawn`] with an explicit random seed instead of OS entropy: the result
-/// is a pure function of `(seed, rng_seed)`, so tests are reproducible.
 fn find_spawn_rng(world: &SpawnWorld, rng_seed: u64) -> IVec3 {
     let mut rng = Rng::new(rng_seed);
 
     let nearest = match nearest_dry_land(world) {
-        // Degenerate: no land within MAX_COAST_RADIUS. Stand at the origin water
-        // surface rather than hang or panic.
         None => return IVec3::new(0, SEA_LEVEL, 0),
         Some(p) => p,
     };
 
-    // Land within range of the origin → randomise around the origin. Otherwise
-    // the origin is open ocean → move the radius onto the nearest coast.
     let radius = SEARCH_RADIUS as i64;
     let near_sq = (nearest.x as i64) * (nearest.x as i64) + (nearest.z as i64) * (nearest.z as i64);
     let centre = if near_sq <= radius * radius {
@@ -103,15 +73,9 @@ impl SpawnWorld {
         }
     }
 
-    /// The 16×16 standing heights of a chunk: the top solid block of every
-    /// column that is dry land with an uncarved surface, `None` elsewhere. Read
-    /// through the process-wide feature tile memo, which warms the tiles the
-    /// join gen path reuses immediately after.
     fn standing_heights(&self, cx: i32, cz: i32) -> Vec<Option<i32>> {
         let (region, raw) =
             cached_feature_region(&self.surface, &self.caves, cx * CHUNK, cz * CHUNK, 16, 16);
-        // The cave-adjusted surface equals the raw one exactly when the
-        // surface voxel was not carved.
         raw.iter()
             .zip(&region.surf)
             .map(|(&raw, &adjusted)| (raw >= SEA_LEVEL && adjusted == raw).then_some(raw))
@@ -119,21 +83,17 @@ impl SpawnWorld {
     }
 }
 
-/// Try up to [`MAX_ATTEMPTS`] uniformly random columns inside the disk of radius
-/// [`SEARCH_RADIUS`] around `centre`, returning the first with standing ground.
 fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> Option<IVec3> {
     let r = SEARCH_RADIUS as f32;
     let r_sq = (SEARCH_RADIUS as i64) * (SEARCH_RADIUS as i64);
     for _ in 0..MAX_ATTEMPTS {
-        // Uniform over the disk's area: radius ∝ sqrt(u) spreads points evenly
-        // instead of clustering them near the centre.
         let radius = r * rng.next_f32().sqrt();
         let theta = std::f32::consts::TAU * rng.next_f32();
         let wx = cx + (radius * detmath::cosf(theta)).round() as i32;
         let wz = cz + (radius * detmath::sinf(theta)).round() as i32;
         let (dx, dz) = ((wx - cx) as i64, (wz - cz) as i64);
         if dx * dx + dz * dz > r_sq {
-            continue; // rounding nudged it just outside the radius — retry.
+            continue;
         }
         if let Some(surf) = standing_height(world, wx, wz) {
             return Some(IVec3::new(wx, surf, wz));
@@ -142,15 +102,6 @@ fn sample_dry_land(world: &SpawnWorld, (cx, cz): (i32, i32), rng: &mut Rng) -> O
     None
 }
 
-/// Nearest dry-land column to the origin, by true (Euclidean) distance, via an
-/// outward chunk-ring walk. Used both to decide the spawn centre and as the
-/// guaranteed fallback. `None` only on a degenerate all-ocean seed.
-///
-/// Because the origin is the min corner of chunk `(0, 0)`, the nearest column in
-/// chunk ring `r` can be as close as `16r - 15` blocks (the inner edge of the
-/// negative-side chunk), so the closest any *unscanned* ring (`>= r+1`) can hold
-/// is `16r + 1`. Once the best is at least that close we stop — exact nearest,
-/// terminating within ~one extra ring of finding land.
 fn nearest_dry_land(world: &SpawnWorld) -> Option<IVec3> {
     let max_ring = MAX_COAST_RADIUS / CHUNK + 2;
     let mut best: Option<(i64, IVec3)> = None;
@@ -173,8 +124,6 @@ fn nearest_dry_land(world: &SpawnWorld) -> Option<IVec3> {
     best.map(|(_, p)| p)
 }
 
-/// Scan one chunk's 16x16 columns, updating `best` with any standing-ground
-/// column closer to the origin than the current best.
 fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec3)>) {
     let heights = world.standing_heights(cx, cz);
     for z in 0..16i32 {
@@ -192,9 +141,6 @@ fn scan_chunk(world: &SpawnWorld, cx: i32, cz: i32, best: &mut Option<(i64, IVec
     }
 }
 
-/// Standing height of a single world column, or `None` where a player cannot
-/// stand. Matches the per-chunk batch [`scan_chunk`] reads because density
-/// lattice sampling is world-anchored (and both go through the same tile memo).
 fn standing_height(world: &SpawnWorld, wx: i32, wz: i32) -> Option<i32> {
     let tcx = wx.div_euclid(CHUNK);
     let tcz = wz.div_euclid(CHUNK);
@@ -204,26 +150,22 @@ fn standing_height(world: &SpawnWorld, wx: i32, wz: i32) -> Option<i32> {
     heights[lz * 16 + lx]
 }
 
-/// Chunk coordinates on the square ring at Chebyshev distance `r` from `(0, 0)`.
 fn ring_chunks(r: i32) -> Vec<(i32, i32)> {
     if r == 0 {
         return vec![(0, 0)];
     }
     let mut v = Vec::with_capacity((8 * r) as usize);
     for cx in -r..=r {
-        v.push((cx, -r)); // top edge
-        v.push((cx, r)); // bottom edge
+        v.push((cx, -r));
+        v.push((cx, r));
     }
     for cz in (-r + 1)..=(r - 1) {
-        v.push((-r, cz)); // left edge (corners already covered above)
-        v.push((r, cz)); // right edge
+        v.push((-r, cz));
+        v.push((r, cz));
     }
     v
 }
 
-/// Stateful SplitMix64 — the codebase's deterministic hash finalizer (see
-/// `entity::hash01`) advanced as a stream. Used only to draw the random sample
-/// points; the stream is seeded from OS entropy in production.
 struct Rng(u64);
 
 impl Rng {
@@ -239,14 +181,11 @@ impl Rng {
         z ^ (z >> 31)
     }
 
-    /// Uniform `f32` in `[0, 1)` from the top 24 mantissa bits.
     fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u32 << 24) as f32
     }
 }
 
-/// A fresh 64-bit value from OS entropy, varying per process (and per call).
-/// Drawn from `RandomState`'s OS-seeded hash keys.
 fn os_random_u64() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     std::collections::hash_map::RandomState::new()
@@ -274,9 +213,6 @@ mod tests {
         }
     }
 
-    /// A spawn must stand on ground: dry land whose surface voxel the cave
-    /// carve left in place. A cave mouth reads as a solid surface to the raw
-    /// density field, and a player dropped onto one falls into the cave.
     #[test]
     fn spawns_stand_on_uncarved_dry_land() {
         for &seed in &SEEDS {

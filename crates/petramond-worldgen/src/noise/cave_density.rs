@@ -1,5 +1,3 @@
-//! Natural cave density. Negative values remove rock; positive values retain it.
-
 use crate::density::noise::{build_climate_field, ClimateFieldParams, ReferenceDoublePerlin};
 
 const CAVERN_DENSITY_BIAS: f64 = 0.35;
@@ -124,8 +122,6 @@ impl CaveDensity {
             .max(((p[1] - elevation).abs() / 8.0 - horizontal_width).powi(3))
             + rough;
 
-        // Layer density retains shelves between large voids. Pillars retain rock
-        // through those voids; small tunnels remain a separate subtraction.
         let layers = self.layer.at(p, 1.0, 8.0).powi(2) * 4.0;
         let roof = (1.5 - depth * 12.8).clamp(0.0, 0.5);
         let cavern = (self.cheese.at(p, 1.0, 2.0 / 3.0) + CAVERN_DENSITY_BIAS).clamp(-1.0, 1.0)

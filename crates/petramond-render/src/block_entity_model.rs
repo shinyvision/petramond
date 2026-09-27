@@ -1,21 +1,17 @@
-//! World-space + item-space geometry for ANIMATED block models — every block
-//! drawn outside the chunk mesh (a chest's hinged lid, a door's swing, a
-//! trapdoor's panel, a pack's own), from its data model
-//! ([`petramond_world::animated_model`]). One builder serves them all: nothing
-//! here knows which block it is drawing.
+//! World-space geometry for ANIMATED block models (chest lids, door swings, trapdoor panels, a
+//! pack's own), drawn outside the chunk mesh from their data model
+//! ([`petramond_world::animated_model`]). One builder serves them all; nothing here knows which
+//! block it is drawing.
 //!
-//! Each model is authored in a canonical unit cell with its front / closed edge
-//! on `+Z` (south). For a placed block every part is swung about its joint by
-//! the eased open fraction (a CPU vertex transform, like the item-entity spin),
-//! then the whole model is turned about the cell's vertical centre to the
-//! pose's `facing` and translated to the world. The geometry is baked into a
-//! reusable dynamic vbuf/ibuf and drawn by the **existing** opaque block
-//! pipeline — exactly like [`item_entity`](super::item_entity).
+//! Models are authored in a unit cell with the closed edge on `+Z` (south). Each part swings about
+//! its joint by the eased open fraction (a CPU vertex transform, like the item-entity spin), then
+//! the whole model turns to the pose's `facing` and moves into the world. The result is baked into
+//! a dynamic vbuf/ibuf and drawn by the existing opaque block pipeline, like
+//! [`item_entity`](super::item_entity).
 //!
-//! Why dynamic (not chunk-meshed): a model's parts move every frame while it
-//! swings, and re-meshing the owning chunk per frame would be far too
-//! expensive, so an animated row opts out of chunk meshing entirely (its
-//! `mesh_emitter` is `Nothing`) and is drawn here.
+//! Parts move every frame while swinging, and re-meshing the chunk per frame would be far too
+//! expensive. So animated rows skip chunk meshing (`mesh_emitter` is `Nothing`) and are drawn
+//! here.
 
 use glam::Vec3;
 
@@ -26,8 +22,6 @@ use petramond_mesh::Vertex;
 use petramond_world::animated_model::{AnimatedModelDef, ModelPart};
 use petramond_world::block::Block;
 
-/// Append every instance's geometry to `verts`/`indices` (NOT cleared). The
-/// caller frustum-culls first.
 pub fn push_block_entities(
     instances: &[BlockEntityInstance],
     render_origin: glam::IVec3,
@@ -39,7 +33,6 @@ pub fn push_block_entities(
     }
 }
 
-/// Append one part's six faces, textured for `block`, over `min..max`.
 fn push_part(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -49,9 +42,6 @@ fn push_part(
     max: Vec3,
     light: DynLight,
 ) {
-    // A panel-thin part crops its edge faces to a matching strip of their
-    // tile instead of squishing a whole tile flat; derived from the part's
-    // own extent by the one rule the crack overlay reads too.
     let slice = if part.thin_edges {
         thin_face_slice_modes(min, max)
     } else {
@@ -69,9 +59,6 @@ fn push_part(
     );
 }
 
-/// Append one placed animated block for `inst`: its pose's variant, each part
-/// swung by the open fraction, turned to `facing`, lit by its cell light, at
-/// the world cell `pos`.
 fn push_block_entity_world(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -113,18 +100,10 @@ fn push_block_entity_world(
     );
 }
 
-/// The animated model a block's ITEM draws (icon, in hand, dropped), if its
-/// row opts in.
 pub(super) fn item_model(block: Block) -> Option<&'static AnimatedModelDef> {
     block.animated_model().filter(|m| m.item)
 }
 
-/// Build `model` CLOSED (variant `0`, no swing) for `block`, centred in the cube
-/// `[origin, origin+size]`, front on `+Z`, lit by `light` — the item form of an
-/// animated block, shared by the inventory icon, the held item and a dropped
-/// stack so it reads as the block rather than a plain cube. The parts are
-/// appended in authored order, which is also the painter order the DEPTHLESS
-/// icon pass relies on (back to front).
 pub(super) fn push_item(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,

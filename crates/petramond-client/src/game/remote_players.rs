@@ -29,63 +29,29 @@ use petramond_render::{HeldItemEase, HeldItemFrame, HeldItemView};
 
 use super::body_pose::{lerp_angle, BodyPose, MovementMedium};
 
-/// Seconds the remote hurt flash lasts — mirrors the LOCAL third-person
-/// body's flash envelope (`app::HURT_SHAKE_SECS`, linear).
 const HURT_FLASH_SECS: f32 = 0.25;
-/// Client-side stand-in for the replicated-as-bool eat progress: foods take a
-/// few seconds, and the ramp only paces what a body graph reads from `eat`.
 const EAT_RAMP_SECS: f32 = 3.0;
-/// How far back a scrubbed play's progress may step and still ease rather
-/// than snap: further back is a restart, and easing across it would play the
-/// clip backward.
 const SCRUB_RESTART: f32 = 0.25;
 
-/// One remote player: the interpolation row pair plus per-remote animation
-/// state.
 pub struct RemotePlayer {
     pub prev: PlayerStateRow,
     pub curr: PlayerStateRow,
-    /// The shared body pose (walk cycle + body-yaw follow) — the same helper
-    /// the local third-person view drives.
     pub pose: BodyPose,
-    /// Each hand's eased held view (`[main, off]`).
     ease: [HeldItemEase; 2],
-    /// Graph events the batches fired on this body's rigs (the engine's
-    /// gestures and mod fires alike) since the last frame — the remote twin
-    /// of the App's `hand_events` latch.
     pending: Vec<(RigId, u16)>,
-    /// Remaining hurt-flash seconds (see [`HURT_FLASH_SECS`]).
     hurt_t: f32,
-    /// Client-side eat-progress ramp (see [`EAT_RAMP_SECS`]).
     eat_t: f32,
-    /// `curr`'s condition emitters and the tint and self-light they compose,
-    /// re-derived only when its conditions change.
     emitters: BodyEmitters,
-    /// The main hand's eased held view this frame — what presentation
-    /// attaches to the posed hand.
     pub view: HeldItemView,
-    /// The LEFT hand's.
     pub off_view: HeldItemView,
-    /// This body's eased bone offsets, so its bones move at the same rate as
-    /// the item in its fist. Holds the eased value between frames; the
-    /// presentation gather copies it into this frame's arena.
     pub bones: super::bone_ease::BoneEase,
-    /// Scratch for this body's resolved offset target, reused across frames.
     target: Vec<crate::animation::BoneOffset>,
-    /// This frame's two hand frames (`[main, off]`), which the body's
-    /// animator reads.
     pub frames: [HeldItemFrame; 2],
-    /// This frame's claimed plays (see [`present_plays`]), sorted like the
-    /// rows by rig and slot.
     pub plays: Vec<AnimatorPlay>,
-    /// Last frame's plays, reused as this frame's scratch.
     last_plays: Vec<AnimatorPlay>,
-    /// The graph events fired on this body this frame, once each.
     pub events: Vec<(RigId, u16)>,
 }
 
-/// `plays`' entry for `play`'s rig, slot and clip, walking `cursor` forward:
-/// both lists are sorted by rig and slot.
 fn matching<'a>(
     plays: &'a [AnimatorPlay],
     cursor: &mut usize,
@@ -175,7 +141,6 @@ impl Replica<PlayerStateRow> for RemotePlayer {
         self.adopt(row, false);
     }
 
-    /// A resync snaps: no frame interpolates across the dropped gap.
     fn reseed(&mut self, row: &PlayerStateRow, _: &mut ()) {
         self.adopt(row, true);
     }
@@ -186,9 +151,6 @@ impl Replica<PlayerStateRow> for RemotePlayer {
 }
 
 impl RemotePlayer {
-    /// Adopt the next row in place (the retired prev row takes its
-    /// contents); `snap` (the row's own, or a forced resync) seeds both
-    /// slots so nothing interpolates across the jump.
     fn adopt(&mut self, row: &PlayerStateRow, snap: bool) {
         std::mem::swap(&mut self.prev, &mut self.curr);
         self.curr.assign_from(row);
@@ -202,25 +164,14 @@ impl RemotePlayer {
         self.emitters.refresh(&[], &row.conditions);
     }
 
-    /// This body's condition emitters, as derived when its row last changed
-    /// them.
     pub fn emitters(&self) -> &BodyEmitters {
         &self.emitters
     }
 
-    /// The hurt-flash intensity `[0, 1]` for this frame (linear decay).
     pub fn hurt_flash01(&self) -> f32 {
         (self.hurt_t / HURT_FLASH_SECS).clamp(0.0, 1.0)
     }
 
-    /// This remote's soft push body at its last-batch position, or `None` when
-    /// there is nothing to jostle: spectators and the dead ship
-    /// `visible = false`, a sleeping body is tucked in a bed it must not
-    /// be shoved off, and a MOUNTED body is slaved to its seat (shoving it —
-    /// or being shoved by it — would fight the mount glue every frame).
-    /// Consumed by the local player's per-frame entity push
-    /// (`Game::apply_entity_push`) through the same body separation rule
-    /// mobs use.
     pub fn push_body(&self) -> Option<petramond_world::body::Body> {
         (self.curr.visible && !self.curr.sleeping && self.curr.mount.is_none()).then(|| {
             petramond_world::body::Body::new(
@@ -232,8 +183,6 @@ impl RemotePlayer {
     }
 }
 
-/// The client's remote-player set, iterated in a deterministic (id) order
-/// like the other replicated stores.
 #[derive(Default)]
 pub struct RemotePlayers {
     map: EntityStore<PlayerId, RemotePlayer>,
@@ -257,9 +206,6 @@ impl RemotePlayers {
             .apply(players, adopt, &mut (), |row| row.id != self_id);
     }
 
-    /// Latch a batch's player actions onto the remotes they name, for their
-    /// next frame. `Died`/`Respawned` need no edge: the `visible` flag and
-    /// `snap` carry their presentation.
     pub fn queue_actions(&mut self, actions: &[(PlayerId, PlayerActionKind)]) {
         for (id, kind) in actions {
             if let PlayerActionKind::Animator { rig, event } = *kind {
@@ -270,8 +216,6 @@ impl RemotePlayers {
         }
     }
 
-    /// [`apply`](Self::apply) a full row snapshot (see
-    /// [`super::replicated::snapshot_lane`]) and its actions.
     #[cfg(test)]
     pub fn apply_snapshot(
         &mut self,
@@ -284,10 +228,6 @@ impl RemotePlayers {
         self.queue_actions(actions);
     }
 
-    /// One frame of presentation state for every remote: the shared body pose
-    /// from the interpolated speed/yaw at `alpha`, the hand frames from the
-    /// replicated flags, this frame's plays and fired events, the hurt-flash
-    /// and eat ramps. Runs in `Game::tick_receive` after the batches applied.
     pub fn advance(
         &mut self,
         dt: f32,
@@ -297,8 +237,6 @@ impl RemotePlayers {
         let ease = 1.0 - (-petramond_render::POSE_EASE_RATE * dt).exp();
         for p in self.map.iter_mut() {
             if p.curr.sleeping {
-                // Lying body: head toward the pillow, walk cycle rested —
-                // mirrors the local sleep branch.
                 p.pose.lie(p.curr.sleep_yaw.unwrap_or(p.curr.transform.yaw));
             } else {
                 let vel = p.prev.transform.vel.lerp(p.curr.transform.vel, alpha);
@@ -322,8 +260,6 @@ impl RemotePlayers {
             } else {
                 0.0
             };
-            // One edge per frame: two batches in a window can carry the
-            // same gesture twice, and an animator fires a slot once.
             p.events.clear();
             for event in p.pending.drain(..) {
                 if !p.events.contains(&event) {
@@ -341,18 +277,12 @@ impl RemotePlayers {
                     .as_deref()
                     .and_then(|b| petramond_world::item::variant::intern_blob(b).ok())
                     .unwrap_or_default(),
-                // Held-rotation preview state isn't replicated; the default
-                // reads fine at held-mini-cube size.
                 block_state: Default::default(),
-                // The row ships the full overlay (target + stage); the arm
-                // swing only needs the level flag.
                 mining: p.curr.mining.is_some(),
                 eating: eating_main.then_some(p.eat_t),
                 pose_target: p.curr.held_pose_main.map(super::render_held_pose),
             };
             p.view = p.ease[0].update(&main_frame, dt);
-            // The LEFT hand: its own item, its own eats. Mining is a
-            // main-hand level by definition.
             let off_frame = HeldItemFrame {
                 item: p.curr.off_hand_item.map(petramond_world::item::ItemType),
                 display: p.curr.held_display[1].map(petramond_world::item::ItemType),
@@ -378,8 +308,6 @@ impl RemotePlayers {
                 ease,
                 &mut p.plays,
             );
-            // The body's bones ease at the same rate as the item in its
-            // fist, so a raised guard and the arm raising it arrive together.
             let mut target = std::mem::take(&mut p.target);
             target.clear();
             super::render_bone_offsets(&p.curr.bone_poses, &mut target);
@@ -393,14 +321,10 @@ impl RemotePlayers {
         self.map.iter()
     }
 
-    /// [`iter`](Self::iter) with each remote's id — for consumers that key
-    /// per-player state on it (the footstep cadence).
     pub fn iter_with_ids(&self) -> impl Iterator<Item = (PlayerId, &RemotePlayer)> {
         self.map.iter_with_ids()
     }
 
-    /// How many remotes exist / are asleep, for the sleep overlay's
-    /// "x/y players sleeping" line.
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -414,9 +338,6 @@ impl RemotePlayers {
     }
 }
 
-/// Interpolate a remote's transform between two batches: position lerps,
-/// yaw takes the shortest arc, pitch lerps. A `snap` row was applied with
-/// prev == curr, so this is the identity across a teleport.
 pub fn interpolate(
     prev: &PlayerStateRow,
     curr: &PlayerStateRow,

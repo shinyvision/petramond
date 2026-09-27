@@ -1,8 +1,5 @@
 use super::*;
 
-/// The per-process test data root the app tests also use: an identical value
-/// from every setter, so parallel tests can't race each other onto the real
-/// user dir.
 fn isolated_data_dir() -> PathBuf {
     let data = petramond_util::test_dirs::test_process_data_dir();
     std::env::set_var("PETRAMOND_DATA_DIR", &data);
@@ -10,9 +7,6 @@ fn isolated_data_dir() -> PathBuf {
     data
 }
 
-/// A fresh source file holding `wasm` (WAT text compiles like binary wasm
-/// through the dev-build's `wat` feature), with no cache entry left from an
-/// earlier run.
 fn fresh_source(name: &str, wasm: &[u8]) -> (PathBuf, CacheEntry) {
     let data = isolated_data_dir();
     let source = data.join(name);
@@ -23,10 +17,6 @@ fn fresh_source(name: &str, wasm: &[u8]) -> (PathBuf, CacheEntry) {
     (source, entry)
 }
 
-/// The disk artifact round-trips: a second process-cache miss for the same
-/// bytes loads the verified artifact instead of recompiling, and a content
-/// change misses to a fresh compile while GC drops the stale artifact (and
-/// its manifest) of the same path.
 #[test]
 fn artifact_roundtrip_and_stale_gc() {
     let wasm_a = b"(module (memory (export \"memory\") 1))".to_vec();
@@ -56,9 +46,6 @@ fn artifact_roundtrip_and_stale_gc() {
     assert!(!first.manifest_path.exists(), "with its manifest");
 }
 
-/// A tampered or torn artifact is never deserialized: its bytes no longer
-/// match the manifest's keyed hash, so the load recompiles and rewrites a
-/// valid entry.
 #[test]
 fn tampered_artifact_recompiles() {
     let wasm = b"(module (memory (export \"memory\") 1) (func (export \"t\")))".to_vec();
@@ -73,14 +60,11 @@ fn tampered_artifact_recompiles() {
     assert_eq!(load_module_traced(&source).unwrap().1, Origin::Compiled);
     assert_eq!(load_module_traced(&source).unwrap().1, Origin::Cache);
 
-    // Torn write: the artifact is shorter than the manifest says.
     let bytes = std::fs::read(&entry.artifact).unwrap();
     std::fs::write(&entry.artifact, &bytes[..bytes.len() / 2]).unwrap();
     assert_eq!(load_module_traced(&source).unwrap().1, Origin::Compiled);
 }
 
-/// A manifest written for another engine build or mod ABI does not vouch for
-/// its artifact, even when the artifact bytes themselves are intact.
 #[test]
 fn manifest_bound_to_engine_and_abi() {
     let wasm = b"(module (memory (export \"memory\") 1) (func (export \"e\")))".to_vec();
@@ -105,8 +89,6 @@ fn manifest_bound_to_engine_and_abi() {
     assert_eq!(load_module_traced(&source).unwrap().1, Origin::Compiled);
 }
 
-/// An artifact with no manifest (a crash between the two writes, or a file
-/// dropped into the cache by hand) is treated as absent and recompiled.
 #[test]
 fn artifact_without_manifest_is_not_loaded() {
     let wasm = b"(module (memory (export \"memory\") 1) (func (export \"m\")))".to_vec();

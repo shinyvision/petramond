@@ -24,16 +24,10 @@ use super::claims::AnimatorInputs;
 use super::locomotion;
 use super::motion::{BodyState, BoneOffset};
 
-/// How far the lying (sleeping) body's anchor floats above the mattress top:
-/// half the 4 px body thickness plus a hair of clearance over the bed model.
 const LIE_LIFT: f32 = 2.2 * PLAYER_MODEL_SCALE;
 
-/// The seated thighs' forward bend at the hip, deliberately SHORT of 90°: at
-/// a right angle the rotated thigh's top face lands coplanar with the body
-/// cube's bottom and the pants z-fight (2026-07-15 playtest).
-const SEATED_HIP_BEND: f32 = 1.35; // ≈ 77°
+const SEATED_HIP_BEND: f32 = 1.35;
 
-/// What drives a body's animator this frame.
 pub(super) struct BodyDrive<'a> {
     pub animator: &'a mut BodyAnimator,
     pub frames: Option<&'a [HeldItemFrame; 2]>,
@@ -68,8 +62,6 @@ pub(super) fn pose_body(
                 .animator
                 .update(state, drive.frames, drive.inputs, drive.dt, &ground);
             let local = drive.animator.pose();
-            // The torso twist the animator added: head-look takes it back out
-            // so the gaze holds while the body swings.
             for &bone in &rig.twist {
                 twist_total += (local.rotation(bone).y - ground.rotation(bone).y).to_radians();
             }
@@ -80,9 +72,6 @@ pub(super) fn pose_body(
     };
     let head_animated = |hb: usize| layers.iter().any(|(a, _, _)| a.affects_bone(hb));
 
-    // Asleep: the rest pose lying on its back — rotated flat about the feet,
-    // head toward `body_yaw`, floated onto the mattress. Head-look and the arm
-    // swing rest with it.
     if state.sleeping {
         out.extend_from_slice(&pose);
         return Mat4::from_translation(Vec3::new(0.0, LIE_LIFT, 0.0))
@@ -91,16 +80,9 @@ pub(super) fn pose_body(
             * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE));
     }
 
-    // Seated (riding a mob seat): thighs swing forward at the hip and the
-    // shins hang back down from the knees — composed over the rest pose about
-    // each bone's own pivot, so the exact leg geometry stays authored data.
-    // The body, head-look, and arm channels below stay live: a rider looks
-    // around and punches like anyone else.
     if state.seated {
         for (hip, knee) in [("leftLeg", "left_knee"), ("rightLeg", "right_knee")] {
             if let Some(bone) = model.bone_named(hip) {
-                // +X is limb-forward for the −Z-front biped (the zombie's
-                // arms-forward rest pose uses the same sign).
                 model.apply_bone_rotation(&mut pose, bone, Quat::from_rotation_x(SEATED_HIP_BEND));
             }
             if let Some(bone) = model.bone_named(knee) {
@@ -141,9 +123,6 @@ pub(super) fn pose_body(
     for offset in bones {
         let translation = Vec3::from(offset.translation) / 16.0 / PLAYER_MODEL_SCALE;
         if offset.hold {
-            // A STANCE: the bone is held at rest + this rotation, discarding
-            // the walk/sneak swing it would otherwise still be wearing
-            // underneath. Degrees, added like an animation channel would.
             model.hold_bone(
                 &mut pose,
                 offset.bone,

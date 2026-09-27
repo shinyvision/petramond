@@ -1,34 +1,18 @@
-//! Generic container block-entities at the world level: world-coordinate
-//! access to the section-owned slot stores that back chests, furnaces, and
-//! mod container blocks alike.
-//!
-//! Containers don't tick by themselves — a furnace's tick reads its container
-//! through [`super::furnace`], and a mod block's meaning lives in its owning
-//! mod — so these are thin world↔section coordinate wrappers for GUI edits,
-//! mod host calls, and breaking.
-
 use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 
 impl<S: WorldSide> World<S> {
-    /// The container at a world block position, if one is stored there.
     pub fn container_at(&self, pos: IVec3) -> Option<&Container> {
         let (c, lx, ly, lz) = self.data.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.container_at(lx, ly, lz)
     }
 
-    /// Mutable handle to the container at a world block position (GUI edits
-    /// and mod `ContainerSet` writes).
     pub fn container_at_mut(&mut self, pos: IVec3) -> Option<&mut Container> {
         let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         c.container_at_mut(lx, ly, lz)
     }
 
-    /// Make sure a container with at least `len` slots exists at `pos`
-    /// (created empty, or grown — never shrunk — if a document re-authored
-    /// with more slots). No-op if the owning chunk is not loaded. Returns
-    /// whether a container is present afterwards.
     pub fn ensure_container(&mut self, pos: IVec3, len: usize) -> bool {
         let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {
             return false;
@@ -41,8 +25,6 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// Remove and return the container at a world position (block break),
-    /// if any.
     pub fn take_container(&mut self, pos: IVec3) -> Option<Container> {
         let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         let container = c.take_container(lx, ly, lz);
@@ -57,15 +39,10 @@ impl<S: WorldSide> World<S> {
     /// itself. (Orientation state — a torch's mount, a chest/furnace front —
     /// lives in the unified cell-state store and dies with the block write
     /// via `clear_on_block_change`; sweeping it here would wipe state a
-    /// DIFFERENT block at the cell still owns, the undermined-door bug.) The
+    /// different block at the cell still owns.) The
     /// container itself is NOT taken here: breaking scatters it via
     /// [`take_container`](Self::take_container) at the anchor.
     pub fn forget_block_entity_records(&mut self, pos: IVec3) {
-        // A mod's drawing is per-block state like every other record here, and
-        // it is keyed at the group ANCHOR — clearing the clicked cell orphans
-        // the set for eleven of a twelve-cell machine. Callers on the BREAK
-        // path must therefore resolve the anchor before they clear the block:
-        // once the footprint is air this resolves to `pos` itself.
         let anchor = self.container_anchor(pos);
         self.forget_block_draw(anchor);
         if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
@@ -74,10 +51,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// The canonical container position for the block at `pos`: multi-cell
-    /// model blocks share ONE container keyed at the model group's base cell,
-    /// so opening the same placed object from any of its cells edits the same
-    /// slots; everything else keys at its own cell.
     pub fn container_anchor(&self, pos: IVec3) -> IVec3 {
         self.model_group(pos)
             .map(|(_, base, _)| base)

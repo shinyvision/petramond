@@ -1,8 +1,3 @@
-//! What the golem wears over its head when work is not going ahead, and what
-//! it answers a player who asks: a thinking bubble while the planner is
-//! finding another way (it nearly always does), a warning sign when only the
-//! player can help — and the reason, in words.
-
 use crate::host::prelude::*;
 
 use super::tuning::{
@@ -19,13 +14,10 @@ const GOLEM_HEIGHT: f64 = 1.5;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Trouble {
-    /// The planner and the golem get out of this on their own.
     Thinking,
-    /// Someone has to help.
     Stuck,
 }
 
-/// The mark as last submitted: which one, and where from the feet.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Mark {
     trouble: Trouble,
@@ -55,7 +47,6 @@ pub fn of(project: &Project, crew: &Crew, now: u64) -> Option<Trouble> {
     (getting_out || now > crew.pace.busy_at + THINK_AFTER).then_some(Trouble::Thinking)
 }
 
-/// Why, in the owner's words; what it is doing when nothing is wrong.
 pub fn reason(project: &Project, crew: &Crew, trouble: Option<Trouble>) -> String {
     let told = (!project.note.is_none())
         .then(|| project.note.to_string())
@@ -76,7 +67,6 @@ pub fn reason(project: &Project, crew: &Crew, trouble: Option<Trouble>) -> Strin
     }
 }
 
-/// Keep the mark over the golem's head in step with its trouble.
 pub fn show(ctx: &mut Ctx, crew: &mut Crew, body: &Body, trouble: Option<Trouble>) {
     let mark = trouble.map(|trouble| Mark {
         trouble,
@@ -127,8 +117,6 @@ pub fn show(ctx: &mut Ctx, crew: &mut Crew, body: &Body, trouble: Option<Trouble
     }
 }
 
-/// Where the mark hangs, from the feet: centred over the head, or in the
-/// nearest free cell when a block is there.
 fn hang(ctx: &mut Ctx, body: &Body) -> [f32; 3] {
     let over = [0.0, (GOLEM_HEIGHT + MARK_CLEAR) as f32, 0.0];
     let want = [
@@ -141,7 +129,6 @@ fn hang(ctx: &mut Ctx, body: &Body) -> [f32; 3] {
     for dy in -1..=2 {
         for dx in -1..=1 {
             for dz in -1..=1 {
-                // Straight down is the golem's own head.
                 if (dx, dz) != (0, 0) || dy > 0 {
                     cells.push([home[0] + dx, home[1] + dy, home[2] + dz]);
                 }
@@ -163,7 +150,6 @@ fn hang(ctx: &mut Ctx, body: &Body) -> [f32; 3] {
             })
     });
     match free {
-        // Over the head, or nowhere better to be found.
         Some(0) | None => over,
         Some(i) => {
             let c = centre(cells[i]);

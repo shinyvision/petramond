@@ -6,8 +6,6 @@ use mod_api::calls;
 use mod_api::{ConditionId, EntityRef, HostRet, PlayerId};
 use petramond_math::world_pos::WorldPos;
 
-/// Run the Mining seam with two sessions connected: `host` as player 0 and
-/// `other` as player 1.
 fn run_with_other(sim: &mut Sim, host: &mut Player, other: &mut Player) {
     let mut host_gui = petramond_world::gui_state::empty_gui_state();
     let mut other_gui = petramond_world::gui_state::empty_gui_state();
@@ -74,7 +72,6 @@ fn a_guest_applies_and_cools_a_condition_on_the_addressed_player_and_mob() {
             })
         }),
     )]);
-    // A fresh system list runs only the cooling producer.
     sim.systems = TickSystems::default();
     sim.init(&mut cool);
     run_with_other(&mut sim, &mut host_player, &mut other);
@@ -117,9 +114,6 @@ fn a_body_in_a_clearing_fluid_refuses_a_grant_after_its_exposure_tick() {
     with_fixture_content(&root, doused_grant_inner);
 }
 
-/// Mobs tick exposure before a mod's later stage runs, so a mod granting a
-/// condition to a body standing in a fluid that clears it must be refused, or
-/// the condition would flicker on for one tick.
 fn doused_grant_inner() {
     let hot = petramond_world::condition::by_name(HOT).unwrap();
     let douse = fluid_fixture::block(DOUSE);

@@ -1,21 +1,12 @@
-//! Every pack id this mod names, declared once and checked against the
-//! shipped JSON by the test below (see [`mod_sdk::pack_keys!`]).
-
 mod_sdk::pack_keys! {
-    /// The mushroom cavern's `underground_biomes.json` row.
     pub(crate) MUSHROOM_CAVERN: UndergroundBiome = "exploration:mushroom_cavern";
-    /// The dripstone caves' `underground_biomes.json` row.
     pub(crate) DRIPSTONE_CAVES: UndergroundBiome = "exploration:dripstone_caves";
-    /// The ambient spore haze bundle.
     pub(crate) SPORE_DRIFT: Emitter = "exploration:spore_drift";
 
-    /// Mushroom-cavern structure rows.
     pub(crate) MUSHROOM_STEM: Block = "exploration:mushroom_stem";
     pub(crate) HANGING_VINE: Block = "exploration:hanging_vine";
     pub(crate) CAVE_SILT: Block = "exploration:cave_silt";
 
-    /// The mushroom species palette, one row per colour and part (tabled in
-    /// `content::SPECIES_ROWS`).
     pub(crate) GLOWCAP_PINK: Block = "exploration:glowcap_pink";
     pub(crate) GLOWCAP_BLUE: Block = "exploration:glowcap_blue";
     pub(crate) GLOWCAP_MAGENTA: Block = "exploration:glowcap_magenta";
@@ -33,21 +24,14 @@ mod_sdk::pack_keys! {
     pub(crate) GLOW_VINE_MAGENTA: Block = "exploration:glow_vine_magenta";
     pub(crate) GLOW_VINE_PURPLE: Block = "exploration:glow_vine_purple";
 
-    /// Dripstone rows.
     pub(crate) DRIPSTONE_BLOCK: Block = "exploration:dripstone_block";
     pub(crate) STALACTITE: Block = "exploration:stalactite";
     pub(crate) STALACTITE_WET: Block = "exploration:stalactite_wet";
     pub(crate) STALAGMITE: Block = "exploration:stalagmite";
-    /// The block-behaviour hook both spike rows name.
     pub(crate) POINTED_DRIPSTONE_HOOK: Behavior = "exploration:pointed_dripstone";
-    /// Registry name of the spike item — what a falling piece IS in flight.
     pub(crate) POINTED_DRIPSTONE_ITEM: Item = "exploration:pointed_dripstone";
-    /// Block-data key a row declares to be FILLED by a drip
-    /// (`{"filled": "<block name>"}` — the row the vessel becomes). The
-    /// furniture cauldron opts in through this pack's integration overlay.
     pub(crate) DRIP_VESSEL: Data = "exploration:drip_vessel";
 
-    /// The engine's still water source.
     pub(crate) WATER: Block = "petramond:water";
 }
 
@@ -58,8 +42,6 @@ mod tests {
         pack_check::assert_declared(&[super::PACK_KEYS]);
     }
 
-    /// Worldgen gates each biome's features on the top of the depth band its
-    /// row declares; the band is data, so the mirrored constant is pinned.
     #[test]
     fn the_biome_altitude_gates_match_their_rows() {
         use mod_sdk::json::Value;

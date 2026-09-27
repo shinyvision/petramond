@@ -9,13 +9,9 @@ fn wait_for(what: &str, done: impl Fn() -> bool) {
     }
 }
 
-/// A write that fails must not open the read barrier (a reader would load
-/// the record it was replacing), must not be lost to the writes behind it,
-/// and must land once the disk takes it again.
 #[test]
 fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
     let dir = petramond_util::test_dirs::TestScratchDir::new("save-io");
-    // A directory where the player file goes makes that write fail.
     let ada = crate::net::identity::PlayerKey([0xAD; 32]);
     let blocker = dir.join(format!("players/{ada}.dat"));
     std::fs::create_dir_all(blocker.join("in-the-way")).unwrap();
@@ -53,9 +49,6 @@ fn a_failed_write_holds_the_barrier_and_lands_in_order_later() {
     assert_eq!(std::fs::read(dir.join("level.dat")).unwrap(), vec![2; 4]);
 }
 
-/// A backlog merges into one job: the newest version of each file and of
-/// each region slot wins, other slots of a region survive, and the job
-/// completes up to the newest message folded in.
 #[test]
 fn a_backlog_merges_into_one_job_where_later_writes_win() {
     let dir = std::env::temp_dir().join(format!("petramond-save-merge-{}", std::process::id()));
@@ -133,8 +126,6 @@ fn codec_bytes(snap: &super::super::SectionSnapshot, pal: &Palette) -> Vec<u8> {
     super::super::codec::encode_snapshot(snap, pal)
 }
 
-/// While a job keeps failing, rebuildable cache writes are not held in
-/// memory behind it.
 #[test]
 fn a_failing_job_drops_cache_writes() {
     let dir = std::env::temp_dir().join(format!("petramond-save-cache-{}", std::process::id()));

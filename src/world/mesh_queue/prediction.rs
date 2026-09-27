@@ -7,12 +7,6 @@ use crate::world::store::SkyCoverChange;
 use petramond_world::chunk::{self, ChunkPos, SectionPos};
 
 impl ReplicaWorld {
-    /// Present a reconciliation/rollback edit without blocking the client
-    /// owner thread. The corrective light and meshes publish together after
-    /// revision validation.
-    ///
-    /// `previous` carries each cell's block id before the predicted mutation;
-    /// the world already contains the post-edit state when this is called.
     pub fn reconcile_predicted_edit(&mut self, previous: &[(petramond_math::math::IVec3, u16)]) {
         if previous.is_empty() {
             return;
@@ -25,10 +19,6 @@ impl ReplicaWorld {
         self.requeue_prediction_meshes(&requeue);
     }
 
-    /// Present an initial local break/place prediction. The complete affected
-    /// light -> mesh bundle runs on the caller, so exact predicted presentation
-    /// is installed before this method returns. Reconciliation uses
-    /// [`Self::reconcile_predicted_edit`] and remains asynchronous.
     pub fn present_predicted_edit(&mut self, previous: &[(petramond_math::math::IVec3, u16)]) {
         use crate::world::prediction_render::run_prediction_terrain_synchronously;
 
@@ -63,10 +53,6 @@ impl ReplicaWorld {
             SectionGuard,
         };
 
-        // Everything the edit can possibly require: light-influence reach plus
-        // one pad cell, and the widened direct-sky cover band. The post-bake
-        // diff prunes whatever the fresh cubes prove untouched; all of what
-        // survives must publish atomically.
         let (candidates, always_mesh) = self.prediction_candidate_sections(previous);
         if candidates.is_empty() {
             return None;
@@ -107,9 +93,6 @@ impl ReplicaWorld {
                 })
             })
             .collect();
-        // Mirror streaming: groups of 3+ share one 64³ batch flood; smaller
-        // groups keep the per-section 48³ bake (below three the shared cube
-        // costs more cells than separate floods).
         let mut lights = Vec::new();
         for (base, members) in group_positions(&light_positions) {
             if members.len() >= 3 {
@@ -155,8 +138,6 @@ impl ReplicaWorld {
             return None;
         }
 
-        // A regular bake from an older prediction cannot contribute to this
-        // snapshot and would only race it for worker time.
         for &pos in &light_positions {
             self.light_bakes.cancel(pos);
         }
@@ -202,7 +183,6 @@ impl ReplicaWorld {
                         if seen.insert(pos) {
                             candidates.push(pos);
                         }
-                        // The pad samples one cell across each bordering face.
                         let samples_cell = (dx == 0 || Self::axis_gap(lx, dx) == 1)
                             && (dy == 0 || Self::axis_gap(ly, dy) == 1)
                             && (dz == 0 || Self::axis_gap(lz, dz) == 1);
@@ -214,10 +194,6 @@ impl ReplicaWorld {
             }
         }
 
-        // Reconstruct the pre-edit sky cover for each changed world column.
-        // This handles multi-cell edits (for example a door) as one before/after
-        // comparison instead of mistaking another newly-written cell for old
-        // cover while scanning downward.
         let mut changed_columns = Vec::new();
         for &(cell, _) in previous {
             let xz = (cell.x, cell.z);
@@ -234,9 +210,6 @@ impl ReplicaWorld {
                 continue;
             };
             let new_cover = column.sky_cover_y(chunk::lx(wx), chunk::lz(wz));
-            // Above both the current cover and the highest edited cell the
-            // pre-edit column transmits everywhere, so the old cover can only
-            // sit at or below that start line — no full-height scan.
             let start = previous
                 .iter()
                 .filter(|(cell, _)| cell.x == wx && cell.z == wz)
@@ -275,15 +248,6 @@ impl ReplicaWorld {
             }
         }
 
-        // A click must not leave its own neighbourhood to the budgeted async
-        // queues: any section ADJACENT to an edited cell that is already
-        // pending in the pipeline — queued, light-blocked, or first-bake
-        // deferred (the stragglers of fresh streaming) — joins the
-        // synchronous bundle, so the terrain the player is pointing at
-        // completes WITH the click instead of a dozen budgeted frames later.
-        // Bounded: at most the edited cells' 3×3×3, and only sections that
-        // had work coming anyway. Parked-invisible sections (sealed/hidden)
-        // stay parked.
         for &(cell, _) in previous {
             let Some((center, _, _, _)) = WorldData::split_world(cell.x, cell.y, cell.z) else {
                 continue;
@@ -298,10 +262,6 @@ impl ReplicaWorld {
                         let pending = self.side.terrain.dirty_meshes.contains(pos)
                             || self.side.terrain.light_blocked_meshes.contains(&pos)
                             || self.data.light_deferred.contains(&pos)
-                            // A mesh job queued on / in flight through the
-                            // worker pool: the bundle's fresh build supersedes
-                            // it (install cancels the job; a stale result is
-                            // revision-fenced at the drain).
                             || self.side.terrain.mesh_job_cancels.contains_key(&pos);
                         if pending && seen.insert(pos) {
                             candidates.push(pos);
@@ -313,10 +273,6 @@ impl ReplicaWorld {
         (candidates, always_mesh)
     }
 
-    /// Install completed local-prediction terrain bundles on the replica
-    /// owner thread. Freshness is all-or-nothing: any sampled section change,
-    /// authoritative light landing, unload, or newer prediction rejects the
-    /// entire bundle and hands its mesh targets back to the ordinary pipeline.
     pub(super) fn drain_prediction_terrain(&mut self) {
         while let Some(completion) = self.side.terrain.prediction_terrain.try_recv() {
             let installed = completion
@@ -370,8 +326,6 @@ impl ReplicaWorld {
             self.light_bakes.cancel(pos);
             if let Some(section) = self.data.section_mut(pos) {
                 if light.mask == 0 {
-                    // Byte-identical rebake: the cached cubes and every mesh
-                    // built from them remain exact — settle the flag only.
                     section.mark_light_clean();
                     continue;
                 }
@@ -379,9 +333,6 @@ impl ReplicaWorld {
                 section.set_skylight(light.result.skylight);
                 section.set_blocklight(light.result.blocklight);
                 section.dirty = true;
-                // Any ordinary mesh snapshot from before this bundle's
-                // light stage is stale. The bundled mesh below is known to
-                // contain these exact cubes and installs past this bump.
                 section.mesh_revision = section.mesh_revision.wrapping_add(1);
                 if !light.first_bake {
                     rim_requeues.push((pos, light.mask));
@@ -427,9 +378,6 @@ impl ReplicaWorld {
                 section.dirty = false;
             }
         }
-        // A changed border region whose sampling neighbour got no bundle mesh
-        // (it sat outside the candidate reach) still invalidates that
-        // neighbour's installed mesh — hand it to the ordinary pipeline.
         for (pos, mask) in rim_requeues {
             for dy in -1..=1 {
                 for dz in -1..=1 {

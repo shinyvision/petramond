@@ -1,18 +1,6 @@
-//! Document validation: the load-time contract that keeps a bad document from
-//! ever mis-routing a click or silently dropping content.
-//!
-//! Structural rules live here (ids, arity, bindings); the *host* supplies the
-//! per-kind [`SlotContract`] (which roles, how many) and a [`StyleLookup`]
-//! (which theme parts exist). A document that validates against its contract
-//! can never mis-map an in-role index: grids generate cells row-major and the
-//! contract pins the counts.
-
 use crate::doc::{Document, Node, NodeKind};
 use std::collections::HashSet;
 
-/// The host's slot expectations for one document kind: every role it must
-/// declare with exact counts. Roles absent from the contract are forbidden —
-/// an empty contract means "no slots at all" (mod GUI kinds).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SlotContract {
     pub roles: Vec<(String, usize)>,
@@ -26,13 +14,10 @@ impl SlotContract {
     }
 }
 
-/// Something that knows which theme part keys exist (implemented by `Theme`).
 pub trait StyleLookup {
     fn has_style(&self, key: &str) -> bool;
 }
 
-/// One validation finding, anchored by a node path like
-/// `root/2/0(button#spin)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocIssue {
     pub path: String,
@@ -46,9 +31,6 @@ impl std::fmt::Display for DocIssue {
 }
 
 impl Document {
-    /// Every violated rule (empty = valid). `styles`/`contract` are optional
-    /// so structural checks run without a theme (builder while art is WIP)
-    /// or before the host resolves the kind.
     pub fn validate(
         &self,
         styles: Option<&dyn StyleLookup>,
@@ -71,9 +53,6 @@ impl Document {
         }
         let mut seen_ids: HashSet<&str> = HashSet::new();
         walk(&self.root, "root", &mut seen_ids, styles, &mut issues);
-        // Hover anchors resolve against the WHOLE id set, so they get their
-        // own pass: a tooltip may sit earlier in document order than the
-        // widget it names.
         check_hover_anchors(&self.root, "root", &seen_ids, &mut issues);
 
         if let Some(contract) = contract {
@@ -106,8 +85,6 @@ impl Document {
     }
 }
 
-/// Sprite-sheet grid rule shared by `image` and image-backed `button`:
-/// both dimensions must be non-zero.
 fn check_frames(frames: &Option<[u32; 2]>, issue: &mut impl FnMut(String)) {
     if let Some([cols, rows]) = frames {
         if *cols == 0 || *rows == 0 {
@@ -116,8 +93,6 @@ fn check_frames(frames: &Option<[u32; 2]>, issue: &mut impl FnMut(String)) {
     }
 }
 
-/// Animation-rate rule: when `fps` is present it must be positive and finite
-/// (anything else would silently rest on frame 0).
 fn check_fps(fps: &Option<f32>, issue: &mut impl FnMut(String)) {
     if let Some(fps) = fps {
         if !fps.is_finite() || *fps <= 0.0 {
@@ -126,8 +101,6 @@ fn check_fps(fps: &Option<f32>, issue: &mut impl FnMut(String)) {
     }
 }
 
-/// A tooltip's `hover` anchor must name a widget that exists — a typo'd id
-/// would not error anywhere else, the tooltip would just never show.
 fn check_hover_anchors(node: &Node, path: &str, ids: &HashSet<&str>, issues: &mut Vec<DocIssue>) {
     if let NodeKind::Tooltip {
         hover: Some(anchor),
@@ -210,8 +183,6 @@ fn walk<'a>(
             if node.children.is_empty() {
                 issue("tooltip needs at least one child".into());
             }
-            // Without a visibility bind a tooltip would follow the pointer on
-            // every frame of the screen's life.
             if node.bind.visible.is_none() {
                 issue("tooltip needs a 'visible' binding (the host shows it)".into());
             }
@@ -277,7 +248,6 @@ fn walk<'a>(
             check_frames(frames, &mut issue);
             check_fps(fps, &mut issue);
             if let (Some(styles), Some(icon)) = (styles, icon.as_deref()) {
-                // A `.png` icon is document art; the host checks its file.
                 if !styles.has_style(icon) && !crate::is_doc_image_icon(icon) {
                     issue(format!("unknown icon part '{icon}'"));
                 }
@@ -332,10 +302,6 @@ fn walk<'a>(
         _ => {}
     }
 
-    // Cross-kind bind rules: an `item` bind is only ever read off a hook, and
-    // a bound abs position needs an authored `layout.abs` resting place (in
-    // at least one form) — anywhere else these silently do nothing, which is
-    // the worst failure a document can have.
     if node.bind.item.is_some() && !matches!(node.kind, NodeKind::Hook) {
         issue("'item' binding is only read on hook nodes".into());
     }
@@ -475,8 +441,6 @@ mod tests {
         );
     }
 
-    /// An `accepts` bind without authored filters (or off a slot entirely)
-    /// would silently narrow nothing — the inert-bind failure mode.
     #[test]
     fn an_accepts_bind_needs_a_filtered_slot() {
         let d = doc(r#"{
@@ -502,8 +466,6 @@ mod tests {
         );
     }
 
-    /// A `palette` bind anywhere but a label would silently recolour
-    /// nothing — the inert-bind failure mode.
     #[test]
     fn a_palette_bind_is_label_only() {
         let d = doc(r#"{

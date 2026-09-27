@@ -30,7 +30,6 @@ impl Selection {
         });
     }
 
-    /// Signed outward displacement. Every preview derives from the original geometry.
     pub fn extrude(&mut self, offset: i32) -> Result<(), String> {
         let Some(edit) = &mut self.extrusion else {
             return Ok(());
@@ -118,8 +117,6 @@ impl Selection {
     }
 }
 
-// Follow the selected volume immediately behind the face. A contraction must
-// stop at gaps instead of erasing a different island further along the axis.
 fn attached_columns(face: &SelectionFace, regions: &[SelectionBox]) -> Vec<SelectionBox> {
     let axis = face.axis;
     let u = (axis + 1) % 3;

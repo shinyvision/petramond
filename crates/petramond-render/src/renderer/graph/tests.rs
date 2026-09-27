@@ -28,9 +28,6 @@ fn world(id: N, label: &'static str, phase: Phase) -> PassNode<N> {
         .depth(DepthTarget::Depth, LoadOp::Load)
 }
 
-/// A miniature of the real frame: a clearing opaque pass, two more world
-/// nodes, a depth-sampling composite, a depth-clearing hand, the post pass
-/// and one screen node. Declared out of order on purpose.
 fn graph() -> FrameGraph<N> {
     FrameGraph::new(vec![
         PassNode::new(N::Chrome, "chrome", Phase::Screen)
@@ -110,7 +107,6 @@ fn equal_phases_keep_declaration_order() {
 #[test]
 fn nodes_sharing_attachments_merge_into_one_pass() {
     let p = plan(PLAIN, &[N::First, N::Stamp, N::Late, N::Out, N::Chrome]);
-    // The post pass clears the swapchain, the chrome loads it: one pass.
     assert_eq!(
         labels(&p),
         [vec!["first", "stamp", "late"], vec!["out", "chrome"]]
@@ -218,7 +214,6 @@ fn resolving_to_the_swapchain_feeds_the_screen_passes() {
     let p = plan(shape, &[N::First, N::Chrome]);
     assert!(p.groups[0].resolve);
     assert_eq!(p.validate(shape), Ok(()));
-    // Without the resolve nothing would have written the swapchain.
     let unresolved = FrameShape {
         route: SceneRoute::ResolveToSwapchain,
         msaa: false,

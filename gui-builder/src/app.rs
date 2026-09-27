@@ -1,7 +1,3 @@
-//! The eframe application: menu/toolbar chrome, dock layout, selection +
-//! undo plumbing. Panels and the canvas live in their own modules and talk to
-//! the app through `App`'s small mutation API so every edit lands in history.
-
 use crate::assets::AssetRoots;
 use crate::bindings::{self, Catalog};
 use crate::doc_edit::{self, NodePath};
@@ -16,7 +12,6 @@ use eframe::egui;
 use petramond_ui::DocIssue;
 use std::path::PathBuf;
 
-/// Forced widget states for the preview (applied to the selected node).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Forced {
     pub hover: bool,
@@ -29,52 +24,31 @@ pub struct App {
     pub path: Option<PathBuf>,
     pub last_dir: Option<PathBuf>,
     pub dirty: bool,
-    /// Bumped whenever anything the preview reads changes (doc, sample state,
-    /// theme reload…). The canvas re-rasterizes only when this moves.
     pub doc_rev: u64,
     pub history: History,
     pub sel: Option<NodePath>,
-    /// External (non-tree) selection happened: the tree scrolls the selected
-    /// row into view once.
     pub tree_scroll_to_sel: bool,
-    /// Collapsed container rows in the doc tree (session-only; paths shift
-    /// with edits, which just re-expands moved rows).
     pub tree_collapsed: std::collections::HashSet<NodePath>,
-    /// The asset roots named on the command line (or discovered).
     cli_roots: AssetRoots,
-    /// The layers the current project reads through: the command-line roots
-    /// plus its own `asset_roots` and enclosing pack.
     pub roots: AssetRoots,
     pub theme: ThemeSource,
-    /// The per-kind data catalog (`assets/ui/bindings.json`); `None` hides
-    /// binding pickers, seeding, and the Screen-data panel.
     pub catalog: Option<Catalog>,
-    /// `Some(true)` forces the Screen-data header open once (new documents).
     pub screen_data_force_open: Option<bool>,
     pub images: DiskImages,
-    /// The preview's state, runtime and canvas rects, rebuilt per revision.
     pub preview: PreviewCache,
     pub forced: Forced,
-    /// Editor chrome (selection outlines, badges) on the canvas.
     pub overlay: bool,
-    // Sample-state JSON editor buffer.
     pub sample_json: String,
     pub sample_error: Option<String>,
     pub sample_open: bool,
-    // New-with-custom-kind popup.
     pub new_kind_open: bool,
     pub new_kind_buf: String,
-    // Cached validation.
     validation: Vec<DocIssue>,
     validation_rev: Option<u64>,
-    /// The engine context validation runs in, with the project dir it was
-    /// read for (re-read only when the project moves).
     engine_ctx: Option<(Option<PathBuf>, EngineContext)>,
-    /// Set by canvas double-click: the inspector focuses its text field.
     pub focus_text_edit: bool,
     pub status: String,
     pub canvas_drag: Option<canvas::CanvasDrag>,
-    /// Cached preview raster (re-rasterized only when `canvas_tex_key` moves).
     pub canvas_tex: Option<egui::TextureHandle>,
     pub canvas_tex_key: Option<canvas::CanvasKey>,
     last_title: String,
@@ -127,24 +101,18 @@ impl App {
         app
     }
 
-    // ---- mutation API (everything routes undo through here) -------------------
-
-    /// A discrete document edit: snapshots for undo, then applies `f`.
     pub fn mutate(&mut self, f: impl FnOnce(&mut petramond_ui::Document)) {
         self.history.record(&self.proj.document);
         f(&mut self.proj.document);
         self.touch();
     }
 
-    /// Start (or continue) a coalescing gesture edit, then apply `f`.
     pub fn gesture_mutate(&mut self, f: impl FnOnce(&mut petramond_ui::Document)) {
         self.history.begin_gesture(&self.proj.document);
         f(&mut self.proj.document);
         self.touch();
     }
 
-    /// Mark preview inputs changed (also used for non-document changes like
-    /// sample state or preview settings).
     pub fn touch(&mut self) {
         self.doc_rev += 1;
         self.dirty = true;
@@ -165,7 +133,6 @@ impl App {
     fn after_history_jump(&mut self) {
         self.doc_rev += 1;
         self.dirty = true;
-        // Selection may point at a node that no longer exists.
         if let Some(sel) = &self.sel {
             if doc_edit::node_at(&self.proj.document.root, sel).is_none() {
                 self.sel = None;
@@ -173,8 +140,6 @@ impl App {
         }
     }
 
-    /// Select from outside the tree panel (canvas, validation): also scrolls
-    /// the tree row into view so both views stay in sync.
     pub fn select_external(&mut self, path: Option<NodePath>) {
         self.sel = path;
         self.tree_scroll_to_sel = true;
@@ -184,8 +149,6 @@ impl App {
         doc_edit::node_at(&self.proj.document.root, self.sel.as_deref()?)
     }
 
-    /// Bring the preview cache (the [`Project::preview_state`], runtime and
-    /// canvas rects) up to the current document and theme.
     pub fn sync_preview(&mut self) {
         if self.preview.is_stale(self.doc_rev, self.theme.rev) {
             let state = self.proj.preview_state(self.catalog.as_ref());
@@ -198,15 +161,12 @@ impl App {
         }
     }
 
-    /// The directory the project is saved in (`None` until first saved).
     pub fn project_dir(&self) -> Option<PathBuf> {
         self.path
             .as_ref()
             .and_then(|p| p.parent().map(PathBuf::from))
     }
 
-    /// Re-derive the project's asset layers; when they moved (another pack,
-    /// edited `asset_roots`), reload everything read through them.
     fn refresh_roots(&mut self) {
         let roots = self
             .cli_roots
@@ -218,7 +178,6 @@ impl App {
         self.reload_assets();
     }
 
-    /// Reload the theme and binding catalog from the current layers.
     pub fn reload_assets(&mut self) {
         self.theme = theme_src::load(&self.roots, self.theme.rev + 1);
         self.catalog = Catalog::load(&self.roots);
@@ -227,9 +186,6 @@ impl App {
         self.doc_rev += 1;
     }
 
-    /// Cached validation for the current document + theme: the game's own
-    /// load-time rules (see `engine_check`), judged in the context of the
-    /// pack the project is saved in.
     pub fn validation(&mut self) -> Vec<DocIssue> {
         if self.validation_rev != Some(self.doc_rev) {
             let dir = self.project_dir();
@@ -254,8 +210,6 @@ impl App {
         self.validation.clone()
     }
 
-    // ---- file ops --------------------------------------------------------------
-
     fn set_project(&mut self, proj: Project, path: Option<PathBuf>, status: String) {
         self.proj = proj;
         self.path = path.clone();
@@ -275,8 +229,6 @@ impl App {
 
     pub fn new_project(&mut self, kind: &str) {
         let mut proj = Project::new(kind);
-        // New documents persist their catalog seeds in sample_state so the
-        // file documents its own preview data.
         if let Some(info) = self.catalog.as_ref().and_then(|c| c.kind(kind)) {
             for (key, value) in bindings::seed_values(info) {
                 proj.editor
@@ -287,7 +239,6 @@ impl App {
         }
         self.set_project(proj, None, format!("New {kind} document"));
         self.dirty = true;
-        // Teach the author what this screen can do.
         self.screen_data_force_open = Some(true);
     }
 
@@ -311,8 +262,6 @@ impl App {
                 match io::save_project(&path, &self.proj) {
                     Ok(()) => {
                         self.dirty = false;
-                        // The project dir may have just come into existence
-                        // (save-as): image and pack checks re-run against it.
                         self.validation_rev = None;
                         self.engine_ctx = None;
                         self.refresh_roots();
@@ -364,8 +313,6 @@ impl App {
         }
     }
 
-    // ---- sample state ------------------------------------------------------------
-
     pub fn sync_sample_buffer(&mut self) {
         self.sample_json =
             serde_json::to_string_pretty(&self.proj.editor.sample_state).unwrap_or_default();
@@ -378,7 +325,6 @@ impl App {
             Ok(map) => {
                 self.proj.editor.sample_state = map;
                 self.sample_error = None;
-                // Surface tagged-value errors immediately.
                 let (_, errs) = self.proj.sample_ui_state();
                 if !errs.is_empty() {
                     self.sample_error = Some(errs.join("; "));
@@ -388,8 +334,6 @@ impl App {
             Err(e) => self.sample_error = Some(e.to_string()),
         }
     }
-
-    // ---- edit actions ---------------------------------------------------------------
 
     pub fn delete_selected(&mut self) {
         let Some(path) = self.sel.clone() else { return };
@@ -424,8 +368,6 @@ impl App {
         self.sel = Some(new_path);
     }
 
-    /// Insert `node` into the selected container (or the selection's parent,
-    /// or the root) and select it.
     pub fn insert_node(&mut self, mut node: petramond_ui::Node) {
         doc_edit::uniquify_ids(&self.proj.document, &mut node);
         let target: NodePath = match &self.sel {
@@ -447,8 +389,6 @@ impl App {
             self.sel = new_path;
         }
     }
-
-    // ---- frame ------------------------------------------------------------------------
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         use egui::{Key, KeyboardShortcut, Modifiers};
@@ -702,13 +642,11 @@ impl eframe::App for App {
             });
         egui::CentralPanel::default().show(ctx, |ui| canvas::show(self, ui));
 
-        // Gestures end when the pointer releases, wherever it is.
         if ctx.input(|i| !i.pointer.any_down()) {
             self.history.end_gesture(&self.proj.document);
             self.canvas_drag = None;
         }
 
-        // Keep doc images fresh (the project dir may gain PNGs while open).
         let dir = self.project_dir();
         self.images
             .refresh(&self.proj.document, dir.as_deref(), &self.roots);

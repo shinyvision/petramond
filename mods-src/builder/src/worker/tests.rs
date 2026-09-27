@@ -1,5 +1,3 @@
-//! The golem's work, a piece at a time, against the fake world.
-
 mod act;
 mod backoff;
 mod body;
@@ -17,11 +15,8 @@ use crate::project::{ProjectId, Projects};
 use crate::testing::{Session, HOME};
 use crate::worker::Job;
 
-/// Route-search nodes a test tick may spend: the session's own budget.
 const NODES: u32 = 28_000;
 
-/// The row site with its job compiled and surveyed, and a golem out at work
-/// from home, standing in `at`.
 pub(super) fn working(at: [i32; 3]) -> (Session, ProjectId, u64) {
     let (mut session, id) = Session::row();
     session.job(id);
@@ -29,7 +24,6 @@ pub(super) fn working(at: [i32; 3]) -> (Session, ProjectId, u64) {
     (session, id, golem)
 }
 
-/// Run `f` with what a tick lends the worker for project `id`.
 pub(super) fn at_work<R>(
     session: &mut Session,
     id: ProjectId,
@@ -44,7 +38,6 @@ pub(super) fn at_work<R>(
     f(&mut ctx, projects, job)
 }
 
-/// The design unit anchored at `pos`.
 pub(super) fn unit(session: &Session, id: ProjectId, pos: [i32; 3]) -> usize {
     session.builder.jobs.map[&id]
         .design

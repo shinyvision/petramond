@@ -1,6 +1,3 @@
-//! Siting: the rarity roll, the coarse height scan, and the contour traces
-//! read out of it — plus each trace's band-probe plan.
-
 use mod_sdk::GenRng;
 
 use super::{
@@ -8,17 +5,12 @@ use super::{
     LATTICE, LATTICE_Y, MARGIN, MAX_STEP, NSAMP, ONE_IN, PROBE_DILATE, SALT_CASCADE,
 };
 
-/// A rolled candidate cell. The roll decides only THAT this cell tries; the
-/// terrain decides everything else.
 pub struct Cell {
     pub lx: i32,
     pub ly: i32,
     pub lz: i32,
 }
 
-/// Every lattice cell whose box overlaps the section at `origin` (plus its
-/// claim rows) — the cells whose cascade outcome this dispatch must know.
-/// Pure: no host calls.
 pub fn cells_overlapping(origin: [i32; 3], claim_rows: i32) -> Vec<(i32, i32, i32)> {
     cells_overlapping_box(
         origin,
@@ -26,9 +18,6 @@ pub fn cells_overlapping(origin: [i32; 3], claim_rows: i32) -> Vec<(i32, i32, i3
     )
 }
 
-/// Every lattice cell whose box overlaps the inclusive world box — how the
-/// giant pass finds the basins that could suppress a candidate whose body
-/// spans `lo..=hi`.
 pub fn cells_overlapping_box(lo: [i32; 3], hi: [i32; 3]) -> Vec<(i32, i32, i32)> {
     let mut out = Vec::new();
     for lz in lo[2].div_euclid(LATTICE)..=hi[2].div_euclid(LATTICE) {
@@ -42,8 +31,6 @@ pub fn cells_overlapping_box(lo: [i32; 3], hi: [i32; 3]) -> Vec<(i32, i32, i32)>
 }
 
 impl Cell {
-    /// The rarity roll: does this lattice cell carry a candidate at all?
-    /// One draw, constant count — the stream is the world's content.
     pub fn roll(seed: u32, lx: i32, ly: i32, lz: i32) -> Option<Cell> {
         let mut rng = GenRng::positional(seed, SALT_CASCADE, lx, ly, lz);
         (rng.next_i32(0, ONE_IN - 1) == 0).then_some(Cell { lx, ly, lz })
@@ -59,7 +46,6 @@ impl Cell {
         self.ly * LATTICE_Y
     }
 
-    /// World column of coarse sample `(kx, kz)`.
     fn sample_col(&self, kx: i32, kz: i32) -> (i32, i32) {
         (
             self.bx() + MARGIN + 1 + kx * COARSE,
@@ -67,8 +53,6 @@ impl Cell {
         )
     }
 
-    /// Cheap biome pre-gate points: the cell's centre and quadrant centres at
-    /// mid-height. Any hit keeps the cell alive for the coarse scan.
     pub fn gate_points(&self) -> Vec<[i32; 3]> {
         let y = self.by() + LATTICE_Y / 2;
         let (cx, cz) = (self.bx() + LATTICE / 2, self.bz() + LATTICE / 2);
@@ -82,7 +66,6 @@ impl Cell {
         ]
     }
 
-    /// The coarse height scan: every sample column's rows, canonical order.
     pub fn coarse_plan(&self, mut f: impl FnMut([i32; 3])) {
         for kz in 0..NSAMP {
             for kx in 0..NSAMP {
@@ -94,11 +77,6 @@ impl Cell {
         }
     }
 
-    /// Read the coarse replies into contour TRACES: chains of step-edge
-    /// samples whose lip height drifts gradually, ranked longest first.
-    ///
-    /// The scoring is the inversion that matters: nothing here fits a shape
-    /// or rolls a centre. The terrain's longest rolling edge is the site.
     pub fn traces(&self, rock: &[bool], free: &[bool]) -> Vec<Trace> {
         let heights = Heights::scan(self.by(), rock, free);
         let chains = heights.lip_chains();
@@ -116,19 +94,13 @@ impl Cell {
         out
     }
 
-    /// The trace one contour chain offers: anchored at its highest point,
-    /// nearest-the-anchor samples first, truncated to the probe budget.
     fn trace_along(&self, heights: &Heights, chain: &[(i32, i32)]) -> Trace {
         let floor = |kx: i32, kz: i32| heights.at(kx, kz).expect("chained samples have floors");
-        // The anchor is the contour's highest point; the head basin floods
-        // the terrace behind it.
         let &(akx, akz) = chain
             .iter()
             .max_by_key(|&&(kx, kz)| (floor(kx, kz), std::cmp::Reverse((kz, kx))))
             .expect("a chain is never empty");
         let s0 = floor(akx, akz);
-        // Nearest-the-anchor samples first, so truncation keeps the part of
-        // the contour the head basin actually lies along.
         let mut samples: Vec<(i32, i32, i32)> = chain
             .iter()
             .map(|&(kx, kz)| {
@@ -145,7 +117,6 @@ impl Cell {
             s0,
             cell: CellBox::of(self),
         };
-        // Truncate until the band probe fits its budget.
         while t.plan_len() > BAND_PROBE_MAX && t.samples.len() > 2 {
             t.samples.pop();
         }
@@ -153,8 +124,6 @@ impl Cell {
     }
 }
 
-/// The top floor of every coarse sample column, inside the vertical pads
-/// that leave room for beds below and headroom above.
 struct Heights(Vec<Option<i32>>);
 
 impl Heights {
@@ -165,11 +134,8 @@ impl Heights {
         for (i, top) in h.iter_mut().enumerate() {
             let base = i * rows;
             let (floor, air) = (&rock[base..base + rows], &free[base..base + rows]);
-            // row r is world y = by + 1 + r
             let lo = (ADOPT_MAX + MAX_STEP) as usize;
             let hi = rows - 1 - HEADROOM as usize;
-            // ROCK under, ROOM over: a fluid surface is neither, so a basin
-            // is never sited on one.
             *top = (lo..=hi)
                 .rev()
                 .find(|&r| floor[r - 1] && (0..HEADROOM as usize).all(|k| air[r + k]))
@@ -184,8 +150,6 @@ impl Heights {
             .flatten()
     }
 
-    /// A lip sample: the floor steps down by more than the bed band within
-    /// one or two samples in some direction.
     fn lip(&self, kx: i32, kz: i32) -> bool {
         let Some(me) = self.at(kx, kz) else {
             return false;
@@ -198,8 +162,6 @@ impl Heights {
             })
     }
 
-    /// Chain lip samples along the contour: 8-connected, heights drifting no
-    /// faster than the bed band between neighbours — one rolling edge each.
     fn lip_chains(&self) -> Vec<Vec<(i32, i32)>> {
         let n = NSAMP as usize;
         let mut comp: Vec<usize> = vec![usize::MAX; n * n];
@@ -242,8 +204,6 @@ impl Heights {
     }
 }
 
-/// Chain indices ranked by SPAN first: the long rolling edge is the design,
-/// and a long thin chain beats a fat short one with more samples.
 fn rank_by_span(chains: &[Vec<(i32, i32)>]) -> Vec<usize> {
     let span_of = |cells: &[(i32, i32)]| {
         let (mut x0, mut x1, mut z0, mut z1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
@@ -266,7 +226,6 @@ fn rank_by_span(chains: &[Vec<(i32, i32)>]) -> Vec<usize> {
     ranked
 }
 
-/// The candidate cell's writable interior, for clamping.
 #[derive(Copy, Clone)]
 pub(super) struct CellBox {
     pub(super) x0: i32,
@@ -290,10 +249,7 @@ impl CellBox {
     }
 }
 
-/// One contour to try: the traced lip samples, the head anchor, and the cell
-/// bounds. Everything downstream is a pure function of this and the terrain.
 pub struct Trace {
-    /// `(x, z, lip height)` of the kept samples, anchor-nearest first.
     pub(super) samples: Vec<(i32, i32, i32)>,
     pub anchor: (i32, i32),
     pub s0: i32,
@@ -301,8 +257,6 @@ pub struct Trace {
 }
 
 impl Trace {
-    /// Probe columns (sorted) with each column's row window — shared by the
-    /// plan and the build so the two cannot drift.
     pub(super) fn probe_cols(&self) -> Vec<((i32, i32), (i32, i32))> {
         let width = (self.cell.z1 - self.cell.z0 + 1) as usize;
         let height = (self.cell.x1 - self.cell.x0 + 1) as usize;
@@ -327,8 +281,6 @@ impl Trace {
                 if lo > hi {
                     continue;
                 }
-                // Deepest read: a bed band + adopted pit + dam foundation
-                // under a descended link; highest: headroom over the lip.
                 let lo = (lo - (BED_BAND + ADOPT_MAX + DAM_MAX + MAX_STEP)).max(self.cell.y0);
                 let hi = (hi + HEADROOM + 2).min(self.cell.y1);
                 if lo <= hi {
@@ -346,7 +298,6 @@ impl Trace {
             .sum()
     }
 
-    /// The band probe plan, in the one canonical order the replies are read.
     pub fn plan(&self, mut f: impl FnMut([i32; 3])) {
         for ((x, z), (lo, hi)) in self.probe_cols() {
             for y in lo..=hi {

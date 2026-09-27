@@ -82,7 +82,6 @@ fn a_paste_names_its_design_and_holds_its_place_while_the_archive_arrives() {
             .into();
     let digest = crate::schematic::store::digest(&bytes);
     server.request_placement(0, digest, pos.to_array(), 0);
-    // An edit asked for after the paste waits behind it.
     server.sessions[0]
         .sim
         .creative

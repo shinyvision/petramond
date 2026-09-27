@@ -1,10 +1,5 @@
-//! Model→terrain contact-shadow emission: the mesher stamps a bottom footprint
-//! cell ONLY onto an opaque full cube directly below it, with bounded darkening
-//! on the supporting face's plane.
-
 use super::*;
 
-/// A workbench bottom cell at (8, 8, 8), with `below` (or air) at (8, 7, 8).
 fn workbench_over(below: Option<Block>) -> ChunkMesh {
     let mut blocks = vec![((8usize, 8usize, 8usize), Block::FurnitureWorkbench)];
     if let Some(b) = below {
@@ -32,8 +27,6 @@ fn model_on_opaque_cube_emits_a_bounded_contact_stamp() {
             "the stamp stays inside its own cell: {:?}",
             v.pos
         );
-        // The strength itself is a tuned constant — assert only the invariant
-        // that it stays a valid partial multiplier.
         assert!(
             v.darken >= 0.0 && v.darken < 1.0,
             "darkening must stay a partial multiplier: {}",
@@ -46,10 +39,6 @@ fn model_on_opaque_cube_emits_a_bounded_contact_stamp() {
     );
 }
 
-/// The stamp spills across the cell boundary onto a SUPPORTED neighbouring
-/// floor (the grass next to the model), each single-cell piece gated on its own
-/// column: an unsupported neighbour clips it, and a wall burying the
-/// neighbouring floor at stamp level suppresses it.
 #[test]
 fn contact_stamp_crosses_cell_boundaries_onto_supported_neighbours() {
     let spill = |extra: &[((usize, usize, usize), Block)]| {
@@ -61,7 +50,6 @@ fn contact_stamp_crosses_cell_boundaries_onto_supported_neighbours() {
         mesh(&section_with(&blocks))
     };
 
-    // Neighbour floor at (7, 7, 8): the stamp crosses into x ∈ [7, 8).
     let supported = spill(&[((7, 7, 8), Block::Stone)]);
     assert!(
         supported.contact.iter().any(|v| v.pos[0] < 8.0 - 1e-4),
@@ -72,7 +60,6 @@ fn contact_stamp_crosses_cell_boundaries_onto_supported_neighbours() {
         "the spill stays within the one-cell dilation ring"
     );
 
-    // No neighbour floor: the same model's stamp clips at its own cell.
     let unsupported = spill(&[]);
     assert!(
         !unsupported.contact.is_empty()
@@ -80,7 +67,6 @@ fn contact_stamp_crosses_cell_boundaries_onto_supported_neighbours() {
         "an unsupported neighbour cell gets no spill"
     );
 
-    // Neighbour floor exists but a wall buries it at stamp level: suppressed.
     let buried = spill(&[((7, 7, 8), Block::Stone), ((7, 8, 8), Block::Stone)]);
     assert!(
         buried.contact.iter().all(|v| v.pos[0] >= 8.0 - 1e-4),

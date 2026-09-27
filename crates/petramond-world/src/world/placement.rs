@@ -1,17 +1,3 @@
-//! The single per-shape placement ladder: validity check → [`PlacementPlan`]
-//! (resulting state write + cell footprint), evaluated by server placement
-//! against the authoritative world and by the client place ghost against the
-//! replica. The slab arm's `slab_layer_target_state` pattern ("one
-//! placement-validity rule, shared by both sides") generalized to every
-//! shape, so the two sides cannot drift into a prediction desync arm by arm.
-//!
-//! Side-specific policy stays with the callers: the server's `block_place_pre`
-//! mod event, inventory consumption, and events; the client's ghost gates
-//! (mod blocks, replace-in-place, the accept convention). Body occupancy is
-//! side-specific too (server sessions + sim mobs vs the client's predicted
-//! body + replicated rows), so the rules take it as a closure over the cells
-//! and boxes the placed shape would occupy.
-
 use super::data::WorldData;
 use crate::block::SupportDir;
 use crate::block::{Aabb, Block, CellPart, ShapeState};
@@ -23,21 +9,10 @@ use crate::slab::{SlabRotation, SlabSlot};
 
 pub mod authored;
 
-/// Whether a click on `looked_at` REPLACES it where it stands instead of
-/// building against its face: replaceable MATTER — tall grass, a snow layer,
-/// water (so a bucket pours in place) — which air, being nothing, is not.
 pub fn replaces_in_place(looked_at: Block) -> bool {
     looked_at.is_replaceable() && looked_at != Block::Air
 }
 
-/// THE build-position rule: which cell a click builds into. Server placement,
-/// server item use, and both client prediction paths resolve through this, so
-/// a change to what counts as replace-in-place cannot land on one side only
-/// and desync the ghost from the authority.
-///
-/// Callers keep their own zero-normal guard where they have one: whether a
-/// faceless hit is a refusal or a build in place is the CALLER's policy, not
-/// part of this rule.
 pub fn build_position(looked_at: Block, hit: IVec3, normal: IVec3) -> IVec3 {
     if replaces_in_place(looked_at) {
         hit
@@ -46,9 +21,6 @@ pub fn build_position(looked_at: Block, hit: IVec3, normal: IVec3) -> IVec3 {
     }
 }
 
-/// How many states the R-key cycle has for `block`: its shape's held
-/// rotations, or the log's two axes (a log turns by row flag, whatever its
-/// shape).
 fn rotation_count(block: crate::block::Block) -> u8 {
     if block.is_log() {
         2
@@ -58,7 +30,6 @@ fn rotation_count(block: crate::block::Block) -> u8 {
 }
 
 impl HeldRotation {
-    /// Every rotation the R key reaches with `item` in hand, unrotated first.
     pub fn each(item: ItemType) -> impl Iterator<Item = HeldRotation> {
         let count = match item.as_block() {
             Some(block) if rotatable_block(block) => rotation_count(block),
@@ -75,12 +46,6 @@ fn rotatable_block(block: crate::block::Block) -> bool {
     rotation_count(block) > 1
 }
 
-/// The click spots on `normal`'s face a placer can deliberately aim at, most
-/// likely first: the spot actually clicked, then — on a VERTICAL face, the
-/// only one with halves to distinguish — the middles of its lower and upper
-/// halves. Placement rules read the spot (which half a trapdoor hangs in), so
-/// a placer that cannot aim by eye, an actor working from a plan, enumerates
-/// these the way it enumerates [`HeldRotation::each`].
 pub fn click_spots(spot: [f32; 3], normal: IVec3) -> impl Iterator<Item = [f32; 3]> {
     let count = if normal.y == 0 { 3 } else { 1 };
     [spot, [spot[0], 0.25, spot[2]], [spot[0], 0.75, spot[2]]]
@@ -88,11 +53,6 @@ pub fn click_spots(spot: [f32; 3], normal: IVec3) -> impl Iterator<Item = [f32; 
         .take(count)
 }
 
-/// The held block's placement-rotation state (the R-key cycle): which item the
-/// cycle was armed on and the raw counter. Lives BOTH client-side (the client
-/// owns the R key and previews the rotated held block) and session-side (the
-/// placement paths read the session's copy, fed from `PlayerUpdate`'s raw
-/// counter) — one struct so the two can never drift in logic.
 #[derive(Clone, Debug, Default)]
 
 pub struct HeldRotation {
@@ -101,8 +61,6 @@ pub struct HeldRotation {
 }
 
 impl HeldRotation {
-    /// Cycle the rotation for `selected` (stairs upside-down, slab column/row,
-    /// log axis). Selecting a non-rotatable item clears it.
     pub fn toggle(&mut self, selected: Option<ItemType>) {
         let Some(item) = selected else {
             self.clear();
@@ -127,13 +85,6 @@ impl HeldRotation {
         self.rotation = 0;
     }
 
-    /// Latch the raw counter a `PlayerUpdate` carried. The wire carries ONLY
-    /// the counter; the session re-derives the armed item as its own currently
-    /// selected item whenever the counter changes to nonzero (the client
-    /// resets the counter to 0 on every hotbar change, so a changed nonzero
-    /// counter can only mean an R-press on the current selection). An
-    /// unchanged counter keeps the armed item as-is, preserving the
-    /// "rotation is remembered per item" activity check.
     pub fn apply_wire(&mut self, counter: u8, selected: Option<ItemType>) {
         if counter == self.rotation {
             return;
@@ -212,36 +163,18 @@ impl HeldRotation {
     }
 }
 
-/// Player-derived inputs to the placement rules, resolved by each side from
-/// its own session / held-rotation state before the ladder runs.
 pub struct PlaceInputs {
-    /// The clicked cell (the raycast hit).
     pub hit: IVec3,
-    /// The clicked face's outward normal.
     pub normal: IVec3,
-    /// WHERE on `hit` the click landed, in that cell's local coordinates
-    /// (`0..1` per axis). A family reads whichever component its own rule
-    /// cares about — a trapdoor asks which HALF of a wall face was clicked.
-    /// GENERIC click input: the engine pre-derives nothing from it.
     pub spot: [f32; 3],
-    /// The build cell: the hit cell when replacing a plant in place, else
-    /// `hit + normal`.
     pub place_pos: IVec3,
-    /// Whether the click replaces a replaceable non-air block in its own cell
-    /// (drops a replacing torch to the floor mount).
     pub replacing_in_place: bool,
     pub player_facing: Facing,
-    /// The held block's raw placement-rotation state (the R-key cycle) plus
-    /// the held item it is armed on. GENERIC input-device state: each family
-    /// derives its own reading (a stair's half, a slab's row/column, a log's
-    /// axis) — the engine pre-derives nothing.
     pub held_rotation: HeldRotation,
     pub held: Option<crate::item::ItemType>,
 }
 
 impl PlaceInputs {
-    /// The inputs of a click on `hit`'s `normal` face, whoever makes it:
-    /// where it builds is [`build_position`]'s to say.
     #[allow(clippy::too_many_arguments)]
     pub fn of_click(
         w: &WorldData,
@@ -265,27 +198,17 @@ impl PlaceInputs {
         }
     }
 
-    /// The horizontal direction from the build cell back to the block the
-    /// click built AGAINST — what a shape that ATTACHES to that block hinges
-    /// or mounts on. `None` for a click on a horizontal face, which leaves no
-    /// wall to attach to.
     #[inline]
     pub fn support_side(&self) -> Option<Facing> {
         Facing::from_horizontal_normal(-self.normal)
     }
 }
 
-/// One cell a [`PlacementPlan`] writes: the block row and the opaque initial
-/// cell-state bytes, plus whether the write claims the WHOLE cell or just one
-/// of its parts.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CellWrite {
     pub cell: IVec3,
     pub block: Block,
     pub state: ShapeState,
-    /// The sub-cell [`CellPart`] this write claims — where the carry courier
-    /// lands the placed stack's data. `0` for every single-part family, which
-    /// is the bare, un-suffixed KV address.
     pub part: CellPart,
     /// Whether this write AUGMENTS the cell (adds a part to one that already
     /// holds others) rather than replacing it whole.
@@ -298,15 +221,6 @@ pub struct CellWrite {
     pub augments: bool,
 }
 
-/// A validated placement: the cell it anchors on (the commit target — the
-/// clicked cell for a slab stack, the oriented base for a model, the lower
-/// cell for a door) and every [`CellWrite`] the write lands.
-/// The commit is GENERIC: there is no per-family write vocabulary — a family
-/// expresses ANY placement as block ids plus opaque cell-state bytes, and the
-/// refine cascade resolves the neighbour-dependent remainder after the write.
-/// A family may write sibling block rows (a wall panel's facing row, a
-/// chain's axis row) or several cells (a door's pair, a model's footprint) —
-/// the engine never knows which family it is committing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementPlan {
     pub anchor: IVec3,
@@ -314,7 +228,6 @@ pub struct PlacementPlan {
 }
 
 impl PlacementPlan {
-    /// The common single-cell plan: a whole-cell write of the cell's one part.
     pub fn single(cell: IVec3, block: Block, state: ShapeState) -> Self {
         Self {
             anchor: cell,
@@ -322,11 +235,6 @@ impl PlacementPlan {
         }
     }
 
-    /// A single-cell plan whose write claims one sub-cell `part`. `augments`
-    /// is true when the cell already holds OTHER parts whose data must survive
-    /// the block write (stacking a second slab layer into a dyed cell), false
-    /// for a fresh cell that happens to fill a non-zero part (a lone top slab
-    /// hung under a ceiling).
     pub fn single_part(
         cell: IVec3,
         block: Block,
@@ -346,7 +254,6 @@ impl PlacementPlan {
         }
     }
 
-    /// A whole-cell write of `block` at `cell`.
     pub fn whole(cell: IVec3, block: Block, state: ShapeState) -> CellWrite {
         CellWrite {
             cell,
@@ -357,14 +264,10 @@ impl PlacementPlan {
         }
     }
 
-    /// Every cell the write touches — the prediction ledger / rollback
-    /// footprint.
     pub fn cells(&self) -> impl Iterator<Item = IVec3> + '_ {
         self.writes.iter().map(|w| w.cell)
     }
 
-    /// The part the ANCHOR write claims — what the carry courier restores
-    /// into.
     pub fn anchor_part(&self) -> CellPart {
         self.writes
             .iter()
@@ -373,43 +276,22 @@ impl PlacementPlan {
     }
 }
 
-/// A construction record's cells (see [`ShapePlacement::construction_writes`]).
 pub enum ConstructionWrites {
-    /// The record anchors an object: these are all of its writes.
     Anchor(PlacementPlan),
-    /// The record is a member of an object anchored at this cell.
     Member(IVec3),
 }
 
-/// A shape family's answer to a placement click — the SEAM that replaced the
-/// engine's per-family placement match. A family either fully owns the
-/// placement (a stair's facing+half, a slab's stack slot, a door's two cells)
-/// or defers to the generic single-cell path.
 pub enum PlacementOutcome {
-    /// The click cannot place here (no floor for a door, a slab cell already
-    /// full, a body in the way).
     Refused,
-    /// This family has no bespoke placement: use the generic single-cell path
-    /// (`World::general_placement_plan`) — cube/log/directional blocks,
-    /// plants, and any family that never overrides.
     General,
-    /// A fully-resolved placement.
     Plan(PlacementPlan),
 }
 
-/// The placement seam every shape family implements. The engine holds NO
-/// per-family placement dispatch: `World::placement_plan` asks the cell's
-/// shape kind, and a mod family answers exactly as an engine one does.
 pub trait ShapePlacement: Send + Sync + 'static {
-    /// How many states the R-key cycle steps a HELD block of this shape
-    /// through (`1` = the key does nothing to it).
     fn held_rotations(&self) -> u8 {
         1
     }
 
-    /// The state a held block of this shape previews (icon, in-hand form)
-    /// under the held-rotation cycle, or `None` for a shape whose held form
-    /// carries no state.
     fn held_state(
         &self,
         _block: Block,
@@ -419,18 +301,10 @@ pub trait ShapePlacement: Send + Sync + 'static {
         None
     }
 
-    /// The construction INTENT a stored state carries: what a built copy of
-    /// the cell reproduces and what an existing cell must hold to count as
-    /// already built. State a player toggles in ordinary use (a door standing
-    /// open) is not intent. The default keeps the whole state.
     fn authored_state(&self, _block: Block, state: ShapeState) -> ShapeState {
         state
     }
 
-    /// Every cell a construction record at `pos` builds, each with its
-    /// authored state: the whole object the cell belongs to, anchored where
-    /// it is paid for. A cell that is a MEMBER of an object anchored at
-    /// another cell answers that anchor instead, since the anchor builds it.
     fn construction_writes(
         &self,
         block: Block,
@@ -444,15 +318,10 @@ pub trait ShapePlacement: Send + Sync + 'static {
         ))
     }
 
-    /// The state a MEMBER cell recorded as `state` holds once the object it
-    /// belongs to is built: its own, unless the object is built another way
-    /// than it was recorded (see [`construction_writes`](Self::construction_writes)).
     fn member_state(&self, _block: Block, state: ShapeState, _pos: IVec3) -> ShapeState {
         state
     }
 
-    /// Pure authored layout, without player, support or live-world checks.
-    /// The caller validates containment and commits the resulting footprint.
     fn authored_plan(
         &self,
         block: Block,
@@ -461,10 +330,6 @@ pub trait ShapePlacement: Send + Sync + 'static {
         inputs.general(block)
     }
 
-    /// Resolve a placement of `block` for this click, or defer. Reads the
-    /// world for support/occupancy through `w`; `occupied` reports whether a
-    /// gameplay body overlaps the given boxes at a cell (side-specific — the
-    /// server's sessions+mobs, the client's predicted+replicated bodies).
     fn placement_plan(
         &self,
         _w: &WorldData,
@@ -476,15 +341,12 @@ pub trait ShapePlacement: Send + Sync + 'static {
     }
 }
 
-/// The SHARED validation of an accepted custom-shape placement plan — evaluated
-/// by the server against the authoritative world and by the client place
-/// ghost against the replica, so the two sides compute the same write by
-/// construction (one rule, never two hand-kept copies). Refuses: a plan
-/// writing more than the anchor cell, an anchor more than Chebyshev 2 from
-/// `place_pos`, or a `block` override that is not a sibling row of the same
-/// shape kind (orientation as block identity; a kind belongs to one pack, so
-/// a plan can never reach across packs). Returns the anchor and the row to
-/// write (the held row by default).
+/// Validates an accepted custom-shape placement plan. The server and the client's place ghost
+/// both call this, so their writes match by construction instead of two hand-kept copies.
+/// Refuses a plan that writes past the anchor cell, an anchor more than Chebyshev 2 from
+/// `place_pos`, or a `block` override that isn't a sibling row of the same shape kind. A kind
+/// belongs to one pack, so a plan can't reach across packs.
+/// Returns the anchor and the row to write, the held row by default.
 pub fn validate_custom_plan(
     result: &mod_api::ShapePlacementResult,
     held: Block,
@@ -502,18 +364,11 @@ pub fn validate_custom_plan(
         }
     };
     let anchor = IVec3::new(result.anchor[0], result.anchor[1], result.anchor[2]);
-    // Placement is SINGLE-CELL and stateless: the guest may claim only the
-    // anchor cell (an empty `cells`, or exactly `[anchor]`). A wider
-    // footprint is refused here — the host cannot yet atomically gate,
-    // re-bake, or remove a multi-cell custom object, so shipping the wire
-    // field is fine but honouring more than one cell is not.
     let single_cell = result.cells.is_empty()
         || (result.cells.len() == 1 && result.cells[0] == anchor.to_array());
     if !single_cell {
         return None;
     }
-    // Bound the anchor to a small neighbourhood of the click so a plan
-    // cannot place kilometres from where the player aimed.
     let (dx, dy, dz) = (
         (anchor.x - place_pos.x).abs(),
         (anchor.y - place_pos.y).abs(),
@@ -562,12 +417,6 @@ impl WorldData {
                     || Block::from_id(self.chunk_block(s.x, s.y, s.z)).support_dir()
                         == SupportDir::Above
             }
-            // A WALL holds it exactly when a wall torch would hold: the
-            // support's face toward this cell is complete — an opaque cube's,
-            // or any shaped face that is geometrically whole (a stair's flat
-            // side, a counter's back). The same test the torch/ladder mounts
-            // run, reached here through the row's declaration instead of
-            // through stored placement state.
             _ => self.mount_face_complete(s, pos - s),
         }
     }
@@ -610,24 +459,13 @@ impl WorldData {
         boxes: &[Aabb],
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
-        // Substrate + support gate: a block that roots in a particular ground,
-        // or hangs from a ceiling, or brackets off a wall, places only when the
-        // SUPPORT cell its row declares actually holds it. Blocks with no such
-        // rule accept anything. Staying put once placed is the separate job of
-        // the FRAGILE behaviour, which reads the same cell.
         if !self.placement_support_ok(block, p) {
             return None;
         }
         let target = Block::from_id(self.chunk_block(p.x, p.y, p.z));
-        // Replacing a block with ITSELF (short grass clicked while holding
-        // short grass) would rewrite the same state invisibly while still
-        // consuming the held item — refuse it like any unplaceable spot.
         if !target.is_replaceable() || target == block {
             return None;
         }
-        // A block with no collision box (a torch, grass, a fern, …) traps
-        // nothing, so it may be placed inside an entity; a block that WOULD
-        // collide cannot be placed where its shape overlaps a gameplay body.
         if occupied(p, boxes) {
             return None;
         }
@@ -642,13 +480,10 @@ impl WorldData {
         if !self.roots_face_ok(block, p - s, s, ground) {
             return false;
         }
-        // A fragile row whose support is NOT the ground below has no substrate
-        // vocabulary to gate on — `roots_on` names GROUNDS, and this row's
-        // support is a ceiling or a wall — so the two rules above accept open
-        // air and the FRAGILE block update would shatter the block at its
-        // dispatch, eating the item. Gate on the fragile rule itself, so placement and
-        // survival agree by construction (the ladder's rule, which the torch
-        // and ladder families already reach through their own pre-gate).
+        // A fragile row supported by a wall or ceiling has no substrate to gate on, since
+        // `roots_on` only names grounds. The two rules above would accept open air, and the
+        // fragile block update would then shatter the block on dispatch and eat the item.
+        // Gating on the fragile rule itself keeps placement and survival in agreement.
         !(block.is_fragile()
             && block.support_dir() != crate::block::SupportDir::Below
             && !self.fragile_supported(p, block))

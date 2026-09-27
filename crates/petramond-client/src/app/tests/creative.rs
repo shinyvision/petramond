@@ -246,7 +246,6 @@ fn schematic_deletion_waits_for_confirmation_and_keeps_the_confirmed_identity() 
         std::thread::yield_now();
     }
     let entries = app.game_mut().tools.library.entries_mut();
-    // Other tests save into the shared process library while this pointer test runs.
     entries.retain(|e| e.path == path || e.path == other);
     let target = entries.iter().position(|e| e.path == path).unwrap();
     open_library(&mut app);
@@ -304,7 +303,6 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         .unwrap()
         .0;
     let screen = (1280, 720);
-    // (save succeeds, the player left for the Items tab meanwhile)
     for (success, left) in [(true, false), (false, false), (true, true)] {
         let mut fixture = schematic_fixture();
         fixture.name = format!("Save navigation {success} {left}");
@@ -312,7 +310,6 @@ fn schematic_save_returns_to_the_library_only_after_success() {
         app.sess_mut().library_form.name = fixture.name.clone();
         let game = app.game_mut();
         game.schematic_captured(std::sync::Arc::new(fixture.clone()));
-        // The first poll may spend itself listing the library.
         let pending = (0..4)
             .find_map(|_| {
                 game.poll_schematic_library();

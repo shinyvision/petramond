@@ -1,27 +1,3 @@
-//! Codecs defined once.
-//!
-//! A persisted structure states its layout ONE time and both directions are
-//! derived from that statement, so an encoder and its decoder cannot drift
-//! apart:
-//! - [`Wire`] is the codec of one value. Primitives, strings, lists, maps,
-//!   options, tuples and positions implement it, and so does every record
-//!   built with the macros below.
-//! - `wire_struct!` derives [`Wire`] for a fixed positional struct from its
-//!   field list: for small, stable, high-volume shapes (an item slot, a
-//!   furnace's counters) where a tag per field would cost more than the
-//!   data.
-//! - `tagged_record!` derives [`Wire`] for an EVOLVING record, stored as a
-//!   list of `[tag: u16][len: u32][value]` fields. A field the record does
-//!   not carry reads as its default, so a record GAINS a field by adding a
-//!   tag — no version bump, no upgrade step. A field this build does not
-//!   know is kept in the record's `unknown` set and written back unchanged
-//!   by [`Wire::put`]; whoever turns the record into a live object decides
-//!   whether it can carry those fields or must refuse the record (see
-//!   `save::format` for the policy).
-//!
-//! The bulk section arrays (blocks, light, fluid) stay hand-tuned raw
-//! payloads in `save::codec`; everything around them is built from these.
-
 use std::collections::BTreeMap;
 
 use petramond_math::math::{IVec3, Vec3};
@@ -30,21 +6,17 @@ use petramond_persist::bytecodec::{
     put_f32, put_f64, put_i64, put_u16, put_u32, put_u64, put_u8, Reader,
 };
 
-/// The codec of one persisted value.
 pub trait Wire: Sized {
     fn put(&self, buf: &mut Vec<u8>);
-    /// `None` on truncated or malformed input.
     fn get(r: &mut Reader) -> Option<Self>;
 }
 
-/// Encode `value` into a fresh buffer.
 pub fn to_bytes<T: Wire>(value: &T) -> Vec<u8> {
     let mut buf = Vec::new();
     value.put(&mut buf);
     buf
 }
 
-/// Decode a whole buffer as one `T`: every byte must belong to it.
 pub fn from_bytes<T: Wire>(bytes: &[u8]) -> Option<T> {
     let mut r = Reader::new(bytes);
     let value = T::get(&mut r)?;
@@ -99,7 +71,6 @@ impl Wire for bool {
     }
 }
 
-/// `[len: u32][utf-8 bytes]`.
 impl Wire for String {
     fn put(&self, buf: &mut Vec<u8>) {
         put_u32(buf, self.len() as u32);
@@ -112,7 +83,6 @@ impl Wire for String {
     }
 }
 
-/// `[count: u32]` then each item.
 impl<T: Wire> Wire for Vec<T> {
     fn put(&self, buf: &mut Vec<u8>) {
         put_u32(buf, self.len() as u32);
@@ -123,7 +93,6 @@ impl<T: Wire> Wire for Vec<T> {
 
     fn get(r: &mut Reader) -> Option<Self> {
         let n = r.u32()? as usize;
-        // The count is untrusted: reserve for a sane list only.
         let mut out = Vec::with_capacity(n.min(1024));
         for _ in 0..n {
             out.push(T::get(r)?);
@@ -132,7 +101,6 @@ impl<T: Wire> Wire for Vec<T> {
     }
 }
 
-/// `0` for none, `1` then the value for some.
 impl<T: Wire> Wire for Option<T> {
     fn put(&self, buf: &mut Vec<u8>) {
         match self {
@@ -153,8 +121,6 @@ impl<T: Wire> Wire for Option<T> {
     }
 }
 
-/// `[count: u32]` then each `(key, value)` in key order; a repeated key is
-/// malformed.
 impl<V: Wire> Wire for BTreeMap<String, V> {
     fn put(&self, buf: &mut Vec<u8>) {
         put_u32(buf, self.len() as u32);
@@ -229,9 +195,6 @@ impl Wire for IVec3 {
     }
 }
 
-/// Opaque bytes behind a `u16` length — the item-slot instance-data blob.
-/// A longer blob is cut at `u16::MAX` bytes rather than desyncing the
-/// record.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Blob16(pub Vec<u8>);
 
@@ -248,8 +211,6 @@ impl Wire for Blob16 {
     }
 }
 
-/// Derive [`Wire`] for a positional struct: its fields, in the listed
-/// order, each through its own [`Wire`].
 macro_rules! wire_struct {
     ($name:ty { $($field:ident),+ $(,)? }) => {
         impl $crate::save::wire::Wire for $name {
@@ -267,14 +228,8 @@ macro_rules! wire_struct {
 }
 pub(super) use wire_struct;
 
-/// Fields of a tagged record this build does not know, by tag, kept to be
-/// written back unchanged.
 pub type UnknownFields = BTreeMap<u16, Vec<u8>>;
 
-/// Derive [`Wire`] for a tagged record: each listed field under its tag,
-/// then the record's `unknown` fields. The struct must have an
-/// `unknown: UnknownFields` field and every listed field type must be
-/// `Default` (what an absent field reads as).
 macro_rules! tagged_record {
     ($name:ty { $($tag:literal => $field:ident),+ $(,)? }) => {
         impl $crate::save::wire::Wire for $name {
@@ -297,8 +252,6 @@ macro_rules! tagged_record {
 }
 pub(super) use tagged_record;
 
-/// Writes one tagged record: `[count: u16]` then each field as
-/// `[tag: u16][len: u32][value]`.
 pub struct TaggedWriter<'a> {
     buf: &'a mut Vec<u8>,
     count_at: usize,
@@ -326,7 +279,6 @@ impl<'a> TaggedWriter<'a> {
         self.count += 1;
     }
 
-    /// A field whose value is already encoded.
     pub fn raw(&mut self, tag: u16, bytes: &[u8]) {
         put_u16(self.buf, tag);
         put_u32(self.buf, bytes.len() as u32);
@@ -334,7 +286,6 @@ impl<'a> TaggedWriter<'a> {
         self.count += 1;
     }
 
-    /// Fields kept from a record this build could not fully read.
     pub fn unknown(&mut self, fields: &UnknownFields) {
         for (&tag, bytes) in fields {
             self.raw(tag, bytes);
@@ -346,13 +297,11 @@ impl<'a> TaggedWriter<'a> {
     }
 }
 
-/// A tagged record's fields as read, each still undecoded.
 pub struct TaggedFields<'a> {
     fields: BTreeMap<u16, &'a [u8]>,
 }
 
 impl<'a> TaggedFields<'a> {
-    /// `None` when truncated or when a tag repeats.
     pub fn read(r: &mut Reader<'a>) -> Option<Self> {
         let count = r.u16()?;
         let mut fields = BTreeMap::new();
@@ -366,9 +315,6 @@ impl<'a> TaggedFields<'a> {
         Some(Self { fields })
     }
 
-    /// Field `tag` decoded — its default when the record does not carry it,
-    /// `None` when it does but the value is malformed or does not fill its
-    /// bytes exactly.
     pub fn take<T: Wire + Default>(&mut self, tag: u16) -> Option<T> {
         match self.fields.remove(&tag) {
             None => Some(T::default()),
@@ -376,7 +322,6 @@ impl<'a> TaggedFields<'a> {
         }
     }
 
-    /// Every field not taken.
     pub fn into_unknown(self) -> UnknownFields {
         self.fields
             .into_iter()

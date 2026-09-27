@@ -6,7 +6,6 @@ use crate::worker::route::Hubs;
 use crate::worker::sight::Work;
 use crate::worker::stance::{self, Search};
 
-/// Laying a stone on the floor at `pos`.
 fn lay(pos: [i32; 3]) -> Work {
     Work::Click {
         pos,
@@ -40,7 +39,6 @@ fn the_stance_is_the_nearest_walk_that_sees_the_work() {
     });
     assert_eq!(stance, Some([1, 0, -6]), "one step on, and in reach");
 
-    // A stance the caller will not have is passed over.
     let stance = at_work(&mut session, id, |ctx, _, job| {
         let hubs = Hubs::new(HOME, &job.crew.trail);
         found(stance::find(

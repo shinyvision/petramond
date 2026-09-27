@@ -1,9 +1,3 @@
-//! A presentation's reads. The blocking calls run on the mod file store's
-//! I/O threads (a stalled disk must not stall meshing, and a read lands
-//! after exactly the queued writes that change its bytes); walking and
-//! decoding what arrives runs on the job pool. Every answer comes back as a
-//! [`Done`] on the one channel the frame drains.
-
 use std::collections::BTreeMap;
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -21,7 +15,6 @@ use super::Prepared;
 use crate::worker::JobPool;
 use crate::world::PieceRange;
 
-/// One answer from the reads or the job pool.
 pub enum Done {
     Shape {
         incarnation: u64,
@@ -30,9 +23,7 @@ pub enum Done {
     },
     Frames {
         incarnation: u64,
-        /// Each frame read, by its record's offset; an error ends the walk.
         frames: Vec<(u64, Result<Arc<Frame>, String>)>,
-        /// Where the read began, how much it read, and how long it took.
         from: u64,
         bytes: u64,
         seconds: f64,
@@ -47,7 +38,6 @@ pub enum Done {
     },
 }
 
-/// A read to carry out.
 pub enum Read {
     Shape {
         file: SourceFile,
@@ -62,7 +52,6 @@ pub enum Read {
     },
     Pieces {
         pieces: Vec<(SourceFile, PieceRange)>,
-        /// Decode priority on the job pool (lower runs sooner).
         key: i64,
     },
 }
@@ -222,8 +211,6 @@ impl Io {
         });
     }
 
-    /// Read `want` bytes of frame records from `offset` (at least one whole
-    /// record), then walk and decode them on the job pool.
     fn frames(&self, file: SourceFile, offset: u64, end: u64, want: u64, started: Instant) {
         let io = self.clone();
         let reader = file.clone();
@@ -235,7 +222,6 @@ impl Io {
                     return io.send_frames(&file, offset, vec![(offset, Err(why))], 0, started);
                 }
             };
-            // One record longer than the block: read exactly it.
             if let Ok(head) = parse_record_head(&bytes) {
                 if head.complete && head.len > want && offset + head.len <= end {
                     return io.frames(file, offset, end, head.len, started);
@@ -266,8 +252,6 @@ impl Io {
         });
     }
 
-    /// Read pieces in as few reads as their ranges allow, then decode each on
-    /// the job pool.
     fn pieces(&self, pieces: Vec<(SourceFile, PieceRange)>, key: i64) {
         let mut by_file: BTreeMap<u64, (SourceFile, Vec<PieceRange>)> = BTreeMap::new();
         for (file, range) in pieces {
@@ -326,9 +310,6 @@ impl Io {
     }
 }
 
-/// The frame records in `bytes` (read from `offset`), decoded. A record the
-/// read cut short is left for the next read; one torn where the whole of
-/// the range was read is where these events end.
 fn walk(
     vocab: &Vocab,
     file: &SourceFile,

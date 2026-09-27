@@ -26,8 +26,6 @@ use wasmtime::{Instance, Memory, Module, Store, TypedFunc};
 
 use crate::events::SimCtx;
 
-/// Whether the per-dispatch wall-time diagnostic is switched on (see
-/// [`ModInstance::log_slow_dispatch`]).
 #[inline]
 fn slow_dispatch_logging() -> bool {
     log::log_enabled!(target: "petramond::modding::perf", log::Level::Debug)
@@ -46,27 +44,15 @@ pub(super) struct ModInstance {
     fn_alloc: TypedFunc<u32, u32>,
     fn_free: TypedFunc<(u32, u32), ()>,
     fn_dispatch: TypedFunc<(u32, u32), u64>,
-    /// The mod's session-wide health, shared with its other instances.
     health: Arc<ModHealth>,
-    /// Fuel the current guest entry was armed with (see [`host::budget`]).
     armed_fuel: u64,
-    /// Successful guest dispatches (init + tick systems + events), for tests
-    /// and diagnostics.
     dispatches: u64,
-    /// Reused request/reply staging. A dispatch is the engine's most frequent
-    /// mod interaction — every AI node of every mob, every tick, among others
-    /// — and each one used to allocate a fresh `Vec` for the encoded request
-    /// and another (zero-filled) for the reply.
     request_buf: Vec<u8>,
     reply_buf: Vec<u8>,
-    /// Call kinds this guest has already declined as unsupported — logged
-    /// once each, not on every dispatch.
     declined: Vec<std::mem::Discriminant<GuestCall>>,
 }
 
 impl ModInstance {
-    /// A standalone server instance with its own health and the default
-    /// fuel budget (fixtures and single-instance tools).
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn from_module(id: &str, module: &Module, world_seed: u32) -> Result<Self, String> {
         Self::from_module_side(
@@ -94,7 +80,6 @@ impl ModInstance {
             ModStoreData::new_for_side(id, world_seed, side, client_buckets),
         );
         store.data_mut().meter.set_budget(budget);
-        // Instantiation runs guest code too (data/start sections): same leash.
         store
             .set_fuel(u64::MAX)
             .map_err(|e| format!("arm fuel: {e:#}"))?;
@@ -147,38 +132,29 @@ impl ModInstance {
         self.health.is_disabled()
     }
 
-    /// Replace this instance's fuel budgets (the session's configuration).
     pub(super) fn set_fuel_budget(&mut self, budget: FuelBudget) {
         self.store.data_mut().meter.set_budget(budget);
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // test observability
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn fuel_used_this_tick(&self) -> u64 {
         self.store.data().meter.used_this_tick()
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // test observability
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn dispatches(&self) -> u64 {
         self.dispatches
     }
 
-    #[cfg_attr(not(test), allow(dead_code))] // test observability
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn stats(&self) -> super::host::HostStats {
         self.store.data().stats
     }
 
-    /// Run `mod_init` — the mod's one registration window. On return the
-    /// window closes; a trapped init disables the mod and DROPS its partial
-    /// registrations (a mod is never half-loaded).
     pub(super) fn call_init(&mut self, ctx: &mut SimCtx) {
         scope::enter(ctx, || self.call_init_detached());
     }
 
-    /// [`call_init`](Self::call_init) WITHOUT publishing a simulation context —
-    /// how per-thread worldgen instances initialize: registrations are still
-    /// accepted (and later ignored — the MAIN load already recorded them), but
-    /// any sim-scoped host call gets `HostRet::Err`, so a gen-hook mod's init
-    /// must stay pure (registrations, `ResolveBlock`, `Log`, `RngU64`).
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);
         if !self.arm_dispatch() {
@@ -203,7 +179,6 @@ impl ModInstance {
         }
     }
 
-    /// The registrations `mod_init` collected — empty if the mod got disabled.
     pub(super) fn take_registrations(&mut self) -> Vec<Registration> {
         if self.disabled() {
             self.store.data_mut().pending.clear();
@@ -212,16 +187,10 @@ impl ModInstance {
         std::mem::take(&mut self.store.data_mut().pending)
     }
 
-    /// Dispatch one [`GuestCall`], publishing `ctx` for re-entrant host calls.
-    /// `None` = no answer: the mod is (or just became) disabled, or it declined
-    /// the call as unsupported; the caller carries on either way.
     pub(super) fn call_guest(&mut self, ctx: &mut SimCtx, call: &GuestCall) -> Option<GuestRet> {
         scope::enter(ctx, || self.call_guest_detached(call))
     }
 
-    /// [`call_guest`](Self::call_guest) with a READ-ONLY scope: the guest may
-    /// query the world but a mutating host call errors. The shape
-    /// placement-plan dispatch path (the ABI promises read-only access).
     pub(super) fn call_guest_read_only(
         &mut self,
         ctx: &mut SimCtx,
@@ -230,20 +199,10 @@ impl ModInstance {
         scope::enter_read_only(ctx, || self.call_guest_detached(call))
     }
 
-    /// [`call_guest`](Self::call_guest) WITHOUT publishing a simulation
-    /// context — the worldgen dispatch path (worker threads and any thread
-    /// running `generate_*`): sim-scoped host calls made during the dispatch
-    /// are rejected, everything else (deadline, disable-on-trap, protocol)
-    /// behaves identically.
     pub(super) fn call_guest_detached(&mut self, call: &GuestCall) -> Option<GuestRet> {
         self.call_guest_encoded(call, std::mem::discriminant(call), call)
     }
 
-    /// [`call_guest_detached`](Self::call_guest_detached) for any encoding of
-    /// a guest call: the owned [`GuestCall`], or a borrowed view serializing
-    /// to exactly its bytes (the batched AI dispatch ships each mob's tag map
-    /// straight from the mob that way). `kind` is the variant those bytes
-    /// decode as and `describe` what diagnostics print for the call.
     pub(super) fn call_guest_encoded<C: serde::Serialize>(
         &mut self,
         call: &C,
@@ -257,7 +216,6 @@ impl ModInstance {
         let request_len = match mod_api::encode_into(call, &mut request) {
             Ok(len) => len,
             Err(e) => {
-                // Host-side bug, but never let it poison the sim either.
                 self.request_buf = request;
                 self.disable(&format!("encode guest call: {e}"));
                 return None;
@@ -267,9 +225,6 @@ impl ModInstance {
             self.request_buf = request;
             return None;
         }
-        // Only timed when the diagnostic that reads it is switched on: a clock
-        // read per dispatch is real cost on a path that runs thousands of
-        // times a tick.
         let started = slow_dispatch_logging().then(std::time::Instant::now);
         let result = self.dispatch_protocol(&request[..request_len]);
         self.request_buf = request;
@@ -294,15 +249,10 @@ impl ModInstance {
         }
     }
 
-    /// Whether this guest has declined calls of `kind` as unsupported — a
-    /// caller with an older equivalent (the per-mob AI dispatch) goes
-    /// straight to it instead of asking again every tick.
     pub(super) fn declines(&self, kind: std::mem::Discriminant<GuestCall>) -> bool {
         self.declined.contains(&kind)
     }
 
-    /// The guest answered [`GuestRet::Unsupported`]: it was built against an
-    /// older ABI minor that predates this call. Say so once per call kind.
     fn note_declined(
         &mut self,
         kind: std::mem::Discriminant<GuestCall>,
@@ -321,10 +271,6 @@ impl ModInstance {
         );
     }
 
-    /// Perf diagnostics: any dispatch over the threshold logs its guest/host
-    /// wall split under the `petramond::modding::perf` target, so frame
-    /// stutter attributes to the mod, the call, and the side of the ABI it
-    /// spent its time on.
     fn log_slow_dispatch(&self, call: &dyn std::fmt::Debug, total: std::time::Duration) {
         const SLOW_DISPATCH: std::time::Duration = std::time::Duration::from_millis(2);
         if total < SLOW_DISPATCH {
@@ -344,11 +290,6 @@ impl ModInstance {
         );
     }
 
-    /// Arm one guest entry with the full meter range, the emergency
-    /// wall-clock backstop, and per-dispatch host-call accounting.
-    ///
-    /// The tick is the published simulation context's, or the detached AI
-    /// dispatch's; worldgen and client instances have no tick counter.
     fn arm_dispatch(&mut self) -> bool {
         let tick = scope::with_active_ref(|ctx| ctx.world.current_tick())
             .or_else(super::ai::detached_tick);
@@ -363,8 +304,6 @@ impl ModInstance {
         true
     }
 
-    /// Charge the finished entry and warn once per session mod when a
-    /// diagnostic threshold was crossed.
     fn settle_fuel(&mut self, call: Option<&dyn std::fmt::Debug>) {
         let remaining = self.store.get_fuel().unwrap_or(0);
         let used = self.armed_fuel.saturating_sub(remaining);
@@ -382,9 +321,6 @@ impl ModInstance {
         }
     }
 
-    /// Diagnostic suffix for disable messages: the guest call that was in
-    /// flight and the dispatch's most recent host call — a failure names what
-    /// was actually happening instead of just the trap kind.
     fn dispatch_context(&self, call: Option<&dyn std::fmt::Debug>) -> String {
         let mut out = String::new();
         if let Some(call) = call {
@@ -409,7 +345,6 @@ impl ModInstance {
         super::client::scope::enter(world, || self.call_guest_detached(call))
     }
 
-    /// See [`ModStoreData::set_world_seed`](super::host::ModStoreData::set_world_seed).
     pub(super) fn set_world_seed(&mut self, seed: u32) {
         self.store.data_mut().set_world_seed(seed);
     }
@@ -422,13 +357,11 @@ impl ModInstance {
         self.store.data_mut().client.as_mut()
     }
 
-    /// The whole store, for issuing a host call as this instance (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub(super) fn store_data_mut(&mut self) -> &mut super::host::ModStoreData {
         self.store.data_mut()
     }
 
-    /// The raw request/reply protocol of one dispatch (see the module docs).
     fn dispatch_protocol(&mut self, request: &[u8]) -> Result<GuestRet, String> {
         let len = request.len() as u32;
         let ptr = self
@@ -443,8 +376,6 @@ impl ModInstance {
             .call(&mut self.store, (ptr, len))
             .map_err(|e| format!("mod_dispatch: {e:#}"))?;
         let (reply_ptr, reply_len) = mod_api::unpack_ptr_len(packed);
-        // Bounds-check BEFORE sizing the copy so a hostile reply length
-        // can't balloon a host allocation.
         if reply_len as usize > self.memory.data_size(&self.store) {
             return Err("reply exceeds guest memory".to_owned());
         }
@@ -465,17 +396,11 @@ impl ModInstance {
         decoded
     }
 
-    /// Session-scoped kill switch: one visible error line, then the mod —
-    /// THIS instance and every other instance sharing its health — stops
-    /// receiving dispatches until the next launch.
     pub(super) fn disable(&mut self, why: &str) {
         self.health.disable(why);
     }
 }
 
-/// Read the guest's side of the ABI handshake and check it against this host.
-/// Runs before `mod_init`, so an incompatible module is refused at load with
-/// the reason spelled out — never half-initialized, never trapping mid-game.
 fn handshake(instance: &Instance, store: &mut Store<ModStoreData>) -> Result<AbiVersion, String> {
     if instance.get_func(&mut *store, "mod_abi_version").is_none() {
         return Err(AbiRejection::Unversioned.to_string());
@@ -491,8 +416,6 @@ fn handshake(instance: &Instance, store: &mut Store<ModStoreData>) -> Result<Abi
             .call(&mut *store, ())
             .map(Capabilities::from_bits)
             .map_err(|e| format!("mod_abi_requires trapped: {e:#}"))?,
-        // Only a same-major guest is bound to this ABI's export set; another
-        // major is refused on its version alone.
         Err(e) if guest.major == mod_api::ABI_VERSION.major => {
             return Err(format!("export mod_abi_requires: {e:#}"));
         }
@@ -508,9 +431,6 @@ fn handshake(instance: &Instance, store: &mut Store<ModStoreData>) -> Result<Abi
     Ok(guest)
 }
 
-/// The handshake exports a hand-written WAT test guest needs: declares
-/// `version` and requires no capabilities. `mod_init` then takes the host's
-/// `(param i32 i64)`.
 #[cfg(any(test, feature = "test-support"))]
 pub(super) fn wat_abi_exports(version: AbiVersion) -> String {
     format!(

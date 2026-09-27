@@ -1,50 +1,32 @@
-//! The strike law: WHERE a swing lands and HOW HARD.
+//! Where a swing lands and how hard.
 //!
-//! The engine's own melee lands a hit on the click, on whatever the
-//! crosshair held. A tool this pack animates does neither: its press is
-//! claimed (`attack_attempt`), and the hit lands the instant the swing's
-//! authored IMPACT plays — from where the attacker is looking THEN, at
-//! every body the family's strike window reaches. If the axe looks like it
-//! hit, it hit; a body that stepped out of the arc was missed; the crosshair
-//! is not consulted at all.
+//! The engine's own melee hits on the click, on whatever the crosshair held. Tools this pack
+//! animates claim the press (`attack_attempt`) instead, and the hit lands when the swing's
+//! authored IMPACT plays. It's aimed from wherever the attacker is looking at that moment, at
+//! every body in the family's strike window. The crosshair isn't consulted. If the axe looks like
+//! it hit, it hit; a body that stepped out of the arc was missed.
 //!
-//! How hard is a product of two things a fighter controls: how CLOSE the
-//! body is (full strength inside the family's sweet spot, tapering toward
-//! the reach's end) and how DEAD-ON the swing is (the angular miss of the
-//! look ray past the body, across and up-down, each against the family's
-//! window). A dead-on hit in the sweet spot lands more than the tool's
-//! plain damage roll; a glancing one at the edge of the window, far less.
-//! An axe SWEEPS — every body in its wide, flat window is struck; a pickaxe
-//! PLUNGES — tall and narrow, and only the best-placed body takes it.
+//! How hard depends on how close the body is (full strength in the sweet spot, tapering toward
+//! the end of reach) and how dead-on the swing is. Dead-on in the sweet spot beats the tool's
+//! plain roll; a glancing hit at the edge of the window lands far less. Axes sweep wide and flat
+//! and hit every body in the window. Pickaxes plunge tall and narrow, and only the best-placed
+//! body takes it.
 //!
-//! [`judge`] is pure: the numbers, the attacker's aiming frame, the bodies.
-//! [`land`] runs it over the live world and lands the verdicts through the
-//! engine's damage funnel, naming the attacker so the victim remembers, the
-//! knockback shoves, and every `mob_damage_pre` handler sees exactly the
-//! strike the engine's own hit would have shown it.
+//! [`judge`] is pure: the numbers, the attacker's aiming frame, the bodies. [`land`] runs it over
+//! the live world and lands the verdicts through the engine's damage funnel. It names the
+//! attacker, so the victim remembers them, knockback applies, and `mob_damage_pre` handlers see
+//! the same strike the engine's own hit would have shown.
 
 use mod_sdk::*;
 
-/// How a family's swing reaches, and what it does when it does.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Profile {
-    /// Farthest a body's closest point may be from the EYE and still be
-    /// struck (blocks).
     pub reach: f32,
-    /// Up to this distance the hit is full strength; past it the strength
-    /// tapers linearly to `floor` at `reach`.
     pub sweet: f32,
-    /// Half-angles (radians) of the strike window either side of the look
-    /// ray: ACROSS the body and UP-DOWN. A wide, flat window is a sweep; a
-    /// narrow, tall one a plunge.
     pub arc_yaw: f32,
     pub arc_pitch: f32,
-    /// The damage multiplier of a dead-on hit inside the sweet spot.
     pub peak: f32,
-    /// The multiplier at the very edge of the window or of the reach.
     pub floor: f32,
-    /// Whether one swing strikes EVERY body in its window (a sweep) or only
-    /// the best-placed one (a plunge).
     pub cleave: bool,
 }
 
@@ -52,8 +34,6 @@ const fn radians(degrees: f32) -> f32 {
     degrees * (std::f32::consts::PI / 180.0)
 }
 
-/// A family's `profile` as the data writes it: the half-angles in DEGREES.
-/// Every field is required — a window with half its numbers does not parse.
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileSpec {
@@ -80,13 +60,8 @@ impl Profile {
     }
 }
 
-/// Nearer than this along the look ray the angular miss is measured as if
-/// the body were here: a body standing inside the attacker names no angle.
 const NEAR: f32 = 0.3;
 
-/// The attacker's aiming frame at the instant of the strike: the eye and an
-/// orthonormal look basis. The player yaw convention (forward is
-/// `(sin yaw, cos yaw)`, pitch tips it) is decided here and nowhere else.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Aim {
     pub eye: [f64; 3],
@@ -114,12 +89,8 @@ impl Aim {
     }
 }
 
-/// One world-space box of a body: `(min, max)`.
 pub type Box3 = ([f64; 3], [f64; 3]);
 
-/// A mob's body as the engine collides and targets it: one square box, or —
-/// for a long body — a run of overlapping squares along its facing, the
-/// same run the engine's own ray validator tests.
 pub fn mob_boxes(m: &MobSnapshot) -> Vec<Box3> {
     let hw = m.half_width;
     let segments = (m.half_length / hw).ceil().max(1.0) as usize;
@@ -142,7 +113,6 @@ pub fn mob_boxes(m: &MobSnapshot) -> Vec<Box3> {
         .collect()
 }
 
-/// A player's body box.
 pub fn player_box(p: &PlayerSnapshot) -> Box3 {
     let (hw, height) = (f64::from(p.half_width), f64::from(p.height));
     (
@@ -151,19 +121,13 @@ pub fn player_box(p: &PlayerSnapshot) -> Box3 {
     )
 }
 
-/// The verdict on one body inside the window.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Hit {
-    /// What the tool's damage roll is scaled by.
     pub multiplier: f32,
-    /// The body's closest point to the eye — where the sightline is tested.
     pub point: [f64; 3],
     pub distance: f32,
 }
 
-/// Judge one body (its boxes) against the profile from the aiming frame:
-/// the best of its boxes, or `None` when no box is inside the window and
-/// the reach.
 pub fn judge(profile: &Profile, aim: &Aim, boxes: &[Box3]) -> Option<Hit> {
     boxes
         .iter()
@@ -172,18 +136,12 @@ pub fn judge(profile: &Profile, aim: &Aim, boxes: &[Box3]) -> Option<Hit> {
 }
 
 fn judge_box(profile: &Profile, aim: &Aim, min: [f64; 3], max: [f64; 3]) -> Option<Hit> {
-    // Eye-relative, so the geometry below stays exact far from the origin.
     let (min, max) = (relative(min, aim.eye), relative(max, aim.eye));
     let nearest = clamp3([0.0; 3], min, max);
     let distance = length(nearest);
-    // Out of reach, or not in FRONT at all: the angular miss below is
-    // measured across the look ray and cannot see a body behind the eye.
     if distance > profile.reach || dot(nearest, aim.forward) < 0.0 {
         return None;
     }
-    // Where the look ray passes the box, by alternating projection: the
-    // ray's point nearest the box, the box's point nearest that, again.
-    // Two rounds settle it to well under a degree for a body-sized box.
     let centre = scale(add(min, max), 0.5);
     let mut t = dot(centre, aim.forward).clamp(NEAR, profile.reach);
     for _ in 0..2 {
@@ -213,9 +171,6 @@ fn judge_box(profile: &Profile, aim: &Aim, min: [f64; 3], max: [f64; 3]) -> Opti
     })
 }
 
-/// Whether a straight line from the eye to `hit.point` is clear of anything
-/// a body collides with. A mob's closest point can sit a hair inside the
-/// block it leans on; a hit that far along the line is the body, not a wall.
 fn in_sight(aim: &Aim, hit: &Hit) -> bool {
     if hit.distance <= NEAR {
         return true;
@@ -225,23 +180,16 @@ fn in_sight(aim: &Aim, hit: &Hit) -> bool {
         .is_none_or(|block| block.distance >= hit.distance - 0.05)
 }
 
-/// One body the swing could strike, judged.
 struct Candidate {
     who: EntityRef,
     hit: Hit,
 }
 
-/// One hit's damage: a uniform roll in `range` off a host random word —
-/// the pack's one derivation, shared by every strike that rolls.
 pub fn roll(range: [f32; 2], word: u64) -> f32 {
     let u = (word >> 11) as f32 / (1u64 << 53) as f32;
     range[0] + (range[1] - range[0]) * u
 }
 
-/// The weapon's damage roll for this strike: the HELD stack's tool range —
-/// resolved as the stack carries it, so an augment's override counts
-/// exactly as it does for the engine's own hit — rolled off the pack's
-/// seeded stream. A hand with no tool row punches for one.
 fn roll_damage(me: PlayerId) -> f32 {
     let range = player_held(me)
         .and_then(|stack| stack_info(&stack))
@@ -250,24 +198,15 @@ fn roll_damage(me: PlayerId) -> f32 {
     roll(range, rng_u64("strike"))
 }
 
-/// SERVER: land `me`'s swing — its impact just played — on every body the
-/// family's `profile` reaches and can be seen: mobs and other players
-/// alike, through the engine's funnel with `me` named as the attacker.
-/// Nothing to land is an ordinary miss.
 pub fn land(me: PlayerId, profile: &Profile, state: &PlayerSnapshot) {
     if state.spectator || state.health <= 0 {
         return;
     }
     let aim = Aim::of(state);
     let mut candidates: Vec<Candidate> = Vec::new();
-    // A generous radius of FEET positions; the window and reach do the
-    // real judging against the bodies themselves.
     let radius = profile.reach + 4.0;
     for mob in mobs_in_radius(state.pos, radius) {
         if let Some(hit) = judge(profile, &aim, &mob_boxes(&mob)) {
-            // A swing from the saddle is not a swing AT the saddle: the
-            // engine's own crosshair never targets the attacker's mount
-            // either.
             let own_mount = mob_riders(mob.id)
                 .is_some_and(|riders| riders.riders.iter().any(|r| r.player_id == me));
             if own_mount {
@@ -296,8 +235,6 @@ pub fn land(me: PlayerId, profile: &Profile, state: &PlayerSnapshot) {
         return;
     }
     if !profile.cleave {
-        // The plunge takes ONE body: the best-placed. Ties break toward
-        // the nearer, then the first enumerated (deterministic).
         let best = candidates
             .iter()
             .enumerate()
@@ -329,8 +266,6 @@ pub fn land(me: PlayerId, profile: &Profile, state: &PlayerSnapshot) {
     }
 }
 
-// ---- small vector arithmetic ---------------------------------------------
-
 fn add(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
 }
@@ -343,7 +278,6 @@ fn scale(a: [f32; 3], s: f32) -> [f32; 3] {
     [a[0] * s, a[1] * s, a[2] * s]
 }
 
-/// World point `a` moved by the offset `b`.
 pub(crate) fn offset_by(a: [f64; 3], b: [f32; 3]) -> [f64; 3] {
     [
         a[0] + f64::from(b[0]),
@@ -352,7 +286,6 @@ pub(crate) fn offset_by(a: [f64; 3], b: [f32; 3]) -> [f64; 3] {
     ]
 }
 
-/// World point `a` as an offset from the world point `origin`.
 pub(crate) fn relative(a: [f64; 3], origin: [f64; 3]) -> [f32; 3] {
     [
         (a[0] - origin[0]) as f32,
@@ -389,8 +322,6 @@ fn clamp3(p: [f32; 3], min: [f32; 3], max: [f32; 3]) -> [f32; 3] {
 mod tests {
     use super::*;
 
-    /// A synthetic window: 3 blocks of reach, full strength inside 2, 30°
-    /// across and 20° up-down, peak 1.5, floor 0.5.
     const WINDOW: Profile = Profile {
         reach: 3.0,
         sweet: 2.0,
@@ -401,7 +332,6 @@ mod tests {
         cleave: true,
     };
 
-    /// Looking straight down +Z from an eye at (0, 1.6, 0).
     fn aim() -> Aim {
         Aim {
             eye: [0.0, 1.6, 0.0],
@@ -411,17 +341,10 @@ mod tests {
         }
     }
 
-    /// A 0.8-wide, 1.8-tall body with its feet at `(x, 0, z)`.
     fn body(x: f64, z: f64) -> Box3 {
         ([x - 0.4, 0.0, z - 0.4], [x + 0.4, 1.8, z + 0.4])
     }
 
-    /// The law's shape, on synthetic numbers: dead-on inside the sweet spot
-    /// is the PEAK; the same body sidestepped to the window's edge, or
-    /// pushed to the reach's end, drops toward the FLOOR; outside either the
-    /// swing misses; and a body behind the eye is never struck however
-    /// close. The multipliers between are what the fight is about — a
-    /// rule that stopped grading distance or aim would flatten it.
     #[test]
     fn dead_on_and_close_is_the_peak_and_the_edges_are_the_floor() {
         let at = |x, z| judge(&WINDOW, &aim(), &[body(x, z)]);
@@ -436,13 +359,9 @@ mod tests {
         assert!(far.multiplier < dead_on.multiplier && far.multiplier > WINDOW.floor);
         assert!(at(0.0, 3.5).is_none(), "past the reach");
 
-        // Sidestepping the same body out toward the window's edge grades
-        // down and finally misses.
         let side = at(1.0, 2.0).expect("inside the window");
         assert!(side.multiplier < dead_on.multiplier && side.multiplier > WINDOW.floor);
         assert!(at(2.0, 2.0).is_none(), "outside the window across");
-        // A body at the feet, right in front, is a steep pitch miss for a
-        // flat window.
         assert!(at(0.0, 0.5).is_some(), "a tall body still fills the window");
         let low = judge(&WINDOW, &aim(), &[([-0.4, 0.0, 1.2], [0.4, 0.3, 1.8])]);
         assert!(
@@ -452,7 +371,6 @@ mod tests {
 
         assert!(at(0.0, -1.0).is_none(), "behind the eye");
 
-        // Monotone in distance along the ray.
         let mut last = f32::INFINITY;
         for z in [1.0, 2.0, 2.4, 2.8] {
             let m = at(0.0, z).expect("along the ray").multiplier;
@@ -461,8 +379,6 @@ mod tests {
         }
     }
 
-    /// A long body is judged as the run of boxes the engine collides it
-    /// with: its bow is as strikeable as its middle.
     #[test]
     fn a_long_body_is_struck_along_its_whole_length() {
         let hull = MobSnapshot {
@@ -473,7 +389,7 @@ mod tests {
             pos: [0.0, 0.0, 2.0],
             health: 4.0,
             id: 1,
-            yaw: std::f32::consts::FRAC_PI_2, // facing -X
+            yaw: std::f32::consts::FRAC_PI_2,
             pitch: 0.0,
             roll: 0.0,
             vel: [0.0; 3],

@@ -1,13 +1,3 @@
-//! Server-side menu/session facade.
-//!
-//! `ContainerMenu` owns low-level slot behavior in `game/container`. This module
-//! owns the `ServerGame` boundary around that menu: opening edit targets ON THE
-//! TICK (from the interaction/mod-action request sites), buffering menu clicks
-//! for fixed ticks, close-session cleanup, and the per-session `MenuSyncMsg`
-//! the replication batch ships. Each player session owns its own
-//! `ContainerMenu` — two players can stand in one chest; their clicks apply in
-//! session-id order on the tick.
-
 use crate::events::PostEvent;
 use crate::net::protocol::{GuiValueWire, ItemSlotWire, MenuSyncMsg, MenuTargetWire};
 use petramond_math::math::IVec3;
@@ -27,11 +17,6 @@ fn slot_wire(slot: Option<ItemStack>) -> Option<ItemSlotWire> {
 }
 
 impl ServerGame {
-    /// Apply the player actions latched this frame — container edits and item drops — at
-    /// once, standing in for the game tick that resolves them in play. For App-level tests
-    /// that drive the input routing and then assert the resulting inventory / world state
-    /// (between two clicks a real tick interleaves, applying the first before the second is
-    /// decided — call this there too).
     #[cfg(any(test, feature = "test-support"))]
     pub fn apply_latched_actions_for_test(&mut self) {
         let mut events = TickEvents::default();
@@ -91,8 +76,6 @@ impl ServerGame {
                     request_id,
                 } => {
                     if let MenuSlot::Widget(id) = slot {
-                        // A right-click is consumed by the button but does not
-                        // activate it.
                         if button == PointerButton::Primary {
                             self.dispatch_gui_click(s, id, events);
                         }
@@ -108,13 +91,6 @@ impl ServerGame {
                             shift,
                             gather,
                         );
-                        // A click may be predicted across both client
-                        // mirrors. Force the authoritative pair into the
-                        // outcome batch even if a stale client mirror made
-                        // the server-side action a no-op and neither
-                        // ordinary on-change gate moved — the client skips
-                        // interim snapshots while its prediction is pending
-                        // and reconciles from exactly this batch.
                         sess.replication.force_inventory_resync();
                         sess.replication.force_menu_resync();
                     }
@@ -134,10 +110,8 @@ impl ServerGame {
                         &slots,
                         button,
                     );
-                    // A drag is predicted across both client mirrors. Force
-                    // the authoritative pair into the outcome batch even if
-                    // stale client capacity made the server-side action a
-                    // no-op and neither ordinary on-change gate moved.
+                    // Drag predicts on both mirrors, so force the resync even when stale client
+                    // capacity made the server action a no-op and no on-change gate fired.
                     sess.replication.force_inventory_resync();
                     sess.replication.force_menu_resync();
                     self.push_action_outcome(s, request_id, true, None);
@@ -177,10 +151,6 @@ impl ServerGame {
                             Some(&gui),
                             slot,
                         );
-                        // The swap is predicted across both client mirrors;
-                        // force the authoritative pair into the outcome batch
-                        // so the pending prediction reconciles from it (the
-                        // SlotClick rule).
                         sess.replication.force_inventory_resync();
                         sess.replication.force_menu_resync();
                     }
@@ -228,10 +198,6 @@ impl ServerGame {
         }
     }
 
-    /// Replace an existing menu through the ordinary close funnel before a
-    /// new target opens. Transient cursor/output stacks are thereby
-    /// recovered exactly once, and chest viewer state cannot leak across a
-    /// direct menu transition.
     fn replace_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
         if self.sessions[s].sim.menu.target() != ContainerTarget::None {
             self.close_open_menu_for(s, events);
@@ -244,14 +210,6 @@ impl ServerGame {
         self.sessions[s].replication.request_open_gui = None;
     }
 
-    /// Begin session `s`'s GUI session for `kind`, opened on `anchor`
-    /// (`None` for the inventory key / an unanchored `GuiOpen`). The ONE
-    /// open dispatch: every kind — engine container or mod GUI — arrives
-    /// through the same `OpenGui` action, and the per-kind session setup
-    /// (crafting station, chest viewer slot, mod GUI state clear) keys on the
-    /// kind here. Returns whether a session actually opened (a block-entity
-    /// kind without a block, an anchor that is no longer there, or a shell
-    /// kind, opens nothing).
     fn open_gui_for(
         &mut self,
         s: usize,
@@ -260,9 +218,6 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> bool {
         let pos = anchor.and_then(MenuAnchor::block);
-        // Any registered crafting station — an engine station or a pack
-        // workbench kind — opens the ordinary crafting session, never a mod
-        // GUI session.
         if let Some(station) = CraftingStation::of_kind(kind) {
             self.open_crafting_for(s, station);
             return true;
@@ -295,10 +250,6 @@ impl ServerGame {
         true
     }
 
-    /// Dispatch a latched button click to the open mod GUI's OWNING mod (the
-    /// pack whose namespace the kind key carries) as a `gui_click` GuestCall,
-    /// on the tick. Engine kinds have no owner (no engine buttons exist) and
-    /// a click with no mod GUI session open dispatches nothing.
     fn dispatch_gui_click(
         &mut self,
         s: usize,
@@ -308,10 +259,6 @@ impl ServerGame {
         let ContainerTarget::Gui { kind, anchor } = self.sessions[s].sim.menu.target() else {
             return;
         };
-        // Engine kinds have no owning mod; their buttons are documented dead
-        // ends, exactly like a content-only pack's. Station sessions are
-        // engine-driven even under a pack kind — their buttons belong to the
-        // client crafting browser, never to a mod dispatch.
         if !kind.is_registered() || CraftingStation::of_kind(kind).is_some() {
             return;
         }
@@ -330,26 +277,19 @@ impl ServerGame {
         });
     }
 
-    /// Begin a fresh player-crafting session for the requested station.
     pub fn open_crafting_for(&mut self, s: usize, station: CraftingStation) {
         let sess = &mut self.sessions[s];
         sess.sim.menu.open_crafting(station);
         self.emit_container_opened(s);
     }
 
-    /// Begin session `s`'s furnace-screen session at `pos`.
     pub fn open_furnace_screen_for(&mut self, s: usize, pos: IVec3) {
         let sess = &mut self.sessions[s];
         sess.sim.menu.open_furnace_screen(&mut self.world, pos);
         self.emit_container_opened(s);
     }
 
-    /// Begin session `s`'s chest-screen session at `pos`. A 0→1 viewer
-    /// transition emits the world-anchored `ChestOpened` event.
     pub fn open_chest_screen_for(&mut self, s: usize, pos: IVec3, events: &mut TickEvents) {
-        // Re-opening the SAME chest keeps the held viewer slot (no leak, and
-        // no phantom close→open transition events); a different chest first
-        // releases the old slot.
         let same = matches!(
             self.sessions[s].sim.menu.target(),
             ContainerTarget::Gui { kind: petramond_world::gui_state::GuiKind::Chest, anchor: Some(MenuAnchor::Block(p)) } if p == pos
@@ -365,9 +305,6 @@ impl ServerGame {
         self.emit_container_opened(s);
     }
 
-    /// Release player `s`'s viewer slot on whatever chest their menu targets.
-    /// The lid falls (for every observer) only when the LAST viewer leaves —
-    /// that 1→0 transition emits the world-anchored `ChestClosed` event.
     fn release_chest_viewer(&mut self, s: usize, events: &mut TickEvents) {
         if let ContainerTarget::Gui {
             kind: petramond_world::gui_state::GuiKind::Chest,
@@ -378,10 +315,6 @@ impl ServerGame {
         }
     }
 
-    /// Begin session `s`'s mod GUI session for `kind`, opened on `anchor`
-    /// (`None` for an unanchored `GuiOpen`). The session's state map
-    /// starts empty — cleared here so no session can read a predecessor's
-    /// values.
     pub fn open_registered_gui_screen_for(
         &mut self,
         s: usize,
@@ -399,9 +332,6 @@ impl ServerGame {
         self.emit_container_opened(s);
     }
 
-    /// End every session whose anchor left the world (a mob that died,
-    /// despawned or unloaded), through the ordinary close funnel, and tell
-    /// the client to drop the screen.
     pub(super) fn close_menus_on_absent_anchors(&mut self, events: &mut TickEvents) {
         for s in 0..self.sessions.len() {
             let gone = self.sessions[s]
@@ -417,13 +347,7 @@ impl ServerGame {
         }
     }
 
-    /// Close player `s`'s open menu session in the app-required cleanup order:
-    /// cursor stack, player-crafting output, furnace, chest, then any mod
-    /// GUI (whose session state map is cleared with it).
     pub fn close_open_menu_for(&mut self, s: usize, events: &mut TickEvents) {
-        // `container_closed` for whatever session was actually open. Emitted
-        // (not dispatched) here: the handler runs at the tick's next drain
-        // point, like every queued event.
         if let Some((kind, anchor)) = container_event_key(self.sessions[s].sim.menu.target()) {
             self.mods.emit(PostEvent::ContainerClosed {
                 player: self.sessions[s].id,
@@ -445,10 +369,6 @@ impl ServerGame {
         self.clear_menu_open_requests(s);
     }
 
-    /// `container_opened` for the session that just began. The `open_*_for`
-    /// methods are the single funnel every container screen opens through
-    /// (whether from a block interact, a mod action, or the inventory key),
-    /// so the event fires exactly once per session.
     fn emit_container_opened(&mut self, s: usize) {
         if let Some((kind, anchor)) = container_event_key(self.sessions[s].sim.menu.target()) {
             self.mods.emit(PostEvent::ContainerOpened {
@@ -459,8 +379,6 @@ impl ServerGame {
         }
     }
 
-    /// Return the real player-crafting output to the inventory, queueing any
-    /// overflow for the ordinary world-drop stage.
     fn close_crafting_for(&mut self, s: usize) {
         let mut overflow = Vec::new();
         let sess = &mut self.sessions[s];
@@ -472,7 +390,6 @@ impl ServerGame {
         }
     }
 
-    /// End the mod GUI session and clear its state map.
     fn close_registered_gui_for(&mut self, s: usize) {
         if self.sessions[s]
             .sim
@@ -507,13 +424,8 @@ impl ServerGame {
         }
     }
 
-    /// Session `s`'s menu view as the wire message, with `gui_state` held
-    /// `None` (the caller attaches the map only when its `Arc` changed).
     pub(super) fn build_menu_sync_base(&self, s: usize) -> MenuSyncMsg {
         let sess = &self.sessions[s];
-        // EVERY container ships as the generic keyed slot list plus whatever
-        // named gauge readings its block entity publishes. No engine content
-        // identity remains here, so adding one is not a wire change.
         let target = match sess.sim.menu.target() {
             ContainerTarget::None => MenuTargetWire::None,
             ContainerTarget::Gui { kind, anchor } => match kind {
@@ -521,8 +433,6 @@ impl ServerGame {
                     output: slot_wire(sess.sim.menu.craft_output()),
                 },
                 kind => {
-                    // A machine's readings ride the SAME generic state map a
-                    // pack GUI uses, so no engine machine needs a wire variant.
                     let gauges = sess.sim.menu.open_gauges(&self.world);
                     MenuTargetWire::Container {
                         kind_key: petramond_world::gui_state::kind_key(kind)
@@ -555,9 +465,6 @@ impl ServerGame {
     }
 }
 
-/// The `container_opened`/`container_closed` payload for a menu target, or `None`
-/// when no container session is involved. The unified target already carries
-/// the event's `(kind, anchor)` identity.
 fn container_event_key(
     target: ContainerTarget,
 ) -> Option<(petramond_world::gui_state::GuiKind, Option<MenuAnchor>)> {

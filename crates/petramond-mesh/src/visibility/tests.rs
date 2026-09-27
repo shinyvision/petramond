@@ -33,7 +33,6 @@ fn air_connects_everything_and_rock_nothing() {
     assert_eq!(SectionVisibility::default(), SectionVisibility::ALL);
 }
 
-/// A straight tunnel along X through solid rock joins exactly its two ends.
 #[test]
 fn a_tunnel_joins_only_its_two_ends() {
     let mut s = section(Block::Stone);
@@ -56,7 +55,6 @@ fn a_tunnel_joins_only_its_two_ends() {
     );
 }
 
-/// A pocket sealed inside the rock touches no face, so it connects nothing.
 #[test]
 fn a_sealed_pocket_connects_nothing() {
     let mut s = section(Block::Stone);
@@ -67,8 +65,6 @@ fn a_sealed_pocket_connects_nothing() {
     assert_eq!(SectionVisibility::of_section(&s), SectionVisibility::NONE);
 }
 
-/// A solid floor splits the section: the space above connects its faces, the
-/// floor's underside connects to nothing above it.
 #[test]
 fn a_floor_separates_above_from_below() {
     let mut s = section(Block::Air);
@@ -87,7 +83,6 @@ fn a_floor_separates_above_from_below() {
     );
 }
 
-/// Non-occluding blocks — leaves, glass, water — let sight through.
 #[test]
 fn see_through_blocks_do_not_occlude() {
     for block in [Block::Water] {

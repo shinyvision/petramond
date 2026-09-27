@@ -1,9 +1,3 @@
-//! Load layered recipe data from `recipes.json`.
-//!
-//! Player crafting has one quantity-based format. Processing rows retain
-//! their separate schema because machines consume them by a different
-//! interaction model.
-
 use serde::Deserialize;
 
 use crate::item::{ItemStack, ItemTag, ItemType};
@@ -58,8 +52,6 @@ struct RawCraftingIngredient {
 }
 
 enum Converted {
-    /// A row plus its own raw `data` map — compiled AFTER all layers parse, so
-    /// patch rows from later packs can target it.
     Crafting(
         Box<CraftingRecipe>,
         serde_json::Map<String, serde_json::Value>,
@@ -71,12 +63,11 @@ fn one_u8() -> u8 {
     1
 }
 
-/// Load base + enabled pack recipe layers in deterministic pack order.
+/// Loads the base and enabled pack recipe layers in a fixed pack order.
 ///
-/// Layer ownership is retained: disabling a pack removes its whole layer even
-/// when one of its rows mentions engine content only, and an integration
-/// layer goes with EITHER pack it joins. Reference filtering then removes
-/// enabled/base rows that touch another disabled namespace.
+/// Disabling a pack drops its whole layer, even rows that only mention engine content. An
+/// integration layer is dropped if either of its packs is. After that we filter out rows that touch
+/// some other disabled namespace.
 pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Result<Recipes, String> {
     Ok(load_layers(read_recipe_layers()?, disabled))
 }
@@ -108,10 +99,6 @@ fn load_layers(
         crafting.extend(c);
         processing.extend(p);
     }
-    // Compile each row's data map now that every layer's patch rows are in (a
-    // patch targets the FINAL row, cross-namespace by design). BOTH row kinds
-    // go through the same gate: a recipe is a recipe, and a pack retires one
-    // the same way whichever machine consumes it.
     let mut retired: Vec<String> = Vec::new();
     let mut compiled = Vec::with_capacity(crafting.len());
     for (mut recipe, own) in crafting {
@@ -131,8 +118,6 @@ fn load_layers(
         }
     }
     for patch in &patches {
-        // A patch that RETIRED its target is the one case where the target is
-        // legitimately absent from the catalog.
         let known = compiled.iter().any(|r| r.key() == patch.patch)
             || compiled_processing.iter().any(|r| r.key == patch.patch)
             || retired.contains(&patch.patch);
@@ -143,15 +128,6 @@ fn load_layers(
     Recipes::new(compiled, compiled_processing)
 }
 
-/// Merge one row's own `data` map with every patch targeting it and apply the
-/// engine's `petramond:enabled` gate. `None` = the row does not join the
-/// catalog (retired, or malformed data).
-///
-/// The merged map is READ and dropped: `petramond:enabled` is the only key the
-/// engine understands on a recipe row. Everything else a pack writes there is
-/// carried for the patch mechanism's sake — a pack retires an engine recipe by
-/// patching a row it does not own — and is deliberately not surfaced to the
-/// compiled recipe.
 fn compile_row(
     key: &str,
     own: &serde_json::Map<String, serde_json::Value>,
@@ -213,9 +189,6 @@ fn parse_for(
     Vec<(CraftingRecipe, serde_json::Map<String, serde_json::Value>)>,
     Vec<(ProcessingRecipe, serde_json::Map<String, serde_json::Value>)>,
 ) {
-    // Patch rows (`{"patch", "data"}`) split out before the tagged-enum
-    // parse, exactly like items/blocks; they register nothing and are exempt
-    // from the owner gate (cross-namespace attach is the point).
     let rows: Vec<RawRecipe> =
         match crate::registry::parse_rows_with_patches(text, "recipes", "recipe", patches) {
             Ok(rows) => rows,
@@ -322,9 +295,6 @@ fn convert_ingredient(raw: RawCraftingIngredient) -> Result<CraftingIngredient, 
     })
 }
 
-/// Both recipe kinds go through this, so `kind` names which one the author is
-/// actually looking at — "crafting recipe" on a malformed processing key sends
-/// them to the wrong file.
 fn validate_recipe_owner(kind: &str, key: &str, owner: Option<&str>) -> Result<(), String> {
     let namespace = crate::registry::namespace(key)
         .ok_or_else(|| format!("{kind} key '{key}' is not namespaced"))?;
@@ -408,10 +378,6 @@ mod tests {
         }
     }
 
-    /// A pack's integration with another retires the pack's OWN route in
-    /// favour of the other's. That layer must follow the TARGET, not just its
-    /// owner: with the target switched off for a world, the plain route is
-    /// the only one left and the retirement must not land.
     #[test]
     fn an_integration_layer_is_dropped_with_either_mod_it_joins() {
         let own = r#"{ "recipes": [{
@@ -501,7 +467,6 @@ mod tests {
 
         let legacy = r#"{ "recipes": [{"type":"shapeless","ingredients":["petramond:oak_log"],"result":"petramond:oak_planks"}] }"#;
         assert!(parse(legacy).0.is_empty());
-        // The retired furniture row shape is malformed, not decoded.
         let furniture = r#"{ "recipes": [{"type":"furniture","input":"petramond:oak_planks","result":"petramond:oak_door","cost":1}] }"#;
         let (crafting, processing) = parse(furniture);
         assert!(crafting.is_empty() && processing.is_empty());
@@ -541,8 +506,6 @@ mod tests {
             .get("petramond:test_retire")
             .is_some());
 
-        // A pack cannot restate an engine recipe key, but it can PATCH one —
-        // which is how it replaces a whole crafting route with its own.
         let retire = r#"{ "recipes": [
             {"patch":"petramond:test_retire","data":{"petramond:enabled":false}}
         ] }"#;
@@ -551,8 +514,6 @@ mod tests {
             .get("petramond:test_retire")
             .is_none());
 
-        // A PROCESSING row is retired by the same key — the forge takes raw
-        // metal off the ordinary furnace this way.
         let smelt = r#"{ "recipes": [{
             "type":"processing","recipe":"petramond:test_smelt","class":"petramond:smelting",
             "ingredient":"petramond:raw_iron","result":"petramond:iron_ingot"
@@ -574,7 +535,6 @@ mod tests {
             .process("petramond:smelting", ItemType::RawIron)
             .is_none());
 
-        // A non-boolean value is a load error, not a silent "still enabled".
         let malformed = r#"{ "recipes": [
             {"patch":"petramond:test_retire","data":{"petramond:enabled":"no"}}
         ] }"#;
@@ -597,9 +557,6 @@ mod tests {
             .0
             .is_empty());
 
-        // This row mentions only engine content, so reference filtering alone
-        // cannot remove it. Disabling its owning pack must remove the layer
-        // before parse, including non-selectable processing rows.
         let core_only = r#"{ "recipes": [{
             "type":"processing","recipe":"wheel:test_disabled_owner",
             "class":"petramond:test_disabled_owner",

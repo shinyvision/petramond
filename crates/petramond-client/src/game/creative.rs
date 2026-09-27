@@ -1,14 +1,9 @@
-//! What only creative mode has: the mode and flight toggles, instant-break
-//! pacing, the server's edit history, and capturing a selection for saving.
-
 use super::Game;
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::schematic::{CreativeAction, CreativeReply, Schematic};
 use std::sync::Arc;
 
-/// Two jump presses this close together toggle flight.
 const DOUBLE_TAP_SECONDS: f64 = 0.3;
-/// Pause between instant breaks while the button stays held.
 const BREAK_REPEAT_SECONDS: f32 = 0.2;
 
 #[derive(Default)]
@@ -17,7 +12,6 @@ pub struct FlightToggle {
 }
 
 impl FlightToggle {
-    /// Whether this press completes a double tap.
     fn press(&mut self, now: f64) -> bool {
         let double = self
             .last_jump
@@ -30,7 +24,6 @@ impl FlightToggle {
     }
 }
 
-/// Spaces out held instant breaks, so one press does not tear through a wall.
 #[derive(Default)]
 pub struct BreakRepeat {
     wait: f32,
@@ -71,8 +64,6 @@ impl Game {
         }
     }
 
-    /// Undo the held tool's last edit; without one (or under a placement
-    /// preview) the server's last creative edit.
     pub fn undo_edit(&mut self) {
         if let Some(tool) = self.editing_tool() {
             tool.undo();
@@ -94,8 +85,6 @@ impl Game {
             .queue(ClientToServer::Action(PlayerAction::Creative(action)));
     }
 
-    /// Ask the server to capture the selection as `name`; the cells come
-    /// back as a blob and are saved to the library.
     pub fn save_selection(&mut self, name: &str, include_air: bool) {
         let selection = &self.tools.world.selection.selection;
         if selection.is_empty() {

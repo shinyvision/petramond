@@ -1,6 +1,5 @@
 use super::*;
 
-/// Byte size of a frame-uniform field's WGSL type (uniform address space).
 fn wgsl_size(ty: &str) -> usize {
     match ty {
         "mat4x4<f32>" => 64,
@@ -9,12 +8,6 @@ fn wgsl_size(ty: &str) -> usize {
     }
 }
 
-/// The generated `petramond::frame` struct is laid out from its own
-/// declaration, so the table it is generated from must describe [`Uniforms`]
-/// exactly: every field at its Rust offset, back to back, and together the
-/// whole struct. A field added to `Uniforms` but not to the table leaves a
-/// gap (or a short total) here instead of a shader silently reading the
-/// wrong bytes.
 #[test]
 fn the_frame_table_describes_every_uniform_byte() {
     let mut offset = 0usize;
@@ -33,7 +26,6 @@ fn the_frame_table_describes_every_uniform_byte() {
     );
 }
 
-/// The generated module declares every table field, in order.
 #[test]
 fn the_frame_module_declares_the_table_in_order() {
     let text = frame_wgsl();
@@ -48,7 +40,6 @@ fn the_frame_module_declares_the_table_in_order() {
     assert!(text.contains(&format!("PETRAMOND_FRAME_ABI: u32 = {FRAME_ABI_VERSION}u")));
 }
 
-/// The shader-param slot count reaches WGSL through the generated module.
 #[test]
 fn the_shader_params_module_spells_the_slot_count() {
     assert!(shader_params_wgsl().contains(&format!("array<vec4<f32>, {SHADER_PARAM_SLOTS}>")));

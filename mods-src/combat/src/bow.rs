@@ -48,36 +48,23 @@ use std::rc::Rc;
 const DRAW_3P: &str = "petramond:body_bow_draw";
 const DRAW_SLOT: &str = "main_claim";
 
-/// Every rig clip the bow plays, `(rig, clip)`.
 #[cfg(test)]
 pub(crate) const CLIPS: [(&str, &str); 1] = [(rig::PLAYER_BODY, DRAW_3P)];
 
-/// The strain shake at full draw: pixels and degrees of jitter at the
-/// peak, and how fast it trembles (cycles per tick).
 const SHAKE_PX: f32 = 0.9;
 const SHAKE_DEG: f32 = 2.0;
 const SHAKE_HZ: f32 = 0.45;
 
-/// What the bow is doing for one actor.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Bow<'a> {
-    /// The use press is the bow's — drawing, or SPENT by the strain and
-    /// inert until the button comes up. Either way no later rule gets it.
     holds_press: bool,
-    /// A draw is showing. Everything below is meaningless while `false`.
     drawing: bool,
-    /// How far the draw has come, `0..=1` (`1` = the row's full draw).
     draw: f32,
-    /// Ticks held PAST full — the strain, `0..=strain_ticks`.
     strain: f32,
-    /// The bow in the main hand, if any.
     row: Option<&'a BowRow>,
 }
 
 impl Bow<'_> {
-    /// The strain tremor at this instant: a jitter that grows with the
-    /// strain, `[x, y]` in `-1..=1`. Zero below full draw. A pure function
-    /// of the clock, so both sides shake alike.
     fn shake(&self) -> [f32; 2] {
         let strain_ticks = self.row.map_or(0, |row| row.draw.strain_ticks);
         if self.strain <= 0.0 || strain_ticks == 0 {
@@ -88,9 +75,6 @@ impl Bow<'_> {
         [t.sin() * grow, (t * 1.7 + 1.0).cos() * grow]
     }
 
-    /// Which sprite shows this draw, `0` = the bow's own art, `n` = the
-    /// n-th pull frame: the frames spread evenly over the draw, the LAST
-    /// reserved for the FULL draw — so a fully drawn bow is unmistakable.
     fn stage(&self) -> usize {
         let frames = self.row.map_or(0, |row| row.pull.len());
         if !self.drawing || frames == 0 {
@@ -103,9 +87,6 @@ impl Bow<'_> {
         }
     }
 
-    /// The item the main hand DISPLAYS instead of the bow: a pull frame, or
-    /// `None` for the bow's own art (rest, and the earliest draw). A frame
-    /// the registry lacks holds the previous one.
     fn display(&self) -> Option<&str> {
         let stage = self.stage();
         let row = self.row?;
@@ -123,7 +104,6 @@ impl Bow<'_> {
         }
     }
 
-    /// The land-speed multiplier to claim (`1.0` releases it).
     fn speed_scale(&self) -> f32 {
         match self.row {
             Some(row) if self.drawing => row.draw.speed_scale,
@@ -131,8 +111,6 @@ impl Bow<'_> {
         }
     }
 
-    /// The main hand's pose: the strain tremor about the hold while drawing,
-    /// `None` (the authored carry) at rest.
     fn pose(&self) -> Option<HeldPose> {
         self.drawing.then(|| {
             let [sx, sy] = self.shake();
@@ -146,8 +124,6 @@ impl Bow<'_> {
         })
     }
 
-    /// The strain tremor in the bow arm, composed over the draw clip — empty
-    /// until the draw strains.
     fn arms(&self) -> Vec<BonePoseData> {
         let [sx, sy] = self.shake();
         if !self.drawing || (sx == 0.0 && sy == 0.0) {
@@ -161,8 +137,6 @@ impl Bow<'_> {
         }]
     }
 
-    /// What the body plays: its draw, scrubbed at how far it has come;
-    /// nothing in first person.
     fn plays(&self) -> Vec<AnimatorPlay> {
         self.drawing
             .then(|| AnimatorPlay::scrubbed(rig::PLAYER_BODY, DRAW_SLOT, DRAW_3P, self.draw))
@@ -170,10 +144,6 @@ impl Bow<'_> {
             .collect()
     }
 
-    /// Everything the bow claims about the body this tick, for the
-    /// publisher to merge: nothing at all at rest, and — a press the strain
-    /// spent — only the press itself, so nothing else takes it before the
-    /// button comes up.
     pub fn claims(&self) -> Claims {
         Claims {
             holds_press: self.holds_press,
@@ -188,10 +158,7 @@ impl Bow<'_> {
     }
 }
 
-/// The entire draw law as a pure function of the actor snapshot, whether
-/// the press is the bow's (the composition's answer) and the draw clock.
 pub fn bow_of<'a>(rows: &'a Rows, state: &PlayerSnapshot, press: bool, clock: State) -> Bow<'a> {
-    // A spectator draws nothing; deciding it HERE releases every claim.
     let row = rows.bow(state.held).filter(|_| !state.spectator);
     let mut bow = Bow {
         holds_press: press,
@@ -209,8 +176,6 @@ pub fn bow_of<'a>(rows: &'a Rows, state: &PlayerSnapshot, press: bool, clock: St
     bow
 }
 
-/// The bow as one of the pack's rules: a bow in the MAIN hand, with an
-/// arrow in the pack, takes a free press and draws.
 pub struct BowRule {
     rows: Rc<Rows>,
 }
@@ -220,7 +185,6 @@ impl BowRule {
         BowRule { rows }
     }
 
-    /// Whether `player` carries any arrow row — read on the PRESS only.
     fn has_arrow(&self, player: PlayerId) -> bool {
         player_inventory(player)
             .into_iter()
@@ -231,9 +195,6 @@ impl BowRule {
 }
 
 impl Rule for BowRule {
-    /// A bow with no arrow to loose has no draw to show: the press is not
-    /// taken, on either side (the client reads its replicated inventory),
-    /// and a later rule gets it instead.
     fn takes_press(&self, state: &PlayerSnapshot) -> bool {
         let Some(me) = state.id else {
             return false;
@@ -260,7 +221,6 @@ impl Rule for BowRule {
             (None, _) => Press::Lost,
         };
         let loosed = clocks.draw.step(press, dt_ticks);
-        // Only the server's edge launches anything; a mirror shows the draw.
         if let (Some(ticks), Some(row), true) = (loosed, row, authority) {
             launch::loose(&self.rows, row, player, state, ticks);
         }

@@ -1,11 +1,3 @@
-//! Player file v7 → v8: the positional v7 body rewritten as the v8 tagged
-//! record.
-//!
-//! This step walks v7 as it SHIPPED and writes the v8 fields under explicit
-//! tags, all frozen here: later changes to the live record cannot change
-//! what it produces. Item slots are copied as stored (disk ids stay disk
-//! ids), so the step needs no palette.
-
 use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_persist::bytecodec::Reader;
@@ -16,13 +8,10 @@ use crate::save::wire::{TaggedWriter, Wire};
 
 use super::FORMAT;
 
-/// Inventory slots in a v7 file (hotbar + main, as shipped).
 const V7_SLOTS: usize = 36;
 
-/// Rewrite a v7 body (after the version header) as a v8 body.
 pub(super) fn upgrade(body: &[u8]) -> Result<Vec<u8>, RecordError> {
     let mut r = Reader::new(body);
-    // Offsets count from the start of the file (the version header is 4 bytes).
     let corrupt =
         |what: &'static str, r: &Reader| RecordError::corrupt(FORMAT.name, what, 4 + r.offset());
     macro_rules! read {

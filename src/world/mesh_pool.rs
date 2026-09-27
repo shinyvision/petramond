@@ -1,13 +1,12 @@
 //! Off-thread section meshing.
 //!
-//! Ordinary streaming must never build a section mesh on the render thread: doing it
-//! inline makes flight stall. The world instead hands each dirty section to the shared
-//! [`JobPool`] as an owned snapshot — the section itself plus a one-block-padded shell
-//! of its neighbours for voxel/light reads and the wider XZ biome halo needed by tint
-//! blending — then drains a finished [`ChunkMesh`] later. Initial local prediction is
-//! the deliberate latency exception and runs the same builder synchronously.
-//! Each job carries the section's `mesh_revision`; a result whose section has since
-//! changed (re-edited, re-lit) is discarded, so stale snapshots never reach the GPU.
+//! Ordinary streaming must never build a section mesh on the render thread; doing it inline makes
+//! flight stall. World hands each dirty section to the shared [`JobPool`] as an owned snapshot:
+//! the section plus a one-block-padded shell of neighbours for voxel/light reads, and the wider XZ
+//! biome halo for tint blending. Result comes back later as a [`ChunkMesh`]. Initial local
+//! prediction is the one exception, runs the same builder synchronously for latency.
+//! Each job carries `mesh_revision`; if the section changed since (re-edited, re-lit) the result
+//! gets dropped instead of reaching the GPU.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -17,14 +16,9 @@ use petramond_mesh::{ChunkMesh, SectionMeshPad, SectionVisibility};
 use petramond_world::chunk::{SectionPos, SECTION_SIZE, SKY_FULL, WORLD_MIN_Y};
 use petramond_world::section::Section;
 
-/// Padded neighbourhood side length: the section (16) plus one cell of border on each
-/// face — all the mesher's face-culling / AO / smooth-light sampling ever reaches.
 pub(super) const PAD: usize = SECTION_SIZE + 2;
 pub(super) const PAD_VOL: usize = PAD * PAD * PAD;
 
-/// Tint blending samples a 5×5 biome window, so an edge block needs two biome columns
-/// past the section on both X/Z axes. Keep this separate from the voxel pad: culling,
-/// AO, and smooth-light only need one block of 3D neighbour data.
 pub(super) const BIOME_PAD_RADIUS: i32 = 2;
 pub(super) const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
 pub(super) const BIOME_PAD_AREA: usize = BIOME_PAD * BIOME_PAD;
@@ -34,9 +28,6 @@ pub(super) fn pad_idx(x: usize, y: usize, z: usize) -> usize {
     (y * PAD + z) * PAD + x
 }
 
-/// Map a padded-axis coordinate `0..PAD` to `(neighbour delta −1/0/+1, section-local
-/// 0..16)`: index 0 is the low neighbour's last cell, `1..PAD-1` is this section, and
-/// `PAD-1` is the high neighbour's first cell.
 #[inline]
 pub(super) fn pad_axis(p: usize) -> (i32, usize) {
     if p == 0 {
@@ -53,28 +44,20 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
     z * BIOME_PAD + x
 }
 
-/// Cheap field-`Arc` snapshot of one neighbour section's voxel buffers — all the mesher
-/// reads of a neighbour (block ids for face culling, fluid/light for sampling). Cloning it
-/// is four `Arc` refcount bumps and zero allocations, and it does NOT share the world's
-/// `Arc<Section>`, so streaming edits never copy-on-write a section because a mesh job holds
-/// it. Absent (`None`) buffers fall back exactly like [`Section`]'s accessors.
 pub(super) struct NeighborSnap {
     pub blocks: petramond_world::section::BlockCube,
     pub fluid: Option<std::sync::Arc<[u8]>>,
     pub skylight: Option<std::sync::Arc<[u8]>>,
     pub blocklight: Option<std::sync::Arc<[petramond_world::light::LightRgb]>>,
-    /// The section's unified per-cell state entries (opaque; the mesher's
-    /// seam hands them to the owning family to decode).
     pub cell_states: Option<Box<[(u16, petramond_world::block::ShapeState)]>>,
     pub transition_tints: Box<[(u16, bool)]>,
 }
 
-/// A self-contained meshing job: the 3×3×3 neighbourhood as cheap field-`Arc` snapshots
-/// (indexed by [`nbhd_idx27`], centre at 13) plus an owned clone of the centre section (the
-/// only one the mesher needs as a full `Section`, for its block-entity maps) and the small
-/// per-column biome strip. Creating it is one `Section` clone + 27×4 `Arc` bumps, not 27
-/// deep copies, and it shares no mutable world state. The worker assembles the padded mesh
-/// buffers (the heavy part) off-thread in [`build`].
+/// Meshing job: 3x3x3 neighbourhood as cheap Arc snapshots (indexed by [`nbhd_idx27`], centre at
+/// 13), plus owned clone of centre section (mesher needs full `Section` for block-entity maps),
+/// plus small per-column biome strip. Building this is one `Section` clone and 27x4 Arc bumps, not
+/// 27 deep copies. No mutable world state touched. The padded mesh buffers, the heavy part, get
+/// built off-thread in [`build`].
 pub(super) struct MeshJob {
     pub pos: SectionPos,
     pub revision: u64,
@@ -84,10 +67,6 @@ pub(super) struct MeshJob {
 }
 
 impl MeshJob {
-    /// Replace one sampled section's predicted light with a freshly baked
-    /// cube before this job is built. Prediction terrain jobs use this to
-    /// chain the ordinary light and mesh implementations inside one worker
-    /// result instead of publishing an old-light mesh between the stages.
     pub(super) fn replace_light_snapshot(
         &mut self,
         pos: SectionPos,
@@ -109,26 +88,18 @@ impl MeshJob {
     }
 }
 
-/// Index into a 3×3×3 section neighbourhood by neighbour delta (−1/0/+1 each axis); centre
-/// `(0,0,0)` is 13.
 #[inline]
 pub(super) fn nbhd_idx27(dx: i32, dy: i32, dz: i32) -> usize {
     (((dy + 1) * 3 + (dz + 1)) * 3 + (dx + 1)) as usize
 }
 
-/// An empty per-column biome strip (`BIOME_PAD×BIOME_PAD` in XZ), filled by the caller.
 pub(super) fn empty_biome() -> Arc<[u8]> {
     Arc::from(vec![0u8; BIOME_PAD_AREA].into_boxed_slice())
 }
 
-/// How one mesh job ended.
 pub(super) enum MeshOutcome {
     Built(Box<ChunkMesh>),
-    /// Cancelled before or during the build: a newer job (or an unload)
-    /// superseded it.
     Cancelled,
-    /// The build panicked. The failure is reported rather than lost so the
-    /// in-flight slot is released; the section keeps whatever mesh it had.
     Failed,
 }
 
@@ -139,8 +110,6 @@ pub(super) struct MeshDone {
     pub cancel: crate::worker::JobCancel,
 }
 
-/// Mesh-stage adapter over the shared [`JobPool`]: `submit` queues a snapshot build
-/// at a distance priority, `try_recv` drains finished meshes on the main thread.
 pub(super) struct MeshPool {
     pool: Arc<JobPool>,
     tx: Sender<MeshDone>,
@@ -162,9 +131,6 @@ impl MeshPool {
         self.submit_build(key, pos, revision, move |cancel| build(job, cancel))
     }
 
-    /// Queue one build under the stage contract: exactly one [`MeshDone`]
-    /// reaches the drain per submission — built, cancelled, or (if `build`
-    /// panics) [`MeshOutcome::Failed`] via the job's report slot.
     pub(super) fn submit_build(
         &self,
         key: i64,
@@ -204,27 +170,17 @@ impl MeshPool {
     }
 }
 
-/// Build one section mesh NOW on the calling thread — the exact [`build`] the
-/// pool workers run (same thread-local pad scratch type, byte-identical
-/// output). Local predicted edits use this to skip the pool's submit→drain
-/// frame hops; everything else stays on the pool.
 pub(super) fn build_inline(job: MeshJob) -> Option<ChunkMesh> {
     build(job, &crate::worker::JobCancel::new())
 }
 
 impl crate::world::ReplicaWorld {
-    /// Mesh one loaded section on the calling thread through the exact
-    /// snapshot + pad path the pool's workers run — for instruments that
-    /// time or inspect meshing without a pool.
     #[cfg(any(test, feature = "test-support"))]
     pub fn mesh_section_inline(&self, pos: SectionPos) -> Option<ChunkMesh> {
         build_inline(self.build_mesh_job(pos)?)
     }
 }
 
-/// The assembled one-cell-padded neighbourhood buffers a section mesh reads (18³ each):
-/// block ids, fluid/light state, per-cell stair facing, and a loaded flag. Reads beyond
-/// the pad fall back exactly as the live world's accessors do (air / open sky / not-loaded).
 struct Pad {
     blocks: Box<[u16]>,
     fluid: Box<[u8]>,
@@ -248,8 +204,6 @@ impl Pad {
         }
     }
 
-    /// Restore the freshly-allocated defaults (air / no fluid / full sky / no block
-    /// light / no cell state / not loaded) so a reused pad assembles byte-identically.
     fn reset(&mut self) {
         self.blocks.fill(0);
         self.fluid.fill(0);
@@ -292,15 +246,12 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         transition_blocked,
     } = pad;
 
-    // Interior X run of every row: cells px=1..=16 all come from the centre-X neighbour
-    // (dx=0), so one neighbour lookup + one slice copy per (py,pz) fills 16 cells. The two
-    // X-border cells (px=0 from dx=-1, px=17 from dx=+1) are handled per-cell below.
     for pz in 0..PAD {
         let (ddz, lz) = pad_axis(pz);
         for py in 0..PAD {
             let (ddy, ly) = pad_axis(py);
-            let base = pad_idx(1, py, pz); // px=1
-            let src = petramond_world::chunk::section_idx(0, ly, lz); // local x=0 of this row
+            let base = pad_idx(1, py, pz);
+            let src = petramond_world::chunk::section_idx(0, ly, lz);
             match nbhd[nbhd_idx27(0, ddy, ddz)].as_ref() {
                 Some(s) => {
                     s.blocks
@@ -309,8 +260,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                         fluid[base..base + SECTION_SIZE]
                             .copy_from_slice(&w[src..src + SECTION_SIZE]);
                     }
-                    // skylight buffer starts full sky, so a `None` (uncomputed) neighbour
-                    // correctly leaves the run at SKY_FULL — only copy a computed cube.
                     if let Some(sk) = s.skylight.as_ref() {
                         skylight[base..base + SECTION_SIZE]
                             .copy_from_slice(&sk[src..src + SECTION_SIZE]);
@@ -322,8 +271,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                     loaded[base..base + SECTION_SIZE].fill(true);
                 }
                 None => {
-                    // Absent neighbour: air / no light / not loaded (buffer defaults),
-                    // and dark below the world floor (above stays the SKY_FULL default).
                     let wy = oy - 1 + py as i32;
                     if wy < WORLD_MIN_Y {
                         skylight[base..base + SECTION_SIZE].fill(0);
@@ -333,8 +280,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         }
     }
 
-    // The two X-border planes: px=0 (from the dx=-1 neighbour, its local x=15) and
-    // px=PAD-1 (dx=+1, local x=0). One cell of each row, per-cell like the old assembler.
     for &(px, ddx, lx) in &[(0usize, -1i32, SECTION_SIZE - 1), (PAD - 1, 1i32, 0usize)] {
         for pz in 0..PAD {
             let (ddz, lz) = pad_axis(pz);
@@ -362,9 +307,8 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         }
     }
 
-    // Sparse per-cell shape states (stairs, slabs) are rare (most sections carry none,
-    // so most neighbours skip entirely). Scatter each bearing neighbour's entries into
-    // the pad, mapping local coords to a pad index only when the cell lies inside it.
+    // Stairs/slabs states are rare, most neighbours have none. Skip those, scatter the rest into
+    // the pad, keep only cells that land inside it.
     for dy in -1i32..=1 {
         for dz in -1i32..=1 {
             for dx in -1i32..=1 {
@@ -380,13 +324,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
             }
         }
     }
-    // Snow exclusions: a material cell neither gives nor takes transition
-    // material while the cell above it wears a blanket (its own, or one it
-    // is bedded in), or while that cell is unknown. Driven from the blankets
-    // and gaps, which are rare, rather than from the material cells, which
-    // are most of the pad: a snow-free pad costs one tag read per cell. The
-    // layer above the pad's top is sampled from the captured neighbour
-    // sections.
     let rules = petramond_world::texture_transition::rules();
     let section = glam::IVec3::splat(SECTION_SIZE as i32);
     let pad_side = glam::IVec3::splat(PAD as i32);
@@ -418,8 +355,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
             }
         }
     };
-    // Every cell that could be a blanket for the cell beneath it: the pad,
-    // then the layer just above it.
     use petramond_world::block::BlockTag;
     let blanket = |id: u16| {
         table.has_tag(id, BlockTag::SNOW_COVER) || table.has_tag(id, BlockTag::SNOW_BEDDED)
@@ -428,8 +363,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         for pz in 0..PAD {
             for px in 0..PAD {
                 let p = glam::IVec3::new(px as i32 - 1, py as i32 - 1, pz as i32 - 1);
-                // Pad cells read the pad directly; only the layer above it
-                // needs the neighbour lookup.
                 let id = if py < PAD {
                     let i = pad_idx(px, py, pz);
                     loaded[i].then_some(blocks[i])
@@ -453,8 +386,6 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
     }
 }
 
-/// Scatter one neighbour's sparse per-cell states into the pad via `write(pad_idx,
-/// state)`, skipping cells that lie outside this section's one-cell border ring.
 fn scatter_border_states<T: Copy>(
     states: &[(u16, T)],
     (dx, dy, dz): (i32, i32, i32),
@@ -471,9 +402,6 @@ fn scatter_border_states<T: Copy>(
     }
 }
 
-/// Pad coordinate a neighbour cell at local `c` (0..16) maps to for neighbour delta `d`,
-/// or `None` when that cell lies outside this section's one-cell pad (a `d=±1` neighbour
-/// only contributes its single face plane).
 #[inline]
 fn pad_border(d: i32, c: usize) -> Option<usize> {
     match d {
@@ -484,7 +412,6 @@ fn pad_border(d: i32, c: usize) -> Option<usize> {
     }
 }
 
-/// Build one section mesh from its owned snapshot; `None` when `cancel` fired.
 fn build(job: MeshJob, cancel: &crate::worker::JobCancel) -> Option<ChunkMesh> {
     let MeshJob {
         pos,
@@ -518,9 +445,6 @@ fn build(job: MeshJob, cancel: &crate::worker::JobCancel) -> Option<ChunkMesh> {
             &|| cancel.is_cancelled(),
         )
     });
-    // Hand the renderer GPU-ready streams (quantising here keeps it off the
-    // render thread, whose column upload is then a byte copy) and the
-    // section's face connectivity for occlusion culling.
     mesh.map(|mut mesh| {
         mesh.visibility = SectionVisibility::of_section(&center);
         mesh.into_sealed()

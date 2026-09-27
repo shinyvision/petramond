@@ -1,8 +1,3 @@
-//! Synthetic fluid and body rows for the behaviour tests that must not depend
-//! on authored water, lava or species tuning. The pack is staged in a fresh
-//! mods root and loaded into a registry of its own ([`with_content`]), pinned
-//! on the test's thread — the process registry never sees it.
-
 use petramond_util::test_dirs::TestScratchDir;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, SectionPos};
@@ -10,19 +5,11 @@ use petramond_world::section::Section;
 
 use crate::world::ServerWorld;
 
-/// A jump-climb fluid with a current.
 pub const BRINE: &str = "bodyfluid:brine";
-/// A viscous step-climb fluid that is a navigation hazard, deals contact
-/// damage and applies burning.
 pub const SYRUP: &str = "bodyfluid:syrup";
-/// A solid, walkable floor block that is a navigation hazard but no fluid.
 pub const CINDER: &str = "bodyfluid:cinder";
-/// Top of the pool floor in [`pool`]; fluid fills the cells above it.
 pub const FLOOR_Y: i32 = 64;
 
-/// Stage the `bodyfluid` pack (the two fluids, the hazardous floor, one
-/// humanoid-sized body per buoyancy mode plus two tolerant species) in a
-/// fresh mods root.
 pub fn stage(tag: &str) -> TestScratchDir {
     let root = crate::modding::tests::stage_mods_fixture(tag, &[]).expect("fixture root");
     let pack = root.join("mods/bodyfluid");
@@ -67,16 +54,10 @@ pub fn stage(tag: &str) -> TestScratchDir {
     root
 }
 
-/// Stage the pack and run `body` against a content registry of its own,
-/// pinned on this thread (see [`crate::modding::tests::with_fixture_content`]).
-/// The fixture's rows never reach the process registry, so these tests run
-/// in-process beside every other test.
 pub fn with_content(tag: &str, body: impl FnOnce()) {
     crate::modding::tests::with_fixture_content(&stage(tag), body);
 }
 
-/// A complete synthetic fluid block row with the given motion knobs and
-/// `contact` object.
 #[allow(clippy::too_many_arguments)]
 pub fn fluid_row(
     name: &str,
@@ -143,12 +124,10 @@ fn body_row(name: &str, buoyancy: &str, tolerates: serde_json::Value) -> serde_j
     })
 }
 
-/// A registered fixture block by name.
 pub fn block(name: &str) -> Block {
     serde_json::from_value(serde_json::json!(name)).expect("fixture block registered")
 }
 
-/// A 16×16 pool of `fluid` from [`FLOOR_Y`] up to and including `top`.
 pub fn pool(fluid: Block, top: i32) -> ServerWorld {
     let mut chunk = Chunk::new(0, 0);
     for z in 0..16 {
@@ -164,7 +143,6 @@ pub fn pool(fluid: Block, top: i32) -> ServerWorld {
     world
 }
 
-/// Raise stone from the floor up to `top` (inclusive) for every `x >= from_x`.
 pub fn bank(world: &mut ServerWorld, from_x: i32, top: i32) {
     for z in 0..16 {
         for x in from_x..16 {
@@ -175,12 +153,10 @@ pub fn bank(world: &mut ServerWorld, from_x: i32, top: i32) {
     }
 }
 
-/// Where a body starts beside the bank in a pool whose top fluid cell is `top`.
 pub fn beside_bank(from_x: i32, top: i32) -> petramond_math::world_pos::WorldPos {
     petramond_math::world_pos::WorldPos::new(from_x as f64 - 1.0, top as f64 - 0.5, 8.5)
 }
 
-/// Write fluid `meta` for `fluid` into the cell at [`FLOOR_Y`].
 pub fn set_flow(world: &mut ServerWorld, x: i32, z: i32, fluid: Block, meta: u8) {
     if world.section_at_world_mut_for_test(x, FLOOR_Y, z).is_none() {
         let (cx, cy, cz) = (x.div_euclid(16), FLOOR_Y.div_euclid(16), z.div_euclid(16));
@@ -198,8 +174,6 @@ pub fn set_flow(world: &mut ServerWorld, x: i32, z: i32, fluid: Block, meta: u8)
         );
 }
 
-/// A one-deep brine sheet flowing toward +X: a source at `x = 4`, one level
-/// thinner per cell out to `x = 10`.
 pub fn flowing_brine() -> ServerWorld {
     let brine = block(BRINE);
     let mut world = pool(Block::Air, FLOOR_Y - 1);

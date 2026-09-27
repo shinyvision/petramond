@@ -1,8 +1,3 @@
-//! Server contracts of the event bus + tick-stage scheduler: the stage seam
-//! ordering, same-tick post drains, and the player-death one-shot. Pure
-//! server behaviour, so it is tested here against a bare `ServerGame` rather
-//! than through a client.
-
 use std::sync::{Arc, Mutex};
 
 use crate::events::tick::TickEvents;
@@ -24,9 +19,9 @@ fn player_died_fires_exactly_once_on_the_zero_transition() {
     }
     let mut feed = TickEvents::default();
     server.sessions[0].player.set_health(1);
-    server.damage_player(0, 2, DamageSource::Fall, None, &mut feed); // 1 → 0: dies
-    server.damage_player(0, 2, DamageSource::Fall, None, &mut feed); // already dead: no re-fire
-    server.damage_player(0, 0, DamageSource::Fall, None, &mut feed); // the zero fall drain: non-event
+    server.damage_player(0, 2, DamageSource::Fall, None, &mut feed);
+    server.damage_player(0, 2, DamageSource::Fall, None, &mut feed);
+    server.damage_player(0, 0, DamageSource::Fall, None, &mut feed);
     server.drain_post_events(&mut feed);
     assert_eq!(*deaths.lock().unwrap(), 1);
 }
@@ -48,8 +43,6 @@ fn attached_systems_run_in_stage_order_and_post_events_drain_within_the_tick() {
             .attach(at, 0, move |_| log.lock().unwrap().push(label));
     }
     {
-        // A system's post event must dispatch at the enclosing stage's
-        // boundary — within the same tick — not linger to a later tick.
         let log = log.clone();
         let player = server.sessions[0].id;
         server

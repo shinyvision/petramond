@@ -1,7 +1,3 @@
-//! The client mods' view claims as the frame presents them: the camera the
-//! frame draws from and hears from, the perspective over the player's own key,
-//! and the shader-param overrides over the replicated environment.
-
 use super::common::game;
 use petramond::modding::client::view::{ViewCameraClaim, ViewFold};
 use petramond_math::world_pos::WorldPos;
@@ -26,12 +22,9 @@ fn a_perspective_claim_holds_over_the_key_and_release_restores_the_players_own()
         game.local.cam.pos,
         "first person is the eye"
     );
-    // The key does nothing while the claim stands...
     game.toggle_third_person();
     assert!(!game.third_person_enabled());
 
-    // ...so release presents exactly the mode the player left, boom placed on
-    // the release frame itself.
     game.apply_view_fold(ViewFold::default());
     assert!(game.third_person_enabled());
     assert!(game.local.third_person.cam.is_some());
@@ -71,8 +64,6 @@ fn a_claimed_camera_is_the_frames_camera_and_listener_until_released() {
         assert_eq!(frame.listener().pos, frame.camera.pos);
     }
     assert!(game.camera_claimed());
-    // The camera is not the eye, so the body presents under it — unless the
-    // player is a spectator, who has no body to present.
     assert!(game.presents_local_body());
     let mode = game.local.player.mode();
     game.local
@@ -86,7 +77,6 @@ fn a_claimed_camera_is_the_frames_camera_and_listener_until_released() {
         "the sim eye never moves"
     );
 
-    // No `fov_y`: the player's LIVE field of view, not the one at claim time.
     game.local.cam.fov_y = 1.3;
     game.apply_view_fold(claimed);
     assert_eq!(game.render_camera().fov_y, 1.3);
@@ -114,7 +104,6 @@ fn a_time_override_scrubs_the_sky_through_the_one_sky_model_and_clears_back() {
     assert_eq!(params.get(SKY_LIGHT_PARAM), Some(&light));
     assert_eq!(params.get("test:tint"), Some(&[0.5; 4]));
 
-    // A light override of its own beats the derived one.
     fold.env.insert(SKY_LIGHT_PARAM.into(), [0.25; 4]);
     game.apply_view_fold(fold);
     let params = game.client_frame(0.0).environment.shader_params;
@@ -127,8 +116,6 @@ fn a_time_override_scrubs_the_sky_through_the_one_sky_model_and_clears_back() {
     );
 }
 
-/// Seed one remote player standing at `feet` into the replica, as a batch
-/// delivers it (within the local player's interest).
 fn with_remote(game: &mut super::common::TestGame, feet: WorldPos) -> mod_api::PlayerId {
     use petramond::events::tick::TickEvents;
     let index = game
@@ -143,14 +130,9 @@ fn with_remote(game: &mut super::common::TestGame, feet: WorldPos) -> mod_api::P
     mod_api::PlayerId(id.0)
 }
 
-/// Another player's view presents from their eye (their own body hidden,
-/// their hands in the viewmodel), a camera anchored to them follows their
-/// presented feet, and the rows a mod reads describe them as drawn.
 #[test]
 fn a_subject_and_an_anchor_present_from_another_players_body() {
     let mut game = game();
-    // Beside the local player: a batch carries only the players in its
-    // interest.
     let here = game.local.player.pos;
     let feet = WorldPos::new(here.x + 4.0, here.y, here.z + 4.0);
     let subject = with_remote(&mut game, feet);

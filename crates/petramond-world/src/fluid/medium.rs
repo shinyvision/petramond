@@ -1,9 +1,5 @@
-//! How a fluid looks from inside it and at its surface: row data a renderer reads.
-
 use crate::block::Block;
 
-/// A grey level the surface albedo is pulled toward, so painted body colour
-/// survives the flipbook detail and the vertex tint.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AlbedoMix {
@@ -11,43 +7,26 @@ pub struct AlbedoMix {
     pub amount: f32,
 }
 
-/// Presentation of a fluid as a medium. Colours are linear RGB `0..=1`.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FluidMedium {
-    /// Fog and clear colour while the camera eye is inside this fluid.
     pub fog_color: [f32; 3],
-    /// Linear fog band (blocks from the eye) while inside.
     pub fog_start: f32,
     pub fog_end: f32,
-    /// Multiply over everything drawn (terrain, bodies, particles) while the
-    /// eye is inside this fluid — every surface except a fluid's own faces.
     pub volume_tint: [f32; 3],
-    /// Multiply on this fluid's faces while the eye is inside ANY fluid, in
-    /// place of the eye medium's `volume_tint`.
     pub surface_tint: [f32; 3],
-    /// Face alpha; `1.0` is an opaque body that draws and writes depth with
-    /// the opaque terrain.
     pub surface_alpha: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub albedo_mix: Option<AlbedoMix>,
-    /// Whether the top surface gets the reflective sheen response.
     #[serde(default)]
     pub sheen: bool,
-    /// How much of its row's light emission a face provides itself, `0..=1`:
-    /// the face's block light is raised toward the emission and its contact
-    /// AO lifted by this fraction. A face is lit from the cell in front of it,
-    /// which for a glowing body under a ceiling or in a trench is dark rock.
     #[serde(default)]
     pub self_lit: f32,
-    /// How far below the open surface the eye must be to count as inside;
-    /// `None` counts any eye in one of this fluid's cells.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub eye_margin: Option<f32>,
 }
 
 impl FluidMedium {
-    /// Whether faces of this fluid are opaque (draw with solid terrain).
     #[inline]
     pub fn is_opaque(&self) -> bool {
         self.surface_alpha >= 1.0
@@ -103,7 +82,6 @@ pub(crate) struct MediaTable {
     by_id: Box<[u32]>,
 }
 
-/// The fluid media of a content registry, derived from its block rows.
 pub(crate) static MEDIA: crate::content::Slot<MediaTable> = crate::content::Slot::new(
     crate::content::stage::FLUID_MEDIA,
     &[crate::content::stage::BLOCKS],
@@ -123,13 +101,10 @@ fn derive_media(_: &crate::content::ContentRegistry) -> Result<MediaTable, Strin
     Ok(MediaTable { blocks, by_id })
 }
 
-/// Every fluid block, in id order: position `i` is medium index `i`, the dense
-/// handle a renderer addresses a fluid's [`FluidMedium`] by.
 pub fn media() -> &'static [Block] {
     &MEDIA.current().blocks
 }
 
-/// The dense medium index of a fluid block (not of a host holding one).
 #[inline]
 pub fn medium_index(block: Block) -> Option<u32> {
     MEDIA

@@ -1,49 +1,16 @@
-//! The headless dedicated-server host: the SAME server the in-game "Open to
-//! LAN" runs — `game/session.rs::build_headless_session` builds it with no
-//! local session, [`crate::server::handle::spawn`] runs the identical self-clocked
-//! loop on its own thread, and this module's main thread just opens the
-//! listener and parks on its console (`stop`, `save`, `say`, `op`, `deop`,
-//! and `time`).
-//!
-//! One server codebase, two hosts: everything gameplay-visible (tick ladder,
-//! streaming, flow control, joins/leaves, saves) is shared with the listen
-//! server; the only headless-specific behavior lives behind
-//! `SessionRegistry::has_local_session` (no local pipe recipient, every session
-//! ack-windowed, fixed ticks skipped while nobody is connected).
-
 use std::path::PathBuf;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// Headless-server settings: `settings.json` NEXT TO THE SERVER BINARY (not
-/// in the data dir — one config per deployed binary). Materialized with
-/// defaults on first run so the knobs are discoverable; unknown fields are
-/// ignored so hand-edited files survive version drift. `PETRAMOND_*` env vars
-/// override the file for one-off runs.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ServerSettings {
-    /// The server's streaming radius CEILING in chunks (`4..=64`): what the
-    /// world keeps loaded around players. A client requesting less (its own
-    /// view-distance option) is streamed less; requesting more clamps here.
     pub view_distance: i32,
-    /// How far from the nearest player mobs simulate, in chunks — fully,
-    /// then at a reduced AI rate, then frozen (see `mob::SimDistance`).
-    /// Independent of `view_distance`: loading more of the world no longer
-    /// costs mob simulation.
     pub simulation_distance: crate::mob::SimDistance,
-    /// Most players connected at once (`1..=256`); joins beyond it are
-    /// refused with `ServerFull`.
     pub max_players: usize,
-    /// Check every joining player against their Petramond account (the default).
-    /// Turn it off only for a private server: with it off the server admits
-    /// whatever name a client sends, so any client can claim any name — and
-    /// therefore any other player's saved inventory.
     pub online_mode: bool,
-    /// Let players load presentation-only packs this server does not run
-    /// (a minimap, a HUD). Consent, not enforcement.
     pub presentation_packs: bool,
 }
 
@@ -95,10 +62,6 @@ fn load_settings() -> ServerSettings {
     }
 }
 
-/// Load the process's content before anything touches it: every installed
-/// pack, then — this process serves exactly one world and draws nothing — the
-/// registry scoped to that world's enabled mods, so a pack the world switched
-/// off registers no ids at all. Either failure is the full load report.
 fn install_world_content(world_name: &str) -> Result<(), petramond_world::content::ContentErrors> {
     crate::content::install_from_env(&[])?;
     let dir = crate::save::world_dir(world_name);
@@ -108,12 +71,6 @@ fn install_world_content(world_name: &str) -> Result<(), petramond_world::conten
     Ok(())
 }
 
-/// `petramond_server <world-name>` — configured by `settings.json` beside the
-/// binary (`view_distance`, `simulation_distance`, `max_players`, `online_mode`,
-/// `presentation_packs`); env overrides: `PETRAMOND_SEED` (new worlds only),
-/// `PETRAMOND_RD` (streaming radius > settings.json), `PETRAMOND_PORT`
-/// (default 7434, 0 = ephemeral), `PETRAMOND_ONLINE_MODE=0` (skip account
-/// checks) and `PETRAMOND_ACCOUNT_URL` (a website checkout).
 pub fn run() {
     super::init_logging();
     let Some(world_name) = std::env::args().nth(1) else {
@@ -127,8 +84,6 @@ pub fn run() {
         eprintln!("       PETRAMOND_ONLINE_MODE=0  PETRAMOND_ACCOUNT_URL=<origin>");
         std::process::exit(2);
     };
-    // A server never applies content changes, but no client on this data
-    // directory may apply them under it either.
     let _content_lock = crate::content::ContentLock::shared(&crate::content::Dirs::installed())
         .map_err(|e| log::warn!("content lock: {e}"))
         .ok();
@@ -154,8 +109,6 @@ pub fn run() {
     let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
     server.set_sim_distance(settings.simulation_distance);
     server.set_max_players(settings.max_players);
-    // settings.json is the deployment's own switch; the env var (already read by
-    // the constructor) is the one-off override, so it wins.
     if !settings.online_mode && std::env::var("PETRAMOND_ONLINE_MODE").is_err() {
         server.set_account_policy(crate::account::AccountPolicy::Offline);
     }
@@ -180,11 +133,6 @@ pub fn run() {
     };
     log::info!("serving world '{world_name}' on port {port} — type 'stop' to save and exit");
 
-    // Console commands arrive over a channel so the main loop can also keep
-    // the handle's (unused) local outbox drained and watch for crashes.
-    // Stdin EOF (running under a supervisor with no console) just stops the
-    // reader; the server keeps running until a signal kills the process —
-    // autosave bounds the loss, but `stop` is the clean path.
     let (line_tx, line_rx) = mpsc::channel::<String>();
     std::thread::Builder::new()
         .name("petramond-console".to_string())
@@ -230,8 +178,6 @@ pub fn run() {
             Some("") | None => {}
             Some(other) => handle.command(other.to_owned()),
         }
-        // No local session ever produces gameplay messages, but join/leave
-        // broadcasts still land on the local pipe — keep it from banking.
         handle.drain(&mut discard);
         discard.clear();
         if handle.is_crashed() {

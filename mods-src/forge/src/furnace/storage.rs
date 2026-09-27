@@ -25,7 +25,6 @@ impl Storage {
     }
 
     pub fn adjacent(&self, anchor: [i32; 3]) -> Vec<[i32; 3]> {
-        // Transform opposite footprint corners through the placed facing.
         let Some(corners) = block_local_to_world(anchor, vec![[0.0, 0.0, 0.0], [2.0, 3.0, 2.0]])
         else {
             return Vec::new();

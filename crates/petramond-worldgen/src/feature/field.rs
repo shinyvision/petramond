@@ -20,25 +20,14 @@ impl FeatureField for &RegionCells {
     }
 }
 
-/// One memoized 16×16 world tile of the feature windows: raw surfaces,
-/// cave-adjusted surfaces, and biomes.
 pub(crate) struct RegionTile {
     raw: [i32; 256],
     adj: [i32; 256],
     biomes: [Biome; 256],
 }
 
-/// A tile's identity: the cave field's context (the seed, and the catalogs
-/// the adjusted surfaces read) and the tile's chunk coordinates. `surface`
-/// is always the density system of that seed — a generator's own pair of
-/// sources — so the key names every input.
 pub(crate) type TileKey = (crate::cache::GenContext, [i32; 2]);
 
-/// One memo tile, derived once for every worker that needs it (the world's
-/// `terrain.surface_tiles` memo is single-flight): tiles are pure functions of
-/// their key, so any worker's computation serves every other. Per-thread
-/// memos made every pool worker recompute the same nearby tiles — at world
-/// open ~20 cold workers each paid the whole spawn area's tile bill.
 fn cached_tile(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
@@ -63,8 +52,6 @@ fn cached_tile(
     })
 }
 
-/// The RAW (pre-cave) density surfaces and biomes of one 16×16 tile, `z*16 +
-/// x` — what the terrain fill of the tile's column reads.
 pub(crate) fn cached_tile_raw(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
@@ -75,9 +62,6 @@ pub(crate) fn cached_tile_raw(
     (tile.raw, tile.biomes)
 }
 
-/// The BIOMES of one memo tile, and nothing else. The point-query twin of
-/// [`cached_feature_region`]: reading one column through that helper allocates
-/// a surface vector and a raw vector to throw both away.
 pub fn cached_tile_biomes(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
@@ -90,12 +74,10 @@ pub fn cached_tile_biomes(
 /// The feature window for `(x0,z0,w,h)`: cave-adjusted surfaces + biomes in
 /// the returned [`RegionCells`], plus the RAW (pre-adjustment) surfaces the
 /// column core needs. Assembled from memoized 16×16 world tiles:
-/// neighbouring chunks' candidate windows overlap ~18×, and this window
-/// build dominated whole-world generation (~75%, 2026-07-13) before the
-/// memo. Tiles are the memo unit because windows are chunk-aligned — every
-/// window covers whole tiles, so a tile computes once and is copied ever
-/// after (per-cell memoization died by scattered evictions defeating bulk
-/// recomputation).
+/// neighbouring chunks' candidate windows overlap ~18×. Tiles are the memo
+/// unit because windows are chunk-aligned: each tile computes once and is
+/// copied into overlapping windows. This retains bulk computation and avoids
+/// scattered per-cell cache evictions.
 ///
 /// Byte-identical by construction: a tile is keyed by exact
 /// `(context, tile coords)` and every value is a pure world-anchored
@@ -120,7 +102,6 @@ pub fn cached_feature_region(
     for tcz in z0.div_euclid(T)..=(z1 - 1).div_euclid(T) {
         for tcx in x0.div_euclid(T)..=(x1 - 1).div_euclid(T) {
             let tile = cached_tile(surface, caves, tcx, tcz);
-            // Copy the tile ∩ window intersection.
             let (ix0, ix1) = (x0.max(tcx * T), x1.min(tcx * T + T));
             let (iz0, iz1) = (z0.max(tcz * T), z1.min(tcz * T + T));
             for wz in iz0..iz1 {
@@ -140,9 +121,6 @@ pub fn cached_feature_region(
     (region, raw)
 }
 
-/// A precomputed square surface-height window (the redwood-support halo) of the
-/// per-section feature field. World-anchored at
-/// `(x0,z0)`, `w×w`, row-major.
 pub struct SurfaceHeights {
     x0: i32,
     z0: i32,
@@ -171,17 +149,8 @@ impl SurfaceHeights {
     }
 }
 
-/// Per-section feature field backed by data precomputed ONCE per column (in
-/// `super::driver::ColumnGen`) and shared, immutably, by every section job of that
-/// column. The candidate region and support surfaces come from the shared window
-/// memo ([`cached_feature_region`]); the field holds no `SurfaceDensitySystem` and
-/// does no lazy work, so it is cheap per section and `Send + Sync` for parallel
-/// section generation.
 pub struct ColumnFeatureField<'a> {
     candidates: &'a RegionCells,
-    /// The redwood-support halo, present only when a redwood-supporting biome is in
-    /// range. `surf_at` only reaches outside the candidate window for a redwood support
-    /// check, which can only fire when that biome — and hence this window — is present.
     support: Option<&'a SurfaceHeights>,
 }
 

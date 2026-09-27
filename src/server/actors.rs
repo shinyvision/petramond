@@ -1,10 +1,3 @@
-//! Actions a mob performs on the world for a mod, at their turn in the
-//! tick: the queued break of a finished dig and a construction placement.
-//! Each is re-proven against the world as it now stands through the same
-//! checks the request passed, runs through the engine's own funnels (the
-//! break funnel, `block_place_pre`, the placement commit), and reports its
-//! outcome as `actor_acted`.
-
 use mod_api::{ActionRefusal, ActorAction};
 use petramond_math::math::IVec3;
 use petramond_world::construction::Record;
@@ -71,8 +64,6 @@ impl ServerGame {
         }
     }
 
-    /// A mob's use of the block at `pos`, re-proven at its turn and reported
-    /// like its digs and placements.
     pub(super) fn apply_actor_interact(
         &mut self,
         mob_id: u64,
@@ -88,9 +79,6 @@ impl ServerGame {
         });
     }
 
-    /// What a body with no session can use: the block's own capability where
-    /// it asks nothing of a player (a door swings; a screen needs someone to
-    /// show it to).
     fn actor_use(
         &mut self,
         mob_id: u64,
@@ -154,7 +142,6 @@ impl ServerGame {
             facing: ready.click.facing,
             actor: EntityRef::Mob(mob_id),
         };
-        // A mob's placement belongs to no player: actor-less.
         let cancelled = {
             let Self {
                 world,
@@ -168,8 +155,6 @@ impl ServerGame {
         if cancelled {
             return Err(ActionRefusal::Vetoed);
         }
-        // Handlers may have changed the world or the actor: the placement
-        // commits only exactly as it was proven.
         if self.check_actor_place(mob_id, pos, record, pay)? != ready {
             return Err(ActionRefusal::Changed);
         }
@@ -205,7 +190,6 @@ impl ServerGame {
         Ok(())
     }
 
-    /// The placement check at the drain: every connected body counts.
     fn check_actor_place(
         &self,
         mob_id: u64,

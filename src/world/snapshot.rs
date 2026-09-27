@@ -1,7 +1,3 @@
-//! Section persistence: the snapshot-and-persist gate shared by autosave/quit
-//! (`flush_modified_chunks`) and eviction (`harvest_section_snapshot`), plus
-//! the save-handle plumbing.
-
 use crate::entity::DroppedItem;
 use crate::mob::SavedMob;
 use crate::save::{SectionSnapshot, WorldSave};
@@ -9,10 +5,6 @@ use crate::world::ServerWorld;
 use petramond_world::chunk::SectionPos;
 
 impl ServerWorld {
-    /// Attach an on-disk save: enables section persistence (load-from-disk in the
-    /// streamer and flush-on-evict) and gives `Game` a handle for level/entities.
-    /// A server-only operation: a replica persisting its installed copies would
-    /// shadow the authoritative world, so it has no save to attach.
     pub fn attach_save(&mut self, save: WorldSave, saved: super::SavedIndex) {
         self.side.schematics.store = crate::schematic::store::Store::new(Some(save.dir()));
         self.side.save = Some(save);
@@ -27,21 +19,16 @@ impl ServerWorld {
         self.side.save.as_mut()
     }
 
-    /// The single snapshot-and-persist gate shared by [`flush_modified_chunks`]
-    /// (autosave/quit) and `unload_far_columns` (eviction). Applies the three-way
-    /// persist condition and, when it holds, builds the section's [`SectionSnapshot`]
-    /// with `entities`/`mobs` attached; returns `None` when the section needn't persist.
+    /// Shared gate for flush (autosave/quit) and unload (eviction) to decide if a section needs
+    /// saving, and build the `SectionSnapshot` when it does.
     ///
-    /// The gate persists a section when ANY of:
-    /// - its blocks were modified,
-    /// - it carries item entities or mobs right now, or
-    /// - `record_holds_entities` — its on-disk record still holds drops/mobs it no
-    ///   longer carries, so the stale record must be rewritten or it resurrects them on
-    ///   reload (cross-session: the caller derives it from the save handle).
+    /// Persists if blocks were modified, section still has item entities or mobs, or
+    /// `record_holds_entities` is set: the on-disk record may still have drops/mobs the section no
+    /// longer carries, so it must be rewritten to keep reloads correct. The caller works that
+    /// out from the save handle.
     ///
-    /// The caller owns the harvest policy (which fed `entities` / `mobs`) and the
-    /// post-action (clear `modified` vs. evict), keeping flush's "stay active" and
-    /// unload's "pause / save" lifetimes distinct.
+    /// Harvest policy and post-action are the caller's job: flush clears `modified` and keeps the
+    /// section active, unload evicts it.
     pub(super) fn snapshot_section_for_save(
         &self,
         pos: SectionPos,
@@ -50,25 +37,15 @@ impl ServerWorld {
         record_holds_entities: bool,
     ) -> Option<SectionSnapshot> {
         let section = self.data.sections.get(&pos)?;
-        // Derived explored terrain and authoritative edits/entities live in
-        // separate stores. First cache persistence waits for final light so the
-        // common path writes and compresses the record only once.
         let light_final = !section.light_dirty || section.all_opaque();
         let authoritative_exists =
             self.side.save.as_ref().is_some() && self.data.saved.authoritative_contains(pos);
         let explored_exists =
             self.side.save.as_ref().is_some() && self.data.saved.explored_contains(pos);
         let explored_first_persist = light_final && !authoritative_exists && !explored_exists;
-        // A record already on disk whose light rebaked since it was written
-        // (a lightless neighbour landed at the explored boundary, or an edit's
-        // spill) rewrites, or its saved cubes diverge from its neighbours'.
         let relit_persisted = light_final
             && self.data.relit_since_persist.contains(&pos)
             && (authoritative_exists || explored_exists);
-        // An edit dirtied this record's baked light and the rebake hasn't
-        // landed (eviction/quit racing the bake): rewrite the record NOW —
-        // the snapshot omits dirty light, so reload rebakes instead of
-        // loading the pre-edit cubes as clean (a permanent dark seam).
         let light_stale_persisted = !light_final
             && self.data.light_edited_since_persist.contains(&pos)
             && (authoritative_exists || explored_exists);
@@ -85,19 +62,11 @@ impl ServerWorld {
         }
     }
 
-    /// Snapshot every modified section to the save thread and clear the flags. Also
-    /// snapshots any section holding item entities or mobs (even if its blocks are
-    /// untouched) so their lifetime timers persist; they stay active in memory. Called
-    /// on autosave and on quit; a no-op without an attached save.
     pub fn flush_modified_chunks(&mut self) {
         if self.side.save.is_none() {
             return;
         }
-        // Queued incremental relights land first: a clean section's cubes
-        // persist as final, so they must already reflect every edit.
         self.apply_light_edits();
-        // Flush's harvest policy: CLONE the resting drops and mobs (they stay active in
-        // memory) so a crash can't lose them.
         let mut by_section = self.side.entities.dropped_items.items_by_section();
         let mut mobs_by_section = self.side.entities.mobs.saved_by_section();
         let positions: Vec<SectionPos> = self.data.sections.keys().copied().collect();
@@ -118,9 +87,6 @@ impl ServerWorld {
                 persisted.push(pos);
             }
         }
-        // Post-action: a persisted section is now in sync with disk. The flush
-        // visited EVERY loaded section, so relit bookkeeping resets wholesale
-        // (evicted stragglers included — they can't re-persist anyway).
         for pos in persisted {
             if let Some(s) = self.data.section_mut(pos) {
                 s.modified = false;
@@ -134,9 +100,6 @@ impl ServerWorld {
         self.flush_pending_colgen_records();
     }
 
-    /// Send the buffered column-gen cache records to the save thread. Batched
-    /// (autosave / unload / a size trigger in `poll`) so one region-file
-    /// rewrite absorbs many columns.
     pub(super) fn flush_pending_colgen_records(&mut self) {
         if self.side.gen.pending_colgen_records.is_empty() {
             return;
@@ -147,19 +110,10 @@ impl ServerWorld {
         }
     }
 
-    /// Harvest a section into a save snapshot for UNLOAD: this DRAINS the section's
-    /// resting drops/mobs into the record (pausing their lifetime timers until the
-    /// section reloads), returning `None` when the section needn't persist. The persist
-    /// gate is shared with autosave (`snapshot_section_for_save`).
     pub(super) fn harvest_section_snapshot(&mut self, sp: SectionPos) -> Option<SectionSnapshot> {
         if !self.data.sections.contains_key(&sp) {
             return None;
         }
-        // The section's true content is still in flight (its saved record has not
-        // been answered/applied yet): persisting the generated base now would
-        // overwrite the player's on-disk record with pre-overlay state. Skip; the
-        // record on disk stays authoritative. (Entities that wandered in are
-        // dropped with the unload — losing a wanderer beats corrupting a build.)
         if self.side.gen.awaited_overlays.contains(&sp)
             || self.side.gen.pending_overlays.contains_key(&sp)
         {

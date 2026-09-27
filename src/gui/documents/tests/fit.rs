@@ -1,7 +1,3 @@
-//! The document fit guards: every screen the shell shows and every document
-//! a pack in `mods-src/` ships, solved in every window of [`views`] with its
-//! catalog's keys seeded.
-
 use super::super::*;
 use crate::gui::GuiKind;
 use petramond_ui::Node;
@@ -48,8 +44,6 @@ fn every_shipped_document_fits_every_window() {
     );
 }
 
-/// One window the guards solve in: the logical box the game lays a
-/// document out in, and the gui scale it draws that box at.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct View {
     size: (i32, i32),
@@ -63,18 +57,11 @@ impl std::fmt::Display for View {
     }
 }
 
-/// Physical windows every document is solved in, each at the gui scale the
-/// game picks for it.
 const WINDOWS: &[(u32, u32)] = &[
-    // The tightest box, 320×240 logical, at every scale: text rounds to
-    // logical px differently at each.
     (320, 240),
     (640, 480),
     (960, 720),
     (1280, 960),
-    // Common desktops. The scale caps at 4, so the big ones get the widest
-    // logical boxes, where anything sized by a share of the screen is
-    // stretched furthest.
     (1024, 768),
     (1280, 720),
     (1366, 768),
@@ -83,7 +70,6 @@ const WINDOWS: &[(u32, u32)] = &[
     (2560, 1440),
     (3840, 2160),
     (5120, 2880),
-    // Odd aspects: 4:3 at scale 2, 16:10, ultrawide, portrait.
     (800, 600),
     (1920, 1200),
     (2560, 1080),
@@ -91,15 +77,9 @@ const WINDOWS: &[(u32, u32)] = &[
     (1080, 1920),
 ];
 
-/// Every view the guards solve in: [`WINDOWS`], plus a window just below
-/// and at every `compact_below_w` a shipped document declares. The smallest
-/// window is NOT always the worst: just above its breakpoint a responsive
-/// document is in its wide form with the least room that form ever gets,
-/// and a side panel there is narrower than the compact form's at 320×240.
 fn views(screens: &[Screen]) -> Vec<View> {
     let mut windows = WINDOWS.to_vec();
     for w in screens.iter().filter_map(|s| s.doc.compact_below_w) {
-        // Scale 3 is what a 720p-class window at that width picks.
         for scale in [1, 3] {
             for w in [w - 1, w] {
                 windows.push(((w * scale) as u32, (240 * scale) as u32));
@@ -121,16 +101,9 @@ fn views(screens: &[Screen]) -> Vec<View> {
     views
 }
 
-/// How long a value to seed every catalog `str` key with.
 #[derive(Clone, Copy, PartialEq)]
 enum Seed {
-    /// A pack author's longest real summary. Widths must survive it: a row
-    /// that cannot hold its text has to ellipsize, never push a widget out.
     Long,
-    /// An ordinary value. HEIGHTS are judged against this — a wrapping
-    /// label with a fixed width grows without bound in long text, so
-    /// seeding long would only ever prove that arithmetic, not tell you
-    /// whether the screen's structure fits.
     Ordinary,
 }
 
@@ -148,15 +121,12 @@ const EXCLUSIVE: &[&[&str]] = &[
     &["is_host", "is_remote"],
     &["has_selection", "no_worlds"],
     &["signed_out", "is_signed_in"],
-    // Creative's three browsing tabs, and its delete confirm over them.
     &[
         "catalog_tab+browsing",
         "selection_tab+browsing",
         "library_tab+browsing",
         "confirming_delete",
     ],
-    // The content browser's pages and confirm variants, and its stamp kinds
-    // with the entry's action and trash columns.
     &[
         "list_page",
         "confirm_page+confirming_destroy+cancel_left",
@@ -174,16 +144,14 @@ const EXCLUSIVE: &[&[&str]] = &[
     &["has_icon", "no_icon"],
 ];
 
-/// Every key an exclusive group names.
 fn group_keys(group: &[String]) -> impl Iterator<Item = &str> + '_ {
     group.iter().flat_map(|member| member.split('+'))
 }
 
-/// Which member of each group a page shows. Page 0 shows every group's
-/// first member; each later page moves ONE group to one of its other
-/// members. Every member is seen, each beside the other groups' main states
-/// — never paired with a state it cannot coexist with, which cycling every
-/// group at once did (the empty-list state only ever beside a confirm page).
+/// Which member of each group each page shows. Page 0 shows every group's first member; each later
+/// page moves one group to another member. Every member gets shown next to the other groups' main
+/// states and never beside a state it can't coexist with. Cycling all groups at once did that: the
+/// empty-list state only ever showed up next to a confirm page.
 fn page_members(groups: &[Vec<String>], page: usize) -> Vec<usize> {
     let mut members = vec![0; groups.len()];
     let mut left = page;
@@ -198,8 +166,6 @@ fn page_members(groups: &[Vec<String>], page: usize) -> Vec<usize> {
     members
 }
 
-/// Turn each group's chosen member on and the rest off, for whichever of
-/// the group's keys `has` says exist.
 fn apply_groups(
     groups: &[Vec<String>],
     members: &[usize],
@@ -214,7 +180,6 @@ fn apply_groups(
     }
 }
 
-/// The screen's groups that name a key it has, on the screen or in a row.
 fn present_groups(screen: &Screen, state: &petramond_ui::UiState) -> Vec<Vec<String>> {
     let has = |key: &str| {
         state.get(key).is_some()
@@ -230,8 +195,6 @@ fn present_groups(screen: &Screen, state: &petramond_ui::UiState) -> Vec<Vec<Str
         .collect()
 }
 
-/// How many pages a screen needs: one, plus one per group member past the
-/// first.
 fn page_count(screen: &Screen) -> usize {
     let state = base_state(screen, Seed::Ordinary);
     let groups = present_groups(screen, &state);
@@ -241,15 +204,8 @@ fn page_count(screen: &Screen) -> usize {
         .sum::<usize>()
 }
 
-/// Keys whose whole point is an EMPTY screen ("No mod packs installed"),
-/// which cannot be true while the list beside them is seeded with rows.
 const EMPTY_STATE_KEYS: &[&str] = &["no_mods", "no_craft_results"];
 
-/// Every catalog key of `screen` seeded, so a screen is judged with content
-/// in it rather than empty. `page` picks a side of every exclusive group.
-/// A key whose catalog entry names its `longest` value is seeded with that
-/// (the widest text its controller ever publishes) whatever the seed; a bool
-/// whose entry says `"seed": false` is never on while the screen is up.
 fn seeded_state(screen: &Screen, seed: Seed, page: usize) -> petramond_ui::UiState {
     use petramond_ui::{UiMap, UiValue};
     let mut state = base_state(screen, seed);
@@ -291,7 +247,6 @@ fn seeded_state(screen: &Screen, seed: Seed, page: usize) -> petramond_ui::UiSta
     state
 }
 
-/// Every catalog key of `screen` at its seed, before any group is applied.
 fn base_state(screen: &Screen, seed: Seed) -> petramond_ui::UiState {
     use petramond_ui::{UiMap, UiState, UiValue};
     const LONG: &str =
@@ -341,19 +296,13 @@ fn base_state(screen: &Screen, seed: Seed) -> petramond_ui::UiState {
     state
 }
 
-/// One document the guards solve: a screen the shell puts in front of a
-/// player, or a document a pack in `mods-src/` ships.
 struct Screen {
     name: String,
     doc: Arc<Document>,
-    /// The kind's catalog entry: `state` keys (each a type, or `{type,
-    /// longest}`), and the pack's own `exclusive` groups beside [`EXCLUSIVE`].
     catalog: serde_json::Value,
 }
 
 impl Screen {
-    /// [`EXCLUSIVE`] plus the catalog's own groups. An empty member turns
-    /// every key of its group off (no popup open, no confirm up).
     fn groups(&self) -> Vec<Vec<String>> {
         let own = self.catalog["exclusive"].as_array().into_iter().flatten();
         EXCLUSIVE
@@ -371,7 +320,6 @@ impl Screen {
     }
 }
 
-/// A shell screen with the engine catalog's entry for its kind.
 fn engine_screen(kind: GuiKind) -> Option<Screen> {
     let (text, _) =
         petramond_world::assets::read_base_text("ui/bindings.json").expect("catalog ships");
@@ -384,9 +332,6 @@ fn engine_screen(kind: GuiKind) -> Option<Screen> {
     })
 }
 
-/// Every document a pack in `mods-src/` ships, validated as the game loads
-/// it (a document the game would refuse fails here), with the
-/// catalog the pack keeps beside its documents (`pack/ui/bindings.json`).
 fn pack_screens() -> Vec<Screen> {
     let theme = crate::gui::doc_theme::theme();
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("mods-src");
@@ -429,8 +374,6 @@ fn pack_screens() -> Vec<Screen> {
     screens
 }
 
-/// Every screen the guards cover: the whole shell, and every pack document
-/// in the repo.
 fn screens() -> Vec<Screen> {
     let mut screens: Vec<Screen> = SHELL_KINDS
         .iter()
@@ -440,9 +383,6 @@ fn screens() -> Vec<Screen> {
     screens
 }
 
-/// Every screen the shell can put in front of a player, so the two text
-/// guards below cover the whole surface rather than the screens someone
-/// happened to open.
 const SHELL_KINDS: &[GuiKind] = &[
     GuiKind::Creative,
     GuiKind::Chest,
@@ -470,8 +410,6 @@ const SHELL_KINDS: &[GuiKind] = &[
     GuiKind::OptionsGraphics,
 ];
 
-/// A node as a failure names it: its kind, and its id and bindings when it
-/// has them, so the report says which key to look at.
 fn describe(node: &Node) -> String {
     let mut out = format!("{:?}", node.kind);
     if let Some(id) = &node.id {
@@ -485,17 +423,14 @@ fn describe(node: &Node) -> String {
     out
 }
 
-/// One solved instance handed to the guards below.
 struct SolvedNode<'a, 'd> {
     inst: &'a petramond_ui::Inst<'d>,
     rect: petramond_ui::RectI,
     root: petramond_ui::RectI,
-    /// Inside a floating `tooltip` subtree (see `Solved::overlay`).
     floating: bool,
     view: View,
 }
 
-/// One document laid out in one view, handed to the guards below.
 struct SolvedView<'a, 'd> {
     tree: &'a petramond_ui::InstTree<'d>,
     solved: &'a petramond_ui::Solved,
@@ -503,11 +438,6 @@ struct SolvedView<'a, 'd> {
     view: View,
 }
 
-/// Solve one shipped document with seeded dynamic text in every view, and
-/// hand each solve to `check`: every page of [`EXCLUSIVE`], and each
-/// anchored tooltip once, shown as its widget's (first stamp's) hover would
-/// show it. Each document is solved in the form the runtime would arrange
-/// it in at that view's width (`compact_below_w`).
 fn solve_views(
     screen: &Screen,
     views: &[View],
@@ -535,8 +465,6 @@ fn solve_views(
                 if at.peek().is_none() {
                     continue;
                 }
-                // The tree depends on the form, not the window: expand it
-                // once and solve it in every view of that form.
                 let tree = InstTree::expand_form_hover(doc, &state, compact, hover.as_ref());
                 for &view in at {
                     let env = ThemeEnv {
@@ -557,7 +485,6 @@ fn solve_views(
     }
 }
 
-/// [`solve_views`], one instance at a time.
 fn walk_solved(
     screen: &Screen,
     views: &[View],
@@ -577,7 +504,6 @@ fn walk_solved(
     });
 }
 
-/// The widget ids every `hover`-anchored tooltip in a document hangs on.
 fn tooltip_anchors(node: &Node) -> Vec<String> {
     let mut out = Vec::new();
     if let petramond_ui::NodeKind::Tooltip {
@@ -593,18 +519,9 @@ fn tooltip_anchors(node: &Node) -> Vec<String> {
     out
 }
 
-/// The recipe tooltip must GROW to whatever width the host says its
-/// ingredient strip needs. Recipe ingredients are essential information —
-/// the strip's own fallback when it runs short is to DROP the ones that
-/// don't fit, which reads as a recipe with fewer ingredients than it has.
-/// So the shipped documents bind the strip hook's `min_w` to the
-/// published width, and this pins the whole chain: the binding present in
-/// the document, resolved onto the instance, and honoured by layout.
 #[test]
 fn the_recipe_tooltip_grows_to_the_published_ingredient_width() {
     use petramond_ui::{solve, InstTree, ThemeEnv, UiValue};
-    // Comfortably past the authored 84 floor, and inside what the
-    // tooltip's own `max_w` can hold.
     const ASKED: i32 = 140;
     let theme = crate::gui::doc_theme::theme();
     for kind in [GuiKind::Inventory, GuiKind::CraftingTable] {
@@ -631,13 +548,6 @@ fn the_recipe_tooltip_grows_to_the_published_ingredient_width() {
     }
 }
 
-/// AUTHORED label text must fit the box the document gives it. The font is
-/// layout's only sizing input, so one font swap turns every box that was
-/// tuned to the old metrics into "Master V..." at once — and an ellipsis
-/// on a caption nobody can widen at runtime is a bug, not a graceful
-/// degradation. Bound text (world names, pack summaries, key bindings) is
-/// data and ellipsizes by design; it is deliberately not checked here.
-/// Authored button captions are held to the same rule.
 #[test]
 fn authored_label_text_fits_the_box_the_document_gives_it() {
     use petramond_ui::{LayoutEnv, NodeKind, ThemeEnv};
@@ -650,8 +560,6 @@ fn authored_label_text_fits_the_box_the_document_gives_it() {
         let kind = &screen.name;
         walk_solved(screen, &views, Seed::Long, |n| {
             let (view, scale) = (n.view, n.view.scale);
-            // An authored button caption is cut the same way when its box
-            // is narrower than the caption with the face's padding.
             if let NodeKind::Button {
                 text: Some(text),
                 image: None,
@@ -682,9 +590,6 @@ fn authored_label_text_fits_the_box_the_document_gives_it() {
             else {
                 return;
             };
-            // A run draws at `k` physical px per font pixel — one step down
-            // for `small`. Convert both ways the way the solver does,
-            // rounding the reservation UP.
             let k = match (*label_scale, *small) {
                 (heading, _) if heading > 1 => scale * heading as i32,
                 (_, true) => (scale - 1).max(1),
@@ -693,8 +598,6 @@ fn authored_label_text_fits_the_box_the_document_gives_it() {
             let logical = |font_px: i32| (font_px * k + scale - 1) / scale;
             let font_px = |logical: i32| logical * scale / k;
             let (need, have) = match wrap {
-                // A wrapping label is bounded by its box HEIGHT: it is the
-                // fixed-height ones (the remap hint) that clip.
                 true => (
                     logical(font.measure(text, Some(font_px(n.rect.w))).1),
                     n.rect.h,
@@ -711,17 +614,13 @@ fn authored_label_text_fits_the_box_the_document_gives_it() {
     assert!(clipped.is_empty(), "clipped labels: {clipped:#?}");
 }
 
-/// However long the text that lands in a row, the row's WIDGETS stay on the
-/// panel. Text is the layout's shock absorber (it ellipsizes); a checkbox
-/// or a mod toggle pushed off the panel edge is unreachable, and a label
-/// that keeps its natural width paints straight across the screen.
+/// Text can be as long as it likes, but the row's widgets stay on the panel; the text ellipsizes.
+/// A checkbox pushed off the edge can't be clicked, and a label at natural width runs across the
+/// whole screen.
 ///
-/// Tooltips float: the runtime places them at the pointer and clamps them
-/// there, so the solver's parking spot says nothing about where they land.
-/// What a floating panel owes is a bounded natural size: an unbounded one
-/// covers the screen the moment a pack ships a long recipe name. The item
-/// tip's cap is the ceiling — at the tightest 320px viewport that is a
-/// panel beside the pointer, never a screen cover.
+/// Tooltips float and get clamped to the pointer at runtime, so solver placement doesn't matter for
+/// them. Their natural size still needs a bound, or one long recipe name covers the screen. The
+/// item tip cap is that bound, and at 320px it's still a panel by the pointer.
 #[test]
 fn long_dynamic_text_never_pushes_a_widget_off_its_screen() {
     let screens = screens();

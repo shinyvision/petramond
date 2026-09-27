@@ -1,9 +1,3 @@
-//! The per-mob intents a tick system issues for a whole population — drive,
-//! kinematic pose, named-animation playback — and the rider read beside
-//! them. Each is validated and applied here ONCE, so the single call and its
-//! batched twin (`MobDriveMany`, `MobKinematicMany`, `MobAnimMany`,
-//! `MobRidersMany`) cannot disagree about what an element means.
-
 use mod_api::{
     HostRet, MobAnimOp, MobDriveData, MobKinematicData, MobRiderData, MobRidersData,
     MAX_MOB_ANIM_NAME_BYTES, MAX_MOB_ANIM_PHASE_MAGNITUDE, MAX_MOB_ANIM_RATE_MAGNITUDE,
@@ -15,8 +9,6 @@ use petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE;
 
 use super::super::guards::live_mob;
 
-/// Maximum horizontal speed accepted from `MobDrive`, derived from the
-/// collision resolver's bounded external sweep and the fixed simulation tick.
 pub(super) const MAX_MOB_DRIVE_SPEED: f32 =
     MAX_SAFE_EXTERNAL_SWEEP_DISTANCE / crate::events::tick::TICK_DT;
 
@@ -41,7 +33,6 @@ fn magnitude_guard(call: &str, field: &str, value: f32, max: f32) -> Result<(), 
     }
 }
 
-/// The rules every drive intent obeys.
 pub(super) fn drive_guard(d: &MobDriveData) -> Result<(), HostRet> {
     if d.horizontal
         .is_some_and(|v| !v.iter().all(|c| c.is_finite()))
@@ -72,8 +63,6 @@ pub(super) fn drive_guard(d: &MobDriveData) -> Result<(), HostRet> {
     Ok(())
 }
 
-/// Latch one validated drive intent for this tick (see
-/// `Instance::set_drive`); `false` = unknown or dead mob.
 pub(super) fn apply_drive(ctx: &mut SimCtx<'_>, d: MobDriveData) -> bool {
     let Some(_mob) = live_mob(ctx, d.mob_id) else {
         return false;
@@ -88,7 +77,6 @@ pub(super) fn apply_drive(ctx: &mut SimCtx<'_>, d: MobDriveData) -> bool {
     )
 }
 
-/// The rules every kinematic pose obeys; the pose's tilt on success.
 pub(super) fn kinematic_guard(k: &MobKinematicData) -> Result<Tilt, HostRet> {
     let tilt = Tilt::new(k.pitch, k.roll);
     if !k.pos.iter().all(|c| c.is_finite()) || !k.yaw.is_finite() || !tilt.is_finite() {
@@ -103,9 +91,6 @@ pub(super) fn kinematic_guard(k: &MobKinematicData) -> Result<Tilt, HostRet> {
     Ok(tilt)
 }
 
-/// Place one validated pose for this tick (see `Instance::set_kinematic`):
-/// `Ok(false)` = unknown or dead mob, `Err` = a placement past the sweep
-/// bound.
 pub(super) fn apply_kinematic(
     ctx: &mut SimCtx<'_>,
     k: MobKinematicData,
@@ -126,7 +111,6 @@ pub(super) fn apply_kinematic(
         })
 }
 
-/// The rules every named-animation command obeys.
 pub(super) fn anim_guard(op: &MobAnimOp) -> Result<(), HostRet> {
     match op {
         MobAnimOp::Set { anim, .. } => anim_name_guard("MobAnimSet", anim),
@@ -144,8 +128,6 @@ pub(super) fn anim_guard(op: &MobAnimOp) -> Result<(), HostRet> {
     }
 }
 
-/// Apply one validated animation command; `false` = unknown mob, the per-mob
-/// cap (a set), or an inactive animation (a rate or seek).
 pub(super) fn apply_anim(ctx: &mut SimCtx<'_>, op: &MobAnimOp) -> bool {
     let mob_id = match op {
         MobAnimOp::Set { mob_id, .. }
@@ -165,8 +147,6 @@ pub(super) fn apply_anim(ctx: &mut SimCtx<'_>, op: &MobAnimOp) -> bool {
     }
 }
 
-/// The seat capacity and riders of the live mob `mob_id`; `None` = no such
-/// live mob.
 pub(super) fn riders(ctx: &SimCtx<'_>, mob_id: u64) -> Option<MobRidersData> {
     let mob = live_mob(ctx, mob_id)?;
     let capacity = crate::mob::def(mob.kind).seats.len() as u8;

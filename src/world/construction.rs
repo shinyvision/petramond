@@ -1,7 +1,3 @@
-//! Construction against the live world: records read from stream-final
-//! cells, and a record's status gated on every cell its object needs being
-//! final — unknown terrain is never read as empty or as already built.
-
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
@@ -12,37 +8,30 @@ use petramond_world::world::placement::PlacementPlan;
 #[cfg(test)]
 mod tests;
 
-/// A record measured against the live world (see [`construction::Status`]).
 #[derive(Clone, Debug, PartialEq)]
 pub enum CellStatus {
-    /// A cell the object needs is unloaded or not yet stream-final.
     Unloaded,
     Satisfied,
     Place {
         missing: Vec<ItemStack>,
         writes: PlacementPlan,
     },
-    /// `block` occupies `at`; breaking it takes `footprint` (a whole door or
-    /// model), and `holds_items` says its container is not empty.
     Clear {
         at: IVec3,
         block: Block,
         footprint: Vec<IVec3>,
         holds_items: bool,
     },
-    /// A member cell of the object anchored here.
     Pending(IVec3),
     Unsupported(String),
 }
 
 impl ServerWorld {
-    /// The cell at `pos` as a construction record, once it is stream-final.
     pub fn construction_record(&self, pos: IVec3) -> Option<Record> {
         self.physics_cell_final_at(pos.x, pos.y, pos.z)
             .then(|| Record::at(&self.data, pos))
     }
 
-    /// Measure `record` at `pos` against the world.
     pub fn construction_status(&self, pos: IVec3, record: &Record) -> CellStatus {
         let cells = match construction::plan(record, pos) {
             Plan::Unit { writes, .. } => writes.writes.iter().map(|w| w.cell).collect(),

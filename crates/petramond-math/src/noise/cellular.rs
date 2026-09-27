@@ -1,5 +1,3 @@
-//! Euclidean cellular noise on a jittered square lattice.
-
 mod vectors;
 
 #[derive(Clone, Copy, Debug)]
@@ -9,8 +7,6 @@ pub struct Cell2 {
     pub hash: i32,
 }
 
-/// Nearest site, with `jitter` in `[0, 1]`. Signed hashes also provide an
-/// independent, uniformly distributed label for each site.
 pub fn cellular2(seed: u32, point: [f64; 2], jitter: f64) -> Cell2 {
     let origin = point.map(|v| (v + 0.5).floor() as i32);
     let amplitude = f64::from(0.437_015_95_f32) * jitter;

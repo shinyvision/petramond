@@ -16,7 +16,7 @@ const V8: &[u8] = include_bytes!("../fixtures/player_v8.bin");
 fn player_file_roundtrips() {
     let mut player = Player::new(WorldPos::new(10.0, 72.0, -4.0));
     player.set_mode(PlayerMode::Spectator);
-    player.vel = Vec3::new(0.0, -1.5, 0.25); // after set_mode, which zeroes vel
+    player.vel = Vec3::new(0.0, -1.5, 0.25);
     player.yaw = 1.25;
     player.pitch = -0.5;
     player.set_health(7);
@@ -62,11 +62,6 @@ fn player_file_roundtrips() {
         "the off-hand slot survives the round-trip"
     );
     assert!(got.kept.is_empty(), "nothing to keep");
-    // Progression is the one record a player cannot re-earn by playing:
-    // losing it re-hides recipes they already unlocked, and losing the
-    // obtained set re-fires `item_obtained` for things they have had for
-    // days. Both travel by NAME, and unlock ORDER is the wire catch-up's
-    // contract.
     let restored = got.restore();
     assert!(
         restored.craft_craftable_only,
@@ -91,9 +86,6 @@ fn player_file_roundtrips() {
 
 #[test]
 fn other_versions_are_typed_errors_not_a_fresh_player() {
-    // A player file this build cannot read must never look like "no
-    // file": the caller would respawn the player with an empty inventory
-    // and save it over the original.
     let mut bytes = encode(&Player::new(WorldPos::new(1.0, 2.0, 3.0)));
     bytes[0..4].copy_from_slice(&(VERSION + 1).to_le_bytes());
     assert!(matches!(
@@ -118,10 +110,6 @@ fn a_truncated_file_is_corrupt() {
     );
 }
 
-/// What the golden fixtures hold, whichever version wrote them: survival
-/// at (1.5, 64, -2.5), health 20, no bed, an empty inventory with hotbar
-/// slot 2 active, one effect, one obtained item, one recipe. Item slots are
-/// all empty so the fixtures hold no palette-dependent id.
 fn assert_golden(got: &PlayerData) {
     assert_eq!(got.pos, WorldPos::new(1.5, 64.0, -2.5));
     assert_eq!(got.vel, Vec3::new(0.0, -0.5, 0.0));
@@ -141,20 +129,16 @@ fn assert_golden(got: &PlayerData) {
     assert!(got.kept.is_empty());
 }
 
-/// Golden player file v8, derived from the v7 fixture by the v7 → v8 layout
-/// (tagged fields 1..=15).
 #[test]
 fn golden_player_v8_decodes() {
     assert_golden(&decode(V8).expect("v8 decodes"));
 }
 
-/// Golden player file v7, laid out by hand: it migrates to the same data.
 #[test]
 fn golden_player_v7_migrates() {
     assert_golden(&decode(V7).expect("v7 migrates"));
 }
 
-/// The upgrade step is a pure byte rewrite: v7 in, the golden v8 out.
 #[test]
 fn the_v7_step_produces_the_golden_v8_bytes() {
     assert_eq!(&V7[..4], &7u32.to_le_bytes());
@@ -162,17 +146,12 @@ fn the_v7_step_produces_the_golden_v8_bytes() {
     assert_eq!(v7::upgrade(&V7[4..]).expect("upgrades"), &V8[4..]);
 }
 
-/// Re-encoding what the golden file decodes to writes it byte for byte: a
-/// layout change that forgets its version bump fails here.
 #[test]
 fn the_encoder_writes_the_golden_v8_layout() {
     let got = decode(V8).expect("decodes");
     assert_eq!(encode(&got.restore()), V8);
 }
 
-/// A slot whose item this world cannot resolve loads empty, and a field
-/// this build does not know is kept: both are written back — the slot
-/// while it is still empty.
 #[test]
 fn unresolvable_slots_and_unknown_fields_are_kept_and_written_back() {
     let pal = Palette::identity();
@@ -213,8 +192,6 @@ fn unresolvable_slots_and_unknown_fields_are_kept_and_written_back() {
 
 #[test]
 fn restore_drops_unknown_effect_names_and_keeps_known_ones() {
-    // A removed/disabled mod's effect must not error the whole restore —
-    // it is dropped (with a warning) while known effects still apply.
     let mut player = Player::new(WorldPos::new(0.0, 70.0, 0.0));
     player.apply_effect(petramond_world::effect::Effect::Regeneration, 400);
     let mut data = decode(&encode(&player)).expect("decodes");

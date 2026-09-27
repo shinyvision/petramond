@@ -1,17 +1,12 @@
-//! Coarse density lattice sampling for the staged surface worldgen rewrite.
+//! Samples a graph channel on a coarse, world-anchored lattice and interpolates per-voxel density
+//! from it, for the staged surface worldgen rewrite. Stage 6A's surface fill gets `master_density`
+//! from here.
 //!
-//! A lattice samples a named scalar graph channel at shared, world-anchored cell
-//! corners, then provides trilinear per-voxel densities for a bounded region.
-//! The live Stage 6A surface fill samples `master_density` through this lattice.
+//! Stage 3's `surface_detection` channel is still a placeholder. We find top surfaces here by the
+//! sign of the interpolated density instead, and don't write any blocks.
 //!
-//! Surface detection belongs after density evaluation. The stage-3
-//! `surface_detection` graph channel remains only a placeholder; this module's
-//! pure scan derives top solid surfaces from interpolated density sign
-//! (`> 0.0` solid, `<= 0.0` air) without writing blocks.
-//!
-//! Bounds are world-anchored boxes on every axis alike: Y may start below
-//! zero and end anywhere, so a lattice covers whatever vertical range its
-//! caller searches — the cubic world's, not a 0..256 column.
+//! Bounds work the same on every axis, so Y can start below zero. The world is cubic, not a 0..256
+//! column.
 
 #[cfg(test)]
 use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
@@ -265,8 +260,6 @@ impl DensityLattice {
     }
 
     #[cfg(test)]
-    /// Last sampled lattice corner: one cell past the last voxel's cell, so a
-    /// 0..256 chunk lattice ends at Y 256 while its voxels end at 255.
     pub fn sample_world_max(&self) -> (i32, i32, i32) {
         (
             self.sample_x.last_coord(),
@@ -611,12 +604,6 @@ fn lerp(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
 }
 
-/// Smoothstep the horizontal (X/Z) interpolation parameter so reconstructed
-/// densities are C1-continuous across cell corners. Plain bilinear is only C0:
-/// its gradient jumps at every cell boundary, which a smooth (detail-noise-free)
-/// macro surface exposes as a regular grid of flat facets in hillshade. Y stays
-/// linear on purpose — `master_density` is exactly linear in Y, so a linear Y
-/// blend reconstructs the depth crossing without error.
 fn smooth_xz(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
@@ -735,8 +722,6 @@ mod tests {
             )
         };
 
-        // Cell corners (world XZ multiples of 4, world Y multiples of 8)
-        // reconstruct the channel exactly: smoothstep fixes the endpoints.
         for (x, y, z) in [(3, 0, 3), (7, 8, 7), (11, 16, 3)] {
             assert_close(
                 lattice.density_at_local(x, y, z),
@@ -744,14 +729,11 @@ mod tests {
             );
         }
 
-        // Y interpolation stays linear: at an XZ corner any Y is exact.
         assert_close(
             lattice.density_at_local(3, 4, 3),
             field.value(point(3, 4, 3)),
         );
 
-        // XZ interpolation is smoothstep, not linear: at a quarter into the cell
-        // the X blend is smooth(0.25)=0.15625, landing short of the linear point.
         let x_lo = field.value(point(3, 0, 3));
         let x_hi = field.value(point(7, 0, 3));
         let expected = x_lo + (x_hi - x_lo) * smooth_xz(0.25);
@@ -843,9 +825,6 @@ mod tests {
             "horizontal subgraph should be sampled once per X/Z lattice column"
         );
 
-        // Sample at columns where smoothstep coincides with the linear blend
-        // (XZ cell corners / midpoints) so the closed-form expectation holds;
-        // this test guards the per-column reuse and Y-linearity, not the XZ curve.
         for (x, y, z) in [(0, 0, 1), (2, 8, 5), (8, 16, 9)] {
             let wx = f64::from(bounds.world_x(x));
             let wy = f64::from(bounds.world_y(y));
@@ -942,8 +921,6 @@ mod tests {
         assert_eq!(negative.sample_world_max(), (0, CHUNK_SY as i32, 0));
     }
 
-    /// Y is an axis like any other: a lattice reaching below zero samples
-    /// world-anchored corners there and finds a surface that lies below zero.
     #[test]
     fn bounds_below_zero_find_surfaces_below_zero() {
         let graph = graph_with(PlaneField { surface_y: -37.0 });

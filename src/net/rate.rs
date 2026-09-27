@@ -1,13 +1,5 @@
-//! Token-bucket rate limiting for untrusted peers.
-//!
-//! A bucket holds up to `capacity` tokens and refills at `per_second`; each
-//! event spends its cost or is refused. Time is passed in by the caller, so
-//! the same bucket meters a connection's reader thread (wall clock) and is
-//! testable with synthetic instants.
-
 use std::time::Instant;
 
-/// One token bucket (see the module docs).
 #[derive(Clone, Debug)]
 pub struct TokenBucket {
     capacity: f64,
@@ -17,7 +9,6 @@ pub struct TokenBucket {
 }
 
 impl TokenBucket {
-    /// A full bucket: a fresh peer may burst up to `capacity` at once.
     pub fn new(capacity: f64, per_second: f64, now: Instant) -> Self {
         Self {
             capacity,
@@ -27,8 +18,6 @@ impl TokenBucket {
         }
     }
 
-    /// Spend `cost` tokens if the bucket holds them after refilling up to
-    /// `now`; `false` (spending nothing) when it does not.
     pub fn try_take(&mut self, cost: f64, now: Instant) -> bool {
         let elapsed = now.saturating_duration_since(self.last).as_secs_f64();
         self.last = now.max(self.last);
@@ -46,8 +35,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// A burst drains the bucket, the refill restores it at the configured
-    /// rate, and it never banks beyond its capacity.
     #[test]
     fn bursts_drain_and_time_refills_up_to_capacity() {
         let t0 = Instant::now();

@@ -1,7 +1,3 @@
-//! What the golem carries: fetching the next batch of blocks and the tools
-//! the clearance ahead wants from the table's chests, choosing a tool per
-//! block, and taking back salvage and leftovers.
-
 mod chest;
 mod trip;
 mod wants;

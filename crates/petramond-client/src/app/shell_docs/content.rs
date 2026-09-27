@@ -1,15 +1,3 @@
-//! Content browser controller: two tabs, Installed (the addons and mods this
-//! game has) and Browse (what petramond.com offers), with Get, Update,
-//! Replace, undo and delete per row, and an in-panel confirm page for
-//! everything destructive. Content packs are part of Petramond and never
-//! listed: they are there whatever the player does.
-//!
-//! The SET of rows changes only when the browser opens, when the first
-//! listing of this open arrives, and on an explicit refresh; everything else
-//! (job progress, a staged change, a listing re-fetched by a download)
-//! MERGES into the rows by stable key, so a row never jumps from under the
-//! pointer. Nothing here waits on the network: the session's workers do.
-
 mod confirm;
 pub(in crate::app) mod rows;
 
@@ -30,7 +18,6 @@ const LIST: &str = "content";
 const TABS: &str = "tabs";
 const SEARCH_MAX_CHARS: usize = 64;
 
-/// The browser's two tabs, in tab bar order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Tab {
     Installed,
@@ -48,32 +35,20 @@ impl Tab {
     }
 }
 
-/// The open browser's own state; the session (downloads, listing) outlives it.
 pub(in crate::app) struct ContentView {
     pub(in crate::app) tab: Tab,
-    /// Where Back leads (see `StartRoute::back`).
     pub(in crate::app) back: Option<String>,
-    /// Show only these pack ids ("Get missing").
     filter: Option<Vec<String>>,
     pub(in crate::app) locals: Vec<Local>,
-    /// The rows, fixed between rebuilds.
     layout: Vec<Slot>,
-    /// The rows shown this frame (search and filter applied).
     shown: Vec<Slot>,
-    /// Every listing row seen this open, so an Available row keeps its
-    /// facts when a merged listing drops it.
     known: BTreeMap<String, ListingRow>,
-    /// The keyboard selection, by stable key.
     selected: Option<String>,
     expanded: BTreeSet<String>,
     search: String,
     confirm: Option<ConfirmPage>,
-    /// The next listing to land rebuilds the rows (the open's first, or an
-    /// explicit refresh's).
     rebuild_on_arrival: bool,
     needs_rebuild: bool,
-    /// Frame counter, and the row a ListSelect toggled on which frame: a
-    /// double click's ListActivate in the same frame undoes that toggle.
     frame: u64,
     toggled: Option<(u32, u64)>,
 }
@@ -85,7 +60,6 @@ impl ContentView {
         rebuild_on_arrival: bool,
     ) -> Self {
         Self {
-            // "Get missing" is for what this game lacks: petramond.com's.
             tab: if filter.is_some() {
                 Tab::Browse
             } else {
@@ -112,8 +86,6 @@ impl ContentView {
         self.needs_rebuild = true;
     }
 
-    /// A listing landed: remember its rows, and rebuild when it is the one
-    /// the rows were waiting for.
     pub(in crate::app) fn listing_landed(&mut self, rows: &[ListingRow]) {
         for row in rows {
             self.known.insert(row.mod_id.clone(), row.clone());
@@ -123,7 +95,6 @@ impl ContentView {
         }
     }
 
-    /// Show `tab`, its rows laid out afresh.
     pub(in crate::app) fn show_tab(&mut self, tab: Tab) {
         if self.tab != tab {
             self.tab = tab;
@@ -132,7 +103,6 @@ impl ContentView {
         }
     }
 
-    /// Lay the tab's rows out afresh.
     fn rebuild(&mut self, session: &crate::app::content::ContentSession) {
         self.needs_rebuild = false;
         for row in &session.rows {
@@ -160,8 +130,6 @@ impl ContentView {
                 }
                 layout.push(Slot::ListingStatus);
                 if session.rows_known {
-                    // What this game already has shows as it is here: with
-                    // its update, undo and delete.
                     layout.extend(
                         session
                             .rows
@@ -219,7 +187,6 @@ impl ContentView {
             || id.is_some_and(|id| id.contains(&needle))
     }
 
-    /// The rows this frame shows: the layout with search and filter applied.
     fn refresh_shown(&mut self, session: &crate::app::content::ContentSession) {
         let searching = !self.search.trim().is_empty();
         let shown = self
@@ -323,9 +290,6 @@ pub(super) fn prepare(ctx: &mut ScreenCtx) -> bool {
         ctx.goto(AppScreen::Title);
         return false;
     }
-    // A sign-in made from here (the account screens return to the browser)
-    // fetches the listing the signed-out message asked for; a sign-out
-    // there leaves nothing the listing could be fetched with.
     let signed_out = matches!(ctx.content.listing, ListingState::SignedOut { .. });
     let signed_in = ctx.shell.account.saved.is_some();
     if !signed_in && !signed_out {
@@ -533,8 +497,6 @@ fn bind_message(row: &mut UiMap, message: &Message, sweep: f32) {
     );
 }
 
-/// The per-widget tooltips of the hovered row. The shortcut is named only
-/// on the selected row, because that is the row it acts on.
 fn bind_tips(state: &mut UiState, entry: Option<&Entry>, selected: bool) {
     let hint = |tip: &str, key: &str| {
         if tip.is_empty() || !selected {
@@ -638,8 +600,6 @@ fn toggle(set: &mut BTreeSet<String>, key: &str) {
     }
 }
 
-/// Select the entry at `index` (headers and messages are not selectable);
-/// a press on the row itself also toggles its expansion.
 fn select_row(ctx: &mut ScreenCtx, index: u32, toggle_expansion: bool) {
     let Some(view) = ctx.content.view.as_mut() else {
         return;
@@ -730,7 +690,6 @@ fn key(ctx: &mut ScreenCtx, key: NavKey, ctrl: bool) {
         NavKey::Char('z') if ctrl => undo(ctx),
         NavKey::Up | NavKey::Down => {
             if searching {
-                // Leave the search first; the arrows then walk the rows.
                 ctx.ui.push_input(petramond_ui::InputEvent::Key {
                     key: NavKey::Escape,
                     shift: false,
@@ -769,14 +728,12 @@ fn refresh(ctx: &mut ScreenCtx) {
     }
 }
 
-/// The selected entry, as it shows now.
 fn selected_entry(ctx: &ScreenCtx) -> Option<Entry> {
     let view = ctx.content.view.as_ref()?;
     let slot = view.shown.get(view.selected_index()?)?;
     view.entry(slot, ctx.content, Instant::now())
 }
 
-/// The selected row's primary action: Get, Update, Retry or Replace.
 fn primary(ctx: &mut ScreenCtx) {
     let Some(entry) = selected_entry(ctx) else {
         return;
@@ -814,7 +771,6 @@ fn undo(ctx: &mut ScreenCtx) {
     }
 }
 
-/// Delete the selected row (after a confirm), or cancel its download.
 fn trash(ctx: &mut ScreenCtx) {
     let Some(entry) = selected_entry(ctx) else {
         return;
@@ -827,7 +783,6 @@ fn trash(ctx: &mut ScreenCtx) {
     }
 }
 
-/// Move the selection over entries only, skipping headers and messages.
 fn move_selection(ctx: &mut ScreenCtx, step: i32) {
     let Some(view) = ctx.content.view.as_mut() else {
         return;
@@ -850,8 +805,6 @@ fn move_selection(ctx: &mut ScreenCtx, step: i32) {
 }
 
 impl App {
-    /// Escape on the browser: close the confirm page; else let a focused
-    /// search blur (its editor takes the key); else leave.
     pub(in crate::app) fn content_escape(&mut self) {
         if let Some(view) = self.content.view.as_mut() {
             if view.confirm.take().is_some() {
@@ -863,7 +816,6 @@ impl App {
         }
     }
 
-    /// The browser on its exit confirm, over whatever it showed.
     pub(in crate::app) fn confirm_content_exit(&mut self, kind: crate::app::ExitKind) {
         confirm::open_exit(&mut self.content, kind);
     }

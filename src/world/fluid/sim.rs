@@ -11,12 +11,6 @@ use super::{
 use petramond_world::fluid::FluidDef;
 
 impl<S: WorldSide> World<S> {
-    /// Set a fluid cell at world coords and announce it at once: a batch of
-    /// one through [`write_fluid_cell`](Self::write_fluid_cell) and
-    /// [`FluidAnnounce::flush`] — the cell write, its section's remesh (plus
-    /// any neighbour across a shared border, whose culled faces change), the
-    /// relight and the neighbour block updates. Returns false if the target
-    /// section is not writable.
     #[cfg(test)]
     pub(in crate::world) fn set_fluid_world(&mut self, pos: IVec3, block: Block, meta: u8) -> bool {
         let mut announce = FluidAnnounce::default();
@@ -25,11 +19,6 @@ impl<S: WorldSide> World<S> {
         written
     }
 
-    /// Write one fluid cell and record it in `announce`: the cell and its
-    /// column heightmaps change now (later reads must see them); the
-    /// neighbour block updates queue at the cell's first write in the batch;
-    /// everything else is announced when the batch flushes. Returns false if
-    /// the target section is not writable.
     pub(in crate::world) fn write_fluid_cell(
         &mut self,
         pos: IVec3,
@@ -44,20 +33,13 @@ impl<S: WorldSide> World<S> {
         let Some((cpos, lx, ly, lz)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
             return false;
         };
-        // Streaming-finality guard: never mutate a section whose gen result or saved
-        // overlay is still in flight (see `world::sim_guard`).
         if !self.data.stream_writable(cpos) {
             return false;
         }
         if !self.data.sections.contains_key(&cpos) {
-            // Fluid spilling into open air below/around a cliff materializes the
-            // section it flows into; a dry-up (setting air) into nothing is a no-op.
             if block == Block::Air || !self.materialize_section(cpos) {
                 return false;
             }
-            // The flow chose this cell reading the ABSENT section as air; the
-            // materialized base is authoritative and may hold terrain (or its own
-            // generated fluid) there. Only genuinely open cells accept the flow.
             if block != Block::Air && self.data.chunk_block(pos.x, pos.y, pos.z) != Block::Air.id()
             {
                 return false;
@@ -80,24 +62,18 @@ impl<S: WorldSide> World<S> {
     }
 }
 
-/// The flowing-fluid simulation: re-levelling, source conversion, and the
-/// down-then-sideways spread with its slope search, factored out of `World`.
-/// Every fluid runs the SAME machine on its own descriptor. Downward quench
-/// contact reacts when the flow enters the receiving cell.
+/// The fluid sim, pulled out of `World`: re-levelling, source conversion, and spreading down then
+/// sideways with a slope search. Same code for every fluid, just a different descriptor.
 ///
-/// `FluidSim` is **stateless with respect to `World`**: it holds no borrow of a
-/// world and no per-cell scratch that must outlive a call. Each method takes the
-/// `&ServerWorld`/`&mut ServerWorld` it operates on as a parameter (only the
-/// server simulates), so the tick driver can construct a `FluidSim` at the call
-/// site and hand it the world (sequential reborrows) without ever storing a
-/// `&mut ServerWorld` — see [`crate::world::tick`].
-/// Read-only stretches read through one [`FluidReads`] cursor; fluid writes go
-/// through [`World::write_fluid_cell`] into the caller's [`FluidAnnounce`]
-/// batch, contact writes through the world's ordinary mutation paths.
+/// It holds no world borrow or scratch. Methods take the `ServerWorld` they work on, so the tick
+/// driver makes one at the call site and never stores a `&mut ServerWorld` (see
+/// [`crate::world::tick`]).
+///
+/// Reads use one [`FluidReads`] cursor; fluid writes go through [`World::write_fluid_cell`] into
+/// the caller's [`FluidAnnounce`] batch.
 pub(super) struct FluidSim;
 
 impl FluidSim {
-    /// The fluid flow update for the cell at `pos` (a scheduled tick).
     pub(super) fn flow_check(
         &self,
         world: &mut ServerWorld,
@@ -105,19 +81,13 @@ impl FluidSim {
         announce: &mut FluidAnnounce,
     ) {
         let Some(fluid) = fluid_of(block_at(world, pos)) else {
-            return; // no longer fluid
+            return;
         };
-        // Earlier scheduled flow can introduce contact before the neighbor
-        // update batch runs. A quenched cell must not pour into another cell.
         contact::react(world, pos, fluid);
         let (current, mut meta, relevel) = {
             let reads = FluidReads::new(world);
             let current = reads.block(pos);
             let meta = reads.meta(pos);
-            // Re-level everything that is not a source. Writing the new state
-            // notifies neighbours, whose own checks carry a change onward —
-            // this is both how a flow front strengthens and how a cut-off
-            // sheet recedes.
             let relevel = (current == fluid.block && !is_source(meta))
                 .then(|| self.recompute(&reads, pos, fluid));
             (current, meta, relevel)
@@ -128,7 +98,7 @@ impl FluidSim {
         match relevel {
             Some(None) => {
                 world.write_fluid_cell(pos, Block::Air, 0, announce);
-                return; // nothing left to spread
+                return;
             }
             Some(Some(new_meta)) if new_meta != meta => {
                 world.write_fluid_cell(pos, fluid.block, new_meta, announce);
@@ -140,20 +110,15 @@ impl FluidSim {
         self.spread(world, pos, meta, fluid, announce);
     }
 
-    /// What this cell's fluid should be, judged purely from its neighbours —
-    /// `None` when nothing feeds it and it should dry up. The single
-    /// re-evaluation rule (in priority order):
-    ///   1. for a renewable fluid, two or more SOURCE neighbours over a solid
-    ///      floor or over another source: the cell becomes a source itself.
-    ///      Falling cells do not count toward the two (only true sources do),
-    ///      and a cell perched over air or moving fluid never converts, which
-    ///      is what keeps a flooding cave from turning to sources everywhere.
-    ///   2. any fluid directly above: a full falling cell, whatever the sides
-    ///      say.
-    ///   3. otherwise: the strongest horizontal neighbour's amount minus one
-    ///      drop-off step — dead when that reaches zero. Every chain of
-    ///      flowing fluid therefore leans on a real source or falling column;
-    ///      there is no state in which flow sustains itself.
+    /// What this cell's fluid should be, going only by its neighbours. `None` means it dries up.
+    ///
+    /// In priority order:
+    /// 1. Renewable fluid with 2+ source neighbours, over solid floor or another source: it becomes
+    ///    a source. Falling cells don't count toward the two. Perched over air or moving fluid it
+    ///    never converts, or a flooding cave would turn to sources everywhere.
+    /// 2. Any fluid directly above: a full falling cell, whatever the sides say.
+    /// 3. Otherwise the strongest horizontal neighbour's amount minus one step, dead at zero. So
+    ///    flow always leans on a real source or falling column and can't sustain itself.
     fn recompute(
         &self,
         reads: &FluidReads<'_>,
@@ -197,7 +162,6 @@ impl FluidSim {
         }
     }
 
-    /// Move this cell's fluid outward: down first, sideways when down is closed.
     fn spread(
         &self,
         world: &mut ServerWorld,
@@ -210,7 +174,6 @@ impl FluidSim {
         match contact::react_to_downward_flow(world, below, fluid) {
             contact::DownwardContact::None => {}
             contact::DownwardContact::Reacted => return,
-            // Treating the quencher as a floor would fan the flow out sideways.
             contact::DownwardContact::Refused => {
                 world.schedule_fluid_tick(pos, crate::world::sim_guard::SIM_RETRY_DELAY);
                 return;
@@ -220,11 +183,6 @@ impl FluidSim {
             let reads = FluidReads::new(world);
             let below_block = reads.block(below);
             if below.y >= WORLD_MIN_Y && fillable(below_block) {
-                // Pour down. The poured cell is judged by the same re-evaluation
-                // rule — with this cell above it that is a full falling cell,
-                // unless the infinite-pool rule fires down there instead. A cell
-                // flanked by three or more sources keeps feeding sideways even
-                // while pouring down — the interior edge of a big pool.
                 let poured = self.recompute(&reads, below, fluid).unwrap_or(FALLING);
                 (
                     Some(poured),
@@ -253,10 +211,6 @@ impl FluidSim {
         }
     }
 
-    /// Spread one ring sideways: pick the direction(s) via the slope search and
-    /// fill each — but never a cell that already holds any fluid
-    /// (existing fluid re-levels itself; overwriting it would double-move the
-    /// flow in one tick).
     fn spread_to_sides(
         &self,
         world: &mut ServerWorld,
@@ -265,9 +219,6 @@ impl FluidSim {
         fluid: &'static FluidDef,
         announce: &mut FluidAnnounce,
     ) {
-        // What the next ring would hold: a source or landing falling cell
-        // carries the full amount, so it spreads at the fluid's own outflow;
-        // a flowing cell at the last level pushes nothing further.
         if amount(meta).saturating_sub(fluid.drop_off) == 0 {
             return;
         }
@@ -280,13 +231,6 @@ impl FluidSim {
         }
     }
 
-    /// The sideways-spread candidates: every passable direction, filtered to the
-    /// one(s) whose path reaches a drop soonest. Distance 0 means the adjacent
-    /// cell itself sits over a drop; with no drop within [`SLOPE_FIND_DIST`]
-    /// steps past the first ring every passable direction ties and all spread.
-    /// Each kept direction carries the metadata its cell would re-evaluate to
-    /// (computed before any of this ring is written), so merging flows land at
-    /// their final level immediately.
     fn spread_directions(
         &self,
         reads: &FluidReads<'_>,
@@ -321,12 +265,6 @@ impl FluidSim {
         (out, count)
     }
 
-    /// Shortest path length (over passable cells at this Y, no immediate
-    /// backtracking) from `pos` to a cell with a drop below it, or `i32::MAX`
-    /// when none is within [`SLOPE_FIND_DIST`] steps. A bounded depth-first
-    /// walk, NOT a shared-frontier flood: each spread direction measures its
-    /// own distance independently, so two directions whose paths overlap still
-    /// both count the drop and tie.
     fn slope_distance(
         &self,
         reads: &FluidReads<'_>,
@@ -354,19 +292,11 @@ impl FluidSim {
         best
     }
 
-    /// Can sideways flow travel through/into this cell? Open space (air or a
-    /// washable fragile block) or this fluid that is not a source. Source cells
-    /// wall the search off: flow neither crosses nor competes with a full pool
-    /// cell.
     fn passable(&self, reads: &FluidReads<'_>, pos: IVec3, fluid: Block) -> bool {
         let b = reads.block(pos);
         fillable(b) || (b == fluid && !is_source(reads.meta(pos)))
     }
 
-    /// Is the cell below `pos` somewhere this fluid could go — open space to
-    /// fall into, existing fluid of the same kind to merge with, or this fluid's
-    /// quencher, which the downward pour enters and solidifies? The world floor
-    /// is solid ground, not a drop.
     fn drop_below(&self, reads: &FluidReads<'_>, pos: IVec3, fluid: &'static FluidDef) -> bool {
         let below = pos + DOWN;
         if below.y < WORLD_MIN_Y {
@@ -376,7 +306,6 @@ impl FluidSim {
         b == fluid.block || fillable(b) || fluid.quench.is_some_and(|q| b == q.by)
     }
 
-    /// How many of the four horizontal neighbours are still SOURCES of this fluid.
     fn source_neighbor_count(&self, reads: &FluidReads<'_>, pos: IVec3, fluid: Block) -> usize {
         CARDINALS
             .iter()

@@ -2,41 +2,21 @@ use crate::player::body_claims::BodyClaims;
 use crate::world::WorldData;
 use petramond_math::math::{IVec3, Vec3};
 
-/// The claimant an [`adopt_resolved_body`](Player::adopt_resolved_body) mirror
-/// writes under. Deliberately a name nothing can register, because a mirror is
-/// not resolving anybody's claim — it is repeating an answer.
 const MIRRORED_CLAIM: &str = "";
 
-// The published per-tick session facts are world-owned (the world holds them
-// for the mod ABI); the player module keeps its historical names.
 pub use crate::world::session::{PlayerInputSnapshot, PlayerRosterSnapshot, UseGesture};
 
-/// Half the horizontal width (box is 0.6 wide on x and z) and the full body
-/// height — world-level values, since the world tests roster bodies too.
 pub use crate::world::session::{PLAYER_HALF_W as HALF_W, PLAYER_HEIGHT as HEIGHT};
-/// Eye height above the feet (1.62).
 pub const EYE: f32 = 1.62;
-/// Largest physics sub-step; `app` splits a frame's `dt` into chunks this size
-/// so a long stall can't make one update step move (and tunnel) too far.
 pub const DT_MAX: f32 = 0.05;
-/// Pitch is clamped to just shy of straight up/down (~89°) so the look never
-/// tips through vertical — past it the view flips and yaw inverts (gimbal).
 pub const PITCH_LIMIT: f32 = 1.553_343;
-/// Full health, in half-heart points: 20 points = 10 hearts. Health is integer
-/// half-hearts so the HUD renders full/half/empty cells directly from it.
 pub const MAX_HEALTH: i32 = 20;
 
-/// Per-frame movement intent, in world space.
 #[derive(Copy, Clone, Default)]
 pub struct Input {
-    /// Wish direction (unit length, or zero). Survival uses the horizontal XZ
-    /// components; spectator mode uses the full 3-D vector.
     pub wishdir: Vec3,
     pub jump: bool,
     pub sprint: bool,
-    /// Sneaking (held): halves land speed and, while grounded, refuses any
-    /// horizontal move that would drop the feet farther than a step-down —
-    /// see the edge guard in `Player::update`. Overrides `sprint`.
     pub sneak: bool,
 }
 
@@ -50,11 +30,6 @@ petramond_math::wire_enum::wire_enum! {
     default Survival
 }
 
-/// The player's bed spawn point: which bed owns it (the bed's rotated-footprint
-/// base cell — cleared when that bed is destroyed) and the safe standing cell
-/// chosen beside it when the spawn was set (the respawn target when the bed's
-/// area isn't loaded for a fresh scan). Set by interacting with a bed
-/// (`game::bed`), persisted in `level.dat`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct BedSpawn {
     pub bed: IVec3,
@@ -63,45 +38,18 @@ pub struct BedSpawn {
 
 #[derive(Clone)]
 pub struct Player {
-    /// Feet centre (see module docs).
     pub pos: petramond_math::world_pos::WorldPos,
     pub vel: Vec3,
-    /// Look direction, radians. `yaw` turns about +Y; `pitch` tilts up/down,
-    /// clamped to [`PITCH_LIMIT`]. The player is the authority for the facing —
-    /// the camera mirrors these onto its own orientation each frame, exactly as
-    /// `cam.pos` mirrors [`eye`](Self::eye) — so the look persists in `level.dat`
-    /// alongside the rest of the player state.
     pub yaw: f32,
     pub pitch: f32,
     pub on_ground: bool,
     mode: PlayerMode,
-    /// True between a jump take-off and the next blocked vertical sweep (landing
-    /// or head-bonk). Gates the apex easing so only a genuine jump arc is
-    /// softened — walking off a ledge or bonking a ceiling falls at full gravity.
     pub(super) jumping: bool,
-    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]). Every source
-    /// mutates it on the deterministic tick through the server damage funnel;
-    /// per-frame physics only *measures* falls (below).
     health: i32,
-    /// Transient body conditions and fluid contact, shared with mobs and
-    /// independent of status effects.
     exposure: petramond_world::exposure::BodyExposure,
-    /// Engine-owned global damage immunity. Transient: a fresh connection or
-    /// respawn starts vulnerable regardless of saved health.
     damage_immunity: petramond_world::damage::DamageImmunity,
-    /// Highest feet-`y` reached since the player last stood on the ground (or was in
-    /// in a fluid). The fall distance of a landing is this minus the landing `y`. Reset when
-    /// grounded/submerged so a fall is measured from where it began, and the arc of a
-    /// jump counts from its apex, not its take-off.
     pub(super) fall_peak_y: f64,
-    /// Fall distance (blocks) of the hardest landing since the tick last consumed it —
-    /// latched by per-frame physics, drained on the tick where it becomes damage. Kept
-    /// as the max (not a sum) because two damaging landings can't occur within one 50 ms
-    /// tick, and it keeps the physics side free of the damage rule.
     fall_distance: f32,
-    /// The player's 36-slot inventory (9 hotbar + 27 main) plus the off-hand
-    /// slot. Owns the active hotbar selection that drives the held item and
-    /// placement.
     pub inventory: petramond_world::inventory::Inventory,
     /// Which hand the use-click ladder is currently acting from. TRANSIENT
     /// dispatch context, never saved or replicated: the ladder's second pass
@@ -110,31 +58,12 @@ pub struct Player {
     /// resolves to the off-hand without the attempt payload ever naming a
     /// hand. Always reset to `Main` when the dispatch returns.
     pub acting_hand: petramond_world::inventory::Hand,
-    /// The committed way out of geometry the body is stuck inside (see
-    /// `collision::EscapeRoute`). Derived from the world every frame on both
-    /// sides, so it is never saved or replicated.
     pub(super) escape: petramond_world::collision::EscapeRoute,
-    /// Bed spawn point, if a bed interaction set one (see [`BedSpawn`]).
     pub bed_spawn: Option<BedSpawn>,
-    /// The recipe browser's craftable-only filter — a per-player UI preference
-    /// that persists with the world's player data and follows the player
-    /// across joins.
     pub craft_craftable_only: bool,
-    /// What this player has discovered: items ever held, recipes unlocked.
-    /// Server-authoritative, persisted, and mirrored on the owning client so
-    /// its browser shows exactly the unlocked catalog.
     pub progression: super::Progression,
-    /// Active status effects, in application order (deterministic iteration).
-    /// Stepped once per game tick by `Game::tick_effects`; persisted by
-    /// registry name in `level.dat`.
     effects: Vec<petramond_world::effect::ActiveEffect>,
-    /// What is currently claimed on this body — speed, barred actions, held
-    /// poses, bone offsets — keyed by claimant so two of them compose.
-    /// TRANSIENT like the damage-immunity timer: never saved, and each claim
-    /// lives only while its claimant keeps re-stating it. See [`BodyClaims`].
     pub claims: BodyClaims,
-    /// Who owns this body's current interact press (see [`UseGesture`]).
-    /// Transient, like the claims beside it.
     pub use_gesture: UseGesture,
 }
 
@@ -165,32 +94,20 @@ impl Player {
         }
     }
 
-    /// The stack the ACTING hand holds (see [`acting_hand`](Self::acting_hand)) —
-    /// the read every use-click consumer resolves through. Outside a dispatch
-    /// the acting hand is `Main`, so this is `inventory.selected()`.
     #[inline]
     pub fn held(&self) -> Option<&petramond_world::item::ItemStack> {
         self.inventory.held_in(self.acting_hand)
     }
 
-    /// Current health in half-heart points (`0..=`[`MAX_HEALTH`]).
     #[inline]
     pub fn health(&self) -> i32 {
         self.health
     }
 
-    /// Overwrite health (clamped to `0..=`[`MAX_HEALTH`]). Used to restore a saved
-    /// player; gameplay damage goes through [`apply_damage`](Self::apply_damage).
     pub fn set_health(&mut self, health: i32) {
         self.health = health.clamp(0, MAX_HEALTH);
     }
 
-    /// Subtract `points` half-hearts of damage, never below zero. `immunity` is
-    /// the hit's stake in the shared damage-immunity window: an ordinary hit
-    /// (`Immunity::PLAYER`) is rejected while the window is active and opens a
-    /// fresh one; damage-over-time (`Immunity::Exempt`) lands regardless and
-    /// opens none. Returns whether health was actually lost. Call this on the
-    /// tick, not in per-frame physics.
     pub fn apply_damage(
         &mut self,
         points: i32,
@@ -213,8 +130,6 @@ impl Player {
         self.damage_immunity.is_active()
     }
 
-    /// The victim-global immunity timer, for a damage composition to judge
-    /// (`Immunity::blocks`) before the funnel dispatches anything.
     #[inline]
     pub fn damage_immunity(&self) -> &petramond_world::damage::DamageImmunity {
         &self.damage_immunity
@@ -230,47 +145,33 @@ impl Player {
         self.damage_immunity.clear();
     }
 
-    /// Whether the body is ENTOMBED: inside collision geometry with nowhere
-    /// free to escape to (see `collision::EscapeRoute`). The engine reports
-    /// it and holds the body still; what it costs the player is gameplay's
-    /// decision, not physics'.
     pub fn entombed(&self) -> bool {
         self.escape.entombed()
     }
 
-    /// The body's active conditions (burning and friends).
     pub fn conditions(&self) -> &petramond_world::condition::BodyConditions {
         self.exposure.conditions()
     }
 
-    /// Conditions and fluid contact: every condition grant goes through here.
     pub fn exposure_mut(&mut self) -> &mut petramond_world::exposure::BodyExposure {
         &mut self.exposure
     }
 
-    /// Drop every condition and contact clock: a fresh life, or no survival body.
     pub fn clear_exposure(&mut self) {
         self.exposure.clear();
     }
 
-    /// Add `points` half-hearts, capped at [`MAX_HEALTH`]. A no-op for a
-    /// non-positive amount AND for a dead player (0 health) — healing never
-    /// resurrects; respawn owns that transition. Call on the tick.
     pub fn heal(&mut self, points: i32) {
         if points > 0 && self.health > 0 {
             self.health = (self.health + points).min(MAX_HEALTH);
         }
     }
 
-    /// Active status effects in application order.
     #[inline]
     pub fn effects(&self) -> &[petramond_world::effect::ActiveEffect] {
         &self.effects
     }
 
-    /// Grant `effect` for `ticks`. An already-active effect is overwritten with
-    /// the new duration (keeping its original slot in the application order);
-    /// zero ticks removes it. Call on the tick.
     pub fn apply_effect(&mut self, effect: petramond_world::effect::Effect, ticks: u32) {
         if ticks == 0 {
             self.remove_effect(effect);
@@ -285,25 +186,14 @@ impl Player {
         }
     }
 
-    /// Remove `effect` if active.
     pub fn remove_effect(&mut self, effect: petramond_world::effect::Effect) {
         self.effects.retain(|e| e.effect != effect);
     }
 
-    /// Adopt an authoritative effect list wholesale (the client's predicted
-    /// player, reconciling against a replicated `SelfState`). Movement reads
-    /// the effect list every step, so a predicted body whose effects lag the
-    /// server's walks at the wrong speed and rubber-bands.
     pub fn set_effects(&mut self, effects: Vec<petramond_world::effect::ActiveEffect>) {
         self.effects = effects;
     }
 
-    /// The product of every active [`EffectBehavior::Speed`] scale. Not read
-    /// directly: it is one input to the engine's own claim (see
-    /// [`refresh_engine_claims`](Self::refresh_engine_claims)), so movement has
-    /// exactly one speed to read.
-    ///
-    /// [`EffectBehavior::Speed`]: petramond_world::effect::EffectBehavior::Speed
     fn effect_speed_scale(&self) -> f32 {
         self.effects
             .iter()
@@ -311,32 +201,12 @@ impl Player {
             .product()
     }
 
-    /// Re-state the ENGINE's own claim on this body, from the body's state plus
-    /// the one fact it cannot see (`gameplay` — whether a menu has the hands).
-    ///
-    /// The engine takes a claimant slot like anything else rather than gating
-    /// each action site on its own condition. That is what makes "may this body
-    /// mine" a single question: a spectator, a corpse, an open menu and a
-    /// pack's raised shield all answer it the same way, and a rule that
-    /// composes with one composes with all of them.
-    ///
-    /// Idempotent and re-stated every tick on BOTH mirrors — every input is
-    /// state the client also holds, so the engine's half is derived rather than
-    /// replicated and stays predicted (see
-    /// [`BodyClaims::replicated_attribute`]).
     pub fn refresh_engine_claims(&mut self, gameplay: bool) {
         self.claims.set_attribute(
             super::ENGINE_CLAIMANT,
             mod_api::PlayerAttribute::MoveSpeed,
             self.effect_speed_scale(),
         );
-        // A spectator has no body to act with and an open menu has the hands.
-        // Both used to be a separate condition at every action site.
-        //
-        // Death is deliberately NOT a term: the death screen is a menu, so
-        // `gameplay` already covers it on both mirrors — and a mirror does not
-        // track this body's health, so reading it here would let the two sides
-        // disagree about what the body may do.
         let idle = self.is_spectator() || !gameplay;
         let denied = if idle {
             super::DeniedActions::of([
@@ -351,48 +221,26 @@ impl Player {
             .set_denied_actions(super::ENGINE_CLAIMANT, denied);
     }
 
-    /// The body-level land-speed scale: the resolved product over every claim
-    /// (see [`BodyClaims::attribute`]).
     #[inline]
     pub fn move_scale(&self) -> f32 {
         self.claims.attribute(mod_api::PlayerAttribute::MoveSpeed)
     }
 
-    /// The flight-speed scale: the resolved product over every claim.
     #[inline]
     pub fn fly_scale(&self) -> f32 {
         self.claims.attribute(mod_api::PlayerAttribute::FlySpeed)
     }
 
-    /// The engine's `base` ticks for `attribute`, scaled by the resolved
-    /// claims — how a consulting site reads a claimed engine constant.
     #[inline]
     pub fn scaled_ticks(&self, attribute: mod_api::PlayerAttribute, base: u32) -> u32 {
         (base as f32 * self.claims.attribute(attribute)).round() as u32
     }
 
-    /// The set of actions this body is barred from (see
-    /// [`BodyClaims::denied_actions`]).
     #[inline]
     pub fn denied_actions(&self) -> super::DeniedActions {
         self.claims.denied_actions()
     }
 
-    /// Adopt an already-resolved body on a MIRROR — the client's predicted
-    /// player, told the answers the authority resolved. Neither knob is
-    /// predicted: both are SIMULATION (the server validates how fast a client
-    /// moved and what it was allowed to do), and a batch of latency on either
-    /// is imperceptible next to the POSE, which IS predicted precisely because
-    /// it is the part you see instantly.
-    ///
-    /// ONE entry point for the whole answer rather than a setter per knob: a
-    /// mirror adopts everything it was told or it is out of step, and a
-    /// per-field door is a field somebody forgets to walk through.
-    ///
-    /// It replaces only the MIRRORED slot, never the whole set: the mirror
-    /// carries the engine's own claim too, worked out from state it holds
-    /// (see [`refresh_engine_claims`](Self::refresh_engine_claims)), and
-    /// clearing would drop it until the next frame re-stated it.
     pub fn adopt_resolved_body(
         &mut self,
         scale: f32,
@@ -409,26 +257,16 @@ impl Player {
         self.claims.set_denied_actions(MIRRORED_CLAIM, denied);
     }
 
-    /// Clear every active effect (death/respawn starts a fresh life).
     pub fn clear_effects(&mut self) {
         self.effects.clear();
     }
 
-    /// Step every active effect one game tick: count down, drop expired
-    /// entries, and return each behavior whose interval boundary fired this
-    /// tick (boundaries land every `interval` ticks counted back from expiry,
-    /// including one AT expiry). The player owns WHEN a behavior fires — a
-    /// duration concern — but never WHAT it does: consequences are applied by
-    /// `Game::tick_effects`, because damaging behaviors must route through
-    /// the `Game::damage_player` funnel this type cannot reach.
     pub fn tick_effects(&mut self) -> Vec<petramond_world::effect::EffectBehavior> {
         let mut fired = Vec::new();
         for e in &mut self.effects {
             e.remaining -= 1;
             let behavior = e.effect.def().behavior;
             match behavior {
-                // Continuous behaviors have no boundary to report: movement
-                // reads them off the live list every step.
                 petramond_world::effect::EffectBehavior::None
                 | petramond_world::effect::EffectBehavior::Speed { .. } => {}
                 petramond_world::effect::EffectBehavior::Regen { interval, .. } => {
@@ -442,47 +280,28 @@ impl Player {
         fired
     }
 
-    /// Add a knockback impulse to the velocity — a mob strike's shove (and, later,
-    /// a mod HostCall). Call on the tick; the per-frame physics then integrates it
-    /// like any other velocity (friction bleeds the horizontal part, gravity the
-    /// vertical). Spectators float free of the world and take none — mirroring how
-    /// they take no damage.
     pub fn apply_knockback(&mut self, impulse: Vec3) {
         if self.is_invulnerable() {
             return;
         }
         self.vel += impulse;
-        // An upward pop must read as a launch, not be swallowed by the grounded
-        // state (mirrors a mob's knockback clearing its own on_ground).
         if impulse.y > 0.0 {
             self.on_ground = false;
             self.jumping = false;
         }
     }
 
-    /// Take and clear the pending fall distance (blocks) latched by the last landing.
-    /// Physics still measures falls per frame (for the `track_fall` tests), but
-    /// the server converts its own replicated-transform fall
-    /// tracking into damage instead (`ConnectedPlayer::fall`) — nothing consumes this
-    /// latch in the game anymore.
     #[cfg(test)]
     pub fn take_fall_distance(&mut self) -> f32 {
         std::mem::replace(&mut self.fall_distance, 0.0)
     }
 
-    /// Move the feet to `pos` (a mod `Teleport` HostCall), clearing the fall
-    /// bookkeeping — re-anchoring the peak and dropping any pending landing —
-    /// so a teleport can never be measured as a fall. Velocity is kept.
     pub fn teleport(&mut self, pos: petramond_math::world_pos::WorldPos) {
         self.pos = pos;
         self.fall_peak_y = pos.y;
         self.fall_distance = 0.0;
     }
 
-    /// Update the fall bookkeeping after a physics sub-step has resolved `on_ground`
-    /// and the final feet `y`. Controlled swimming or climbing cancels the fall; a
-    /// fresh landing (`was_on_ground` false, now grounded) latches its distance, and
-    /// while airborne the peak tracks the highest point of the arc.
     pub(super) fn track_fall(&mut self, was_on_ground: bool, controlled: bool) {
         if controlled {
             self.fall_peak_y = self.pos.y;
@@ -499,9 +318,6 @@ impl Player {
         }
     }
 
-    /// Turn the look by `(dyaw, dpitch)` radians (mouse delta × sensitivity).
-    /// Yaw wraps freely; pitch is clamped to [`PITCH_LIMIT`] so the view can't
-    /// tip past vertical.
     pub fn rotate(&mut self, dyaw: f32, dpitch: f32) {
         self.yaw += dyaw;
         self.pitch = (self.pitch + dpitch).clamp(-PITCH_LIMIT, PITCH_LIMIT);
@@ -537,8 +353,6 @@ impl Player {
         self.vel = Vec3::ZERO;
         self.on_ground = false;
         self.jumping = false;
-        // A mode switch is not a fall: re-anchor the peak and drop any pending landing so
-        // dropping out of spectator (or into it) never lands as fall damage.
         self.fall_peak_y = self.pos.y;
         self.fall_distance = 0.0;
     }
@@ -553,45 +367,33 @@ impl Player {
         self.set_mode(next);
     }
 
-    /// Eye position (camera origin).
     #[inline]
     pub fn eye(&self) -> petramond_math::world_pos::WorldPos {
         self.pos + Vec3::new(0.0, EYE, 0.0)
     }
 
-    /// View direction from yaw/pitch — the sim-side twin of
-    /// `crate::camera::Camera::forward`. Per-player actions (placement
-    /// facing, bucket rays, thrown drops) read THIS, not the camera: the
-    /// camera is presentation, exists only for the local player, and can lag
-    /// the eye during a step-up glide.
     #[inline]
     pub fn forward(&self) -> Vec3 {
         let cp = self.pitch.cos();
         Vec3::new(self.yaw.sin() * cp, self.pitch.sin(), self.yaw.cos() * cp).normalize()
     }
 
-    /// Centre of the body AABB (feet + half height). Used as the pickup-radius
-    /// centre so a drop resting at the player's feet is measured from the body,
-    /// not the eye (contract §6: "within pickup radius of player AABB").
     #[inline]
     pub fn body_center(&self) -> petramond_math::world_pos::WorldPos {
         self.pos + Vec3::new(0.0, HEIGHT * 0.5, 0.0)
     }
 
-    /// Gameplay body: feet at `pos`, using the player's collision dimensions.
     #[inline]
     pub fn body(&self) -> petramond_world::body::Body {
         petramond_world::body::Body::new(self.pos, HALF_W, HEIGHT)
     }
 
-    /// AABB min corner.
     #[inline]
     pub(super) fn aabb_min(&self) -> [f64; 3] {
         let hw = f64::from(HALF_W);
         [self.pos.x - hw, self.pos.y, self.pos.z - hw]
     }
 
-    /// AABB max corner.
     #[inline]
     pub(super) fn aabb_max(&self) -> [f64; 3] {
         let hw = f64::from(HALF_W);
@@ -602,11 +404,6 @@ impl Player {
         ]
     }
 
-    /// True if every chunk column the horizontal AABB overlaps is loaded. The
-    /// caller gates physics on this (once per frame) so the player can't fall
-    /// through terrain that hasn't generated yet (spawn, or running past the
-    /// load frontier). Column membership can't change within a frame, so this
-    /// need not be re-checked per sub-step.
     pub fn columns_loaded(&self, world: &WorldData) -> bool {
         let hw = f64::from(HALF_W);
         let cx0 = (self.pos.x - hw).floor() as i32 >> 4;

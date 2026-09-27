@@ -15,7 +15,7 @@
 //!
 //! Unconnected ends, and the sides of a bare post, show the pane edge tile
 //! (the 2px strip), which also caps each box top/bottom. Smooth-lit like
-//! every box family (2026-07-23), so a glass wall shades continuously with
+//! every box family, so a glass wall shades continuously with
 //! the terrain it meets.
 
 use crate::block::Aabb;
@@ -25,30 +25,21 @@ use crate::tile::Tile;
 use crate::block::shape::{ShapeBox, ShapeFace};
 use crate::face::Face;
 
-/// Which tile a pane face samples: the glass sheet, or the 2px edge strip.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PaneTile {
     Glass,
     Edge,
 }
 
-/// One box of the connected pane shape.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PaneBox {
-    /// The bare centre post (no connections).
     Post,
-    /// The north-south run, post included.
     ZRun,
-    /// The east-west run, post included (no crossing north-south run).
     XRun,
-    /// A west/east arm butting against a crossing north-south run.
     ArmW,
     ArmE,
 }
 
-/// Visit every box of the connected pane shape for `mask` — non-overlapping
-/// by construction. The SINGLE geometry source for the chunk mesher, the
-/// break-crack overlay, and neighbour-occupancy queries.
 pub fn shape_boxes(
     post_lo: f32,
     post_hi: f32,
@@ -85,9 +76,6 @@ pub fn shape_boxes(
     }
 }
 
-/// The per-face styling of one pane box: which tile it samples, whether the
-/// edge strip's u/v swap to lie along the run, or `None` for a face the pane
-/// never emits (a connected end). Shared by the mesher wrap and the overlay.
 fn face_styles(kind: PaneBox, mask: u8) -> [Option<(PaneTile, bool)>; 6] {
     let (w, e) = (mask & WEST != 0, mask & EAST != 0);
     let (n, s) = (mask & NORTH != 0, mask & SOUTH != 0);
@@ -114,23 +102,17 @@ fn face_styles(kind: PaneBox, mask: u8) -> [Option<(PaneTile, bool)>; 6] {
             f[Face::NegX as usize] = end(w);
             f[Face::PosX as usize] = end(e);
         }
-        // Arms exist only when their side is connected: the outer end is a
-        // connected cell edge (never emitted), the inner end butts into the
-        // crossing run (buried; kept omitted so the overlay matches).
         PaneBox::ArmW | PaneBox::ArmE => {
             f[Face::NegZ as usize] = glass;
             f[Face::PosZ as usize] = glass;
         }
     }
-    // Caps: the edge strip runs vertically (u = the thin post span), so
-    // boxes running along X swap u/v to lay the strip along the arm.
     let cap_swap = matches!(kind, PaneBox::XRun | PaneBox::ArmW | PaneBox::ArmE);
     f[Face::PosY as usize] = Some((PaneTile::Edge, cap_swap));
     f[Face::NegY as usize] = Some((PaneTile::Edge, cap_swap));
     f
 }
 
-/// The connected pane shape as [`ShapeBox`]es for the unified emitter.
 #[allow(clippy::too_many_arguments)]
 pub fn push_mesh_boxes(
     out: &mut Vec<ShapeBox>,

@@ -6,8 +6,6 @@ use petramond_world::{
     section::SectionSummary,
 };
 
-/// Some pair the shipped catalog declares — the plumbing under test is the
-/// snapshot path, not which blocks are tuned to transition.
 fn shipped_pair() -> (Block, Block) {
     let rules = petramond_world::texture_transition::rules();
     rules
@@ -107,7 +105,6 @@ fn edits_inside_the_sampling_halo_of_a_neighbour_remesh_it() {
     insert_solid_section(&mut world, center);
     let n = SECTION_SIZE as i32;
     let (h, up, down) = (halo.horizontal as i32, halo.up as i32, halo.down as i32);
-    // The farthest cell each neighbour's halo reaches, then one past it.
     for (cell, reaches) in [
         ((8, n + up - 1, 8), true),
         ((8, n + up, 8), false),

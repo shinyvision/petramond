@@ -1,9 +1,3 @@
-//! Layered worldgen content catalogs: the rows a pack layers over, parsed
-//! into the tables generation reads — including the generation rules
-//! (`biome_gen`) and tree placement (`tree_profiles`) of each biome row, the
-//! climate → biome placement table (`climate_table`), the underground vein
-//! table (`ores`) and the terrain density recipe (`terrain`).
-
 pub mod biome_gen;
 pub mod bounds;
 pub mod climate_table;
@@ -16,11 +10,6 @@ pub mod underground;
 
 use petramond_world::content::Stage;
 
-/// Worldgen's catalogs as content-registry stages, in build order. A process
-/// that generates terrain passes these to its `ContentLoader` (after the world
-/// crate's own stages) so a bad worldgen row fails the registry build with the
-/// rest of the load report; a registry built without them derives each table
-/// on first use instead (test registries).
 pub fn content_stages() -> [&'static dyn Stage; 8] {
     [
         &terrain::RECIPE,
@@ -34,9 +23,6 @@ pub fn content_stages() -> [&'static dyn Stage; 8] {
     ]
 }
 
-/// FNV-1a over a loaded table's resolved content: the fingerprint a table
-/// stamps into the column-gen cache so a pack that changes it is never served
-/// stale cached columns.
 pub(crate) struct Fingerprint(u64);
 
 impl Fingerprint {

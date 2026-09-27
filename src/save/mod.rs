@@ -1,17 +1,13 @@
-//! Native world saving: a per-world directory under the OS data dir holding a
-//! `level.dat` (seed, world tick, mod world KV), per-player `players/<key>.dat`
-//! files keyed by player identity (position, inventory, effects…), the
-//! identity→display-name registry `players/names.json`, and `region/` files
-//! packing the
-//! 16³ sections the player has modified. Everything else regenerates from the
-//! seed, so a save stays small.
+//! Save layout, per-world dir in OS data dir.
+//! level.dat: seed, tick, mod KV.
+//! players/<key>.dat: pos, inventory, effects.
+//! players/names.json: identity to display name.
+//! region/ only keeps touched sections, rest regens from seed. Keeps saves small.
 //!
-//! Nothing here blocks the 20 TPS game loop: section records deflate on the
-//! shared job pool (see `encode`), one writer thread journals and applies
-//! the writes (`io`), and a few reader threads sharded by region feed a
-//! decoder pool (`read`, `decode`). The game thread queues snapshots and
-//! requests and drains loaded sections via [`WorldSave::poll_loaded`],
-//! mirroring the section-gen worker pool.
+//! None of this touches the 20 TPS loop. Deflate runs on the job pool during encode. One
+//! writer thread does journal + io, a few reader threads sharded by region feed the decoder
+//! pool. Game thread queues work and drains it in [`WorldSave::poll_loaded`] - mirrors the
+//! section-gen pool.
 
 pub mod client;
 mod codec;
@@ -72,19 +68,14 @@ pub enum SectionStore {
     ExploredCache,
 }
 
-/// A section read back from disk.
 pub struct LoadedSection {
     pub pos: SectionPos,
     pub store: SectionStore,
     pub record: SectionRecord,
 }
 
-/// What a section read found. An unreadable record is never "absent": its
-/// bytes may be the player's builds.
 pub enum SectionRecord {
-    /// No record on disk.
     Absent,
-    /// The decoded section plus the item entities and mobs stored with it.
     Decoded {
         section: Box<Section>,
         entities: Vec<DroppedItem>,
@@ -93,40 +84,28 @@ pub enum SectionRecord {
     Unreadable(Unreadable),
 }
 
-/// A record that exists but could not be read.
 #[derive(Debug)]
 pub struct Unreadable {
     pub error: RecordError,
-    /// Where the record's bytes were kept (`quarantine/` in the world
-    /// directory), or `None` when they could not be kept (or could not be
-    /// read in the first place).
     pub quarantined: Option<PathBuf>,
 }
 
 impl Unreadable {
-    /// Whether writing over the record could lose data nobody kept: it came
-    /// from a newer build, or its bytes are not in quarantine.
     pub fn must_not_overwrite(&self) -> bool {
         self.error.is_from_newer_build() || self.quarantined.is_none()
     }
 }
 
-/// A section read as the decoders publish it: the load, plus what its record
-/// keeps that this build cannot bring to life, for the save to hold (see
-/// [`WorldSave::poll_loaded`]).
 struct DecodedLoad {
     loaded: LoadedSection,
     kept: KeptContent,
 }
 
-/// A column-gen cache record read back from disk (`record` is `None` when the
-/// cache misses — absent, corrupt, or seed/version drift: regenerate instead).
 pub struct LoadedColumnGen {
     pub pos: ChunkPos,
     pub record: Option<colgen::ColumnGenRecord>,
 }
 
-/// Live handle to a world's on-disk save and its I/O thread.
 pub struct WorldSave {
     writes: Arc<WriteQueue>,
     reads: Arc<ReadQueues>,
@@ -136,9 +115,6 @@ pub struct WorldSave {
     colgen_rx: Receiver<LoadedColumnGen>,
     writer_handle: Option<JoinHandle<()>>,
     reader_handles: Vec<JoinHandle<()>>,
-    /// Columns with a column-gen cache record on disk ("Optimize explored
-    /// terrain"): seeded at open from `colgen/` headers, grown as we save.
-    /// Presence only — a hit still validates seed/version at decode.
     colgen_manifest: rustc_hash::FxHashSet<ChunkPos>,
     /// Section coords whose written record currently carries live entities — dropped
     /// items OR mobs. A section leaves the set when re-saved with neither. The persist
@@ -148,38 +124,17 @@ pub struct WorldSave {
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
     entities_on_disk: HashSet<SectionPos>,
-    /// `<world dir>/players/` — per-identity `<hex key>.dat` files plus the
-    /// name registry, behind a handle joins read through off the server
-    /// thread.
     players: Arc<PlayerFiles>,
-    /// The world's save directory.
     dir: PathBuf,
-    /// Write jobs the I/O thread is holding because one failed to land.
     held_writes: Arc<AtomicU64>,
-    /// Authoritative sections whose record could not be read and must not be
-    /// overwritten (see [`Unreadable::must_not_overwrite`]): their saves are
-    /// dropped for the rest of the session.
     write_protected: HashSet<SectionPos>,
-    /// Content kept in disk form from each loaded section's record (mobs and
-    /// item entities this build cannot bring to life — a removed or disabled
-    /// mod's), written back with every save of the section so it returns
-    /// with its mod. Replaced by each load of the section.
     kept_sections: Mutex<HashMap<SectionPos, KeptContent>>,
-    /// This world's name↔id palette. Every record the save writes or reads
-    /// maps its ids through it (see [`palette`]).
     palette: Arc<palette::Palette>,
-    /// The shared job pool section records deflate on (see `encode`);
-    /// `None` until one is attached, when the writer encodes them itself.
     encoders: Option<Arc<crate::worker::JobPool>>,
 }
 
-/// Where section encoding sits among the pool's jobs (lower runs sooner):
-/// just behind predicted terrain, ahead of every generation, light and mesh
-/// job — a save's latency is what a crash would lose.
 const ENCODE_PRIORITY: i64 = i64::MIN + 1;
 
-/// The ordered lane to the write thread, shared with any open
-/// [`SaveBatch`].
 struct WriteQueue {
     tx: Sender<(u64, IoMsg)>,
     next_seq: AtomicU64,
@@ -189,7 +144,6 @@ struct WriteQueue {
 struct OpenBatch {
     seq: u64,
     msgs: Vec<IoMsg>,
-    /// Live [`SaveBatch`] guards; the batch is sent when the last one drops.
     guards: usize,
 }
 
@@ -215,10 +169,6 @@ impl WriteQueue {
     }
 }
 
-/// While alive, every write queued on its [`WorldSave`] is gathered into one
-/// batch that reaches disk whole or not at all; dropping it hands the batch
-/// to the I/O thread. An unwind drops it too, so what was gathered is still
-/// written and later writes are never swallowed by a batch nobody closes.
 #[must_use = "the batch is sent when this guard drops"]
 pub struct SaveBatch {
     writes: Arc<WriteQueue>,
@@ -242,34 +192,16 @@ impl Drop for SaveBatch {
     }
 }
 
-/// The result of opening (or creating) a world.
 pub struct OpenedWorld {
     pub save: WorldSave,
-    /// The scanned on-disk record index — WORLD DATA the sim consults (see
-    /// `world::SavedIndex`); attach it to the world beside the save handle.
     pub saved: crate::world::SavedIndex,
-    /// `Some` if a `level.dat` already existed (a returning world): seed, the
-    /// world tick, and the mod world KV. Per-player state is NOT here — the
-    /// session reads it per identity via [`WorldSave::load_player`].
     pub level: Option<LevelData>,
-    /// Mod pack ids disabled for THIS world (`settings.json`; empty = all
-    /// enabled). Already applied to the palette here; the session applies it
-    /// to the mod host / recipes / spawner.
     pub disabled_mods: std::collections::BTreeSet<String>,
-    /// Keep the inventory on death (`settings.json` world rule).
     pub keep_inventory: bool,
-    /// Day length in real minutes (`settings.json`; night mirrors it — the
-    /// session converts to cycle ticks).
     pub day_minutes: u32,
-    /// Mods the world was last saved with that are not active now (see
-    /// `modding::modset`). Their content is kept, and the world's small
-    /// files were backed up before this open; the session can tell the
-    /// player which mods to bring back.
     pub missing_mods: Vec<String>,
 }
 
-/// The backup directory for an open with `missing` mods: one per distinct
-/// missing set, so reopening without the same mods keeps the first backup.
 fn missing_mods_backup_name(missing: &[String]) -> String {
     let ids: Vec<String> = missing
         .iter()
@@ -289,18 +221,14 @@ fn missing_mods_backup_name(missing: &[String]) -> String {
 }
 
 impl WorldSave {
-    /// The world's save directory.
     pub fn dir(&self) -> &std::path::Path {
         &self.dir
     }
 
-    /// This world's save palette.
     pub fn palette(&self) -> &palette::Palette {
         &self.palette
     }
 
-    /// Deflate section records on `pool` (the world's shared job pool)
-    /// instead of on the writer thread.
     pub fn use_job_pool(&mut self, pool: Arc<crate::worker::JobPool>) {
         self.encoders = Some(pool);
     }
@@ -309,11 +237,6 @@ impl WorldSave {
         self.writes.queue(msg)
     }
 
-    /// Gather the writes queued while the returned guard lives into one
-    /// batch. Only those: a write queued outside a batch (a section leaving
-    /// the streamed area) lands on its own, so state that spans two records
-    /// is consistent on disk as of the last batch, not between batches.
-    /// Guards nest; the outermost one sends.
     pub fn begin_batch(&self) -> SaveBatch {
         let mut open = self.writes.open.lock().expect("save batch");
         match open.as_mut() {
@@ -331,16 +254,10 @@ impl WorldSave {
         }
     }
 
-    /// How many queued writes are being held back because one failed to
-    /// reach disk (it is retried; the rest merge into it). 0 = saving works.
     pub fn held_writes(&self) -> u64 {
         self.held_writes.load(Ordering::Relaxed)
     }
 
-    /// How many queued writes have not reached disk yet — the save's lag
-    /// behind the game. Healthy saving keeps this near zero; it grows while
-    /// the disk is slow or failing (the writer merges the backlog, so its
-    /// memory stays bounded by the distinct records written).
     pub fn write_backlog(&self) -> u64 {
         self.writes
             .next_seq
@@ -348,8 +265,6 @@ impl WorldSave {
             .saturating_sub(self.reads.completed())
     }
 
-    /// One write per region group; each group starts deflating on the job
-    /// pool right away (see `encode`).
     fn queue_section_writes(&mut self, store: SectionStore, snaps: Vec<SectionSnapshot>) {
         let mut by_region: HashMap<(i32, i32), Vec<SectionSnapshot>> = HashMap::new();
         for snap in snaps {
@@ -369,26 +284,14 @@ impl WorldSave {
         }
     }
 
-    /// `true` if `pos`'s written record currently carries live entities (dropped items
-    /// or mobs) — so a save that now finds the section free of both must rewrite it, or
-    /// the stale record resurrects them on the next load.
     pub fn record_holds_entities(&self, pos: SectionPos) -> bool {
         self.entities_on_disk.contains(&pos)
     }
 
-    /// Note that `pos`'s on-disk record carries live entities (drops or mobs), learned
-    /// by reading it back. Mirrors what [`save_sections`](Self::save_sections) records
-    /// when it writes them, so a record saved in a *previous* session is still rewritten
-    /// once its entities are gone.
     pub fn note_record_holds_entities(&mut self, pos: SectionPos) {
         self.entities_on_disk.insert(pos);
     }
 
-    /// Queue modified sections for compression + region write (non-blocking).
-    /// `saved` is the world's on-disk record index; this is one of its two
-    /// write choke points (the other is [`note_section_load_miss`]).
-    ///
-    /// [`note_section_load_miss`]: Self::note_section_load_miss
     pub fn save_sections(
         &mut self,
         saved: &mut crate::world::SavedIndex,
@@ -413,11 +316,6 @@ impl WorldSave {
             if let Some(kept) = kept.get(&s.pos) {
                 s.kept = kept.clone();
             }
-            // Track whether the record we're about to write carries any live entities —
-            // drops or mobs. A section that loses them all is then re-saved once to clear
-            // the record (see the persist decisions in `world::stream`/`world::store`).
-            // Kept content does not count: it rides every save of the section, so it
-            // never needs a clearing rewrite.
             if s.entities.is_empty() && s.mobs.is_empty() {
                 self.entities_on_disk.remove(&s.pos);
             } else {
@@ -438,31 +336,20 @@ impl WorldSave {
         self.queue_write(IoMsg::SaveLevel(bytes));
     }
 
-    /// Encode `player` through this world's palette and queue its file
-    /// write (`players/<hex key>.dat`, atomic like `level.dat`).
-    ///
-    /// A player whose file could not be read and was not kept aside is not
-    /// written (see [`PlayerFiles::load_player`]).
     pub fn save_player(&self, key: &PlayerKey, player: &crate::player::Player) {
         if let Some(bytes) = self.players.encode_for_save(key, player) {
             self.queue_write(IoMsg::SavePlayer { key: *key, bytes });
         }
     }
 
-    /// The world's player files, as a handle other threads may read through
-    /// (a join's restore runs off the server thread).
     pub fn player_files(&self) -> Arc<PlayerFiles> {
         Arc::clone(&self.players)
     }
 
-    /// Blocking read and decode of `key`'s player file (see
-    /// [`PlayerFiles::load_player`]).
     pub fn load_player(&self, key: &PlayerKey) -> Result<Option<player::PlayerData>, RecordError> {
         self.players.load_player(key)
     }
 
-    /// Migrate the legacy file of `name` to `key` (see
-    /// [`PlayerFiles::adopt_legacy_player`]).
     pub fn adopt_legacy_player(
         &self,
         name: &str,
@@ -471,20 +358,14 @@ impl WorldSave {
         self.players.adopt_legacy_player(name, key)
     }
 
-    /// The identity→display-name registry bytes (`None` = none saved yet).
     pub fn load_player_registry(&self) -> Option<Vec<u8>> {
         self.players.load_player_registry()
     }
 
-    /// Record the active mod set (`mods.json`) with the save — compared with a
-    /// loud warning at the next open (`modding::modset`).
     pub fn save_mods_json(&self, bytes: Vec<u8>) {
         self.queue_write(IoMsg::SaveModsJson(bytes));
     }
 
-    /// Ask the I/O thread to read `pos`; the result arrives via [`poll_loaded`].
-    ///
-    /// [`poll_loaded`]: Self::poll_loaded
     pub fn request_load(
         &self,
         saved: &crate::world::SavedIndex,
@@ -513,9 +394,6 @@ impl WorldSave {
         }
     }
 
-    /// The next finished section read. What its record keeps in disk form
-    /// stays with the save (see `kept_sections`), so world code only ever
-    /// sees content it can bring to life.
     pub fn poll_loaded(&self) -> Option<LoadedSection> {
         let DecodedLoad { loaded, kept } = self.load_rx.try_recv().ok()?;
         let mut held = self.kept_sections.lock().expect("kept sections");
@@ -527,8 +405,6 @@ impl WorldSave {
         Some(loaded)
     }
 
-    /// A missing record must not stay in the presence index or every revisit
-    /// repeats the failed read and suppresses cache replacement.
     pub fn note_section_load_miss(
         &mut self,
         saved: &mut crate::world::SavedIndex,
@@ -541,11 +417,6 @@ impl WorldSave {
         }
     }
 
-    /// An unreadable record leaves the presence index like a missing one (so
-    /// generation stands in for it), but an authoritative record that must
-    /// not be overwritten also becomes write-protected: the generated
-    /// stand-in is never saved over it this session. A quarantined corrupt
-    /// record may be replaced — its bytes are kept.
     pub fn note_section_unreadable(
         &mut self,
         saved: &mut crate::world::SavedIndex,
@@ -564,14 +435,10 @@ impl WorldSave {
         }
     }
 
-    /// `true` if `pos` has a column-gen cache record on disk (or saved this
-    /// session). A hit still validates seed/version at decode.
     pub fn colgen_manifest_contains(&self, pos: ChunkPos) -> bool {
         self.colgen_manifest.contains(&pos)
     }
 
-    /// Queue explored columns' 2D gen data for the column-gen cache
-    /// (non-blocking; "Optimize explored terrain").
     pub fn save_column_gens(&mut self, recs: Vec<colgen::ColumnGenRecord>) {
         if recs.is_empty() {
             return;
@@ -590,10 +457,6 @@ impl WorldSave {
         }
     }
 
-    /// Ask the I/O thread to read `pos`'s column-gen cache record (validated
-    /// against `seed`); the result arrives via [`poll_loaded_column_gen`].
-    ///
-    /// [`poll_loaded_column_gen`]: Self::poll_loaded_column_gen
     pub fn request_column_gen(&self, pos: ChunkPos, seed: u32) {
         let barrier = self
             .colgen_write_barriers
@@ -612,9 +475,6 @@ impl WorldSave {
         self.colgen_manifest.remove(&pos);
     }
 
-    /// Flush everything still queued and join the I/O thread. Call on quit after
-    /// sending the final level / entities / chunks: the channel is ordered, so
-    /// the join returns only once every prior write has hit disk.
     pub fn shutdown(&mut self) {
         self.writes.send_open_batch();
         self.queue_write(IoMsg::Shutdown);
@@ -634,46 +494,29 @@ impl Drop for WorldSave {
     }
 }
 
-/// Open (or create) a world's save directory and spin up its I/O thread.
 pub fn open(name: &str) -> std::io::Result<OpenedWorld> {
     open_at(world_dir(name))
 }
 
-/// Open (or create) a world at an explicit directory. Backs [`open`]; tests use
-/// it directly against a temp dir so they never touch the real data dir.
 pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let t0 = std::time::Instant::now();
     let region_dir = dir.join("region");
     let explored_dir = dir.join("explored");
     std::fs::create_dir_all(&region_dir)?;
     std::fs::create_dir_all(&explored_dir)?;
-    // Refuse a world this build cannot read before anything touches it; back
-    // up and restamp an older one (see `format`).
     format::prepare_world(&dir)?;
-    // Finish the last save's batch before anything reads the save.
     if journal::recover(&dir)? {
         log::info!("finished an interrupted save in {}", dir.display());
     }
-    // A `level.dat` that cannot be read (nor recovered from its backup)
-    // refuses the open: a world treated as new would get a fresh seed and
-    // world KV written over the real ones.
     let level = level::load(&dir)?;
 
-    // Per-world settings (`settings.json`; absent = defaults). Mod enablement
-    // is read BEFORE the palette so disabled-mod content decodes as unknown.
     let world_settings = settings::load_persisting(&dir);
     let keep_inventory = world_settings.keep_inventory;
     let day_minutes = world_settings.day_minutes;
     let disabled_mods = world_settings.disabled_mods;
 
-    // Pin (or load) the save's block/item name palette BEFORE any record is
-    // read or written: the codec maps every id through it (see `palette`).
     let palette = Arc::new(palette::load_or_create(&dir, &disabled_mods)?);
 
-    // Compare the save's recorded mod set with the ENABLED one (loud warning
-    // on any difference; never blocks — a missing mod's content is kept in
-    // disk form). Deliberately disabled mods are not a mismatch. A world
-    // opened with mods missing is backed up before anything is rewritten.
     let missing_mods: Vec<String> = crate::modding::modset::check_at_open(&dir, &disabled_mods)
         .into_iter()
         .map(|entry| entry.id)
@@ -684,13 +527,6 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
 
     let t_meta = t0.elapsed();
 
-    // Build the load manifests from existing region/cache headers. The record
-    // headers interleave with the (small) compressed bodies, so an index scan
-    // effectively streams the whole store through the page cache — a real
-    // explored save is hundreds of MB across hundreds of files. The per-file
-    // scans are independent, so ALL files of all three stores fan out over one
-    // batch of scoped threads (short-lived; no persistent pool exists this
-    // early in a session build).
     let t1 = std::time::Instant::now();
     let colgen_dir = dir.join("colgen");
     let list_files = |dir: &std::path::Path| -> Vec<PathBuf> {

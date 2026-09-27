@@ -1,11 +1,3 @@
-//! Container slot behavior for the open GUI session — ONE implementation for
-//! every slot-bearing target. The engine owns the mechanics (click/place/
-//! split, take-only outputs, shift-routing by the [`SlotSpec`] item tags,
-//! gather double-clicks); what the slots MEAN stays with the container's
-//! owner — engine machine state like the furnace's, or the opening mod's tick
-//! logic. Every kind's slot semantics come from the server-owned contract
-//! table ([`super::slots`]), never from the GUI layer.
-
 use super::slots::slot_specs_for_kind;
 use super::{ContainerMenu, ContainerTarget, MenuAnchor};
 use crate::world::ServerWorld;
@@ -16,20 +8,12 @@ use petramond_world::inventory::Inventory;
 use std::sync::Arc;
 
 impl ContainerMenu {
-    /// The open session's container slots for the render view, or `None` when
-    /// no anchor-backed container is open. The engine chest and a pack's own
-    /// container publish through this ONE view — the chest is not a kind the
-    /// render path knows by name. (The furnace still draws its own view; it
-    /// carries cook/burn gauges the plain slot view has no room for.)
     pub fn open_container_view(&self, world: &ServerWorld) -> Option<ContainerView> {
         Some(ContainerView {
             slots: self.open_container(world)?.slots.clone(),
         })
     }
 
-    /// What holds the open session's container slots: the block or mob an
-    /// anchor-backed kind's session was opened on (`None` for an unanchored
-    /// open or a transient station, whose stacks live on the menu).
     pub(super) fn container_anchor(&self) -> Option<MenuAnchor> {
         match self.target {
             ContainerTarget::Gui { kind, anchor } if ContainerTarget::kind_anchor_backed(kind) => {
@@ -39,13 +23,10 @@ impl ContainerMenu {
         }
     }
 
-    /// The open session's backing container, read-only.
     pub(super) fn open_container<'a>(&self, world: &'a ServerWorld) -> Option<&'a Container> {
         self.container_anchor()?.container(world)
     }
 
-    /// The ONE write path to the open session's backing container, whatever
-    /// it is anchored on.
     pub(super) fn edit_open_container<R>(
         &self,
         world: &mut ServerWorld,
@@ -54,11 +35,6 @@ impl ContainerMenu {
         self.container_anchor()?.edit_container(world, edit)
     }
 
-    /// The open session's slot semantics (empty when no slot-bearing GUI is
-    /// up). Every container — the engine chest included — derives them from
-    /// its own GUI DOCUMENT's `container` slots, exactly as a pack's does;
-    /// only the furnace keeps an engine-owned set, because its filters are
-    /// machine state (smeltable/fuel/output) rather than authored layout.
     pub(super) fn slot_specs(&self) -> Arc<Vec<SlotSpec>> {
         match self.target.kind() {
             Some(kind) => slot_specs_for_kind(kind),
@@ -66,11 +42,6 @@ impl ContainerMenu {
         }
     }
 
-    /// One container slot's full click decode: shift quick-moves the slot to
-    /// the inventory, a gather double-click sweeps matching items onto the
-    /// cursor, otherwise a left/right click (take-only outputs only ever
-    /// give). The single entry the dispatcher routes every chest, furnace,
-    /// and mod container slot through.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn container_slot_interaction(
         &self,
@@ -116,9 +87,6 @@ impl ContainerMenu {
         });
     }
 
-    /// The gather a double-click performs: sweep matching items from the open
-    /// container's slots AND the inventory onto the cursor — or the inventory
-    /// alone when no block-entity container is open.
     pub(super) fn collect_to_cursor(&self, world: &mut ServerWorld, inv: &mut Inventory) {
         if self.container_anchor().is_some() {
             self.collect_to_cursor_in_container(world, inv);
@@ -131,14 +99,11 @@ impl ContainerMenu {
         self.edit_open_container(world, |c| inv.collect_to_cursor_including(&mut c.slots));
     }
 
-    /// Shift-click of inventory slot `i` with a container GUI open: route the
-    /// stack into the container's slots — filter-matching slots first (a fuel
-    /// goes to the fuel-filtered slot even past an open storage cell), then
-    /// unfiltered storage slots, in document order. Within the routed order,
-    /// matching stacks are topped up before an empty slot is opened, so a
-    /// shifted stack merges instead of fragmenting. An item no slot routes
-    /// falls back to the ordinary hotbar↔grid move; take-only outputs are
-    /// never targets.
+    /// Shift-click of slot `i` with a container open: routes into filter-matching slots first (fuel
+    /// goes to the fuel slot even past an open storage cell), then unfiltered storage slots, in
+    /// document order. Tops up matching stacks before opening an empty slot, so it merges instead
+    /// of fragmenting. An item that no slot routes falls back to the normal hotbar/grid move.
+    /// Take-only outputs are never targets.
     pub(super) fn container_shift_from_inventory(
         &self,
         world: &mut ServerWorld,

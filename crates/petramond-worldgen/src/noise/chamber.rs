@@ -1,12 +1,12 @@
 //! Bounded room and passage influence, independent of habitat surface treatment.
 //!
-//! Multiple offset lobes retain necks and pillars; per-lobe sills create terraces.
-//! The sampler blends their influence into natural cave density and flares local
-//! tunnel entrances. Habitat admission is checked only at the room anchor.
+//! Several offset lobes keep necks and pillars, and per-lobe sills make terraces. The sampler
+//! blends their influence into the natural cave density and flares local tunnel entrances. Habitat
+//! admission is only checked at the room anchor.
 //!
-//! Profiles must be exactly zero outside their declared reach. Canonical row and
-//! cell order keeps the nonzero floating-point sum identical in overlapping query
-//! windows; a larger gather may add only exact zero terms.
+//! Profiles must be exactly zero outside their declared reach. Rows and cells are summed in a fixed
+//! order, so the nonzero float sum comes out identical in overlapping query windows, and a larger
+//! gather can only add exact zeros.
 
 use crate::data::excavations::{Chamber, Excavation, Excavations};
 use crate::data::underground::UndergroundBiomes;
@@ -20,13 +20,8 @@ pub(super) use cache::CandidateCache;
 mod passage;
 use passage::Passage;
 
-/// Hard cap on lobes per room, mirroring the loader's bound. Rooms live in a
-/// `Vec` the carver walks per lattice corner, so they are stored inline.
 const MAX_LOBES: usize = 4;
 
-/// One bubble of a room. A room is the MAX of its lobes, which is what puts a
-/// pinch or a pillar where two of them meet instead of blending them into one
-/// convex blob.
 #[derive(Copy, Clone, Debug, Default)]
 struct Lobe {
     off: [f64; 3],
@@ -34,29 +29,19 @@ struct Lobe {
     ry: f64,
     major: f64,
     axis: [f64; 2],
-    /// This lobe's own floor, never below the room's. A satellite riding high
-    /// in the room therefore floors HIGHER than the primary, and where it
-    /// reaches past the primary the floor steps up — a terrace. One sill for
-    /// the whole room is a machined disc at a single Y across the entire
-    /// footprint.
     sill_y: i32,
-    /// Blocks above `sill_y` over which this lobe ramps in. A step here is a
-    /// hard floor plane; a ramp hands the bottom of the lobe back to the noise.
     sill_span: f64,
 }
 
 impl Lobe {
-    /// The falloff, measured in BLOCKS radially outward from this lobe's own
-    /// surface. Exactly `strength` inside, exactly `0.0` at and past `feather`
-    /// blocks outside, smooth in between.
+    /// Falloff in blocks, measured radially outward from this lobe's own surface. It's exactly
+    /// `strength` inside, exactly `0.0` from `feather` blocks out, and smooth in between.
     ///
-    /// Along any ray the surface sits at `rho_s = 1/q(u)` and the point at
-    /// `rho = n/q(u)`, so `rho - rho_s = rho * (n - 1) / n` — an exact radial
-    /// distance, with no square root of the ellipsoid's true normal distance
-    /// and no per-direction reach to measure. `rho_s * |u_y| <= ry` and
-    /// `rho_s * |u_xz| <= major` hold for every direction and either aspect, so
-    /// the reach is bounded by `major + feather` horizontally and `ry + feather`
-    /// vertically. Every bound in this file rests on that.
+    /// On any ray the surface is at `rho_s = 1/q(u)` and the point at `rho = n/q(u)`, so
+    /// `rho - rho_s = rho * (n - 1) / n` gives the radial distance exactly, without a square root.
+    /// And since `rho_s * |u_y| <= ry` and `rho_s * |u_xz| <= major` for every direction, reach is
+    /// bounded by `major + feather` sideways and `ry + feather` up and down. Every bound in this
+    /// file depends on that.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn at(
@@ -82,10 +67,6 @@ impl Lobe {
         };
         let n2 = horizontal + dy * dy / (self.ry * self.ry);
         let ramp = |t: f64| {
-            // `knead` SCALES the ramp instead of displacing it, so it vanishes
-            // where the ramp does: exactly `0.0` at the declared reach and at
-            // the sill, whatever the field says. Every bound in this file rests
-            // on that, and a displacement would put a step at the boundary.
             let t = (t * knead).clamp(0.0, 1.0);
             strength * (t * t * (3.0 - 2.0 * t))
         };
@@ -107,23 +88,16 @@ impl Lobe {
     }
 }
 
-/// One rolled room, admitted independently of its query window.
 #[derive(Copy, Clone, Debug)]
 struct Room {
     center: [i32; 3],
     lobes: [Lobe; MAX_LOBES],
     n_lobes: usize,
-    /// The LOWEST of the lobes' sills. Below it the term is exactly zero, which
-    /// is what leaves a floor — and lets an ordinary tunnel punch up through
-    /// that floor instead of being capped by it.
     sill_y: i32,
     feather: f64,
     strength: f64,
-    /// Precomputed half-extents, so `reaches` never re-derives them.
     ex: i32,
     ey: i32,
-    /// This room's contribution to the RADIUS carvers, as a gain on the same
-    /// profile. Zero for a row that declares no `chamber.tunnel`.
     tunnel_gain: f64,
     rim_noise: f64,
 }
@@ -150,12 +124,8 @@ impl Room {
         false
     }
 
-    /// `(room influence, tunnel gain)`. Both are read at every lattice
-    /// corner, and both must be EXACTLY `0.0` past the declared reach.
     #[inline]
     fn at(&self, x: i32, y: i32, z: i32, knead: f64) -> (f64, f64) {
-        // Past the half-extents every lobe is past its feather, so the term is
-        // exactly zero there anyway; this only skips the arithmetic.
         if y < self.sill_y
             || y > self.center[1] + self.ey
             || (x - self.center[0]).abs() > self.ex
@@ -178,8 +148,6 @@ impl Room {
     }
 }
 
-/// The rooms whose influence reaches one lattice box, ready to splat onto its
-/// corners. Empty when no excavation reaches this box.
 pub(super) struct ChamberField {
     rooms: Vec<Room>,
     passages: Vec<Passage>,
@@ -191,9 +159,6 @@ impl ChamberField {
         self.rooms.is_empty() && self.passages.is_empty()
     }
 
-    /// The rooms and passages of this field that can reach the inclusive box,
-    /// in the same frozen order. A field gathered over a superset box holds
-    /// exactly its sub-box's terms plus terms that are zero everywhere in it.
     pub(super) fn restrict(&self, lo: [i32; 3], hi: [i32; 3]) -> ChamberField {
         ChamberField {
             rooms: self
@@ -211,20 +176,11 @@ impl ChamberField {
         }
     }
 
-    /// Test seam: where the rolled rooms are, so an adversarial sweep can aim
-    /// its boxes at the rims instead of hoping a random one lands on a room.
     #[cfg(test)]
     pub(super) fn centers(&self) -> Vec<[i32; 3]> {
         self.rooms.iter().map(|r| r.center).collect()
     }
 
-    /// `(room influence, tunnel gain)` summed over every gathered room, in
-    /// the frozen order (see the module docs). Both lanes accumulate from
-    /// `0.0`, so a superset gather adds only exact `+0.0`.
-    ///
-    /// `knead` is a cave field the caller already sampled at this exact corner,
-    /// so it is a pure function of position like everything else here — never
-    /// a value differenced between corners, which would not be.
     #[inline]
     pub(super) fn at(&self, x: i32, y: i32, z: i32, knead: f64) -> (f64, f64) {
         let (mut v, mut t) = (0.0, 0.0);
@@ -239,14 +195,11 @@ impl ChamberField {
         (v, t)
     }
 
-    /// Roll every candidate room that can reach the inclusive world box
-    /// `lo..=hi`.
+    /// Rolls every candidate room that can reach the inclusive world box `lo..=hi`.
     ///
-    /// `biome_field_at` samples the underground-biome field. Room centres are
-    /// SNAPPED to the cave lattice, so that sample is exactly the value the
-    /// carver's own trilinear read would give there — the territory test and
-    /// the wall lining therefore cannot disagree about who owns the room, and
-    /// the sample costs one call instead of eight.
+    /// Room centres snap to the cave lattice, so sampling `biome_field_at` there gives the same
+    /// value the carver's trilinear read would. Otherwise the territory test and the wall lining
+    /// could disagree about who owns a room. It's also one call instead of eight.
     pub(super) fn gather(
         cache: &CandidateCache,
         table: &UndergroundBiomes,
@@ -288,8 +241,6 @@ impl ChamberField {
                                     }))
                     }
                 };
-                // A neighbor must touch the independent source itself. Looking
-                // up its final admission here would introduce a cyclic graph.
                 contact.then_some(room)
             })
         };
@@ -344,8 +295,6 @@ fn gather_row(
             let Some(a) = candidates[i] else {
                 continue;
             };
-            // Positive-axis ownership emits every undirected edge once, in a
-            // world order independent of the query's candidate window.
             for (axis, neighbor) in [
                 (0, (cx < x1).then_some(i + 1)),
                 (1, (cz < z1).then_some(i + nx)),
@@ -382,12 +331,6 @@ fn roll_room(excavation: &Excavation, seed: u32, cx: i32, cz: i32) -> Option<Roo
     let (jx, jz) = (jitter(&mut rng), jitter(&mut rng));
     let rx = rng.next_i32(ch.r_min, ch.r_max);
     let (mut lobes, n_lobes, ex, ey) = roll_lobes(&mut rng, ch, rx);
-    // Depth is rolled inside the row's own band, shrunk by the room's
-    // ACTUAL extent, so the room stays inside the declared depth band,
-    // and snapped to the cave lattice so the biome
-    // sample below is exactly the value the carver reads there. The
-    // loader guarantees a legal centre exists for the row's worst case,
-    // so the rolled-extent window is never empty when that one is not.
     let drop = ch.drop(rx);
     let passage_reach = excavation.connections.map_or(0, |c| c.reach_y());
     let cy = roll_center_y(
@@ -396,10 +339,6 @@ fn roll_room(excavation: &Excavation, seed: u32, cx: i32, cz: i32) -> Option<Roo
         drop.max(passage_reach),
         ey.max(passage_reach),
     )?;
-    // Sills, once the centre is known. Clamped to the ROOM's floor so a
-    // satellite riding low simply joins it — the room's bottom stays
-    // exactly `drop` below the centre, which is what every depth bound
-    // is written against.
     let room_sill = cy - drop;
     for l in lobes.iter_mut().take(n_lobes) {
         let lc = cy as f64 + l.off[1];
@@ -421,11 +360,6 @@ fn roll_room(excavation: &Excavation, seed: u32, cx: i32, cz: i32) -> Option<Roo
     })
 }
 
-/// The primary lobe plus its rolled satellites, and the room's actual
-/// half-extents. Satellites are offset in units of the PRIMARY's radii, so the
-/// loader can bound the whole cluster from `lobe_spread + lobe_scale[1]` with
-/// no per-roll reasoning, and the offsets are drawn per axis so the cluster is
-/// never axis-aligned in practice.
 fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES], usize, i32, i32) {
     let (rx, ry) = (rx as f64, ch.ry(rx));
     let (stretch, axis) = if ch.stretch == (1.0, 1.0) {
@@ -437,7 +371,6 @@ fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES]
         (stretch, [detmath::cos(yaw), detmath::sin(yaw)])
     };
     let mut lobes = [Lobe::default(); MAX_LOBES];
-    // Sills are filled in once the centre is rolled; see `roll_room`.
     lobes[0] = Lobe {
         off: [0.0; 3],
         rx,
@@ -447,8 +380,6 @@ fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES]
         ..Lobe::default()
     };
     let n = 1 + rng.next_i32(0, ch.lobes - 1) as usize;
-    // A fraction in [-1, 1] from one draw, so the offsets stay on the same
-    // frozen stream whatever the lobe count.
     let frac = |r: &mut FeatureRng| r.next_i32(-1000, 1000) as f64 / 1000.0;
     for l in lobes.iter_mut().take(n).skip(1) {
         let s = ch.lobe_scale.0
@@ -480,16 +411,6 @@ fn roll_lobes(rng: &mut FeatureRng, ch: &Chamber, rx: i32) -> ([Lobe; MAX_LOBES]
     (lobes, n, ex, ey)
 }
 
-/// A cave-lattice corner inside `band` that leaves `drop` below and `rise`
-/// above it, or `None` when the band cannot hold the room (the loader rejects
-/// that for the row's largest radius, but a rounding edge is cheaper to answer
-/// than to argue away).
-///
-/// The band's low end is clipped to the carvable range: a centre below it puts
-/// the sill under the world floor, where the room is sliced by bedrock into a
-/// dead-flat plane of BARE rock instead of tapering to its own sill (the lining
-/// shell needs the same `interior` gate the carve does, so that plane is not
-/// even lined).
 fn roll_center_y(rng: &mut FeatureRng, band: (i32, i32), drop: i32, rise: i32) -> Option<i32> {
     let step = CAVE_LATTICE_STEP;
     let band = Chamber::placement_band(band);
@@ -504,10 +425,6 @@ fn roll_center_y(rng: &mut FeatureRng, band: (i32, i32), drop: i32, rise: i32) -
 }
 
 impl Room {
-    /// Whether any cell of the inclusive box `lo..=hi` can read a non-zero term
-    /// from this room. Conservative: it bounds the lobe cluster by its
-    /// axis-aligned extent, so it may keep a room that happens to contribute
-    /// nothing — which is harmless, because that room then adds exact zeros.
     fn reaches(&self, lo: [i32; 3], hi: [i32; 3]) -> bool {
         let span = |c: i32, e: i32, a: i32, b: i32| c + e >= a && c - e <= b;
         span(self.center[0], self.ex, lo[0], hi[0])

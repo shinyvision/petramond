@@ -11,8 +11,6 @@ pub(in crate::builder) struct CrownCorners {
 }
 
 impl CrownCorners {
-    /// `world` addresses the neighbourhood reads; `origin` is the cell's
-    /// minimum corner in the space its face vertices are emitted in.
     pub(in crate::builder) fn new(
         world: [i32; 3],
         origin: Vec3,
@@ -76,8 +74,6 @@ impl CrownCorners {
                     }
                 }
             }
-            // Only convex edges/corners: a flat canopy plane has just one
-            // unanimous axis. Every cell sharing this lattice point agrees.
             let axes = sum.map(|s| count > 0 && s.abs() == count);
             if !pinned && axes.into_iter().filter(|&a| a).count() >= 2 {
                 *offset = Vec3::from_array(std::array::from_fn(|a| {

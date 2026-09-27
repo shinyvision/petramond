@@ -24,13 +24,8 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 
 use crate::views::BreakOverlayView;
 
-/// Cracked models drawn at once. The overlay list is the local miner plus
-/// visible remotes; four concurrently-cracked models in view is already
-/// generous, and the mask is a fixed-size uniform the vertex stage walks.
 pub(crate) const MAX_MODEL_CRACKS: usize = 4;
 
-/// One cracked model's mask: its world outline box relative to the render
-/// origin, plus the atlas uv rect of its stage's destroy tile.
 #[repr(C)]
 #[derive(Copy, Clone, Default, bytemuck::Pod, bytemuck::Zeroable)]
 struct CrackEntry {
@@ -39,12 +34,10 @@ struct CrackEntry {
     rect: [f32; 4],
 }
 
-/// group(2) binding 0 of the model-break pipeline.
 #[repr(C, align(16))]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct CrackUniform {
     entries: [CrackEntry; MAX_MODEL_CRACKS],
-    /// `x` = live entries; the rest pads to 16 bytes.
     count: [u32; 4],
 }
 
@@ -57,9 +50,6 @@ impl Default for CrackUniform {
     }
 }
 
-/// The group(2) layout: the crack masks (read in the VERTEX stage, which
-/// classifies each vertex into its model's box) plus the BLOCK atlas, where the
-/// destroy tiles live — group(1) is the model atlas the geometry samples.
 pub(crate) fn layout_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
     let tex = crate::pipeline::texture_sampler_layout_entries(1, wgpu::TextureViewDimension::D2);
     [
@@ -78,14 +68,10 @@ pub(crate) fn layout_entries() -> [wgpu::BindGroupLayoutEntry; 3] {
     ]
 }
 
-/// The model-break decal pass's resources: its pipeline, the per-frame mask
-/// uniform, and the columns whose model streams this frame must re-draw.
 pub(crate) struct ModelBreak {
     pub(crate) pipe: crate::pipeline::SampledPipeline,
     buf: wgpu::Buffer,
     pub(crate) bind: wgpu::BindGroup,
-    /// Columns holding a cracked model this frame (deduplicated; nearly always
-    /// one, at most four per crack when a model straddles a column corner).
     pub(crate) columns: Vec<ChunkPos>,
 }
 
@@ -124,9 +110,6 @@ impl ModelBreak {
         }
     }
 
-    /// Take this frame's model cracks from the overlay views: upload their
-    /// masks and collect the columns to re-draw. Non-model overlays are the CPU
-    /// geometry path's and are ignored here.
     pub(crate) fn upload(
         &mut self,
         queue: &wgpu::Queue,
@@ -155,15 +138,11 @@ impl ModelBreak {
         queue.write_buffer(&self.buf, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Whether anything is cracked this frame.
     pub(crate) fn active(&self) -> bool {
         !self.columns.is_empty()
     }
 }
 
-/// Record every column the model's outline reaches into — its geometry can be
-/// baked into any of them, and a model wider than a cell may straddle a column
-/// edge.
 fn push_columns(columns: &mut Vec<ChunkPos>, base: IVec3, min: [f32; 3], max: [f32; 3]) {
     let s = SECTION_SIZE as i32;
     let (x0, x1) = (
@@ -188,9 +167,6 @@ fn push_columns(columns: &mut Vec<ChunkPos>, base: IVec3, min: [f32; 3], max: [f
 mod tests {
     use super::*;
 
-    /// The mask array's length is a WGSL LITERAL, which no Rust constant can
-    /// reach. A cap raised on this side alone would leave the shader reading a
-    /// shorter array — silently dropping the cracks past its end.
     #[test]
     fn shader_declares_the_mask_array_length() {
         let src = include_str!("../shaders/model_break.wgsl");
@@ -201,8 +177,6 @@ mod tests {
         );
     }
 
-    /// A model wider than a cell straddles column edges; every column it
-    /// reaches into must draw, or half the piece keeps an uncracked face.
     #[test]
     fn a_straddling_model_draws_every_column_it_reaches() {
         let mut columns = Vec::new();

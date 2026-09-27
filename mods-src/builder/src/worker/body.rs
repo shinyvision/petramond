@@ -1,5 +1,3 @@
-//! The golem's body as a tick reads it, and where it stands.
-
 use crate::host::prelude::*;
 
 use super::Ctx;
@@ -20,17 +18,12 @@ impl Body {
         EntityRef::Mob(self.id)
     }
 
-    /// How far the body stands from the centre of its cell, horizontally.
     pub fn off_centre(&self) -> [f64; 2] {
         let centre = feet_of(self.cell);
         [centre[0] - self.pos[0], centre[2] - self.pos[2]]
     }
 }
 
-/// The foothold a grounded body stands on, as the navigator reads it. Feet
-/// resting partway up a cell (a slab, a stair) stand in the cell above it,
-/// not the one they floor to; and a footprint over a ledge's edge (a slab's
-/// rim) may rest on the cell beside. Every route is asked from here.
 pub(super) fn standing_cell(pos: [f64; 3]) -> [i32; 3] {
     let own = cell_of(pos);
     let half = f64::from(crate::content::GOLEM_HALF_WIDTH);
@@ -61,9 +54,6 @@ pub(super) fn standing_cell(pos: [f64; 3]) -> [i32; 3] {
         .unwrap_or(own)
 }
 
-/// A body wedged under a block (physics pushed it there) cannot walk out;
-/// set it down on the nearest free standing cell instead. Returns whether it
-/// was moved.
 pub(super) fn unwedge(ctx: &mut Ctx, body: &Body) -> bool {
     const HEIGHT: f64 = 1.5;
     let top = body.pos[1] + HEIGHT - 0.05;
@@ -71,7 +61,6 @@ pub(super) fn unwedge(ctx: &mut Ctx, body: &Body) -> bool {
     if head[1] == body.cell[1] {
         return false;
     }
-    // Just inside the body's sides: a box it only brushes does not wedge it.
     let half = f64::from(crate::content::GOLEM_HALF_WIDTH) - 0.02;
     let reach_in = (top - f64::from(head[1])) as f32;
     let (x, z) = (
@@ -103,12 +92,10 @@ pub(super) fn unwedge(ctx: &mut Ctx, body: &Body) -> bool {
     true
 }
 
-/// Whether `cell` is a foothold for the golem as the world stands.
 pub(super) fn stands_at(cell: [i32; 3]) -> bool {
     footholds(GOLEM, vec![cell]).first() == Some(&true)
 }
 
-/// Standing room within two cells of the body, nearest first.
 fn standing_near(body: &Body) -> Vec<[i32; 3]> {
     let mut around = Vec::new();
     for dy in [0, 1, -1] {

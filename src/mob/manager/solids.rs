@@ -1,31 +1,19 @@
-//! Solid-collision bodies (`mobs.json` `"collision": "solid"`): the obstacle
-//! boxes every body resolves against, and the simultaneous peer-motion solve
-//! that commits every solid's proposal together, independent of storage order.
-
 use petramond_world::collision::DynBox;
 
 use super::{def, BodyMotion, MobCollision, Mobs};
 use crate::world::ServerWorld;
 
-/// The solid solve's reused buffers.
 #[derive(Default)]
 pub(super) struct SolidScratch {
-    /// Terrain-resolved solid-body proposals, stable-id sorted before the
-    /// pair solver runs, with their live-set slots.
     motions: Vec<BodyMotion>,
     slots: Vec<usize>,
     limits: Vec<f32>,
     checked: Vec<f32>,
-    /// The exact peer supports handed to one moving solid's proposal.
     pub supports: Vec<DynBox>,
     solver: super::super::SolidMotionSolver,
 }
 
 impl Mobs {
-    /// Solve solid peers from their complete proposals, then commit every
-    /// selected prefix together. Stable-id sorting keeps the broadphase and
-    /// tie paths independent of storage order. `obstacles` is the
-    /// start-of-tick solid box set; its buffer is reused for the committed one.
     pub(super) fn solve_solids(&mut self, world: &ServerWorld, obstacles: Vec<DynBox>) {
         let mut scratch = std::mem::take(&mut self.solid);
         let SolidScratch {
@@ -92,11 +80,6 @@ impl Mobs {
             self.list[i].commit_solid_motion(*motion, fraction);
         }
 
-        // Final top-face support is queried only after every solid has committed,
-        // so landing does not depend on storage order. Supplying the same exact
-        // supports to the next proposal lets gravity land first and horizontal
-        // drive/AI motion continue, just like the terrain resolver's Y-then-XZ
-        // ordering.
         let mut committed = obstacles;
         committed.clear();
         for mob in &self.list {
@@ -123,11 +106,6 @@ impl Mobs {
         self.solid = scratch;
     }
 
-    /// The dynamic collision boxes of every LIVE solid-collision body
-    /// (`mobs.json` `"collision": "solid"`) — what players and mobs resolve
-    /// their movement against, beside the world's cell boxes. A dead body
-    /// stops blocking (a wreck is not a wall). Long bodies emit a run of
-    /// boxes along their facing (see [`super::super::solid_boxes`]).
     pub fn solid_obstacles(&self) -> Vec<DynBox> {
         let mut out = Vec::new();
         for m in &self.list {

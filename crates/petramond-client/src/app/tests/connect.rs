@@ -1,8 +1,3 @@
-//! Multiplayer UI flows: the Connect to Server screen, the
-//! ModsMissing refusal, the Disconnected screen, and the pause menu's
-//! host/remote split — all driven through the real documents (rects resolved
-//! from the solved frame, never pinned pixels).
-
 use super::app;
 use super::controls::click_doc_id;
 use crate::app::connect::ConnectPhase;
@@ -24,8 +19,6 @@ fn shell_app() -> App {
     App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1)
 }
 
-/// A minimal remote join, the shape `client_handshake` returns (health > 0 so
-/// adopting the game lands on the gameplay screen, not the death screen).
 fn join_data() -> Box<JoinData> {
     Box::new(JoinData {
         player_id: PlayerId(2),
@@ -55,9 +48,6 @@ fn join_data() -> Box<JoinData> {
     })
 }
 
-/// Title → Connect to Server; typed edits mirror into bound state; the
-/// Connect button gates on the address alone — there is no player-name field,
-/// because an online server names the session from the Petramond account.
 #[test]
 fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     let mut app = shell_app();
@@ -73,8 +63,6 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
         "the player-name field is gone: identity comes from the account"
     );
 
-    // The address input opens focused: select-all + type replaces whatever
-    // the prefill was, and the controller mirrors it into bound state.
     app.handle_text_shortcut(TextShortcut::SelectAll);
     assert!(app.handle_text_input("192.168.0.5:7434"));
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.3);
@@ -86,7 +74,6 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.4);
     assert_eq!(app.ui.state_mut().get_bool("can_connect"), Some(true));
 
-    // Emptying the address disables Connect again.
     app.handle_text_shortcut(TextShortcut::SelectAll);
     app.handle_text_key(TextKey::Delete);
     app.drive_doc_ui(GuiKind::ConnectServer, SCREEN, 0.5);
@@ -95,9 +82,6 @@ fn connect_screen_opens_from_title_mirrors_edits_and_gates_connect() {
     assert_eq!(app.ui.state_mut().get_bool("can_connect"), Some(false));
 }
 
-/// A local world whose recorded world-affecting pack is gone stops at the
-/// Missing Mods screen before opening, and Back returns to World Select with
-/// nothing opened.
 #[test]
 fn a_world_missing_a_pack_that_shaped_it_asks_before_opening() {
     super::ensure_test_data_dir();
@@ -132,8 +116,6 @@ fn a_world_missing_a_pack_that_shaped_it_asks_before_opening() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A refused join's mod list fills the ModsMissing rows; Back returns to the
-/// connect screen with the attempted address preserved.
 #[test]
 fn refused_mod_list_populates_missing_rows_and_back_preserves_address() {
     let mut app = shell_app();
@@ -174,8 +156,6 @@ fn refused_mod_list_populates_missing_rows_and_back_preserves_address() {
     );
 }
 
-/// An unparseable address fails inline — phase Failed, danger label bound —
-/// without ever spawning a worker thread.
 #[test]
 fn a_bad_address_fails_inline_without_spawning_a_worker() {
     let mut app = shell_app();
@@ -199,8 +179,6 @@ fn a_bad_address_fails_inline_without_spawning_a_worker() {
     assert_eq!(app.ui.state_mut().get_bool("connecting"), Some(false));
 }
 
-/// A `connection_lost` event tears the session down (no game left) onto the
-/// Disconnected screen showing the reason; OK returns to the title.
 #[test]
 fn connection_lost_event_tears_down_to_the_disconnected_screen() {
     let mut app = app();
@@ -228,8 +206,6 @@ fn connection_lost_event_tears_down_to_the_disconnected_screen() {
     assert_eq!(app.screen, AppScreen::Title);
 }
 
-/// The host's pause menu offers Open to LAN until a port is bound, then the
-/// open-port label; Disconnect never shows and Save and Quit stays.
 #[test]
 fn pause_menu_shows_lan_controls_for_host() {
     let mut app = app();
@@ -244,7 +220,6 @@ fn pause_menu_shows_lan_controls_for_host() {
     assert!(app.ui.out().rect("save_quit").is_some());
     assert!(app.ui.out().rect("disconnect").is_none());
 
-    // A bound port flips the button into the status label.
     app.sess_mut().lan_port = Some(7434);
     app.drive_doc_ui(GuiKind::Pause, SCREEN, 0.1);
     assert_eq!(app.ui.state_mut().get_bool("lan_open"), Some(true));
@@ -252,8 +227,6 @@ fn pause_menu_shows_lan_controls_for_host() {
     assert!(app.ui.out().rect("open_lan").is_none());
 }
 
-/// A remote session's pause menu shows Disconnect (which leaves to the
-/// title) and hides both Save and Quit and Open to LAN.
 #[test]
 fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     let (handle, _pipe) = ServerHandle::loopback();
@@ -287,19 +260,12 @@ fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
     assert!(!app.has_session());
 }
 
-/// Single-player pause freezes the client (no frames reach the sim), but a
-/// LAN host's pause menu must NOT: the server ignores `Pause` once opened
-/// (`lan_ever_opened`), so a frozen client would be an unpushable,
-/// undamageable statue in a world that keeps running. Behind the multiplayer
-/// pause menu the client keeps running full frames — observable as its
-/// per-frame `PlayerUpdate` still reaching the server channel — while
-/// gameplay input stays disabled and the menu stays up.
 #[test]
 fn multiplayer_pause_menu_does_not_freeze_the_client() {
     use petramond::net::protocol::ClientToServer;
 
     let mut app = super::app();
-    app.handle_control(Control::CloseScreen, true); // ESC
+    app.handle_control(Control::CloseScreen, true);
     assert_eq!(app.screen, AppScreen::Pause);
     let drain = |app: &mut super::TestApp| {
         let mut updates = 0;
@@ -310,14 +276,11 @@ fn multiplayer_pause_menu_does_not_freeze_the_client() {
         }
         updates
     };
-    drain(&mut app); // the ESC's Pause(true) and any pre-pause frames
+    drain(&mut app);
 
-    // Single-player: the pause menu freezes the client — no frames run.
     app.update_frame(SCREEN);
     assert_eq!(drain(&mut app), 0, "SP pause: the client sends nothing");
 
-    // The same session once LAN is open (the flag the Open-to-LAN click
-    // sets): the pause menu no longer freezes anything.
     app.sess_mut().lan_port = Some(7434);
     app.update_frame(SCREEN);
     assert!(
@@ -342,13 +305,13 @@ fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
     app.sess_mut().lan_port = Some(7434);
     app.mark_lan_opened();
 
-    app.handle_control(Control::CloseScreen, true); // ESC → Pause
+    app.handle_control(Control::CloseScreen, true);
     app.handle_control(Control::CloseScreen, false);
-    app.update_frame(SCREEN); // solve the pause document
+    app.update_frame(SCREEN);
     assert_eq!(app.screen, AppScreen::Pause);
 
     click_doc_id(&mut app, "options");
-    app.update_frame(SCREEN); // the transition frame: the click flips the screen
+    app.update_frame(SCREEN);
     assert_eq!(app.screen, AppScreen::Options);
     if let Some((GuiKind::Options, _)) = app.ui.frame_stamp() {
         assert_eq!(
@@ -358,15 +321,11 @@ fn lan_menu_transition_never_stamps_an_unpopulated_shell_frame() {
         );
     }
 
-    // Settled: the shell branch drives Options with its populate.
     app.update_frame(SCREEN);
     assert!(matches!(app.ui.frame_stamp(), Some((GuiKind::Options, _))));
     assert_eq!(app.ui.state_mut().get_bool("show_backdrop"), Some(false));
 }
 
-/// The real thing over loopback TCP: a spawned host opened to LAN on an
-/// ephemeral port, the UI connect worker joining it, and the remote-session
-/// disconnect leaving cleanly.
 #[test]
 fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     let (server, _bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 7, 1);
@@ -414,10 +373,6 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     host.shutdown_and_join();
 }
 
-/// Title → Account, and the screen's two states. The stored sign-in
-/// is real machine state the suite must not invent, so this drives the
-/// signed-OUT shape (the state every fresh install is in) and pins that the
-/// screen offers Sign In rather than Log Out.
 #[test]
 fn account_screen_opens_from_the_title_and_offers_sign_in_when_signed_out() {
     let mut app = shell_app();
@@ -427,7 +382,6 @@ fn account_screen_opens_from_the_title_and_offers_sign_in_when_signed_out() {
     app.drive_doc_ui(GuiKind::Title, SCREEN, 0.1);
     assert_eq!(app.screen, AppScreen::Account);
 
-    // No stored sign-in in the test data dir: the signed-out shape.
     app.shell.account.saved = None;
     app.drive_doc_ui(GuiKind::Account, SCREEN, 0.2);
     assert_eq!(app.ui.state_mut().get_bool("signed_out"), Some(true));
@@ -442,7 +396,6 @@ fn account_screen_opens_from_the_title_and_offers_sign_in_when_signed_out() {
     app.drive_doc_ui(GuiKind::Account, SCREEN, 0.3);
     assert_eq!(app.screen, AppScreen::AccountSignIn);
 
-    // Submit gates on both fields; typing only the name is not enough.
     app.drive_doc_ui(GuiKind::AccountSignIn, SCREEN, 0.4);
     assert_eq!(app.ui.state_mut().get_bool("can_submit"), Some(false));
     assert!(app.handle_text_input("explorer"));
@@ -464,13 +417,10 @@ fn account_screen_opens_from_the_title_and_offers_sign_in_when_signed_out() {
         "submitting half a form says so instead of reaching the network"
     );
 
-    // ESC goes back to the account overview, never out of the flow.
     app.handle_control(Control::CloseScreen, true);
     assert_eq!(app.screen, AppScreen::Account);
 }
 
-/// The account screens hand back to whichever screen opened them, however
-/// often the player moved between the overview and the form.
 #[test]
 fn account_back_returns_to_the_screen_that_opened_it() {
     let mut app = shell_app();
@@ -484,15 +434,6 @@ fn account_back_returns_to_the_screen_that_opened_it() {
     assert_eq!(app.screen, AppScreen::ConnectServer);
 }
 
-/// A join refused because the sign-in is dead must send the player to the
-/// Account screen WITH the reason, not leave them on an inline error they
-/// cannot act on.
-///
-/// The refusal is constructed, not obtained from
-/// `account::session::join_ticket_for`: that reads the real credential store
-/// and, for a developer who IS signed in, makes live HTTPS calls to the account
-/// service. An earlier draft did exactly that and passed only because nobody
-/// running it happened to be signed in.
 #[test]
 fn an_online_server_offered_no_sign_in_routes_the_player_to_the_account_screen() {
     use petramond::account::AccountError;

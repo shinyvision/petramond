@@ -1,6 +1,3 @@
-//! Inventory revision, crafting outputs, and the session-boundary menu
-//! contracts: chest viewer events, `menu_sync`, mod GUI state, open-screen.
-
 use super::common::{count_item, filled_inventory, game, game_on_empty_chunk};
 use super::pump_one_tick;
 use petramond::entity::DroppedItem;
@@ -27,14 +24,11 @@ fn test_crafting_recipe(
     )
 }
 
-/// The inventory revision moves on every mutation class the HUD cares about:
-/// pickup, menu click, drop, and craft.
 #[test]
 fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     let mut game = game_on_empty_chunk();
     let rev = |game: &super::common::TestGame| game.server_player().inventory.revision();
 
-    // Pickup: an eligible drop at the body centre is collected in one tick.
     game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut drop = DroppedItem::new(
         game.server_player().body_center(),
@@ -48,17 +42,14 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     assert_ne!(rev(&game), before, "a pickup bumps the revision");
     assert_eq!(count_item(game.inventory(), ItemType::Dirt), 2);
 
-    // Menu click: picking the stack up onto the cursor.
     let before = rev(&game);
     game.menu_click(MenuSlot::Inventory(0), PointerButton::Primary, false, false);
     game.apply_latched_actions_for_test();
     assert!(game.inventory().cursor().is_some(), "stack on the cursor");
     assert_ne!(rev(&game), before, "a menu click bumps the revision");
-    // Put it back for the drop below.
     game.menu_click(MenuSlot::Inventory(0), PointerButton::Primary, false, false);
     game.apply_latched_actions_for_test();
 
-    // Drop: Q drops one of the selected stack.
     game.server_player_mut().inventory = filled_inventory();
     let before = rev(&game);
     game.drop_selected_item(false);
@@ -66,8 +57,6 @@ fn pickup_menu_click_drop_and_craft_each_bump_the_inventory_revision() {
     assert_eq!(count_item(game.inventory(), ItemType::Dirt), 63);
     assert_ne!(rev(&game), before, "a drop bumps the revision");
 
-    // Craft: the explicit stable-key request consumes inventory into a real
-    // output, then the ordinary result-slot click takes it.
     game.sim_mut()
         .install_recipes_for_test(petramond_world::crafting::Recipes::new(
             vec![test_crafting_recipe(
@@ -193,8 +182,6 @@ fn crafting_outputs_replicate_per_session_and_remain_independent() {
     );
 }
 
-/// The full inventory rides a `SelfState` only when the revision moved —
-/// always on the first update after join, then only after a change.
 #[test]
 fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     let mut game = game_on_empty_chunk();
@@ -233,11 +220,6 @@ fn self_state_ships_the_inventory_only_when_the_revision_moved() {
     );
 }
 
-// ---- Session-boundary contracts: events + menu sync on the wire ----
-
-/// Chest viewer-count transitions emit `ChestOpened`/`ChestClosed` world
-/// events ONLY at the 0↔1 boundaries — a second overlapping viewer opens and
-/// closes silently.
 #[test]
 fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
     use petramond_math::math::IVec3;
@@ -270,10 +252,6 @@ fn chest_viewer_transitions_emit_events_only_at_zero_boundaries() {
     );
 }
 
-/// A SECOND session's chest interaction (the tick-side open) reaches session
-/// 0's replication batch: `open_chests` gains the chest and exactly one
-/// `ChestOpened` event rides `events` — while session 0's own `self_events`
-/// carries no open-screen (it wasn't the opener).
 #[test]
 fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
     use petramond::net::protocol::WorldEventMsg;
@@ -293,8 +271,6 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
             2.5, 64.0, 2.5,
         )));
 
-    // Session 1 right-clicked the chest (latched edge + look, as its
-    // PlayerUpdate/UseClick messages would leave them).
     game.session_at_mut(s1).input_mut().look = Some(super::common::hit(pos, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(s1);
 
@@ -326,9 +302,6 @@ fn a_remote_sessions_chest_open_reaches_the_local_batch_exactly_once() {
     );
 }
 
-/// `menu_sync` rides a batch only when the menu view CHANGED: the first batch
-/// ships the initial (closed) view, an unchanged menu ships `None`, and a
-/// tick-side open ships the new target once.
 #[test]
 fn menu_sync_ships_on_change_only() {
     use petramond::net::protocol::MenuTargetWire;
@@ -374,11 +347,6 @@ fn menu_sync_ships_on_change_only() {
     );
 }
 
-/// A slot click forces the authoritative inventory + menu pair into its
-/// outcome batch even when the server-side action was a no-op and neither
-/// on-change gate moved: the client may have predicted the click against a
-/// stale mirror, and it skips interim snapshots while a prediction is
-/// pending — this batch is the one it reconciles from.
 #[test]
 fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
     use petramond::net::protocol::{ClientToServer, MenuSlotWire};
@@ -400,7 +368,6 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
         "baseline: nothing changes"
     );
 
-    // Empty cursor onto an empty chest slot: a server-side no-op.
     game.send_to_server(ClientToServer::MenuClick {
         slot: MenuSlotWire::Container(0),
         button: petramond::net::protocol::button_to_wire(
@@ -429,9 +396,6 @@ fn a_slot_click_forces_the_authoritative_pair_even_as_a_noop() {
     );
 }
 
-/// The mod-GUI state map rides `menu_sync` only when its `Arc` changed: once
-/// at open (the cleared map), once per tick-side write (copy-on-write forces
-/// a fresh allocation), never in between.
 #[test]
 fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     use petramond::net::protocol::{GuiValueWire, MenuTargetWire};
@@ -458,8 +422,6 @@ fn gui_state_ships_in_menu_sync_only_on_arc_change() {
     let up = pump_one_tick(&mut game);
     assert!(up.menu_sync().cloned().is_none(), "no writes → no sync");
 
-    // What a mod's GuiStateSet HostCall does on the tick: a copy-on-write
-    // write against the session's map.
     petramond_world::gui_state::gui_state_set(
         &mut game.session_mut().sim_mut().gui_state,
         "modtest:v".into(),
@@ -525,9 +487,6 @@ fn host_written_mod_gui_state_syncs_to_matching_remote_session() {
     );
 }
 
-/// The screen-open request queued at the tick's interaction site arrives as
-/// `SelfEvents.open_screen` and `Game::tick` maps it onto the app-facing
-/// `GameEvents` field unchanged-consumer-side.
 #[test]
 fn open_screen_one_shot_maps_back_onto_game_events() {
     use crate::game::GameInput;
@@ -535,8 +494,6 @@ fn open_screen_one_shot_maps_back_onto_game_events() {
 
     let mut game = super::common::game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
-    // The tick's request site (interaction arm) writes this outbox field;
-    // seed it directly to isolate the SelfEvents → GameEvents pipe.
     game.session_mut().replication_mut().request_open_gui =
         Some((petramond_world::gui_state::GuiKind::Chest, Some(pos.into())));
 

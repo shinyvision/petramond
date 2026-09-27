@@ -9,9 +9,6 @@ pub(super) struct RawPattern {
     bindings: Vec<(String, Expression)>,
     material: Expression,
     palette: Vec<String>,
-    /// Sample the pattern's height-dependent noise this many blocks apart
-    /// along a column and interpolate between: for noise far wider than
-    /// the step, the same look for a fraction of the samples.
     #[serde(default)]
     lattice: Option<i32>,
 }
@@ -54,17 +51,12 @@ impl RawPattern {
     }
 }
 
-/// Column evaluations of position-only formulas, keyed by formula identity:
-/// a column walk paints many cells from the same few patterns, and each
-/// evaluation's column work is the expensive part.
 #[derive(Default)]
 pub(crate) struct ColumnCache {
     entries: Vec<(usize, [i32; 2], crate::formula::Evaluation<'static>)>,
 }
 
 impl ColumnCache {
-    /// The formula's evaluation bound to `column`, rebinding one kept from
-    /// another column rather than building a new register file.
     pub(crate) fn evaluation(
         &mut self,
         formula: &'static Formula,
@@ -96,7 +88,6 @@ impl MaterialPattern {
         self.column(seed, x, z, 0).at(y)
     }
 
-    /// [`Self::at`] through a per-column cache of this pattern's evaluation.
     pub(crate) fn at_cached(
         &'static self,
         seed: u32,
@@ -108,17 +99,14 @@ impl MaterialPattern {
         self.palette[index.max(0.0).min((self.palette.len() - 1) as f64) as usize]
     }
 
-    /// A reusable scan of this pattern's formula.
     pub(crate) fn scanner(&'static self, seed: u32) -> crate::formula::Scan<'static> {
         self.formula.scan(seed)
     }
 
-    /// The step the pattern asked its noise to be sampled on, if any.
     pub(crate) fn lattice(&self) -> Option<i32> {
         self.lattice
     }
 
-    /// The palette materials selected by scanned indices.
     pub(crate) fn materials(&self, values: &[[f64; 1]], out: &mut Vec<u16>) {
         out.clear();
         out.extend(values.iter().map(|[index]| {

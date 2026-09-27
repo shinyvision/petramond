@@ -38,15 +38,8 @@ use petramond_world::tile::Tile;
 
 use glam::Vec3;
 
-/// Max AO (no occlusion).
 const FULL_AO: u32 = 3 << petramond_mesh::AO_SHIFT;
 
-/// The six cube faces (`PosX, NegX, PosY, NegY, PosZ, NegZ`). Dynamic geometry
-/// shares the chunk mesher's [`mesh::face::Face`](petramond_math::face::Face): its
-/// `shade_idx` bakes the same "top bright, bottom dark" directional shading and
-/// its `quad_box` winds corners identically, so a held / dropped / icon cube is
-/// byte-identical to the world block. `quad_box(min, max)` also spans non-cube
-/// boxes (the chest's inset body and lid).
 const ALL_FACES: [Face; 6] = Face::ALL;
 
 #[inline]
@@ -79,9 +72,6 @@ fn face_bits2(mat: FaceMaterial) -> u32 {
     }
 }
 
-/// The base quad emitter: append 4 verts (one per corner via `vertex(corner,
-/// pos)`) + the standard 6 indices. Every quad variant below differs only in
-/// its per-corner bit packing.
 #[inline]
 fn push_quad_with(
     verts: &mut Vec<Vertex>,
@@ -96,8 +86,6 @@ fn push_quad_with(
     indices.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
 }
 
-/// Append a textured quad (4 verts, 6 indices) to `verts`/`indices`. `packed2`
-/// carries the second vertex word (block light in bits 0..6).
 #[inline]
 fn push_quad(
     verts: &mut Vec<Vertex>,
@@ -155,16 +143,6 @@ fn push_quad_cell_uvs(
     });
 }
 
-/// Append a full-bright textured cube spanning `[origin, origin + size]`, per-face
-/// tiles `[top, bottom, side]` (matching `Block::tiles()`), into the caller-owned
-/// `verts`/`indices` (capacity reused, nothing cleared). Indices are re-based onto
-/// the running vertex count so this composes with prior geometry. 24 verts / 36
-/// indices, back-face culled (CCW front faces).
-///
-/// Each face is foliage-tinted out-of-world via [`foliage_tint::face_material`],
-/// mirroring the chunk mesher: a grass block tints its top green and renders its
-/// sides as dirt + a tinted grass-side overlay, leaves tint with the foliage
-/// colour, and everything else stays untinted.
 pub fn push_cube_textured(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -183,7 +161,6 @@ pub(super) fn push_cube_textured_lit(
     size: f32,
     light: DynLight,
 ) {
-    // Raw tiles, not a row's slots — no row-declared turn exists here.
     push_cube_faces_lit(
         verts,
         indices,
@@ -195,13 +172,9 @@ pub(super) fn push_cube_textured_lit(
     );
 }
 
-/// Expand the `[top, bottom, side]` model into the 6 per-face tiles in `ALL_FACES`
-/// order, with `side` on every horizontal face. The inverse mapping of
-/// [`push_cube_textured_lit`].
 #[inline]
 fn expand_tiles(tiles: [Tile; 3]) -> [Tile; 6] {
     let [top, bottom, side] = tiles;
-    // ALL_FACES: PosX, NegX, PosY, NegY, PosZ, NegZ.
     [side, side, top, bottom, side, side]
 }
 
@@ -215,10 +188,6 @@ fn expand_log_tiles(tiles: [Tile; 3], axis: LogAxis) -> [Tile; 6] {
     }
 }
 
-/// The 6 per-face tiles (`ALL_FACES` order) for drawing `block` as an inventory /
-/// held / dropped-item cube. Most blocks just expand their `[top, bottom, side]`
-/// model; the furnace puts its front on a single visible face so the item reads as
-/// a furnace instead of four mouths (the placed block is meshed directionally).
 #[cfg(test)]
 fn block_icon_faces(block: Block) -> [Tile; 6] {
     block_icon_faces_with_state(block, HeldBlockState::None)
@@ -233,20 +202,12 @@ pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -
         };
         faces = expand_log_tiles(block.tiles(), axis);
     }
-    // Index 4 = PosZ, one of the two side faces the isometric icon presents, so a
-    // directional block shows its row-declared front there instead of repeating
-    // the side art (furnace/chest fronts).
     if let Some(front) = block.front_tile() {
         faces[4] = front;
     }
     faces
 }
 
-/// The 6 per-face row-declared UV quarter turns (`ALL_FACES` order) — the twin
-/// of [`block_icon_faces_with_state`]'s tile expansion, so a turned slot
-/// rotates wherever its tile is drawn: the held/dropped/icon cube reads
-/// exactly like the placed block. The icon's `front` face (index 4) always
-/// draws unturned: the front tile is authored for that face.
 fn block_icon_uv_turns(block: Block, state: HeldBlockState) -> [u8; 6] {
     let [top, bottom, side] = block.uv_turns();
     if block.is_log() {
@@ -280,12 +241,6 @@ pub(super) fn push_cube_faces_lit(
     push_box_faces_lit(verts, indices, faces, uv_turns, origin, max, light);
 }
 
-/// Append a textured box spanning `[min, max]` with explicit per-face tiles
-/// (`ALL_FACES` order: PosX, NegX, PosY, NegY, PosZ, NegZ), lit by `skylight`. Like
-/// [`push_cube_faces_lit`] but for an arbitrary (non-cube) box — used to build the
-/// chest's inset body and hinged lid. 24 verts / 36 indices, back-face culled.
-/// `uv_turns` carries each face's row-declared UV quarter turn (zeros on every
-/// caller whose tiles are not a row's `[top, bottom, side]` slots).
 pub(super) fn push_box_faces_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -328,8 +283,6 @@ fn push_log_cube_faces_lit(
         let corners = face.quad_box(origin.to_array(), max.to_array());
         let word2 = light.block.packed2_bits() | face_bits2(mat);
         if let Some(cell_uvs) = log_side_cell_uvs(axis, face) {
-            // The remap carries the whole mapping; no turn bits on a
-            // CELL_LOCAL vertex.
             push_quad_cell_uvs(
                 verts,
                 indices,
@@ -354,9 +307,6 @@ fn push_log_cube_faces_lit(
     }
 }
 
-/// Yaw (radians) that rotates the canonical front / closed edge (`+Z`, South) to
-/// `facing`'s — the shared convention for animated block models, authored
-/// south-facing.
 pub(super) fn facing_yaw(facing: Facing) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     match facing {
@@ -367,10 +317,6 @@ pub(super) fn facing_yaw(facing: Facing) -> f32 {
     }
 }
 
-/// Rotate the verts appended at `start..` about the cell's vertical centre by
-/// [`facing_yaw`] (canonical = South), then translate to the world block origin
-/// `pos`. CPU vertex transform since the opaque pipeline has no per-draw model
-/// matrix (animated blocks and item entities place geometry this way).
 pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: Facing, pos: Vec3) {
     let (ys, yc) = facing_yaw(facing).sin_cos();
     for v in verts[start..].iter_mut() {
@@ -383,9 +329,6 @@ pub(super) fn orient_faces_to_block(verts: &mut [Vertex], start: usize, facing: 
     }
 }
 
-/// Packed bit shift for the UV mode field. Dynamic thin geometry uses 1 = crop U
-/// and 2 = crop V; chunk-meshed stairs use the remaining modes for cell-local
-/// side UVs.
 pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
 
 /// The per-face UV-slice modes (`ALL_FACES` order) a box of this extent needs.
@@ -403,7 +346,6 @@ pub(super) const UV_SLICE_SHIFT: u32 = UV_MODE_SHIFT;
 pub(super) fn thin_face_slice_modes(min: Vec3, max: Vec3) -> [u32; 6] {
     let size = max - min;
     let thin = |axis: usize| (size[axis] - petramond_world::door::THICKNESS).abs() < 1e-4;
-    // Each face's (U axis, V axis), in `ALL_FACES` order.
     const UV_AXES: [(usize, usize); 6] = [(2, 1), (2, 1), (0, 2), (0, 2), (0, 1), (0, 1)];
     UV_AXES.map(|(u, v)| {
         if thin(v) {
@@ -455,9 +397,6 @@ pub(super) fn push_box_faces_lit_mirrored(
     }
 }
 
-/// [`push_quad`] with the texture mirrored horizontally: each geometric corner is given
-/// the UV of its left↔right partner (`corner_uv` maps 0/1/2/3 to bl/br/tr/tl, so the
-/// swap `[1,0,3,2]` flips `u`). Geometry + winding are unchanged.
 #[inline]
 fn push_quad_uflip(
     verts: &mut Vec<Vertex>,
@@ -476,9 +415,6 @@ fn push_quad_uflip(
     });
 }
 
-/// Append `block` as an inventory / held / dropped cube into `[origin, origin+size]`,
-/// full-bright. The single entry point so every place a block is drawn as a small
-/// cube draws the SHAPE's own geometry; see the `_lit` variant.
 pub(super) fn push_block_item_cube(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -486,15 +422,9 @@ pub(super) fn push_block_item_cube(
     origin: Vec3,
     size: f32,
 ) {
-    // The only caller is the depthless icon-atlas bake, so a self-occluding
-    // custom shape sorts its boxes far→near here.
     push_block_item_cube_lit(verts, indices, block, origin, size, DynLight::FULL, true);
 }
 
-/// As [`push_block_item_cube`] but lit by `skylight` (a held item / dropped stack samples
-/// world light). Per-face tiles come from [`block_icon_faces`] (so a furnace shows its
-/// front); a shaped block draws its own boxes so the item matches the block it
-/// places, every other block is a plain cube.
 pub(super) fn push_block_item_cube_lit(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -525,21 +455,13 @@ pub(super) fn push_block_item_cube_lit_with_state(
     origin: Vec3,
     size: f32,
     light: DynLight,
-    // Only the depthless icon pass needs a back-to-front painter sort of a
-    // shape's self-occluding boxes; the depth-tested hand/dropped forms
-    // pass `false`.
     sort_for_icon: bool,
 ) {
-    // An animated block whose row opts in draws its model, closed — a chest
-    // reads as a tiny chest in the icon, the hand and a dropped stack alike.
     if let Some(model) = super::block_entity_model::item_model(block) {
         super::block_entity_model::push_item(verts, indices, model, block, origin, size, light);
         return;
     }
     let faces = block_icon_faces_with_state(block, state);
-    // A WASM-baked custom shape's item is its own baked geometry, cached at
-    // client-mod load. Asked FIRST and by block id, so no family is named: a
-    // block with no bake simply has none.
     if let Some(boxes) = petramond_world::block::item_shape_bake::item_bake(block.id()) {
         if !boxes.is_empty() {
             for b in icon_painter_order(&boxes, |b| b, sort_for_icon) {
@@ -552,9 +474,6 @@ pub(super) fn push_block_item_cube_lit_with_state(
             return;
         }
     }
-    // Otherwise the SHAPE owns its item form: stair steps, slab layers (each
-    // in its own material), a fence's authored two-post segment, a static box
-    // set's boxes. One loop; the renderer names no family.
     let k = block.shape_kind_def();
     let mut boxes = Vec::new();
     k.render.item_boxes(&k.params, block, state, &mut boxes);
@@ -570,8 +489,6 @@ pub(super) fn push_block_item_cube_lit_with_state(
                     .expect("own element")
             });
         for b in order.map(|i| &boxes[i]) {
-            // A box may draw in another material than the item's own block —
-            // a stacked two-tone slab shows both layers.
             let box_faces = match b.material {
                 Some(mat) => block_icon_faces_with_state(mat, HeldBlockState::None),
                 None => faces,
@@ -600,8 +517,6 @@ pub(super) fn push_block_item_cube_lit_with_state(
         }
         return;
     }
-    // A log's axis is a BLOCK property, not a shape one — its cube just
-    // rotates its side tiles.
     if block.is_log() {
         let axis = match state {
             HeldBlockState::Log(axis) => axis,
@@ -630,20 +545,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
     );
 }
 
-/// One `face` of the cell-local box `[min, max]` scaled into `[origin, origin +
-/// size]`: like [`push_quad`] but with cell-local UVs ([`UV_MODE_CELL_LOCAL`]),
-/// so a partial face samples the matching sub-rectangle of its tile. Shared by
-/// the stair item cube (hand / drop / icon) and the stair break-crack overlay,
-/// so a stair reads as a cut-out full block everywhere it is drawn.
 #[allow(clippy::too_many_arguments)]
-/// The order a multi-box item form must be SUBMITTED in.
-///
-/// The inventory ICON draws in the DEPTHLESS icon pass, so self-occluding boxes
-/// (a chair's backrest behind its seat, a cabinet's back panel behind its door)
-/// have to be painted BACK-TO-FRONT: box centres sorted by view depth along the
-/// shared iso view direction, ascending. Back-face culling alone only settles
-/// each box against ITSELF, never one box against another. The depth-tested
-/// in-hand / dropped forms skip the sort entirely.
 fn icon_painter_order<T>(
     items: &[T],
     aabb: impl Fn(&T) -> &petramond_world::block::Aabb,
@@ -692,23 +594,13 @@ pub(super) fn push_cell_local_face(
     );
 }
 
-/// How one box face is posed and mapped — what a static box set authors per
-/// face, carried to the item-side pusher so the hand, the icon and the crack
-/// draw exactly the chunk mesher's face.
 #[derive(Copy, Clone, Default)]
 pub(super) struct FaceArt {
-    /// Extra cell-local UV quarter turns (`ShapeFace::uv_turns`).
     pub uv_turns: u8,
-    /// An authored tile rect stretched over the face (`ShapeFace::uv_rect`).
     pub uv_rect: Option<[u8; 4]>,
-    /// The box's rotation off the axis grid (`ShapeBox::pose`).
     pub pose: Option<petramond_world::block::BoxPose>,
 }
 
-/// [`push_cell_local_face`] with the face's authored art — UV turned, an
-/// authored tile rect, the box's pose — the item-side twin of the chunk
-/// mesher's [`ShapeFace`](petramond_world::block::ShapeFace) mapping, so a
-/// turned or posed box set reads the same in the icon as in the world.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn push_cell_local_face_styled(
     verts: &mut Vec<Vertex>,
@@ -728,14 +620,12 @@ pub(super) fn push_cell_local_face_styled(
         Face::PosZ | Face::NegZ => 2,
     };
     if (0..3).any(|a| a != normal_axis && max[a] - min[a] <= 0.0) {
-        // The edge faces of a flat plane have no area.
         return;
     }
     let mat = foliage_tint::face_material(tile);
     let bits = face_bits_textured_lit(mat, face, light) | (UV_MODE_CELL_LOCAL << UV_MODE_SHIFT);
     let word2 = light.block.packed2_bits() | face_bits2(mat);
     let local = face.quad_box(min, max);
-    // The authored corners through the pose, then scaled into place.
     let corners = local.map(|p| {
         let p = Vec3::from(p);
         let p = art.pose.map_or(p, |pose| pose.apply(p));
@@ -754,9 +644,6 @@ pub(super) fn push_cell_local_face_styled(
             (u, v),
             petramond_mesh::plane::face_fraction(face, min, max, (u, v)),
         );
-        // Cell-local UV is 0..=1 by definition; a caller whose box reaches past
-        // its cell (a mod draw prim spanning a multi-cell footprint) would
-        // otherwise pack a lane it cannot hold and sample past its own tile.
         let (u, v) = (u.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
         Vertex {
             pos,
@@ -767,12 +654,6 @@ pub(super) fn push_cell_local_face_styled(
     });
 }
 
-/// A full-bright textured cube spanning `[origin, origin + size]`, per-face tiles
-/// `[top, bottom, side]` (matching `Block::tiles()`). 24 verts / 36 indices, back-face
-/// culled (CCW front faces).
-///
-/// Test-only convenience: live render bakes into caller buffers via the append-style
-/// [`push_cube_textured`] / [`push_cube_textured_lit`].
 #[cfg(test)]
 pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::with_capacity(24);
@@ -781,10 +662,6 @@ pub fn cube_textured(tiles: [Tile; 3], origin: Vec3, size: f32) -> (Vec<Vertex>,
     (verts, indices)
 }
 
-/// Append a flat, upright, double-sided billboard quad of one `tile`, centered on
-/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright, into
-/// the caller-owned `verts`/`indices` (capacity reused). Emitted in both windings
-/// so it is visible from either side under back-face culling. 8 verts / 12 indices.
 pub fn push_billboard_quad(
     verts: &mut Vec<Vertex>,
     indices: &mut Vec<u32>,
@@ -793,22 +670,18 @@ pub fn push_billboard_quad(
     size: f32,
 ) {
     let h = size * 0.5;
-    // Front-facing (+Z) winding: 0 bl, 1 br, 2 tr, 3 tl (matches corner_uv).
     let front = [
         [center.x - h, center.y - h, center.z],
         [center.x + h, center.y - h, center.z],
         [center.x + h, center.y + h, center.z],
         [center.x - h, center.y + h, center.z],
     ];
-    // Back-facing winding: same positions, reversed so CCW points the other way.
     let back = [
         [center.x + h, center.y - h, center.z],
         [center.x - h, center.y - h, center.z],
         [center.x - h, center.y + h, center.z],
         [center.x + h, center.y + h, center.z],
     ];
-    // Sprites are flat: use the brightest (top) shade so they read evenly. Fern /
-    // short-grass sprites get the fixed grass tint (flowers stay untinted).
     let tint = foliage_tint::face_material(tile).tint;
     let base = (tile.index() as u32)
         | (Face::PosY.shade_idx() << petramond_mesh::SHADE_SHIFT)
@@ -819,12 +692,6 @@ pub fn push_billboard_quad(
     push_quad(verts, indices, back, tint, base, 0);
 }
 
-/// A flat, upright, double-sided billboard quad of one `tile`, centered on
-/// `center` in the X (right) / Y (up) plane, `size` tall & wide, full-bright. 8 verts
-/// / 12 indices.
-///
-/// Test-only convenience: live render bakes into caller buffers via
-/// [`push_billboard_quad`].
 #[cfg(test)]
 pub fn billboard_quad(tile: Tile, center: Vec3, size: f32) -> (Vec<Vertex>, Vec<u32>) {
     let mut verts = Vec::with_capacity(8);
@@ -863,31 +730,24 @@ mod tests {
 
     #[test]
     fn cube_textured_uses_per_face_tiles() {
-        // Distinct top/bottom/side so we can check each face samples the right tile.
         let tiles = [
             Tile::named("grass_top"),
             Tile::named("dirt"),
             Tile::named("stone"),
         ];
         let (v, _) = cube_textured(tiles, Vec3::ZERO, 1.0);
-        // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
-        // 4 verts per face; the tile id is the low field of `packed`.
         let face_tile =
             |face_idx: usize| v[face_idx * 4].packed & petramond_mesh::vertex::TILE_MASK;
-        // PosX (side), NegX (side)
         assert_eq!(face_tile(0), Tile::named("stone").index() as u32);
         assert_eq!(face_tile(1), Tile::named("stone").index() as u32);
-        // PosY (top), NegY (bottom)
         assert_eq!(face_tile(2), Tile::named("grass_top").index() as u32);
         assert_eq!(face_tile(3), Tile::named("dirt").index() as u32);
-        // PosZ (side), NegZ (side)
         assert_eq!(face_tile(4), Tile::named("stone").index() as u32);
         assert_eq!(face_tile(5), Tile::named("stone").index() as u32);
     }
 
     #[test]
     fn block_icon_faces_default_expands_top_bottom_side() {
-        // A normal block just expands its 3-tile model: side on every horizontal.
         let faces = block_icon_faces(Block::OakLog);
         let [top, bottom, side] = Block::OakLog.tiles();
         assert_eq!(faces, [side, side, top, bottom, side, side]);
@@ -928,8 +788,6 @@ mod tests {
 
     #[test]
     fn furnace_icon_shows_front_on_exactly_one_face() {
-        // The reported bug was four fronts; the item must show the front once, with
-        // furnace_side on the other three horizontal faces (top/bottom are the top).
         let faces = block_icon_faces(Block::Furnace);
         assert_eq!(faces[2], Tile::named("furnace_top"), "PosY top");
         assert_eq!(faces[3], Tile::named("furnace_top"), "NegY bottom");
@@ -959,14 +817,11 @@ mod tests {
     fn cube_textured_is_full_bright() {
         let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         for vert in &v {
-            // skylight (bits 23..29) is full (63).
             assert_eq!(
                 (vert.packed >> petramond_mesh::vertex::SKY_SHIFT) & 0x3F,
                 63
             );
-            // AO (bits 21..23) is full (3).
             assert_eq!((vert.packed >> petramond_mesh::vertex::AO_SHIFT) & 0x3, 3);
-            // textured path never sets the solid-color flag.
             assert_eq!(vert.packed & petramond_mesh::OVERLAY_FLAG, 0);
         }
     }
@@ -976,19 +831,18 @@ mod tests {
         let (v, _) = cube_textured([Tile::named("stone"); 3], Vec3::ZERO, 1.0);
         let shade =
             |face_idx: usize| (v[face_idx * 4].packed >> petramond_mesh::vertex::SHADE_SHIFT) & 0x3;
-        assert_eq!(shade(0), 2); // PosX
-        assert_eq!(shade(1), 2); // NegX
-        assert_eq!(shade(2), 0); // PosY (top, brightest)
-        assert_eq!(shade(3), 3); // NegY (bottom, darkest)
-        assert_eq!(shade(4), 1); // PosZ
-        assert_eq!(shade(5), 1); // NegZ
-                                 // SHADES table is the brightness these indices reference.
+        assert_eq!(shade(0), 2);
+        assert_eq!(shade(1), 2);
+        assert_eq!(shade(2), 0);
+        assert_eq!(shade(3), 3);
+        assert_eq!(shade(4), 1);
+        assert_eq!(shade(5), 1);
         const { assert!(SHADES[0] > SHADES[3]) };
     }
     #[test]
     fn billboard_quad_is_double_sided() {
         let (v, i) = billboard_quad(Tile::named("poppy"), Vec3::ZERO, 1.0);
-        assert_eq!(v.len(), 8); // two quads (front + back)
+        assert_eq!(v.len(), 8);
         assert_eq!(i.len(), 12);
         for vert in &v {
             assert_eq!(
@@ -1001,7 +855,6 @@ mod tests {
 
     #[test]
     fn cube_textured_tints_grass_top_and_overlays_sides() {
-        // Block::Grass tiles = [GrassTop, Dirt, GrassSide].
         let (v, _) = cube_textured(
             [
                 Tile::named("grass_top"),
@@ -1012,8 +865,6 @@ mod tests {
             1.0,
         );
         let grass = foliage_tint::default_grass_color();
-        // Faces emitted in ALL_FACES order: PosX, NegX, PosY, NegY, PosZ, NegZ.
-        // Top face (PosY = index 2): GrassTop tinted green, no overlay.
         let top = &v[2 * 4];
         assert_eq!(
             top.packed & petramond_mesh::vertex::TILE_MASK,
@@ -1026,8 +877,6 @@ mod tests {
             "top has no overlay flag"
         );
 
-        // Side faces (PosX 0, NegX 1, PosZ 4, NegZ 5): dirt base + tinted
-        // grass-side overlay: the has-overlay flag in word 1, the tile in word 2.
         for idx in [0usize, 1, 4, 5] {
             let s = &v[idx * 4];
             assert_eq!(
@@ -1035,7 +884,6 @@ mod tests {
                 Tile::named("dirt").index() as u32,
                 "side base = dirt"
             );
-            // Bit 20 (overlay flag) set; overlay tile = GrassSideOverlay.
             assert_eq!(
                 s.packed & petramond_mesh::OVERLAY_FLAG,
                 petramond_mesh::OVERLAY_FLAG,
@@ -1050,7 +898,6 @@ mod tests {
             assert_eq!(s.tint, pack_tint(grass), "side overlay tinted green");
         }
 
-        // Bottom face (NegY = index 3): plain dirt, untinted, no overlay.
         let bot = &v[3 * 4];
         assert_eq!(
             bot.packed & petramond_mesh::vertex::TILE_MASK,

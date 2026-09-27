@@ -1,13 +1,8 @@
 //! Suballocated GPU storage for the packed terrain columns.
 //!
-//! Every terrain layer of every column used to own a `wgpu::Buffer` — measured
-//! at render distance 32, **11 138 live buffer objects**. wgpu validates and
-//! resource-tracks per DISTINCT buffer a command buffer touches, and a frame
-//! that binds ~3 700 of them pays for it on the render thread: an ablation that
-//! pointed every terrain draw at one shared buffer (identical command count,
-//! identical draw count — only the number of distinct resources changed) cut
-//! `CommandEncoder::finish` from 0.80 to 0.37 ms, `Queue::submit` from 0.15 to
-//! 0.02 ms and pass encoding from 0.30 to 0.17 ms.
+//! Terrain layers share large GPU buffers because wgpu validates and tracks
+//! each distinct buffer bound by a command buffer. Suballocation keeps the
+//! number of bound resources small at high render distance.
 //!
 //! A repack still rewrites only its column; only the ALLOCATION is shared —
 //! a handful of large blocks every draw addresses. An arena is built for one
@@ -36,14 +31,10 @@ use book::Book;
 pub struct LayerAlloc {
     block: u32,
     offset: u64,
-    /// The CLASS size — what the allocation may grow into, not what is in use.
     capacity: u64,
     recycle: Recycle,
 }
 
-/// Space handed back by dropped allocations, drained into the arena's free
-/// lists on the next `alloc`. Shared (not owned by the arena) precisely so a
-/// drop needs no access to the arena.
 type Recycle = std::sync::Arc<std::sync::Mutex<Vec<(u64, u32, u64)>>>;
 
 impl LayerAlloc {
@@ -60,21 +51,10 @@ impl Drop for LayerAlloc {
     }
 }
 
-/// Block size. The tail of the last block is the arena's only real overhead, so
-/// this trades reserved VRAM at LOW render distance (a 64 MiB block reserved
-/// 128 MiB for 94 MiB of terrain at RD16) against the number of distinct
-/// buffers a frame binds — and the CPU win is flat from a handful of blocks up
-/// to a few dozen, because the cost was per-buffer over THOUSANDS.
 const BLOCK_BYTES: u64 = 16 * 1024 * 1024;
 
-/// Smallest class in bytes (rounded to whole units), and the granularity
-/// below eight of it.
 const MIN_CLASS: u64 = 512;
 
-/// Round `len` bytes up to its size class in an arena of `unit`-byte
-/// elements: multiples of the minimum class up to eight of them, then eighths
-/// of the enclosing power of two — both counted in units, so every class (and
-/// so every offset the bump pointer reaches) is a whole number of units.
 pub(super) fn class_size(len: u64, unit: u64) -> u64 {
     let units = len.max(1).div_ceil(unit);
     let min = (MIN_CLASS / unit).max(1);
@@ -88,21 +68,15 @@ pub(super) fn class_size(len: u64, unit: u64) -> u64 {
 }
 
 pub struct GeometryArena {
-    /// The allocation policy's bookkeeping (see [`book`]).
     book: Book,
-    /// One buffer per live block slot of the book; a released slot is `None`
-    /// so live [`LayerAlloc`] block indices stay valid.
     buffers: Vec<Option<wgpu::Buffer>>,
     recycle: Recycle,
     usage: wgpu::BufferUsages,
     copy_scratch: Option<wgpu::Buffer>,
-    /// The element size every allocation is a whole multiple of (and aligned
-    /// to). A multiple of 4, wgpu's copy alignment.
     unit: u64,
 }
 
 impl GeometryArena {
-    /// An arena of `unit`-byte elements in blocks of about `block_bytes`.
     pub fn new(unit: u64, block_bytes: u64) -> Self {
         assert!(
             unit > 0 && unit.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT),
@@ -121,12 +95,10 @@ impl GeometryArena {
         }
     }
 
-    /// An arena of `unit`-byte elements in the default block size.
     pub fn with_unit(unit: u64) -> Self {
         Self::new(unit, BLOCK_BYTES)
     }
 
-    /// Total bytes of GPU buffer the arena holds.
     pub fn reserved_bytes(&self) -> u64 {
         self.book.reserved_bytes() + self.copy_scratch.as_ref().map_or(0, |b| b.size())
     }
@@ -142,21 +114,15 @@ impl GeometryArena {
             .expect("live allocation in a released arena block")
     }
 
-    /// The bound range for a live allocation, `len` bytes from its start.
     pub fn slice(&self, alloc: &LayerAlloc, len: u64) -> wgpu::BufferSlice<'_> {
         self.block(alloc.block)
             .slice(alloc.offset..alloc.offset + len)
     }
 
-    /// The whole buffer of block `index`, for draws that bind a block once
-    /// and address allocations in it by element.
     pub fn block_buffer(&self, index: u32) -> &wgpu::Buffer {
         self.block(index)
     }
 
-    /// `(block, first element)` of a live allocation: bind the block's whole
-    /// buffer and draw with this as the base, and the draw reads exactly the
-    /// allocation's elements. Exact because offsets are whole units.
     pub fn first_element(&self, alloc: &LayerAlloc) -> (u32, u32) {
         debug_assert_eq!(alloc.offset % self.unit, 0);
         (alloc.block, (alloc.offset / self.unit) as u32)
@@ -191,9 +157,6 @@ impl GeometryArena {
         bytes
     }
 
-    /// Write `bytes` at `offset` inside a live allocation. Returns false when
-    /// the write would leave the allocation, which is the caller's cue that the
-    /// GPU copy is stale and must be repacked.
     pub fn write(
         &self,
         queue: &wgpu::Queue,
@@ -208,10 +171,6 @@ impl GeometryArena {
         true
     }
 
-    /// Write `len` bytes at `offset` inside a live allocation by filling
-    /// wgpu's staging memory directly: `fill` receives the destination bytes,
-    /// so a caller assembling several sources copies each once, with no
-    /// intermediate buffer. False when the range would leave the allocation.
     pub fn write_with(
         &self,
         queue: &wgpu::Queue,
@@ -235,7 +194,6 @@ impl GeometryArena {
         }
     }
 
-    /// Copy live geometry between distinct allocations without a CPU readback.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn copy(
         &mut self,
@@ -249,7 +207,6 @@ impl GeometryArena {
     ) {
         assert!(src_offset + len <= src.capacity && dst_offset + len <= dst.capacity);
         if src.block == dst.block {
-            // wgpu forbids even disjoint copies within one buffer.
             if self.copy_scratch.as_ref().is_none_or(|b| b.size() < len) {
                 self.copy_scratch = Some(device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("terrain relocation scratch"),
@@ -284,8 +241,6 @@ impl GeometryArena {
         }
     }
 
-    /// Claim `len` bytes. Never fails: a request larger than a block gets a
-    /// block of its own.
     pub fn alloc(&mut self, device: &wgpu::Device, len: u64) -> LayerAlloc {
         self.reclaim();
         let placed = self.book.place(len);
@@ -309,8 +264,6 @@ impl GeometryArena {
         }
     }
 
-    /// Fold dropped allocations into the free lists, dropping the buffer of
-    /// every block they emptied past the spare.
     fn reclaim(&mut self) {
         let recycled = match self.recycle.lock() {
             Ok(mut r) if !r.is_empty() => std::mem::take(&mut *r),
@@ -321,8 +274,6 @@ impl GeometryArena {
         }
     }
 
-    /// Bytes currently sitting in the free lists (including drop-recycled ones)
-    /// — arena space that is reserved but not handed to any column.
     pub fn free_bytes(&self) -> u64 {
         let listed = self.book.free_bytes();
         let pending: u64 = self

@@ -22,24 +22,14 @@ use petramond_world::particle_emitters::{AmbientLight, AmbientSpec, FlightSpec};
 use super::super::presentation::{ParticleAtlas, ParticlePresentation};
 use super::{colour, lerp_range, Activation, View, SKY_OPEN_LIGHT};
 
-/// The height bob runs this many times faster than the orbit, so heading and
-/// altitude never repeat together (a Lissajous wander, not an ellipse).
 const HOVER_BOB_RATE: f32 = 2.3;
-/// The Z axis of the orbit runs slower than X for the same reason.
 const ORBIT_Z_RATE: f32 = 0.73;
-/// Wing fold angle envelope `[min, max]` (radians from the body plane) the
-/// wingbeat sweeps: never fully flat, never fully closed.
 const WING_FOLD: [f32; 2] = [0.15, 1.30];
-/// Each wing spans this fraction of `size` outward from the body hinge and
-/// this fraction along the body axis (a wing is longer than it is wide).
 const WING_SPAN: f32 = 0.25;
 const WING_LENGTH: f32 = 0.5;
-/// Fliers shrink to nothing over the outer blocks of `radius` and the outer
-/// blocks of the height band, so the population edge never pops.
 const RADIUS_FADE: f32 = 4.0;
 const BAND_FADE: f32 = 2.0;
 
-/// The orbit: the flier's offset from its ground anchor and its heading.
 pub(super) fn orbit(flight: &FlightSpec, seed: u64, time: f32) -> (Vec3, Vec3) {
     let phase = hash01(seed ^ 3) * TAU;
     let t = time * lerp_range(flight.speed, hash01(seed ^ 4)) + phase;
@@ -57,9 +47,6 @@ pub(super) fn orbit(flight: &FlightSpec, seed: u64, time: f32) -> (Vec3, Vec3) {
     (offset, heading.normalize_or(Vec3::Z))
 }
 
-/// The cruise ground (top face height of the highest admitted ground cell)
-/// for a flier anchored at world `(x, z)`, or `None` when any column its
-/// orbit can occupy refuses it. `roll` is the flier's density roll in `0..1`.
 pub(super) fn orbit_ground(
     spec: &AmbientSpec,
     flight: &FlightSpec,
@@ -69,8 +56,6 @@ pub(super) fn orbit_ground(
     z: f64,
     roll: f32,
 ) -> Option<f32> {
-    // A wing corner reaches farther along a world axis when the body turns
-    // diagonally; the margin is the largest sprite's corner radius.
     let reach = spec.size[1] * FRAC_1_SQRT_2;
     let (rx, rz) = (flight.orbit[0] + reach, flight.orbit[1] + reach);
     let mut highest = f32::NEG_INFINITY;
@@ -94,7 +79,6 @@ pub(super) fn orbit_ground(
     Some(highest)
 }
 
-/// The lattice seed of cell `(gx, gz)` for this activation.
 #[inline]
 pub(super) fn cell_seed(act: &Activation, gx: i32, gz: i32) -> u64 {
     act.seed
@@ -102,8 +86,6 @@ pub(super) fn cell_seed(act: &Activation, gx: i32, gz: i32) -> u64 {
         ^ (gz as u64).wrapping_mul(0xA24B_AED4_963E_E407)
 }
 
-/// A cell's anchor: a fixed point inside the cell, so flight stays continuous
-/// through every camera movement, jumps included.
 #[inline]
 pub(super) fn cell_anchor(flight: &FlightSpec, seed: u64, gx: i32, gz: i32) -> (f64, f64) {
     let spacing = f64::from(flight.spacing);
@@ -139,9 +121,6 @@ pub(super) fn derive_flight(
             if distance >= spec.radius {
                 continue;
             }
-            // Occupancy and intensity thin the lattice; the same roll is then
-            // held against every orbit column's biome density, so admission
-            // never varies with flight phase.
             let roll = hash01(seed ^ 5) / (act.intensity * flight.occupancy);
             if roll >= 1.0 {
                 continue;
@@ -189,7 +168,6 @@ pub(super) fn derive_flight(
                 });
                 continue;
             };
-            // Two half-tiles hinged at the body, folding up and down together.
             let beat = TAU * lerp_range(flight.flap_hz, hash01(seed ^ 7));
             let fold = lerp_range(
                 WING_FOLD,

@@ -2,10 +2,9 @@ use super::*;
 
 #[test]
 fn a_mob_pushes_the_player_per_frame() {
-    // The player is shoved out of an overlapping mob every frame (not on the tick),
-    // so the drift is smooth. An owl just east of the player pushes it west.
-    // The push acts on the CLIENT's predicted player against the REPLICATED
-    // mob rows (the shove reaches the server in the next PlayerUpdate).
+    // Shoves every frame instead of every tick to keep drift smooth
+    // Owl east of player pushes west
+    // Predicted player, replicated mob; the server sees the shove in the next PlayerUpdate
     let mut game = game();
     game.local.player.pos = WorldPos::new(8.0, 64.0, 8.0);
     game.replica
@@ -46,12 +45,6 @@ fn a_mob_pushes_the_player_per_frame() {
 
 #[test]
 fn a_remote_player_pushes_the_local_player_per_frame() {
-    // Remote players jostle like mobs: an overlapping remote body shoves the
-    // LOCAL predicted player out, per frame, through the same separation rule.
-    // The remote's own half runs on its own client — each client only ever
-    // shoves itself. Hidden bodies (spectators/the dead) and sleepers don't
-    // push: nothing should nudge the player off a bedside vigil, and nothing
-    // is there to touch when the body isn't rendered.
     use petramond::net::protocol::PlayerStateRow;
     use petramond::player::PlayerId;
 
@@ -92,7 +85,7 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
     let mut game = game();
     let own_id = game.game.replica.entities.self_id();
     let start = WorldPos::new(8.0, 64.0, 8.0);
-    let overlap = WorldPos::new(8.2, 64.0, 8.0); // just east, footprints overlapping
+    let overlap = WorldPos::new(8.2, 64.0, 8.0);
 
     let run = |game: &mut common::TestGame, row: PlayerStateRow| {
         game.local.player.pos = start;
@@ -123,22 +116,18 @@ fn a_remote_player_pushes_the_local_player_per_frame() {
 #[test]
 fn cannot_place_a_solid_block_inside_a_mob() {
     let mut game = game_on_empty_chunk();
-    game.server_player_mut().inventory = filled_inventory(); // a stack of Dirt
+    game.server_player_mut().inventory = filled_inventory();
     game.server_player_mut().inventory.set_active(0);
-    // Park the player far off so only the mob can block placement here.
     game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
 
-    // An owl standing in cell (8, 200, 8), high up and clear of the player.
     assert!(game.server_world_mut().mobs_mut().spawn(
         Mob::Owl,
         WorldPos::new(8.5, 200.0, 8.5),
         0.0
     ));
 
-    // Aiming a Dirt block into the owl's cell does nothing: no block lands and the
-    // held stack isn't consumed.
     let before = game.server_player().inventory.selected().unwrap().count;
-    game.session_mut().input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
+    game.session_mut().input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y));
     assert!(
         !game.sim_mut().try_place_for_test(),
         "a solid block can't be placed inside the owl"
@@ -154,8 +143,7 @@ fn cannot_place_a_solid_block_inside_a_mob() {
         "the held item wasn't consumed"
     );
 
-    // A cell clear of the owl (and the player) places as usual.
-    game.session_mut().input_mut().look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y)); // p = (0, 200, 0)
+    game.session_mut().input_mut().look = Some(hit(IVec3::new(0, 199, 0), IVec3::Y));
     assert!(
         game.sim_mut().try_place_for_test(),
         "an empty cell places normally"
@@ -169,9 +157,8 @@ fn cannot_place_a_solid_block_inside_a_mob() {
 #[test]
 fn cannot_place_a_solid_block_inside_another_player() {
     let mut game = game_on_empty_chunk();
-    game.server_player_mut().inventory = filled_inventory(); // a stack of Dirt
+    game.server_player_mut().inventory = filled_inventory();
     game.server_player_mut().inventory.set_active(0);
-    // Park the placer far off so only the other session can block placement here.
     game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
 
     let other = game
@@ -181,7 +168,7 @@ fn cannot_place_a_solid_block_inside_another_player() {
         )));
 
     let before = game.server_player().inventory.selected().unwrap().count;
-    game.session_mut().input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y)); // p = (8, 200, 8)
+    game.session_mut().input_mut().look = Some(hit(IVec3::new(8, 199, 8), IVec3::Y));
     assert!(
         !game.sim_mut().try_place_for_test(),
         "a solid block can't be placed inside another live player"
@@ -216,8 +203,6 @@ fn cannot_place_a_solid_block_inside_another_player() {
     );
 }
 
-/// Latch a PvP attack click at `target`, the way an `Action(AttackClick)`
-/// message does (mob and player are mutually exclusive on a click).
 fn click_attack_player(
     game: &mut super::super::common::TestGame,
     target: petramond::player::PlayerId,
@@ -228,8 +213,6 @@ fn click_attack_player(
     }));
 }
 
-/// Two sessions in reach; a fist guarantees the deterministic (1.0, 1.0)
-/// damage roll.
 fn pvp_pair(game: &mut super::super::common::TestGame) -> usize {
     game.server_player_mut().pos = WorldPos::new(0.5, 64.0, 0.5);
     game.server_player_mut().inventory = petramond_world::inventory::Inventory::new();
@@ -286,7 +269,7 @@ fn a_pvp_attack_damages_the_target_through_the_funnel_with_knockback_and_cooldow
 fn a_pvp_attack_out_of_reach_lands_no_damage() {
     let mut game = game();
     let t = pvp_pair(&mut game);
-    game.session_at_mut(t).player_mut().pos = WorldPos::new(20.5, 64.0, 0.5); // beyond REACH + 1
+    game.session_at_mut(t).player_mut().pos = WorldPos::new(20.5, 64.0, 0.5);
     let h0 = game.session_at(t).player().health();
     let target_id = game.session_at(t).id();
 
@@ -304,7 +287,6 @@ fn spectators_neither_attack_nor_take_pvp_hits() {
     let t = pvp_pair(&mut game);
     let target_id = game.session_at(t).id();
 
-    // A spectator TARGET can't be hit.
     game.session_at_mut(t)
         .player_mut()
         .set_mode(petramond::player::PlayerMode::Spectator);
@@ -315,7 +297,6 @@ fn spectators_neither_attack_nor_take_pvp_hits() {
     assert_eq!(game.session_at(t).player().health(), h0);
     assert_eq!(game.session_at(t).player().vel, Vec3::ZERO);
 
-    // A spectator ATTACKER can't hit.
     game.session_at_mut(t)
         .player_mut()
         .set_mode(petramond::player::PlayerMode::Survival);
@@ -370,16 +351,14 @@ fn a_cancelled_player_damage_pre_suppresses_pvp_damage_and_knockback() {
     );
 }
 
-/// The knockback is tick-side VELOCITY-only (position follows client-side),
-/// so the victim's transform-drift check must catch a vel change and ship the
-/// `SelfState::transform` echo — otherwise the victim's own physics never
-/// learns the new velocity.
+/// Knockback is tick-side and velocity-only (position follows on the client). The victim's
+/// drift check has to notice a vel change and ship the `SelfState::transform` echo - otherwise
+/// the victim's own physics never learns the new velocity.
 #[test]
 fn pvp_knockback_ships_the_victims_vel_echo() {
     let mut game = game();
     let t = pvp_pair(&mut game);
     let target_id = game.session_at(t).id();
-    // What the victim's client last claimed: its exact pre-hit transform.
     let reported = {
         let p = &game.session_at(t).player();
         petramond::net::protocol::SelfTransform {
@@ -419,9 +398,6 @@ fn pvp_knockback_ships_the_victims_vel_echo() {
     );
 }
 
-/// Client-side PvP targeting: a visible, alive remote body under the
-/// crosshair is targeted (nearest wins vs mobs; at most one target kind is
-/// set); dead/invisible remotes are ignored.
 #[test]
 fn refresh_target_picks_remote_players_competing_with_mobs() {
     use petramond::net::protocol::PlayerStateRow;
@@ -467,7 +443,6 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     let dir = game.local.cam.forward();
     let own_id = game.game.replica.entities.self_id();
 
-    // A remote body two metres ahead, feet dropped so the level ray crosses it.
     let mut feet = game.local.cam.pos + dir * 2.0;
     feet.y -= 1.0;
     game.game.replica.entities.players_mut().apply_snapshot(
@@ -487,7 +462,6 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
         "an entity target clears the block look"
     );
 
-    // A mob NEARER than the remote wins the distance competition.
     let mut mob_feet = game.local.cam.pos + dir * 1.2;
     mob_feet.y -= 0.35;
     game.game.replica.entities.mobs_mut().apply_snapshot(&[
@@ -518,7 +492,6 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     assert_eq!(game.local.targeted_mob, Some(42), "the nearer mob wins");
     assert!(game.local.targeted_player.is_none());
 
-    // A hidden (dead/spectator) remote is never targeted.
     game.game.replica.entities.mobs_mut().apply_snapshot(&[]);
     game.game.replica.entities.players_mut().apply_snapshot(
         &[remote_row(1, feet, false)],
@@ -532,12 +505,6 @@ fn refresh_target_picks_remote_players_competing_with_mobs() {
     );
 }
 
-/// A frame hitch (opening the inventory, the ESC pause transition) pumps
-/// SEVERAL fixed ticks at once, and a fast fall legitimately covers more
-/// than two blocks across them. The pump's teleport detector must scale its
-/// discontinuity bound with the ticks it actually ran — a fixed bound reset
-/// the fall tracker mid-fall, so flashing a menu while falling landed
-/// without damage.
 #[test]
 fn multi_tick_pumps_never_eat_fall_damage() {
     let mut game = game();
@@ -549,8 +516,6 @@ fn multi_tick_pumps_never_eat_fall_damage() {
     sess.sim_mut().fall.reset(79.0);
     let start = sess.player_mut().health();
 
-    // Every "frame" runs three fixed ticks — the hitchy cadence a menu
-    // open produces. The fall is pure server F2 integration (no claims).
     for _ in 0..300 {
         game.pump_server(3.0 * TICK_DT);
         if game.server_player().on_ground {
@@ -561,8 +526,6 @@ fn multi_tick_pumps_never_eat_fall_damage() {
         game.server_player().on_ground,
         "the drop lands on the floor"
     );
-    // One more hitchy frame so the landing tick's pending fall drains even
-    // if it straddled the pump boundary.
     game.pump_server(3.0 * TICK_DT);
 
     let lost = start - game.server_player().health();

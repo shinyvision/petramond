@@ -5,9 +5,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use super::super::side::TerrainRenderState;
 use super::column_cy_bit;
 
-/// The replica's mesh store and the per-column indexes derived from it — the
-/// single funnel that keeps `meshes`, `mesh_columns`, `mesh_column_cys` and
-/// the upload bookkeeping in step.
 impl TerrainRenderState {
     #[inline]
     pub(in crate::world) fn column_has_mesh(&self, pos: ChunkPos) -> bool {
@@ -62,15 +59,10 @@ impl TerrainRenderState {
 }
 
 impl ReplicaWorld {
-    /// Iterate loaded section meshes for rendering (caller culls by camera).
     pub fn iter_meshes(&self) -> impl Iterator<Item = (SectionPos, &ChunkMesh)> {
         self.side.terrain.meshes.iter().map(|(p, m)| (*p, m))
     }
 
-    /// Hand every meshed column to the renderer again, as if each had just
-    /// been meshed: for a renderer that dropped its copies of this world while
-    /// it presented another one. Released CPU geometry comes back through the
-    /// renderer's ordinary repack path.
     pub fn redeliver_meshes(&mut self) {
         self.side.terrain.redeliver_meshes();
     }

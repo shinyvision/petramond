@@ -11,7 +11,6 @@ fn bucket_rays_key_on_the_fluid_rows() {
     });
 }
 
-/// Eye three blocks over the top face of `cell`, looking straight down.
 fn eye_over(cell: IVec3) -> (petramond_math::world_pos::WorldPos, Vec3) {
     let eye = petramond_math::world_pos::WorldPos::new(
         cell.x as f64 + 0.5,
@@ -21,10 +20,6 @@ fn eye_over(cell: IVec3) -> (petramond_math::world_pos::WorldPos, Vec3) {
     (eye, Vec3::new(0.0, -1.0, 0.0))
 }
 
-/// The fill ray keys on the bucket's predicate over the fluid, not on one
-/// concrete fluid: a bucket that takes any fluid stops on a syrup source, and
-/// a brine-only bucket reads THROUGH that same syrup to the floor beneath — a
-/// fluid the bucket does not take is as transparent as flow.
 fn fill_ray_stops_on_a_source_only_when_the_bucket_takes_its_fluid() {
     let (brine, syrup) = (block(BRINE), block(SYRUP));
     let mut w = flat_server_world();
@@ -47,8 +42,6 @@ fn fill_ray_stops_on_a_source_only_when_the_bucket_takes_its_fluid() {
     );
 }
 
-/// The pour ray stops at the FIRST fluid cell of any fluid, so pouring at a
-/// two-deep pool targets its surface cell (normal up), never the pool floor.
 fn pour_ray_stops_at_the_surface_of_any_fluid() {
     for fluid in [block(BRINE), block(SYRUP)] {
         let mut w = flat_server_world();

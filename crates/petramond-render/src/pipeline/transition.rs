@@ -1,22 +1,12 @@
-//! Texture-transition tables, resolved at pipeline construction into WGSL
-//! constants: no per-frame buffer, and the shader indexes by the set and
-//! local material ids the mesher encoded.
-
 use petramond_world::texture_transition::{Rules, MAX_MATERIALS_PER_SET};
 use std::fmt::Write;
 
-/// Rows per set in the face table: local ids 0..=15, three face classes each.
 const ROWS_PER_SET: usize = (MAX_MATERIALS_PER_SET + 1) * 3;
 
 pub(super) fn declarations() -> String {
     declarations_for(petramond_world::texture_transition::rules())
 }
 
-/// `TRANSITION_SET[set] = (mask base tile, width texels, tinted, face-row
-/// offset)`; `TRANSITION_FACES[offset + local * 3 + face] = (base tile,
-/// overlay tile, flags)`, flags bit 0 = base tinted, 1 = has overlay, 2 =
-/// overlay tinted. Local id 0 (no donor) rows stay zero. WGSL arrays need a
-/// length, so a world without sets still declares one empty entry.
 pub(super) fn declarations_for(rules: &Rules) -> String {
     let sets = rules.sets.len();
     let mut text = format!(

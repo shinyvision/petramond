@@ -1,13 +1,6 @@
-//! Per-frame dynamic CPU geometry bakes for [`Renderer`], lifted verbatim out
-//! of `render`'s prologue. Three `&mut self` steps run before encoding:
-//! overlay-buffer refresh, held-item geometry, and the world-instance bakes.
-//! Behavior, ordering, borrow/scratch-reuse patterns are byte-for-byte identical.
-
 use super::*;
 
 impl Renderer {
-    /// The frame's CPU lighting environment (sky scale + colour), mirroring the
-    /// shader uniform lanes for the explicit-shade dynamic bakes.
     #[inline]
     pub(super) fn light_env(&self) -> crate::lighting::LightEnv {
         crate::lighting::LightEnv {
@@ -16,15 +9,11 @@ impl Renderer {
         }
     }
 
-    /// The two-channel light sampled at the local player, lighting every
-    /// held-item variant.
     #[inline]
     pub(super) fn held_item_light(&self) -> crate::lighting::DynLight {
         crate::lighting::DynLight::new(self.hand.held_item_skylight, self.hand.held_item_blocklight)
     }
 
-    /// Refresh the crosshair + selection-outline vertex buffers when their
-    /// inputs changed (resize / new target). Extracted from `render`'s prologue.
     pub(super) fn refresh_overlay_buffers(&mut self) {
         if !self.chrome.crosshair_visible {
             self.chrome.crosshair_vertex_count = 0;
@@ -43,8 +32,6 @@ impl Renderer {
             self.chrome.crosshair_drawn_size = (self.config.width, self.config.height);
         }
 
-        // Refresh the outline vertex buffer only when the target (or the render
-        // origin its vertices are relative to) changed.
         let origin = self.view.render_origin;
         let wanted = self.chrome.selection.map(|shape| (shape, origin));
         if wanted != self.chrome.selection_drawn {
@@ -67,9 +54,6 @@ impl Renderer {
         }
     }
 
-    /// Bake every dynamic world subsystem (item-entity, item-model-entity, block-entity,
-    /// mob, break, particle) for this frame, in the order that reuses the
-    /// shared item-entity scratch. Extracted verbatim from `render`.
     pub(super) fn bake_world_instances(&mut self) {
         let render_origin = self.view.render_origin;
         let visible_world_aabb =
@@ -79,18 +63,9 @@ impl Renderer {
                     max.relative_to(render_origin),
                 )
             };
-        // Bake the dynamic world subsystems. Item-entity, block-entity, and break-overlay
-        // each clear-and-refill the SAME shared CPU scratch (`item_entity_verts` /
-        // `item_entity_indices`) in this exact order — `bake` (clear count → build
-        // → grow → upload to that subsystem's OWN buffers → store count) runs
-        // sequentially, never aliasing two GPU buffers at once.
 
-        // Item entities (spinning cubes / extruded sprite slabs), frustum-culled
-        // so off-screen drops cost nothing. Cubes ride the EXISTING opaque
-        // pipeline; sprites bake below into their explicit-UV stream.
         self.item_entity.visible.clear();
         for inst in &self.item_entity.instances {
-            // ~0.5 m cull box around the item centre.
             let c = inst.pos;
             let min = c - glam::Vec3::splat(0.5);
             let max = c + glam::Vec3::new(0.5, 1.0, 0.5);
@@ -98,18 +73,6 @@ impl Renderer {
                 self.item_entity.visible.push(*inst);
             }
         }
-        // Re-cull against THIS frame's camera, like the item entities above.
-        // The gather already culled, but against the camera the game thread
-        // published. Recorded as INDICES into the published list, not as a filtered copy
-        // of it: the published list is state (narrowing it in place would make
-        // the next frame's contents depend on where this frame's camera
-        // pointed), but saying WHICH rows survived costs a `u32`, where
-        // cloning them cost an atomic refcount pair and ~96 bytes each.
-        //
-        // The bound is the set's OWN, carried into world axes by its transform:
-        // a set is authored in its block's footprint space and may reach a few
-        // cells, and a hardcoded box big enough for the largest machine is a
-        // cull that stops culling.
         let mut visible_draws = std::mem::take(&mut self.item_entity.block_draws_visible);
         visible_draws.clear();
         visible_draws.extend(
@@ -150,7 +113,6 @@ impl Renderer {
                 indices.len() as u32
             },
         );
-        // Dropped bbmodel items (their own model atlas), baked from the same visible set.
         let visible = &self.item_entity.visible;
         let env = self.light_env();
         self.item_entity.model_draw.bake(
@@ -159,7 +121,6 @@ impl Renderer {
             &mut self.item_entity.model_verts,
             &mut self.item_entity.model_indices,
             |verts, indices| {
-                // Two producers: the count is the buffer's (see above).
                 crate::item_entity::build_item_model_entities(
                     visible,
                     render_origin,
@@ -171,8 +132,6 @@ impl Renderer {
                 indices.len() as u32
             },
         );
-        // Dropped sprite items as extruded pixel-perfect 3D slabs (block atlas,
-        // explicit-UV stream), spinning + bobbing like the cubes above.
         let visible = &self.item_entity.visible;
         let mut sprite_scratch = std::mem::take(&mut self.item_entity.sprite_scratch);
         self.item_entity.sprite_draw.bake(
@@ -181,7 +140,6 @@ impl Renderer {
             &mut self.item_entity.sprite_verts,
             &mut self.item_entity.sprite_indices,
             |verts, indices| {
-                // Two producers: the count is the buffer's (see above).
                 crate::item_entity::build_item_sprite_entities(
                     visible,
                     render_origin,
@@ -203,10 +161,6 @@ impl Renderer {
         self.item_entity.sprite_scratch = sprite_scratch;
         self.item_entity.block_draws_visible = visible_draws;
 
-        // Animated blocks (chest lids, door and trapdoor swings, a pack's
-        // own), frustum-culled against the bounds their model's swing sweeps
-        // and baked into ONE stream drawn by the EXISTING opaque pipeline,
-        // reusing the item entities' CPU scratch.
         self.block_entity.visible.clear();
         for inst in &self.block_entity.instances {
             let Some(model) = inst.block.animated_model() else {
@@ -219,8 +173,6 @@ impl Renderer {
                 self.block_entity.visible.push(*inst);
             }
         }
-        // Static geometry: rebake only when the visible set or the origin its
-        // vertices are relative to actually changed (see `baked`).
         if self.block_entity.baked_origin != render_origin
             || self.block_entity.visible != self.block_entity.baked
         {
@@ -244,24 +196,10 @@ impl Renderer {
             self.block_entity.baked_origin = render_origin;
         }
 
-        // Mobs (animated entity models), grouped by species and frustum-culled, then
-        // POSED into the frame's skin batch: one bone palette run + one instance row
-        // each, contiguous per species so each species draws as one instanced call
-        // over its static mesh. Each instance is posed by the walk animation at its
-        // `anim_time` when moving, else the model's rest pose. Player bodies join the
-        // same batch below; it uploads once after both.
         for g in &mut self.actor.mob_gpu {
             g.visible.clear();
         }
-        // Visibility is recorded as INDICES into the published rows, like the
-        // draw sets above: a species' batch names which rows survived rather
-        // than copying them.
         for (i, inst) in self.actor.mobs.iter().enumerate() {
-            // Cull box: the species' rest-pose bounds × scale + slack around the
-            // feet (`MobGpu::cull_*`, computed at construction) — a hardcoded pad
-            // clipped every species taller than it. A killed mob is flung from its
-            // (frozen) death point and tumbles across the ground, so use a generous
-            // box while it's ragdolling so the flying corpse doesn't pop out of view.
             let g = &self.actor.mob_gpu[inst.kind.0 as usize];
             let (min, max) = if inst.ragdoll.is_some() {
                 let pad = glam::Vec3::splat(6.0);
@@ -301,15 +239,9 @@ impl Renderer {
             );
         }
 
-        // Player bodies + their held items: the LOCAL third-person body (when
-        // the view is up) plus EVERY remote player, each posed by the client's
-        // animation and carrying its own held views, frustum-culled like mobs
-        // and ALL placed into the skin batch as one contiguous instance range
-        // (every body shares the rig's mesh + skin bind). Held items
-        // accumulate per render kind into three combined streams — block
-        // mini-cubes on the packed opaque stream, extruded sprites and bbmodel
-        // items on explicit-UV streams split by atlas — each uploaded and
-        // drawn once regardless of player count.
+        // The local third-person body and every remote player are culled like mobs and share one
+        // skin batch range, since they share the rig's mesh and bind. Held items batch per render
+        // kind, so each stream is uploaded and drawn once regardless of player count.
         self.actor.player_visible.clear();
         {
             let pad = glam::Vec3::new(1.0, 2.2, 1.0);
@@ -320,8 +252,6 @@ impl Renderer {
                 }
             }
         }
-        // Combined held-item streams taken out so the loop below can borrow
-        // them alongside `self` reads (restored after the uploads).
         let mut streams = HeldStreams {
             sprite_verts: std::mem::take(&mut self.actor.item_verts),
             sprite_indices: std::mem::take(&mut self.actor.item_indices),
@@ -350,16 +280,10 @@ impl Renderer {
                 render_origin,
                 &mut self.actor.skin.batch,
             );
-            // claimed poses ride their own per-hand attach frames (the off
-            // frame mirrors the pose, lefthand-style), upstream of the
-            // per-render-kind transforms below so every kind wears them.
             let hand = crate::player_model::posed_hand(hand, &held.pose.third_person, false);
             let off_hand = crate::player_model::posed_hand(off_hand, &off.pose.third_person, true);
 
             let light = crate::lighting::DynLight::new(inst.skylight, inst.blocklight);
-            // A sleeper's hands are empty — the held items would poke through
-            // the bed. Each hand emits its own item with its own attach
-            // transforms (the off set is the mirrored twin).
             for (view, hand_mat, off_side) in [(held, hand, false), (off, off_hand, true)] {
                 let grip = if off_side {
                     crate::player_model::Grip::body_off(hand_mat)
@@ -381,8 +305,6 @@ impl Renderer {
             }
         }
         self.actor.player_gpu.drawn = bodies_first..self.actor.skin.batch.next_instance();
-        // Every mob and body is posed: one upload of the palette + instance
-        // rows serves every skinned draw this frame.
         self.actor.skin.upload(&self.device, &self.queue);
         for held in mob_held {
             streams.push(
@@ -404,8 +326,6 @@ impl Renderer {
             mut model_verts,
             mut model_indices,
         } = streams;
-        // Upload the three combined held-item streams (a stream that stayed
-        // empty draws nothing).
         let prebuilt = |_: &mut Vec<_>, i: &mut Vec<u32>| i.len() as u32;
         self.actor.item_draw.bake(
             &self.device,
@@ -474,11 +394,6 @@ impl Renderer {
             block_rows
         };
 
-        // Particle emitters (torch flames, mod content, burning mobs). The set
-        // arrives already culled against this frame's view volume — the gather
-        // holds the same frustum and fog distance published by `update_uniforms`
-        // above — so all that is left is the far-to-near order the alpha-blended
-        // cubes' rows are written (and so rasterized) in.
         let cam_pos = self.view.cam_pos;
         self.particle.emitters.sort_by(|a, b| {
             let da = (a.origin - cam_pos).length_squared();
@@ -508,8 +423,6 @@ impl Renderer {
             },
         );
 
-        // Entity blob shadows: the rows arrive ground-resolved + view-culled
-        // from the gather, so this is just the quad bake.
         let shadows = std::mem::take(&mut self.shadow.instances);
         self.shadow
             .draw
@@ -520,8 +433,6 @@ impl Renderer {
     }
 }
 
-/// The combined held-item streams of one frame, one per render kind, shared
-/// by every body and mob holding something.
 struct HeldStreams {
     block_verts: Vec<petramond_mesh::Vertex>,
     block_indices: Vec<u32>,
@@ -533,7 +444,6 @@ struct HeldStreams {
 }
 
 impl HeldStreams {
-    /// Append one held item seated at `grip` (the off-hand twins mirror it).
     #[allow(clippy::too_many_arguments)]
     fn push(
         &mut self,
@@ -563,8 +473,6 @@ impl HeldStreams {
                     light,
                     false,
                 );
-                // Instance-data tint on the held mini-cube (dyed wool in a
-                // remote or third-person hand).
                 crate::item_model::dye_block_verts(&mut self.block_verts[start..], variant);
                 crate::player_model::transform_positions(
                     self.block_verts[start..].iter_mut().map(|v| &mut v.pos),
@@ -572,9 +480,6 @@ impl HeldStreams {
                 );
             }
             petramond_world::item::ItemRenderKind::Sprite(tile) => {
-                // The extrusion clears its buffer and emits a non-indexed
-                // triangle list; transform in place, then append with
-                // sequential offset indices to ride the indexed draw.
                 let m = if off_side {
                     crate::player_model::held_sprite_off_at(grip)
                 } else {
@@ -596,7 +501,6 @@ impl HeldStreams {
                 self.sprite_indices.extend((0..count).map(|i| i + base));
             }
             petramond_world::item::ItemRenderKind::Model(kind) => {
-                // Appends with absolute indices into the shared buffer.
                 let m = if off_side {
                     crate::player_model::held_model_off_at(grip, kind)
                 } else {

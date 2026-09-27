@@ -124,7 +124,6 @@ fn button_fires_on_release_in_and_cancels_on_release_out() {
         "{ev:?}"
     );
 
-    // Press in, drag out, release: no click.
     let ev = h.frame(&[
         down(bx, by),
         InputEvent::PointerMove { x: 1.0, y: 1.0 },
@@ -147,7 +146,6 @@ fn toggle_reports_inverted_bound_state() {
             .any(|e| matches!(e, UiEvent::Toggle { id, on: true, .. } if id == "snd")),
         "{ev:?}"
     );
-    // Host applies it; next toggle reports off.
     h.state.set("sound_on", UiValue::Bool(true));
     h.frame(&[]);
     let ev = h.frame(&[down(tx, ty), up(tx, ty)]);
@@ -157,9 +155,6 @@ fn toggle_reports_inverted_bound_state() {
         "{ev:?}"
     );
 
-    // The pressing BUTTON rides the event, exactly as it does on a click:
-    // whether a right-click flips a checkbox is a host policy, and a host that
-    // cannot see which button pressed cannot have one.
     let ev = h.frame(&[
         InputEvent::PointerDown {
             x: tx,
@@ -192,7 +187,6 @@ fn slider_quantizes_live_and_commits_on_release() {
     let mut h = Harness::new();
     h.frame(&[]);
     let r = h.out.rect("vol").unwrap();
-    // Press at ~62% of the track: snaps to 50 with step 25.
     let x = r.x as f32 + r.w as f32 * 0.62;
     let y = (r.y + r.h / 2) as f32;
     let ev = h.frame(&[down(x, y)]);
@@ -203,7 +197,7 @@ fn slider_quantizes_live_and_commits_on_release() {
         ),
         "{ev:?}"
     );
-    let end = r.x as f32 + r.w as f32 + 50.0; // drag past the end clamps to max
+    let end = r.x as f32 + r.w as f32 + 50.0;
     let ev = h.frame(&[InputEvent::PointerMove { x: end, y }, up(end, y)]);
     assert!(
         ev.iter().any(
@@ -240,8 +234,6 @@ fn text_input_focus_type_submit() {
             .any(|e| matches!(e, UiEvent::Submit { id, text } if id == "name" && text == "Hi")),
         "{ev:?}"
     );
-    // An unfocused char edits nothing and reaches the screen as a key; ESC
-    // blurs first.
     let ev = h.frame(&[
         InputEvent::Key {
             key: NavKey::Escape,
@@ -359,7 +351,7 @@ fn list_selects_on_down_and_activates_on_double_click() {
     let mut h = Harness::new();
     h.frame(&[]);
     let rows = h.out.rect("rows").unwrap();
-    let (rx, ry) = (rows.x as f32 + 10.0, rows.y as f32 + 50.0); // second row (20 logical = 40 phys)
+    let (rx, ry) = (rows.x as f32 + 10.0, rows.y as f32 + 50.0);
     let ev = h.frame(&[down(rx, ry), up(rx, ry)]);
     assert!(
         ev.iter()
@@ -380,7 +372,6 @@ fn wheel_scrolls_and_clamps() {
     h.frame(&[]);
     let sc = h.out.rect("sc").unwrap();
     let (sx, sy) = ((sc.x + sc.w / 2) as f32, (sc.y + sc.h / 2) as f32);
-    // Content: 6 rows × 20 = 120; viewport 40 → max offset 80.
     h.frame(&[
         InputEvent::PointerMove { x: sx, y: sy },
         InputEvent::Scroll { delta: 500 },
@@ -404,11 +395,6 @@ fn wheel_scrolls_and_clamps() {
 fn click_outside_panel_reports_throw_territory() {
     let mut h = Harness::new();
     h.frame(&[]);
-    // Panel is 200×200 logical centered in 200×200 logical viewport — it
-    // fills the screen, so shrink: click at panel edge+ works only if
-    // outside root. Use a corner outside the centered panel: the root IS
-    // 200x200 at 0,0 filling everything, so instead verify a click on
-    // empty panel space does NOT emit ClickOutside.
     let ev = h.frame(&[down(300.0, 390.0)]);
     assert!(
         !ev.iter().any(|e| matches!(e, UiEvent::ClickOutside { .. })),
@@ -454,7 +440,6 @@ fn slot_grid_cells_map_row_major_and_click_on_down() {
     };
     frame(&[], &mut fs, &mut out);
     assert_eq!(out.slots.len(), 7);
-    // Cell 4 = row 1, col 1 of the grid; cell 6 = the standalone slot.
     let cell4 = out.slots.iter().find(|s| s.index == 4).unwrap();
     let cell1 = out.slots.iter().find(|s| s.index == 1).unwrap();
     assert_eq!(cell4.rect.x, cell1.rect.x);
@@ -482,7 +467,6 @@ fn slot_grid_cells_map_row_major_and_click_on_down() {
             if role == "storage")),
         "{ev:?}"
     );
-    // Hover reporting names the same cell.
     assert_eq!(out.hover_slot, Some(("storage".into(), 4)));
 }
 
@@ -935,7 +919,6 @@ fn tab_doc() -> Arc<Document> {
     )
 }
 
-/// The physical center of tab cell `i` (the bar solves at scale 2).
 fn tab_center(out: &FrameOutput, theme: &Theme, doc: &Document, i: usize) -> (f32, f32) {
     let phys = out.rect("tabs").unwrap();
     let logical = RectI {
@@ -987,7 +970,6 @@ fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
     frame(&state, &mut fs, &mut out, &[]);
     let (mx, my) = tab_center(&out, &theme, &doc, 1);
 
-    // Fires on pointer DOWN, before any release.
     let ev = frame(&state, &mut fs, &mut out, &[down(mx, my)]);
     assert_eq!(
         ev,
@@ -998,7 +980,6 @@ fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
     );
     assert_eq!(frame(&state, &mut fs, &mut out, &[up(mx, my)]), vec![]);
 
-    // The gap between cells hits nothing.
     let (wx, _) = tab_center(&out, &theme, &doc, 0);
     let bar = out.rect("tabs").unwrap();
     let NodeKind::TabBar { tabs } = &doc.root.children[0].kind else {
@@ -1010,7 +991,6 @@ fn tab_bar_fires_on_down_and_respects_enabled_and_gaps() {
     assert_eq!(ev, vec![], "gap between tabs is inert (x={gap_x}, w0={w0})");
     let _ = wx;
 
-    // A disabled bar fires nothing.
     state.set("tabs_on", UiValue::Bool(false));
     let ev = frame(&state, &mut fs, &mut out, &[down(mx, my), up(mx, my)]);
     assert_eq!(ev, vec![]);
@@ -1068,7 +1048,6 @@ fn tab_faces_track_bound_selection_and_hover() {
             [0, 0, 0, 255],
             &mut rgba,
         );
-        // Sample inside tab 0's fill, clear of the border and the label rows.
         let (cx, _) = tab_center(&out, &theme, &doc, 0);
         let bar = out.rect("tabs").unwrap();
         let (px, py) = (cx as u32, (bar.y + 10) as u32);
@@ -1084,10 +1063,6 @@ fn tab_faces_track_bound_selection_and_hover() {
     assert_ne!(selected, hovered);
 }
 
-/// A tooltip with a `hover` anchor expands only while its widget is under the
-/// cursor: hover is resolved after input and read by the NEXT frame's
-/// expansion, so the show/hide lands one frame after the pointer move — the
-/// same contract as hover-revealed list content.
 #[test]
 fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
     let doc = Arc::new(
@@ -1113,7 +1088,6 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
     let mut out = FrameOutput::default();
     let mut state = UiState::new();
     state.set("fill", UiValue::F32(0.5));
-    // The tip's TEXT is its visibility: a non-empty string is true.
     state.set("tip", UiValue::Str("Iron".to_owned()));
     let run = |fs: &mut FrameState, out: &mut FrameOutput, input: &[InputEvent]| {
         rt.frame(
@@ -1167,7 +1141,6 @@ fn a_hover_anchored_tooltip_shows_only_over_its_widget() {
         "off the widget, it hides again"
     );
 
-    // An EMPTY published string hides it even under the cursor (Str-as-bool).
     let mut empty = UiState::new();
     empty.set("fill", UiValue::F32(0.5));
     empty.set("tip", UiValue::Str(String::new()));
@@ -1339,8 +1312,6 @@ fn compact_breakpoint_swaps_node_layouts_by_viewport_width() {
     );
 }
 
-// ---- grid lists + floating tooltips ----------------------------------------
-
 fn tip_doc(offset: bool) -> Arc<Document> {
     let abs = if offset {
         r#""abs": { "x": 4, "y": 4 }, "#
@@ -1381,8 +1352,6 @@ struct TipHarness {
 }
 
 impl TipHarness {
-    /// `enabled` applies to every cell — a grid of unaffordable recipes is the
-    /// case the tooltip exists for.
     fn new(cells: usize, enabled: bool) -> TipHarness {
         TipHarness::with_offset(cells, enabled, true)
     }
@@ -1434,8 +1403,6 @@ fn a_tooltip_follows_the_pointer_and_flips_instead_of_leaving_the_viewport() {
     let tip = h.out.rect("tip").expect("tooltip solves");
     assert_eq!((tip.x, tip.y), (54, 64), "offset by the node's abs");
 
-    // Near the right/bottom edge it flips to the other side of the cursor so
-    // it never covers what is being pointed at.
     h.frame(
         (200, 200),
         &[InputEvent::PointerMove { x: 190.0, y: 195.0 }],
@@ -1447,14 +1414,11 @@ fn a_tooltip_follows_the_pointer_and_flips_instead_of_leaving_the_viewport() {
 
 #[test]
 fn a_tooltip_never_takes_the_input_under_it() {
-    // No `abs` offset: the tooltip sits exactly on the pointer, which is the
-    // only way it can cover what the pointer is over.
     let mut h = TipHarness::with_offset(3, true, false);
     h.frame((200, 200), &[]);
     let cell = h.out.rect("cell").expect("first cell solves");
     let (cx, cy) = ((cell.x + cell.w / 2) as f32, (cell.y + cell.h / 2) as f32);
 
-    // The tooltip is now parked right on top of the cell it describes.
     h.frame((200, 200), &[InputEvent::PointerMove { x: cx, y: cy }]);
     let tip = h.out.rect("tip").unwrap();
     assert!(
@@ -1508,8 +1472,6 @@ fn tooltip_chrome_lands_in_the_overlay_tier_after_every_base_batch() {
         !draw.overlay_batches().is_empty(),
         "the tooltip painted an overlay tier"
     );
-    // The host draws its own content between the two tiers, so the split must
-    // be a real vertex boundary and not a merged batch.
     let last_base = draw.base_batches().last().unwrap();
     let first_overlay = draw.overlay_batches().first().unwrap();
     assert!(first_overlay.start >= last_base.start + last_base.count);
@@ -1522,9 +1484,6 @@ fn tooltip_chrome_lands_in_the_overlay_tier_after_every_base_batch() {
     );
 }
 
-/// A bitmap font has exactly one crisp size, so "smaller text" has to come
-/// from drawing at a smaller INTEGER multiple of the gui scale — never from
-/// resampling the glyphs, which would blur them.
 #[test]
 fn a_small_label_shrinks_by_one_gui_scale_step_and_never_clips_its_ink() {
     let doc = Arc::new(
@@ -1563,15 +1522,12 @@ fn a_small_label_shrinks_by_one_gui_scale_step_and_never_clips_its_ink() {
         (out.rect("normal").unwrap(), out.rect("small").unwrap())
     };
 
-    // At scale 1 there is no smaller step, so both are identical.
     let (normal, small) = solve_at(1);
     assert_eq!(normal.w, small.w, "no step to take at gui scale 1");
 
-    // At 3, the small run draws at 2 physical px per font pixel: two thirds.
     let (normal, small) = solve_at(3);
     assert!(small.w < normal.w, "{small:?} vs {normal:?}");
     assert!(small.h < normal.h);
-    // Rects are physical here; the reserved box must still hold the ink.
     let font = theme.ui_font();
     let ink_w = font.width("Oak Door") * 2;
     assert!(
@@ -1579,16 +1535,9 @@ fn a_small_label_shrinks_by_one_gui_scale_step_and_never_clips_its_ink() {
         "reserved {} must not clip {ink_w} px of ink",
         small.w
     );
-    // ...and not by more than the rounding the integer step forces.
     assert!(small.w - ink_w < 3, "reserved {} vs ink {ink_w}", small.w);
 }
 
-/// Typing must not strand the caret on the last glyph.
-///
-/// The visible window is a character COUNT, so deriving it from the text
-/// already in the box makes it collapse: an empty box fits "zero characters",
-/// which scrolls every keystroke out of view and shows only the one just
-/// typed. The window has to come from the box's width alone.
 #[test]
 fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
     let mut h = Harness::new();
@@ -1612,8 +1561,6 @@ fn typing_a_word_keeps_it_visible_instead_of_scrolling_to_the_last_glyph() {
     assert_eq!(shown.text, "chest", "the whole word stays in view");
     assert_eq!(shown.cursor, 5, "and the caret is after it");
 
-    // The window is a property of the box: a wider box shows more, and it
-    // never depends on what has been typed into it.
     let font = h.rt.theme().ui_font();
     assert_eq!(
         crate::widget::input_visible_chars(font, font.max_advance() * 3),
@@ -1846,10 +1793,6 @@ fn surface_run(
     out.events.clone()
 }
 
-/// A document canvas paints its host scene inside its own rect only, and
-/// talks to its host in its own local coordinates: presses with a click
-/// streak, one move per frame, wheel travel that scrolls nothing around it,
-/// its size once and on change, and a leave.
 #[test]
 fn a_document_canvas_paints_its_scene_and_reports_the_pointer() {
     let doc = Arc::new(
@@ -1990,7 +1933,6 @@ fn a_document_canvas_paints_its_scene_and_reports_the_pointer() {
     )));
 }
 
-/// A button's icon can be document art, and a binding swaps it per frame.
 #[test]
 fn a_bound_icon_swaps_between_a_theme_part_and_document_art() {
     let doc = Arc::new(
@@ -2076,8 +2018,6 @@ fn a_list_row_painted_over_a_button_takes_the_press() {
     );
 }
 
-/// An icon-only tab names itself through the hovered item: the tab bar's
-/// id and the index of the tab under the pointer.
 #[test]
 fn the_tab_under_the_pointer_is_the_hovered_item() {
     let doc = Arc::new(

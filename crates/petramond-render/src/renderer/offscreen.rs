@@ -1,26 +1,11 @@
-//! Windowless rendering: a [`Renderer`] with no swapchain, plus one-frame
-//! capture straight to CPU pixels.
-//!
-//! A capture draws through the SAME `plan_draw_order` + frame graph the
-//! windowed game draws through — only the colour target differs — so the image
-//! is what the window would have shown. That makes it usable for looking at
-//! generated content without launching the game, and for visual regression
-//! tests later.
-
 use super::*;
 
-/// One rendered frame on the CPU: `width * height` tightly packed RGBA8
-/// pixels, top row first. Row padding from the GPU copy alignment is already
-/// stripped, and BGRA targets are already swizzled.
 pub struct RenderedFrame {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
 }
 
-/// Colour formats [`Renderer::capture_frame`] can read back: 8-bit, four
-/// channels, RGBA or BGRA order. Anything wider would silently skew the
-/// readback, which assumes [`TEXEL_BYTES`] per pixel.
 pub(super) const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -30,11 +15,6 @@ pub(super) const CAPTURE_FORMATS: [wgpu::TextureFormat; 4] = [
 
 const TEXEL_BYTES: u32 = 4;
 
-/// Build a renderer with no surface at `width` × `height`, rendering in
-/// `format` (one of `CAPTURE_FORMATS`), or why it cannot be built. Prefer an
-/// sRGB format: every pipeline (and the pre-baked icon atlas) is built for the
-/// colour format handed in here, and the windowed game runs on an sRGB
-/// swapchain.
 pub async fn new_offscreen_renderer(
     width: u32,
     height: u32,
@@ -46,8 +26,6 @@ pub async fn new_offscreen_renderer(
     let instance = wgpu::Instance::new(&super::construct::instance_descriptor());
     let adapter = super::construct::request_adapter(&instance, None).await?;
     let (device, queue) = super::construct::request_device(&adapter).await?;
-    // Present-only fields (`present_mode`, `alpha_mode`) are inert without a
-    // swapchain; `config` is the renderer's frame geometry + format either way.
     let config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format,
@@ -68,9 +46,6 @@ pub async fn new_offscreen_renderer(
 }
 
 impl Renderer {
-    /// Encode + submit one frame into a REUSED offscreen target, with no
-    /// readback. The frame-cost instrument: `capture_frame`'s per-call texture,
-    /// staging buffer and copy would dominate any repeated timing.
     pub fn render_offscreen(&mut self) {
         let (width, height) = (self.config.width, self.config.height);
         if self.offscreen_target.as_ref().map(|(w, h, _)| (*w, *h)) != Some((width, height)) {
@@ -103,12 +78,6 @@ impl Renderer {
         self.offscreen_target = Some((width, height, view));
     }
 
-    /// Render one frame into an owned offscreen target and read it back: the
-    /// window as it would show, the scene with the window's UI over it.
-    /// Blocks until the GPU is done. Works with or without a surface; nothing
-    /// is presented either way. Panics unless the renderer's colour format is
-    /// one of `CAPTURE_FORMATS` — a windowed renderer on an HDR swapchain is
-    /// not capturable.
     pub fn capture_frame(&mut self) -> RenderedFrame {
         let (width, height) = (self.config.width, self.config.height);
         let format = self.config.format;
@@ -161,11 +130,6 @@ impl Renderer {
     }
 }
 
-/// Repack a `copy_texture_to_buffer` readback as tightly packed RGBA8: every
-/// source row is padded up to [`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`], and a
-/// BGRA target needs red and blue swapped. Getting either wrong yields a frame
-/// that is skewed or channel-swapped yet still plausible, so this is kept apart
-/// from the GPU work and tested.
 pub(super) fn pack_rows(
     mapped: &[u8],
     width: u32,

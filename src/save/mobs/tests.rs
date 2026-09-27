@@ -56,8 +56,6 @@ fn mobs_roundtrip_through_a_buffer() {
     assert_eq!(got.live, [a, b], "every persisted field survives");
 }
 
-/// A species this build cannot resolve is kept in disk form beside the live
-/// mobs — its tags and slots intact — and re-encodes byte for byte.
 #[test]
 fn a_mob_this_build_cannot_spawn_is_kept_and_written_back() {
     let known = crate::mob::defs().len() as u8;
@@ -91,8 +89,6 @@ fn a_mob_this_build_cannot_spawn_is_kept_and_written_back() {
     );
 }
 
-/// A known species carrying an item this world cannot resolve, or a field
-/// this build does not know, stays in disk form rather than losing either.
 #[test]
 fn a_known_mob_with_unresolvable_content_is_kept_whole() {
     let pal = Palette::identity();
@@ -117,8 +113,6 @@ fn empty_list_roundtrips() {
 
 #[test]
 fn a_shared_tag_key_is_stored_once_and_read_back_by_every_mob() {
-    // Two mobs carrying the same key must encode the string ONCE (the
-    // table) — a regression to per-record strings doubles the bytes.
     let key = crate::mob::tags::CONFINED;
     let penned = |x| SavedMob {
         kind: Mob::Sheep,
@@ -147,8 +141,6 @@ fn a_shared_tag_key_is_stored_once_and_read_back_by_every_mob() {
 
 #[test]
 fn a_tag_key_index_outside_the_table_is_rejected() {
-    // One mob, an EMPTY table, but its tag claims table index 0: the reader
-    // must refuse the record, not invent a key or desync.
     let list = MobList {
         keys: Vec::new(),
         mobs: vec![MobRecord {

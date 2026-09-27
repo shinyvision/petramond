@@ -1,13 +1,6 @@
-//! GPU texture uploads: atlases, model sheets, GUI panels, the scene colour
-//! and depth targets.
-
 use crate::atlas::decode_atlas_mips;
 use crate::texture_mips::build_cutout_mips;
 
-/// Upload a standalone GUI PNG (e.g. the HUD heart atlas) as its own
-/// texture + nearest sampler (sRGB, like the gui atlas), or `None` when the
-/// bytes do not decode. Arbitrary size — each PNG is its own image, not a
-/// fixed atlas slot.
 pub(crate) fn create_gui_panel(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -17,7 +10,6 @@ pub(crate) fn create_gui_panel(
     Some(create_rgba_nearest(device, queue, &img, "gui panel"))
 }
 
-/// Upload one pack sky texture for a shader texture slot.
 pub(crate) fn create_sky_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -27,8 +19,6 @@ pub(crate) fn create_sky_texture(
     Some(create_rgba_nearest(device, queue, &img, "sky texture"))
 }
 
-/// Upload a single fallback pixel for fixed bind slots whose pack texture is
-/// absent or invalid.
 pub(crate) fn create_solid_rgba_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -39,8 +29,6 @@ pub(crate) fn create_solid_rgba_texture(
     create_rgba_nearest(device, queue, &img, label)
 }
 
-/// Shared single-mip sRGB upload + nearest ClampToEdge sampler for arbitrary
-/// standalone RGBA images.
 pub(crate) fn create_rgba_nearest(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -98,14 +86,13 @@ pub(crate) fn create_rgba_nearest(
     (texture, view, sampler)
 }
 
-/// Upload an entity/model RGBA texture (decoded from a `.bbmodel`) as its own GPU
-/// texture + nearest sampler — a SEPARATE atlas from the block atlas, because model
-/// faces carry arbitrary sub-rectangle UVs into this sheet (see `petramond_world::bbmodel`).
-/// Mips use cutout-alpha expansion so thin transparent decals, like the workbench's
-/// tabletop grid, stay stable at distance under the shader's alpha test.
+/// Uploads an entity/model texture as its own texture + nearest sampler. It can't share the
+/// block atlas because model faces use arbitrary sub-rectangle UVs into this sheet (see
+/// `petramond_world::bbmodel`).
+/// Mips use cutout-alpha expansion so thin decals like the workbench's tabletop grid stay
+/// stable at distance under the alpha test.
 ///
-/// `w`/`h` of 0 are clamped to 1 so a missing/empty texture still yields a valid 1×1
-/// binding.
+/// `w`/`h` of 0 clamp to 1, so a missing texture still gets a valid 1x1 binding.
 pub(crate) fn create_model_texture(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -171,9 +158,6 @@ pub(crate) fn create_model_texture(
     (texture, view, sampler)
 }
 
-/// The offscreen scene-colour target the world renders into before the grade
-/// pass reads it back (same format as the swapchain, so every world pipeline
-/// renders to it unchanged). Recreated with the depth texture on resize.
 pub(crate) fn create_scene_color(
     device: &wgpu::Device,
     w: u32,
@@ -305,10 +289,6 @@ pub(crate) fn create_atlas(
     (texture, view, sampler)
 }
 
-/// The terrain pipeline's tile texture ARRAY (one layer per tile, per-layer mips), with a
-/// REPEAT sampler so a greedy-meshed quad can tile its layer across a wide/tall face without
-/// the atlas cross-tile bleed. Parallel to [`create_atlas`]: the 2D atlas stays for the model
-/// / break-overlay / particle / mob passes; only the block terrain pipeline binds this.
 pub(crate) fn create_atlas_array(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

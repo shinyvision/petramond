@@ -4,12 +4,8 @@ use crate::schematic::share::GhostPlacement;
 use crate::schematic::store::Store;
 use crate::world::ServerWorld;
 
-/// A world's schematic assets and the ghosts anchored in it.
 pub struct WorldSchematics {
     pub store: Store,
-    /// Retained anchored ghosts by their namespaced key: what each shows and
-    /// who sees it (empty = everyone). Presentation, never persisted — the
-    /// owner re-sets them.
     pub ghosts: std::collections::BTreeMap<String, Ghost>,
 }
 

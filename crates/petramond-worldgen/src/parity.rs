@@ -1,20 +1,3 @@
-//! The worldgen byte-parity gate: one hash over what the production section
-//! pipeline generates for a fixed spread of columns across several seeds.
-//!
-//! The hash covers exactly what the streamer hands a world: each column's 2D
-//! data (biomes, density surfaces, heightmap, content top) and every section
-//! from the bottom of the world up to the column's content top, generated
-//! through [`ChunkGenerator::generate_section`] — the same
-//! [`start_section`](ChunkGenerator::start_section) path the streaming worker
-//! runs, including caves below y = 0, fluid falls and the section terrain
-//! memo. Sections above the content top are provably air and never
-//! generated, so they are not hashed.
-//!
-//! `make genparity` (a CI gate) compares the hash with [`EXPECTED_COMBINED`].
-//! A pure refactor, toolchain bump or rustflag change must reproduce it. A
-//! change that means to alter generation updates the constant in the same
-//! commit, which makes every such change a deliberate, reviewable one.
-
 use std::sync::Arc;
 
 use petramond_world::chunk::{
@@ -25,17 +8,10 @@ use petramond_world::section::Section;
 use crate::cache::{CacheBudget, GenCaches};
 use crate::driver::ChunkGenerator;
 
-/// The checked-in parity hash of [`combined_hash`] over the shipped catalogs
-/// with no packs installed. Update it only together with a change that is
-/// meant to alter generation.
 pub const EXPECTED_COMBINED: u64 = 0x41e6_984b_18b1_e46a;
 
-/// The sampled seeds: chosen so forests, wooded hills, riverbank plains and
-/// redwood stands all fall inside the sample.
 pub const SEEDS: [u32; 3] = [0x1234_5678, 786, 0xDEAD_BEEF];
 
-/// The sampled columns: every third point of a 25×25 lattice of chunks five
-/// apart, a wide spread around the origin.
 pub fn sample_columns() -> impl Iterator<Item = (i32, i32)> {
     (-12..=12)
         .flat_map(|cz| (-12..=12).map(move |cx| (cx, cz)))
@@ -43,7 +19,6 @@ pub fn sample_columns() -> impl Iterator<Item = (i32, i32)> {
         .map(|(cx, cz)| (cx * 5, cz * 5))
 }
 
-/// FNV-1a over the little-endian bytes of what it is fed.
 struct Fnv(u64);
 
 impl Fnv {
@@ -74,14 +49,10 @@ impl Fnv {
     }
 }
 
-/// The pure engine generator for `seed`: no mod hooks and memos of its own,
-/// so the hash cannot depend on what else the process installed or cached.
 pub fn engine_generator(seed: u32) -> ChunkGenerator {
     ChunkGenerator::with_caches(seed, None, Arc::new(GenCaches::new(CacheBudget::REFERENCE)))
 }
 
-/// The parity hash of one column: its 2D data, then each generated section
-/// from the bottom of the world up.
 pub fn column_hash(generator: &ChunkGenerator, cx: i32, cz: i32) -> u64 {
     let col = generator.generate_column_gen(cx, cz);
     let mut h = Fnv::new();
@@ -101,8 +72,6 @@ pub fn column_hash(generator: &ChunkGenerator, cx: i32, cz: i32) -> u64 {
     h.0
 }
 
-/// Everything generation leaves in a section: block ids, fluid levels, cell
-/// states and cell data, the sparse maps in cell order.
 fn hash_section(h: &mut Fnv, section: &Section) {
     for id in section.blocks_iter() {
         h.u16(id);
@@ -137,7 +106,6 @@ fn hash_section(h: &mut Fnv, section: &Section) {
     }
 }
 
-/// The parity hash of one seed's sample.
 pub fn seed_hash(seed: u32) -> u64 {
     let generator = engine_generator(seed);
     let mut h = Fnv::new();
@@ -147,9 +115,6 @@ pub fn seed_hash(seed: u32) -> u64 {
     h.0
 }
 
-/// The COMBINED parity hash: every seed's hash, in [`SEEDS`] order. The seeds
-/// generate on threads of their own; each is a pure function of its seed, so
-/// the result does not depend on scheduling.
 pub fn combined_hash() -> u64 {
     let per_seed: Vec<u64> = std::thread::scope(|scope| {
         let workers: Vec<_> = SEEDS
@@ -172,8 +137,6 @@ pub fn combined_hash() -> u64 {
 mod tests {
     use super::*;
 
-    /// A column's parity hash is a function of the column alone: warm memos,
-    /// a fresh generator and the order columns are asked in change nothing.
     #[test]
     fn a_column_hash_does_not_depend_on_what_is_cached() {
         let seed = SEEDS[1];
@@ -185,7 +148,6 @@ mod tests {
         assert_ne!(column_hash(&engine_generator(SEEDS[0]), 5, -10), first);
     }
 
-    /// The sample is the fixed spread the golden hash was taken over.
     #[test]
     fn the_sample_is_the_pinned_spread() {
         let columns: Vec<_> = sample_columns().collect();

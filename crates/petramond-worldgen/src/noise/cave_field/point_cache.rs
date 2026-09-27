@@ -1,5 +1,3 @@
-//! Scalar surface walks revisit neighbouring voxels far more often than sources.
-
 use std::sync::Arc;
 
 use super::*;
@@ -29,8 +27,6 @@ impl CaveField {
             ^ (key.tile[1] as u32 as u64).rotate_left(21)
             ^ (key.tile[2] as u32 as u64).rotate_left(42)
             ^ self.seed as u64;
-        // Construction can query the natural source for room admission; the
-        // table holds no borrow while the lattice is built.
         TILES.with(|tiles| {
             tiles.get_or_insert_with(local::spread(hash), key, || {
                 let lo = key.tile.map(|v| v * TILE);

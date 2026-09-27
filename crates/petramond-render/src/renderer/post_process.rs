@@ -1,27 +1,14 @@
 use super::*;
 use petramond::save::client::{AntiAliasing, GraphicsSettings};
 
-/// How the finished world image reaches the swapchain this frame.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SceneRoute {
-    /// Single-sample scene at native size with no grade: the world passes
-    /// draw into the swapchain and nothing is copied.
     Direct,
-    /// Multisampled scene with no grade: the MSAA resolve writes the
-    /// swapchain itself — no scene texture round-trip, no full-screen copy.
     ResolveToSwapchain,
-    /// Everything else: scene texture → post-process pass (supersample
-    /// reduction, render-scale upscale, colour grade) → swapchain.
     PostProcess,
 }
 
 impl Renderer {
-    /// Apply every renderer-owned graphics setting at once — the ONE path from
-    /// `client.json` to the GPU, at window creation and on every options
-    /// change alike (the per-knob setters below are renderer-private for that
-    /// reason). Returns the anti-aliasing mode that actually runs (the
-    /// requested one, or the nearest the device and viewport support), which
-    /// the caller writes back so the options readout tells the truth.
     pub fn apply_graphics(&mut self, settings: &GraphicsSettings) -> AntiAliasing {
         self.set_render_distance(settings.render_dist);
         self.set_particle_density(settings.particle_density);
@@ -31,8 +18,6 @@ impl Renderer {
         self.set_anti_aliasing(settings.anti_aliasing)
     }
 
-    /// Set the world-resolution scale used with AA Off (clamped `0.5..=1.0`).
-    /// AA modes use native output size as their base; the stored scale resumes when AA is off.
     pub(super) fn set_render_scale(&mut self, scale: f32) {
         let scale = if scale.is_finite() {
             scale.clamp(0.5, 1.0)
@@ -49,7 +34,6 @@ impl Renderer {
         }
     }
 
-    /// Toggle the world colour grade independently of scene sampling.
     pub(super) fn set_grade_enabled(&mut self, on: bool) {
         if self.targets.grade_enabled != on {
             self.targets.grade_enabled = on;
@@ -57,12 +41,10 @@ impl Renderer {
         }
     }
 
-    /// The applied scene sampling mode, including device and texture-dimension limits.
     pub fn anti_aliasing(&self) -> AntiAliasing {
         self.targets.anti_aliasing
     }
 
-    /// Maximum per-axis multiplier that fits this viewport on the current device.
     pub(super) fn max_anti_aliasing_multiplier(&self) -> u32 {
         max_multiplier(
             self.screen_size(),
@@ -74,8 +56,6 @@ impl Renderer {
         self.targets.max_samples
     }
 
-    /// Sample the scene before drawing the native-resolution HUD and UI.
-    /// Returns the mode that fits the current device and viewport.
     pub(super) fn set_anti_aliasing(&mut self, requested: AntiAliasing) -> AntiAliasing {
         let mode = supported_mode(
             requested,
@@ -180,13 +160,9 @@ impl Renderer {
         }
         self.recreate_scene_targets();
         self.chrome.crosshair_drawn_size = (0, 0);
-        // A real size change earns a fresh suboptimal-retry (render()).
         self.suboptimal_retried = false;
     }
 
-    /// (Re)build the world-pass targets at the current `render_scale` (and the
-    /// grade bind that reads them), then the volumetric targets over the new
-    /// depth. Called on resize and scale changes.
     pub(super) fn recreate_scene_targets(&mut self) {
         self.targets.anti_aliasing = super::post_process::supported_mode(
             self.targets.anti_aliasing,
@@ -209,8 +185,6 @@ impl Renderer {
 }
 
 impl SceneTargets {
-    /// The scene targets at `scene` dims for `anti_aliasing`, with the
-    /// post-process controls and the grade bind that reads them.
     pub(super) fn new(
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
@@ -254,8 +228,6 @@ impl SceneTargets {
         }
     }
 
-    /// Rebuild the views at `scene` dims for the current sample count, and
-    /// the grade bind over the new scene colour.
     fn recreate_views(
         &mut self,
         device: &wgpu::Device,

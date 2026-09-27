@@ -1,23 +1,19 @@
-//! The layout solver: deterministic flexbox-lite over an expanded
-//! [`InstTree`], entirely in i32 logical pixels.
+//! Flexbox-lite layout over an expanded [`InstTree`], i32 logical pixels.
 //!
 //! Two passes:
-//! 1. **Measure** (bottom-up): every instance reports its natural size —
-//!    leaves ask the [`LayoutEnv`] (theme metrics + text measurement),
-//!    containers sum children along the flow axis. A width hint threads down
-//!    for wrapping labels where the ancestor width is definite.
-//! 2. **Arrange** (top-down): parents hand children final rects. Free space
-//!    goes to `grow` children by weight, with the integer remainder given to
-//!    the first weighted children in document order — shares always sum
-//!    exactly, so the result is deterministic and gap-free.
+//! 1. Measure, bottom-up. Leaves ask [`LayoutEnv`] for natural size, containers sum children along
+//!    flow axis. Where the ancestor width is definite, a width hint threads down for wrapping
+//!    labels.
+//! 2. Arrange, top-down. Parents hand children final rects. Free space splits across grow children
+//!    by weight, remainder goes to first weighted children in doc order so shares always sum
+//!    exactly.
 //!
-//! Physical px = logical px × the host's integer gui scale, applied at paint;
-//! nothing here ever rounds, so draw and hit-test can never diverge.
+//! Physical px = logical px * host's integer gui scale, applied at paint. Nothing rounds here, so
+//! draw and hit-test can't diverge.
 
 use crate::doc::{AnchorEdge, Dir, NodeKind, ScrollAxis, Size};
 use crate::tree::{InstTree, ROOT};
 
-/// An integer rectangle in logical px, top-left origin, y down.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct RectI {
     pub x: i32,
@@ -34,12 +30,10 @@ impl RectI {
         h: 0,
     };
 
-    /// Half-open containment (includes top-left edge, excludes bottom-right).
     pub fn contains(&self, px: i32, py: i32) -> bool {
         px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
     }
 
-    /// Shrink by padding `[l, t, r, b]` (clamped to non-negative size).
     pub fn inset(&self, pad: [i32; 4]) -> RectI {
         RectI {
             x: self.x + pad[0],
@@ -63,23 +57,13 @@ impl RectI {
     }
 }
 
-/// Theme-side metrics for slot cells (`slot`/`slot_grid` nodes).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SlotMetrics {
-    /// Slot cell side, logical px.
     pub slot: i32,
-    /// Gap between grid cells, logical px.
     pub gap: i32,
 }
 
-/// What the solver needs from the theme/text side: natural sizes of leaf
-/// widgets (buttons, labels, checkboxes, gauges, slots…) and slot cell
-/// metrics. Implemented by `Theme`; tests use fixed mocks.
 pub trait LayoutEnv {
-    /// Natural content size of a leaf node. `text` is the instance's resolved
-    /// display text, `image` its resolved image name (`image`/`rotimage`
-    /// nodes), and `avail_w` a definite available width for wrapping labels
-    /// (`None` = single line).
     fn leaf_size(
         &self,
         node: &crate::doc::Node,
@@ -90,28 +74,19 @@ pub trait LayoutEnv {
 
     fn slot_metrics(&self) -> SlotMetrics;
 
-    /// The host's integer GUI scale. Only text that opts into a smaller
-    /// step needs it: its logical size depends on how many physical pixels a
-    /// font pixel gets. Everything else measures scale-independently.
     fn gui_scale(&self) -> i32 {
         1
     }
 
-    /// A styled container's chrome insets `[l, t, r, b]` (its 9-slice border).
-    /// Content is laid out INSIDE these automatically (border-box), so a
-    /// framed panel never needs hand-tuned padding just to clear its border.
     fn container_insets(&self, _node: &crate::doc::Node) -> [i32; 4] {
         [0; 4]
     }
 
-    /// Scrollbar lane width (logical px): overflowing scroll content reserves
-    /// this so rows never run under the bar.
     fn scrollbar_width(&self) -> i32 {
         8
     }
 }
 
-/// Author padding + chrome insets combined — the effective content inset.
 pub(crate) fn content_pad(l: &crate::doc::LayoutProps, ins: [i32; 4]) -> [i32; 4] {
     [
         l.pad[0] + ins[0],
@@ -121,37 +96,22 @@ pub(crate) fn content_pad(l: &crate::doc::LayoutProps, ins: [i32; 4]) -> [i32; 4
     ]
 }
 
-/// Solved geometry, indexed by instance arena index.
 #[derive(Clone, Debug)]
 pub struct Solved {
-    /// Final absolute rect per instance (logical px).
     pub rects: Vec<RectI>,
-    /// Inherited clip per instance (`None` = unclipped). Hit tests and paint
-    /// both respect it, so a scrolled-away row can neither draw nor click.
     pub clips: Vec<Option<RectI>>,
-    /// Per `scroll` instance: its flow content size (for offset clamping and
-    /// thumb geometry).
     pub scroll_content: Vec<Option<(i32, i32)>>,
-    /// Whether the instance belongs to a floating `tooltip` subtree: painted
-    /// in the tooltip tier and excluded from every hit test, so a panel that
-    /// follows the pointer can never swallow the input under it.
     pub overlay: Vec<bool>,
-    /// Whether the instance paints in the RAISED tier (an `overlay: true`
-    /// node's subtree, or a tooltip's): its chrome and host content draw
-    /// after the base tier's. Superset of [`Solved::overlay`]; unlike it,
-    /// raised-only instances stay fully hit-testable.
     pub raised: Vec<bool>,
 }
 
 impl Solved {
-    /// Whether `(px, py)` hits instance `idx`'s rect within its clip.
     pub fn hit(&self, idx: u32, px: i32, py: i32) -> bool {
         let i = idx as usize;
         self.rects[i].contains(px, py) && self.clips[i].is_none_or(|c| c.contains(px, py))
     }
 }
 
-/// The i-th cell (row-major) of a slot grid arranged from `rect`'s top-left.
 pub fn grid_cell(rect: RectI, cols: u32, i: u32, m: SlotMetrics) -> RectI {
     let col = (i % cols.max(1)) as i32;
     let row = (i / cols.max(1)) as i32;
@@ -163,9 +123,6 @@ pub fn grid_cell(rect: RectI, cols: u32, i: u32, m: SlotMetrics) -> RectI {
     }
 }
 
-/// Solve the whole tree against a viewport (logical px). `scroll_offset`
-/// supplies each `scroll` instance's current offset (the caller owns and
-/// clamps it — one frame of lag on clamp after content shrinks is fine).
 pub fn solve(
     tree: &InstTree<'_>,
     env: &dyn LayoutEnv,
@@ -231,14 +188,11 @@ struct Solver<'t, 'd, 'e> {
     env: &'e dyn LayoutEnv,
     scroll_offset: &'e dyn Fn(u32) -> i32,
     naturals: Vec<(i32, i32)>,
-    /// Set while arranging a `tooltip` subtree (see [`Solved::overlay`]).
     in_overlay: bool,
-    /// Set while arranging a raised subtree (see [`Solved::raised`]).
     in_raised: bool,
     out: Solved,
 }
 
-/// One flow axis: extract/pack (main, cross) against (w/x, h/y) pairs.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct Ax {
     horizontal: bool,
@@ -264,7 +218,6 @@ impl Ax {
             (cross, main)
         }
     }
-    /// Leading/trailing margin along this axis from `[l, t, r, b]`.
     fn margin_lead(self, m: [i32; 4]) -> i32 {
         if self.horizontal {
             m[0]
@@ -288,15 +241,6 @@ impl Ax {
     }
 }
 
-/// A node's effective minimum width: the AUTHORED floor, raised by a live
-/// `bind.min_w`. The binding may only raise it — the authored minimum is the
-/// document's own promise about the box, and a host publishing nothing yet
-/// (the first frame) or a small number must never collapse it.
-///
-/// Both the measure pass and the shrink pass consult this. Measure alone is
-/// not enough: a tooltip that grew for its content would give the room
-/// straight back the moment its parent ran short, which for a recipe strip
-/// means silently hiding ingredients again.
 fn effective_min_w(inst: &crate::tree::Inst<'_>) -> Option<i32> {
     match (inst.layout.min_w, inst.min_w) {
         (Some(authored), Some(bound)) => Some(authored.max(bound)),
@@ -313,11 +257,6 @@ fn clamp_opt(v: i32, min: Option<i32>, max: Option<i32>) -> i32 {
     }
 }
 
-/// The definite width a node's content may wrap against at measure time: its
-/// explicit width or the incoming hint, capped by the node's own `max_w` —
-/// the natural width can never exceed the cap, so a wrapping label inside a
-/// max-bounded AUTO container (a tooltip) must break there instead of
-/// measuring single-line and then ellipsizing into the clamped box.
 fn wrap_hint(l: &crate::doc::LayoutProps, pad_w: i32, avail_w: Option<i32>) -> Option<i32> {
     let hint = match l.w {
         Size::Px(p) => Some(p),
@@ -343,9 +282,6 @@ impl Solver<'_, '_, '_> {
 
         let cols = node.kind.list_cols();
         let mut natural = if node.lays_out_children() && cols > 1 {
-            // Grid list: uniform cells, so the natural size is just the cell
-            // size times the grid extent. Stamp margins play no part — cells
-            // are the grid's, not the stamp's.
             let content_avail_w = wrap_hint(l, pad_w, avail_w);
             let cols_i = cols as i32;
             let cell_hint = content_avail_w.map(|a| ((a - l.gap * (cols_i - 1)) / cols_i).max(0));
@@ -381,8 +317,6 @@ impl Solver<'_, '_, '_> {
             for &c in &inst.children {
                 let cn = tree.get(c);
                 let cm = cn.layout.margin;
-                // Wrap hints only flow down columns, where each child gets the
-                // full content width; a row's split is unknown until arrange.
                 let child_hint = match dir {
                     Dir::Column => content_avail_w.map(|a| (a - cm[0] - cm[2]).max(0)),
                     Dir::Row => None,
@@ -399,9 +333,6 @@ impl Solver<'_, '_, '_> {
             if n_flow > 1 {
                 main_sum += l.gap * (n_flow - 1);
             }
-            // A row with a definite width splits it now, exactly as arrange
-            // will, so a child it narrows (a wrapping label) is measured at
-            // that width and the row is as tall as the lines it wraps into.
             if let (Dir::Row, Some(avail)) = (dir, content_avail_w) {
                 if main_sum > avail {
                     cross_max = self.narrowed_row_height(idx, avail, cross_max);
@@ -432,13 +363,9 @@ impl Solver<'_, '_, '_> {
         ) && matches!(l.h, Size::Auto)
             && l.reserve_scrollbar
         {
-            // An auto-height horizontal scroll owns its reserved lane too.
             natural.1 += self.env.scrollbar_width();
         }
         natural.1 = clamp_opt(natural.1, l.min_h, l.max_h);
-        // A vertical scroll its own cap makes overflow already knows it will
-        // show its bar: the lane belongs in its natural width, not carved out
-        // of its content, or an auto-width scroll squeezes its rows under it.
         if matches!(
             node.kind,
             NodeKind::Scroll {
@@ -461,10 +388,6 @@ impl Solver<'_, '_, '_> {
         self.out.rects[idx as usize] = rect;
         self.out.clips[idx as usize] = clip;
         self.out.overlay[idx as usize] = self.in_overlay;
-        // An `overlay: true` node promotes its whole subtree to the RAISED
-        // paint tier (chrome + host content draw after the base tier's),
-        // WITHOUT the tooltip tier's hit-test exclusion — the two flags are
-        // deliberately separate: a raised widget is still a widget.
         let was_raised = self.in_raised;
         self.in_raised = self.in_raised || self.in_overlay || node.overlay;
         self.out.raised[idx as usize] = self.in_raised;
@@ -472,8 +395,6 @@ impl Solver<'_, '_, '_> {
         self.in_raised = was_raised;
     }
 
-    /// The height of row `idx` once its `avail` width is split: every child
-    /// the split narrows is measured again at its share.
     fn narrowed_row_height(&mut self, idx: u32, avail: i32, mut height: i32) -> i32 {
         let tree = self.tree;
         let inst = tree.get(idx);
@@ -504,8 +425,6 @@ impl Solver<'_, '_, '_> {
         height
     }
 
-    /// Each flow child's base size along `main` (its fixed size, else its
-    /// natural one), its grow weight, and the sum of their outer sizes.
     fn flow_bases(&self, flow: &[u32], main: Ax, grow_inert: bool) -> (Vec<i32>, Vec<u32>, i32) {
         let tree = self.tree;
         let mut bases: Vec<i32> = Vec::with_capacity(flow.len());
@@ -549,9 +468,6 @@ impl Solver<'_, '_, '_> {
         }
         let tree = self.tree;
 
-        // Distribute positive leftover to growers by weight; the integer
-        // remainder goes +1 each to the first `rem` weighted children in
-        // document order, so shares sum exactly.
         let total_weight: u32 = weights.iter().sum();
         if leftover > 0 && total_weight > 0 {
             let mut shares: Vec<i32> = weights
@@ -569,7 +485,6 @@ impl Solver<'_, '_, '_> {
                 }
             }
             for (i, s) in shares.iter().enumerate() {
-                // Respect max_* caps; capped leftover is not redistributed.
                 let cl = tree.get(flow[i]).layout;
                 let capped = if main.horizontal {
                     clamp_opt(bases[i] + s, None, cl.max_w)
@@ -599,22 +514,12 @@ impl Solver<'_, '_, '_> {
                 .max(0)
             };
             let mut deficit = -leftover;
-            // Tier 0 is the growers — including AUTO children with a grower
-            // inside them: an auto panel wrapped in a full-screen backdrop
-            // frame has to give back exactly like a panel that IS the root,
-            // or its scroll never learns the screen is short and the buttons
-            // below it slide off the bottom edge. Cutting the panel is safe
-            // because its own arrange then re-runs this pass and the grower
-            // inside takes the cut.
             let mut weights = weights;
             for i in 0..flow.len() {
                 if weights[i] == 0 && grower_inside(tree, flow[i], main.horizontal) {
                     weights[i] = 1;
                 }
             }
-            // Tier 1 is the ellipsizable text beside them: text only absorbs
-            // along the axis it can ellipsize on, and only once the growers
-            // have nothing left to give.
             let text_claims: Vec<u32> = match main.horizontal {
                 true => (0..flow.len())
                     .map(|i| u32::from(weights[i] == 0 && text_shrinkable(tree, flow[i])))
@@ -645,7 +550,6 @@ impl Solver<'_, '_, '_> {
                         }
                     }
                     if !cut_any {
-                        // Integer floors all rounded to zero: peel 1px at a time.
                         for &i in &cands {
                             if deficit == 0 {
                                 break;
@@ -682,8 +586,6 @@ impl Solver<'_, '_, '_> {
             horizontal: !main.horizontal,
         };
 
-        // Scroll nodes clip their children and shift them by the offset along
-        // the scroll axis (flow direction is independent of scroll axis).
         let scroll_axis = match node.kind {
             NodeKind::Scroll { axis } => Some(axis),
             _ => None,
@@ -709,8 +611,6 @@ impl Solver<'_, '_, '_> {
             .filter(|&c| tree.get(c).layout.abs.is_none() && !is_tooltip(tree, c))
             .collect();
 
-        // Main-axis base sizes + grow weights. Inside a scroll node, grow is
-        // inert along the scroll axis (content is unbounded there).
         let grow_inert = match scroll_axis {
             Some(ScrollAxis::Vertical) => !main.horizontal,
             Some(ScrollAxis::Horizontal) => main.horizontal,
@@ -723,8 +623,6 @@ impl Solver<'_, '_, '_> {
             0
         };
 
-        // Overflowing scroll content reserves the scrollbar lane so rows
-        // never run under the bar.
         let mut avail = content;
         if let Some(axis) = scroll_axis {
             let flow_is_axis = matches!(
@@ -765,8 +663,6 @@ impl Solver<'_, '_, '_> {
             && dir == Dir::Column
             && avail.w < content.w
         {
-            // The scrollbar narrows wrapped rows; their new heights must also
-            // drive sibling placement and the scroll range.
             outer_sum = 0;
             for (i, &c) in flow.iter().enumerate() {
                 let cl = tree.get(c).layout;
@@ -785,7 +681,6 @@ impl Solver<'_, '_, '_> {
             grow_inert,
         );
 
-        // Justify only distributes space no grower claimed.
         let (mut cursor, extra_gap, mut gap_rem) = if leftover > 0 {
             match l.justify {
                 crate::doc::Justify::Start => (0, 0, 0),
@@ -817,10 +712,6 @@ impl Solver<'_, '_, '_> {
                     if align == crate::doc::Align::Stretch {
                         stretch
                     } else if cross.horizontal && text_shrinkable(tree, c) {
-                        // The other half of the shock absorber: a column that
-                        // gave width back has to hand the cut on to the text
-                        // inside it, or the label keeps its natural width and
-                        // paints straight out of the panel.
                         nat_cross.min(stretch)
                     } else {
                         nat_cross
@@ -860,9 +751,6 @@ impl Solver<'_, '_, '_> {
             }
         }
 
-        // Tooltips: out of flow entirely, at natural size and unclipped. The
-        // runtime moves each subtree to the pointer once the frame is solved —
-        // the solver has no cursor.
         for &c in &inst.children {
             if !is_tooltip(tree, c) {
                 continue;
@@ -882,8 +770,6 @@ impl Solver<'_, '_, '_> {
             self.in_overlay = was;
         }
 
-        // Absolute children: placed against the padded rect, out of flow,
-        // natural/explicit size, unaffected by scroll offset.
         for &c in &inst.children {
             let cn = tree.get(c);
             let Some(authored) = cn.layout.abs else {
@@ -892,8 +778,6 @@ impl Solver<'_, '_, '_> {
             if is_tooltip(tree, c) {
                 continue;
             }
-            // Bound abs position overrides the authored one per axis — the
-            // authored value is the resting place, the binding moves it.
             let abs = crate::doc::AbsPos {
                 x: cn.abs_x.unwrap_or(authored.x),
                 y: cn.abs_y.unwrap_or(authored.y),
@@ -941,11 +825,6 @@ impl Solver<'_, '_, '_> {
         }
     }
 
-    /// Arrange a grid list's stamps row-major into uniform cells filling
-    /// `content`. Columns split the width evenly with the integer remainder
-    /// going +1 to the leading columns (the same exact-sum rule grow shares
-    /// use), and every row is as tall as the tallest stamp, so cells stay on a
-    /// grid no matter how the panel is sized.
     fn arrange_grid(&mut self, idx: u32, content: RectI, clip: Option<RectI>) {
         let tree = self.tree;
         let inst = tree.get(idx);
@@ -980,14 +859,10 @@ impl Solver<'_, '_, '_> {
     }
 }
 
-/// Whether instance `c` is a floating tooltip (its own subtree root).
 fn is_tooltip(tree: &InstTree<'_>, c: u32) -> bool {
     matches!(tree.get(c).node.kind, NodeKind::Tooltip { .. })
 }
 
-/// Whether an AUTO-sized `c` has a `grow` child along this axis, somewhere
-/// below it, that would absorb a cut handed down to it. A `Px` size is the
-/// author's decision and never gives way; a `Grow` size is already a claim.
 fn grower_inside(tree: &InstTree<'_>, c: u32, horizontal: bool) -> bool {
     let inst = tree.get(c);
     let size = match horizontal {
@@ -1006,20 +881,8 @@ fn grower_inside(tree: &InstTree<'_>, c: u32, horizontal: bool) -> bool {
     }
 }
 
-/// Whether `c`'s WIDTH can be taken away without breaking a promise: a
-/// single-line widget showing BOUND text ellipsizes, so it is the one leaf
-/// that can absorb a deficit, and a container inherits the property from its
-/// flow children.
-///
-/// Bound text is data — a world name, a pack summary, a key binding — and its
-/// natural width is whatever happened to land in the box. Left unshrinkable it
-/// wins every space fight and shoves the row's real widgets off the panel.
-/// AUTHORED text is a decision the layout must keep, so it never shrinks; a
-/// caption that does not fit its panel is an authoring bug, not something to
-/// silently ellipsize.
 fn text_shrinkable(tree: &InstTree<'_>, c: u32) -> bool {
     let inst = tree.get(c);
-    // An author-sized box is a decision too.
     if matches!(inst.layout.w, Size::Px(_)) {
         return false;
     }

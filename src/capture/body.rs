@@ -1,24 +1,3 @@
-//! The ONE codec of every piece body: what the capture writers put inside a
-//! piece and what a presentation reads back out.
-//!
-//! A body is one protocol frame (`net::framing`'s `[u32 len][u8 flags][bytes]`,
-//! bit 0 of the flags = zlib) around a postcard value. DOCUMENTED bodies are
-//! `mod_api::capture`'s own types and are never compressed; the opaque ones
-//! are the engine's replication encodings below, opaque to mods by design.
-//!
-//! | Kind | Body |
-//! | --- | --- |
-//! | `Section` | [`SectionPayload`] |
-//! | `Column` | [`ColumnPayload`] |
-//! | `Tables` | [`NameTables`] |
-//! | `Mob`, `Item`, `Player` | [`MobStateRow`](crate::net::protocol::MobStateRow), [`ItemStateRow`](crate::net::protocol::ItemStateRow), [`PlayerStateRow`](crate::net::protocol::PlayerStateRow) |
-//! | `Activity` | [`CapturedActivity`] |
-//! | `Viewer` | [`SelfState`](crate::net::protocol::SelfState) |
-//! | `Message` | [`ServerToClient`] |
-//! | `BatchWorld`, `BatchRows`, `BatchRest` | [`BatchWorld`], [`BatchRows`], [`BatchRest`] |
-//! | `Cues` | [`CapturedCues`] |
-//! | `View` | [`ViewCue`] |
-
 use std::io::{Read, Write};
 
 use mod_api::capture::{
@@ -38,19 +17,15 @@ use crate::net::protocol::{
 pub use super::view::ViewCue;
 pub use crate::net::protocol::{ColumnPayload, NameTables, SectionPayload, ServerToClient};
 
-/// Bodies above this many bytes are zlib-compressed when that shrinks them.
 const COMPRESS_MIN: usize = 1024;
 
-/// The spatial loops sounding, the local player's dig cell, the open containers.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CapturedActivity {
-    /// Each sounding loop as the command that started it.
     pub loops: Vec<SpatialSoundMsg>,
     pub dig: Option<IVec3>,
     pub open_chests: Vec<IVec3>,
 }
 
-/// A tick batch's terrain writes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BatchWorld {
     pub block_deltas: Vec<BlockDelta>,
@@ -58,9 +33,6 @@ pub struct BatchWorld {
     pub block_draws: Vec<BlockDrawDelta>,
 }
 
-/// A tick batch's entity lanes, or one slice of them when they would pass
-/// one protocol frame. A lane moves the tracked set on as the batch did:
-/// despawns, then spawns, then updates.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BatchRows {
     pub mobs: MobLane,
@@ -69,7 +41,6 @@ pub struct BatchRows {
 }
 
 impl BatchRows {
-    /// Despawned ids and rows, over every lane.
     pub fn entries(&self) -> usize {
         let lane = |despawned: usize, rows: usize| despawned + rows;
         lane(self.mobs.despawned.len(), self.mobs.len())
@@ -78,8 +49,6 @@ impl BatchRows {
     }
 }
 
-/// The rest of a tick batch's world content: every section a presentation
-/// replays that is neither terrain nor an entity lane, in batch order.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BatchRest {
     pub tick: u64,
@@ -87,15 +56,12 @@ pub struct BatchRest {
     pub sections: Vec<TickSection>,
 }
 
-/// The local predictions a frame presented: the predicted place/break
-/// events, and the dig cell as it then stood.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CapturedCues {
     pub events: Vec<WorldEventMsg>,
     pub dig: Option<IVec3>,
 }
 
-/// Why a body did not encode or decode.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BodyError(pub String);
 
@@ -105,7 +71,6 @@ impl std::fmt::Display for BodyError {
     }
 }
 
-/// `value` as one protocol frame; `compress` only for opaque bodies.
 pub fn encode_body<T: Serialize>(value: &T, compress: bool) -> Result<Vec<u8>, BodyError> {
     let raw = postcard::to_allocvec(value).map_err(|e| BodyError(e.to_string()))?;
     if raw.len() > MAX_FRAME {
@@ -133,7 +98,6 @@ pub fn encode_body<T: Serialize>(value: &T, compress: bool) -> Result<Vec<u8>, B
     Ok(frame)
 }
 
-/// Decode one body frame, inflating at most one protocol frame.
 pub fn decode_body<T: DeserializeOwned>(frame: &[u8]) -> Result<T, BodyError> {
     let (flags, bytes) =
         mod_api::capture::split_frame(frame).map_err(|e| BodyError(e.to_string()))?;
@@ -155,12 +119,10 @@ pub fn decode_body<T: DeserializeOwned>(frame: &[u8]) -> Result<T, BodyError> {
     postcard::from_bytes(bytes).map_err(|e| BodyError(e.to_string()))
 }
 
-/// The postcard bytes the vocabulary hash is taken over.
 pub fn vocabulary_of(tables: &NameTables) -> u64 {
     mod_api::capture::fnv1a64(&postcard::to_allocvec(tables).expect("name tables encode"))
 }
 
-/// A whole piece: head and `body` (one frame from [`encode_body`]).
 pub fn piece(
     kind: ClientPieceKind,
     key: [u8; 12],
@@ -183,7 +145,6 @@ pub fn piece(
     out
 }
 
-/// A state piece stating `key` with `value` as its body.
 pub fn state_piece<T: Serialize>(
     key: ClientStateKey,
     value: &T,
@@ -194,9 +155,6 @@ pub fn state_piece<T: Serialize>(
     Ok(piece(kind, key.key_bytes(), false, vocabulary, &body))
 }
 
-/// A tick batch split by role into its three bodies. The recipient's chrome
-/// (request answers, creative and schematic replies, menu sync) is in none
-/// of them.
 pub fn split_batch(t: &TickUpdate) -> (BatchWorld, BatchRows, BatchRest) {
     let mut world = BatchWorld::default();
     let mut rows = BatchRows::default();

@@ -4,8 +4,6 @@ use crate::{pipeline::SampledPipeline, uniforms::Uniforms};
 use glam::{IVec3, Mat4, Vec3};
 use wgpu::util::DeviceExt;
 
-/// The two ghost pipelines and their atlases, compiled once and shared by
-/// every ghost mesh.
 #[derive(Clone)]
 pub(super) struct GhostPipelines {
     uniform_layout: wgpu::BindGroupLayout,
@@ -47,8 +45,6 @@ struct Mesh {
     count: u32,
 }
 
-/// One alpha-blended schematic mesh (block + model geometry) at an integer
-/// world origin.
 pub(super) struct GhostMesh {
     blocks: Mesh,
     models: Mesh,

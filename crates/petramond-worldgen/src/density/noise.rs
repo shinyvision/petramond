@@ -1,20 +1,6 @@
-//! Seed-derived surface-terrain noise fields.
-//!
-//! This module intentionally does not use the cave-oriented `worldgen::noise`
-//! samplers. Every field is a pure function of `(world_seed, field id, point)`.
-
 use super::super::graph::{SamplePoint, SampledScalarField};
 use crate::cache::local::{self, LocalTable};
 
-/// The 16 axis-aligned edge gradients (each pointing to an edge midpoint of the
-/// unit cube, magnitude √2). This is the standard improved-Perlin gradient set:
-/// the 12 distinct cube-edge directions plus 4 repeats, indexed by `hash & 15`.
-///
-/// The magnitude MUST be √2, not 1: the reference double-Perlin value factor
-/// (`AMP_INI`) is calibrated for these √2 edge gradients. Normalizing them to
-/// unit length silently shrinks every field by a factor of √2, breaking the
-/// bit-exact parity and collapsing the climate axes toward zero (which starves
-/// the outer classification bands — deep ocean, extremes).
 const GRADIENTS: [(f64, f64, f64); 16] = [
     (1.0, 1.0, 0.0),
     (-1.0, 1.0, 0.0),
@@ -33,14 +19,6 @@ const GRADIENTS: [(f64, f64, f64); 16] = [
     (-1.0, 1.0, 0.0),
     (0.0, -1.0, -1.0),
 ];
-
-// === Exact reference noise (Xoroshiro128++) ===========================
-//
-// The reference generator seeds every Perlin octave from a Xoroshiro128++ stream,
-// not our SplitMix/FNV scheme. To make `(seed, field, x, y, z)` reproduce the
-// reference value-for-value, the permutation, origin offsets, and octave seeds
-// must all come from this exact RNG. The sampling math (gradient set, fade, lerp,
-// value factor) already matches; only the seeding differs.
 
 #[derive(Clone, Copy, Debug)]
 pub struct Xoroshiro {
@@ -79,8 +57,6 @@ impl Xoroshiro {
         n
     }
 
-    /// Bounded integer in `[0, n)`, matching the reference's Lemire-style draw
-    /// (including the rejection loop, so the RNG stream advances identically).
     pub fn next_int(&mut self, n: u32) -> u32 {
         let mut r = (self.next_long() & 0xFFFF_FFFF).wrapping_mul(u64::from(n));
         if (r as u32) < n {
@@ -101,7 +77,6 @@ fn rotl64(x: u64, b: u32) -> u64 {
     x.rotate_left(b)
 }
 
-/// md5 of "octave_-12".."octave_0"; index `12 + omin + i` selects octave `i`'s seed.
 const MD5_OCTAVE: [(u64, u64); 13] = [
     (0xb198_de63_a801_2672, 0x7b84_cad4_3ef7_b5a8),
     (0x0fd7_87bf_bc40_3ec3, 0x74a4_a31c_a21b_48b8),
@@ -118,7 +93,6 @@ const MD5_OCTAVE: [(u64, u64); 13] = [
     (0xd507_0808_6cef_4d7c, 0x6e16_51ec_c7f4_3309),
 ];
 
-/// Lowest-octave frequency by `-omin` (= `2^omin`); doubled per octave.
 const LACUNA_INI: [f64; 13] = [
     1.0,
     0.5,
@@ -135,7 +109,6 @@ const LACUNA_INI: [f64; 13] = [
     1.0 / 4096.0,
 ];
 
-/// Lowest-octave amplitude weight by octave count `len`; halved per octave.
 const PERSIST_INI: [f64; 10] = [
     0.0,
     1.0,
@@ -149,7 +122,6 @@ const PERSIST_INI: [f64; 10] = [
     256.0 / 511.0,
 ];
 
-/// Double-Perlin value factor by trimmed octave count `len` (= `(5/3)·len/(len+1)`).
 const AMP_INI: [f64; 10] = [
     0.0,
     5.0 / 6.0,
@@ -163,10 +135,6 @@ const AMP_INI: [f64; 10] = [
     45.0 / 30.0,
 ];
 
-/// One Perlin octave: a permutation, a sampling origin `(a, b, c)`, and the
-/// amplitude/lacunarity it contributes to its octave stack. Built by the exact
-/// reference `xPerlinInit`: origins from `next_double·256`, then a Fisher-Yates
-/// shuffle driven by `next_int`.
 #[derive(Clone, Debug)]
 struct PerlinOctave {
     perm: [u8; 257],
@@ -175,10 +143,6 @@ struct PerlinOctave {
     c: f64,
     amplitude: f64,
     lacunarity: f64,
-    /// The b-axis (Y) lattice cell / fractional / fade precomputed for `y == 0` — every
-    /// climate and surface-density sample passes `y = 0` (all live noise is 2D), so the
-    /// reference `d2 == 0` fast path is hit on every call. Holds exactly what
-    /// `sample` would compute from `y + b` at `y = 0`, so results stay bit-identical.
     h2_y0: u8,
     d2_y0: f64,
     t2_y0: f64,
@@ -213,9 +177,6 @@ impl PerlinOctave {
         }
     }
 
-    /// `samplePerlin` with `yamp = ymin = 0` (the climate/octave call). The `d2==0`
-    /// fast path in the reference is a pure optimization — this general path yields
-    /// identical values, so it is omitted.
     fn sample(&self, x: f64, y: f64, z: f64) -> f64 {
         let mut d1 = x + self.a;
         let mut d3 = z + self.c;
@@ -227,10 +188,6 @@ impl PerlinOctave {
         let h3 = i3 as i64 as u8;
         let t1 = fade(d1);
         let t3 = fade(d3);
-        // The reference `d2 == 0` fast path: at y == 0 the Y-axis cell/frac/fade are the
-        // precomputed b-axis constants (identical to floor/fade of `y + b`), saving a
-        // floor + a fade polynomial on every octave sample. Any non-zero y (none today)
-        // falls back to the exact general computation.
         let (d2, h2, t2) = if y == 0.0 {
             (self.d2_y0, self.h2_y0, self.t2_y0)
         } else {
@@ -264,8 +221,6 @@ impl PerlinOctave {
     }
 }
 
-/// A stack of Perlin octaves (`xOctaveInit` / `sampleOctave`). `nmax < 0` keeps all
-/// octaves (the climate-field case).
 #[derive(Clone, Debug)]
 struct OctaveStack {
     octaves: Vec<PerlinOctave>,
@@ -309,9 +264,6 @@ impl OctaveStack {
     }
 }
 
-/// Exact reference double-Perlin: two independent octave stacks summed (the second
-/// at input ×337/331) and scaled by the trimmed-octave value factor. Built by
-/// `xDoublePerlinInit`; the climate fields pass `nmax = -1` (both stacks full).
 #[derive(Clone, Debug)]
 pub struct ReferenceDoublePerlin {
     oct_a: OctaveStack,
@@ -354,16 +306,14 @@ impl ReferenceDoublePerlin {
     }
 }
 
-/// A climate field's seed fork: its md5 salt (XORed into the world-seed Xoroshiro),
-/// first octave, and octave amplitudes.
 pub struct ClimateFieldParams {
     pub salt: (u64, u64),
     pub omin: i32,
     pub amplitudes: &'static [f64],
 }
 
-/// The reference climate fields. All fork from the same `xSetSeed(world_seed)`
-/// stream (its first two longs), then XOR their per-field md5 salt.
+/// All of these fork off the first two longs of `xSetSeed(world_seed)`, then XOR in their own md5
+/// salt.
 pub mod climate_fields {
     use super::ClimateFieldParams;
 
@@ -397,21 +347,11 @@ pub mod climate_fields {
         omin: -7,
         amplitudes: &[1.0, 2.0, 1.0, 0.0, 0.0, 0.0],
     };
-    /// OUR field, not a reference port: the mountain crag detail the stylized
-    /// silhouette folds into high, low-erosion terrain (see `terrain.rs`).
-    /// Two octaves at ~128/64-block periods — deliberately broad so ridge
-    /// crests are walkable crests, never one-block pillar fields (the pillar
-    /// trap). The salt is an arbitrary fixed fork of our own.
     pub const CRAG: ClimateFieldParams = ClimateFieldParams {
         salt: (0x11a3_c0de_5eed_2026, 0x0707_beef_cafe_f00d),
         omin: -5,
         amplitudes: &[1.0, 1.0],
     };
-    /// OUR field: the world-structure spine noise. Its zero lines (after the
-    /// ridged fold in `terrain.rs`) become kilometres-long mountain-range
-    /// spines that UPLIFT the continentality/erosion channels, so ranges and
-    /// their mountain biomes form connected belts instead of blobs. Two
-    /// octaves at ~4096/2048-block periods; arbitrary fixed salt of our own.
     pub const STRUCTURE: ClimateFieldParams = ClimateFieldParams {
         salt: (0x5a11_e175_0f00_ba12, 0x9e3d_77aa_1234_c001),
         omin: -10,
@@ -419,8 +359,6 @@ pub mod climate_fields {
     };
 }
 
-/// Build a climate field's double-Perlin noise for a world seed, exactly as the
-/// reference `setBiomeSeed`/`init_climate_seed` does.
 pub fn build_climate_field(world_seed: u64, params: &ClimateFieldParams) -> ReferenceDoublePerlin {
     let mut xr = Xoroshiro::new(world_seed);
     let xlo = xr.next_long();
@@ -429,9 +367,6 @@ pub fn build_climate_field(world_seed: u64, params: &ClimateFieldParams) -> Refe
     ReferenceDoublePerlin::init(&mut pxr, params.amplitudes, params.omin)
 }
 
-/// A climate axis sampled with the reference domain warp: the shift field warps
-/// the sample coordinates before the axis field is read. Horizontal (y-invariant),
-/// sampled at the 1:4 quart scale (world block → quart cell).
 #[derive(Clone, Debug)]
 pub struct ShiftedClimateField {
     world_seed: u64,
@@ -461,14 +396,11 @@ impl ShiftedClimateField {
         }
     }
 
-    /// Sample at quart coordinates (the reference's native climate scale). The shift
-    /// for `z` reads the shift field at `(qz, qx, 0)` — swapped, matching the source.
     pub fn sample_quart(&self, qx: f64, qz: f64) -> f64 {
         let (sx, sz) = self.warp(qx, qz);
         self.field.sample(qx + sx, 0.0, qz + sz)
     }
 
-    /// The domain warp at a quart cell, memoized per thread (direct-mapped).
     fn warp(&self, qx: f64, qz: f64) -> (f64, f64) {
         let (qxb, qzb) = (qx.to_bits(), qz.to_bits());
         let hash = local::spread(qxb ^ qzb.rotate_left(32) ^ self.world_seed);
@@ -497,22 +429,16 @@ fn grad_dot(hash: u8, dx: f64, dy: f64, dz: f64) -> f64 {
     gx * dx + gy * dy + gz * dz
 }
 
-/// Reference-order lerp (`from + part·(to − from)`), matching cubiomes' `lerp`.
 fn rlerp(part: f64, from: f64, to: f64) -> f64 {
     from + part * (to - from)
 }
 
-/// `x.floor()`, bit for bit, without the libm call baseline x86-64 lowers it
-/// to — the Perlin cell lookup runs it twice per octave sample.
 #[inline]
 fn floor(x: f64) -> f64 {
-    // At and past 2^52 every finite f64 is an integer; NaN and the
-    // infinities take the libm answer too.
     if x.is_nan() || x.abs() >= 4_503_599_627_370_496.0 {
         return x.floor();
     }
     let t = x as i64 as f64;
-    // `copysign` keeps -0.0 for -0.0 (every other in-range result is exact).
     if t > x {
         t - 1.0
     } else {
@@ -554,11 +480,6 @@ mod tests {
 
     #[test]
     fn warp_memo_is_bit_exact_across_interleaved_seeds_and_fields() {
-        // The per-thread warp memo must be pure memoization: sampling two different
-        // seeds and several fields interleaved over the same cells (worst case for
-        // key collisions / a missing seed key) must yield exactly what an inline
-        // warp computes. A stale or mis-keyed memo entry shifts the climate warp
-        // and silently moves every biome border.
         let fields: Vec<ShiftedClimateField> = vec![
             ShiftedClimateField::new(0x1234_5678, &climate_fields::CONTINENTALITY),
             ShiftedClimateField::new(0x1234_5678, &climate_fields::EROSION),
@@ -579,7 +500,6 @@ mod tests {
                         assert_eq!(got.to_bits(), inline.to_bits());
                         expected.push_back(got);
                     } else {
-                        // Second pass re-reads every cell through a fully warm memo.
                         let want = expected.pop_front().unwrap();
                         assert_eq!(got.to_bits(), want.to_bits());
                     }
@@ -590,10 +510,6 @@ mod tests {
 
     #[test]
     fn perlin_gradients_have_root_two_magnitude() {
-        // The reference double-Perlin value factor (`AMP_INI`) is calibrated for
-        // edge gradients of magnitude √2. Normalizing them to unit length silently
-        // shrinks every field by √2, breaking parity and compressing the climate
-        // axes. This invariant has regressed before; lock the magnitude.
         for &(x, y, z) in &GRADIENTS {
             let mag_sq = x * x + y * y + z * z;
             assert!(

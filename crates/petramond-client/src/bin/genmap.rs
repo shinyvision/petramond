@@ -1,30 +1,9 @@
-//! Headless worldgen previewer (dev tool).
-//!
-//! Renders a chunk region so worldgen output can be eyeballed without the GPU
-//! app. Main modes:
-//!   top   (default) — top-down, coloured by each column's top block.
-//!   biome           — top-down, coloured by per-column biome id.
-//!   side  `<z>`       — vertical cross-section at world Z = `<z>`, so overhangs,
-//!                     ocean depth and mountain strata are visible (y 0..255).
-//!   deep  `<z>`       — full-depth cross-section (y -64..255) from the cubic
-//!                     per-section generator: deep caves, marble, ores.
-//!   cavestats       — cave/ore census: carved share per depth band, marble
-//!                     share, ore counts per chunk, entrance-mouth rate.
-//!
-//! Run:
-//!   cargo run --quiet --bin genmap -- `seed` [out.png] `mode` `arg`
-//! e.g.
-//!   cargo run --quiet --bin genmap -- 42 /tmp/top.png top
-//!   cargo run --quiet --bin genmap -- 42 /tmp/biome.png biome
-//!   cargo run --quiet --bin genmap -- 42 /tmp/cut.png side 0
-
 use petramond::tooling::biome::Biome;
 use petramond::tooling::block::Block;
 use petramond::tooling::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 use petramond::tooling::worldgen::{generate_chunk, macro_surface_map};
 use petramond_world::tile::{map_rgb as tile_map_rgb, TileTint};
 
-/// Highest non-air block in a column + its Y.
 fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
@@ -35,10 +14,6 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     (0, 0)
 }
 
-/// Top-down colour for a block, derived from its data row: the top tile's
-/// cartography average (`Tile::map_rgb`),
-/// with tinted tiles (grass/foliage/water) multiplied by a fixed Plains biome
-/// colour — the previewer has no per-column tint blend and doesn't need one.
 fn block_color(block: u16) -> [u8; 3] {
     let b = Block::from_id(block);
     if b == Block::Air {
@@ -56,24 +31,22 @@ fn block_color(block: u16) -> [u8; 3] {
     std::array::from_fn(|c| (base[c] as f32 * tint[c]).round().clamp(0.0, 255.0) as u8)
 }
 
-/// Distinct top-down colour per engine biome id; pack biomes show their fog
-/// colour.
 fn biome_color(id: u8) -> [u8; 3] {
     match Biome::from_id(id) {
         Biome::OCEAN => [46, 104, 180],
         Biome::DEEP_OCEAN => [20, 50, 116],
-        Biome::BEACH => [240, 232, 174], // pale sand
+        Biome::BEACH => [240, 232, 174],
         Biome::RIVER => [80, 150, 210],
-        Biome::DESERT => [224, 186, 88], // tan-orange (distinct from beach)
-        Biome::PLAINS => [126, 198, 78], // bright green
-        Biome::SAVANNA => [188, 186, 86], // olive
-        Biome::FOREST => [46, 128, 48],  // dark green
-        Biome::REDWOOD_FOREST => [30, 90, 36], // deep dark green — tall redwood groves
+        Biome::DESERT => [224, 186, 88],
+        Biome::PLAINS => [126, 198, 78],
+        Biome::SAVANNA => [188, 186, 86],
+        Biome::FOREST => [46, 128, 48],
+        Biome::REDWOOD_FOREST => [30, 90, 36],
         Biome::WETLAND => [92, 144, 96],
         Biome::SWAMP => [58, 92, 64],
         Biome::TAIGA => [58, 116, 92],
-        Biome::FOOTHILLS => [152, 168, 122], // gray-green
-        Biome::MOUNTAINS => [138, 138, 132], // gray
+        Biome::FOOTHILLS => [152, 168, 122],
+        Biome::MOUNTAINS => [138, 138, 132],
         Biome::SNOWY_TUNDRA => [210, 224, 228],
         Biome::SNOWY_TAIGA => [168, 198, 198],
         Biome::SNOWY_PEAKS => [238, 242, 250],
@@ -87,7 +60,6 @@ fn biome_color(id: u8) -> [u8; 3] {
         Biome::MOUNTAIN_EDGE => [148, 158, 132],
         Biome::DESERT_LAKES => [214, 178, 92],
         Biome::SNOWY_PLAINS => [222, 230, 226],
-        // A pack biome: its horizon colour.
         pack => pack
             .fog_color()
             .map(|c| (c * 255.0).round().clamp(0.0, 255.0) as u8),
@@ -95,15 +67,12 @@ fn biome_color(id: u8) -> [u8; 3] {
 }
 
 fn save(out: &str, buf: &[u8], w: usize, h: usize) {
-    // Timing/stat runs pass /dev/null; skip the encode (the image crate can't
-    // infer a format from it) but keep the printed summaries.
     if out == "/dev/null" {
         return;
     }
     image::save_buffer(out, buf, w as u32, h as u32, image::ColorType::Rgb8).expect("write png");
 }
 
-/// Top-down map, coloured by either top block or biome id.
 fn render_topdown(seed: u32, out: &str, by_biome: bool) {
     let r: i32 = 12;
     let n = (r * 2) as usize;
@@ -127,7 +96,6 @@ fn render_topdown(seed: u32, out: &str, by_biome: bool) {
                     } else {
                         block_color(b)
                     };
-                    // Subtle height relief on the block map.
                     if !by_biome {
                         let shade = (0.66 + 0.007 * (y - 58) as f32).clamp(0.45, 1.25);
                         for c in &mut col {
@@ -166,13 +134,12 @@ fn render_topdown(seed: u32, out: &str, by_biome: bool) {
     );
 }
 
-/// Vertical cross-section at world Z = `slice_z`. `zoom` enlarges each voxel to
-/// `zoom`×`zoom` px and centers the window on world X = `center_x` (so overhang
-/// detail is legible); zoom=1 shows the full 512-wide strip centered at 0.
+/// Side-on slice through Z = `slice_z`. Pass `zoom` > 1 for bigger voxels around `center_x`
+/// (handy for overhangs); 1 gives the full 512-wide strip.
 fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, proj: i32) {
     let zoom = zoom.max(1);
-    let cells_x = 512 / zoom; // world blocks across
-    let cells_y = (176 / zoom).clamp(80, 176); // world blocks tall
+    let cells_x = 512 / zoom;
+    let cells_y = (176 / zoom).clamp(80, 176);
     let x0 = center_x - cells_x as i32 / 2;
     let w = cells_x * zoom;
     let h = cells_y * zoom;
@@ -181,7 +148,6 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
     let cz = slice_z.div_euclid(CHUNK_SZ as i32);
     let lz = slice_z.rem_euclid(CHUNK_SZ as i32) as usize;
 
-    // Auto-center the vertical window on the terrain at center_x.
     let y_top = {
         let ccx = center_x.div_euclid(CHUNK_SX as i32);
         let clx = center_x.rem_euclid(CHUNK_SX as i32) as usize;
@@ -193,7 +159,6 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
                 break;
             }
         }
-        // put the surface ~1/4 down from the top of the window
         (s + cells_y as i32 / 4).min(CHUNK_SY as i32 - 1)
     };
     let mut cur_cx = i32::MIN;
@@ -209,17 +174,15 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
         }
         let c = chunk.as_ref().unwrap();
         for gy in 0..cells_y {
-            let wy = y_top - gy as i32; // row 0 = top
+            let wy = y_top - gy as i32;
             let col = if wy < 0 || wy >= CHUNK_SY as i32 {
                 [150, 190, 232]
             } else if proj > 0 {
-                // Project over a z-window: prefer logs, then leaves, then terrain,
-                // so a whole tree silhouette shows instead of one sliced plane.
                 let (mut log, mut leaf, mut terr) = (false, false, 0u16);
                 for dz in -proj..=proj {
                     let zz = lz as i32 + dz;
                     if zz < 0 || zz >= CHUNK_SZ as i32 {
-                        continue; // stay within this chunk (fine for tree inspection)
+                        continue;
                     }
                     let b = c.block_raw(lx, wy as usize, zz as usize);
                     match Block::from_id(b) {
@@ -252,7 +215,6 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
                     block_color(b)
                 }
             };
-            // expand to zoom×zoom
             for dy in 0..zoom {
                 for dx in 0..zoom {
                     let px = (gy * zoom + dy) * w + (gx * zoom + dx);
@@ -265,9 +227,6 @@ fn render_side(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32, p
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, side z={slice_z} zoom={zoom} cx={center_x})");
 }
 
-/// Full-depth vertical cross-section at world Z = `slice_z`, built from the
-/// cubic per-section generator so caves below y = 0, cave-biome wall lining, and
-/// deep ores are visible (the whole-column `side` preview stops at y = 0).
 fn render_deep(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32) {
     use petramond::tooling::worldgen::{
         ChunkGenerator, Section, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE,
@@ -305,15 +264,15 @@ fn render_deep(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32) {
             cur_cx = cx;
         }
         for gy in 0..cells_y {
-            let wy = 255 - gy as i32; // row 0 = world top
+            let wy = 255 - gy as i32;
             let si = (wy.div_euclid(SECTION_SIZE as i32) - SECTION_MIN_CY) as usize;
             let ly = wy.rem_euclid(SECTION_SIZE as i32) as usize;
             let b = sections[si].block_raw(lx, ly, lz);
             let col = if b == 0 {
                 if wy > surf[lx].max(63) {
-                    [150, 190, 232] // open sky
+                    [150, 190, 232]
                 } else {
-                    [16, 16, 20] // underground cave air
+                    [16, 16, 20]
                 }
             } else {
                 block_color(b)
@@ -330,13 +289,9 @@ fn render_deep(seed: u32, out: &str, slice_z: i32, zoom: usize, center_x: i32) {
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, deep z={slice_z} zoom={zoom} cx={center_x})");
 }
 
-/// Horizontal cave-network map for the SECTION containing world Y = `slice_y`:
-/// one pixel per column over a 512×512 window centred on the origin, marked
-/// cave-air (black) if ANY of the section's 16 layers is carved there, marble
-/// (light) if any layer is lined, else plain rock. The top-down projection that
-/// makes tunnel topology (branch junctions, caverns, crawl-maze patches)
-/// legible — a single-block slice only shows slivers of the mostly-horizontal
-/// tunnels.
+/// Squashes the whole section at Y = `slice_y` into one top-down image (512x512 around the
+/// origin). Black = carved on any layer, light = lined, else rock. Much easier to follow tunnel
+/// branches than a one-block slice.
 fn render_caveplan(seed: u32, out: &str, slice_y: i32, zoom: usize) {
     use petramond::tooling::worldgen::{ChunkGenerator, SectionPos, SECTION_SIZE};
 
@@ -395,20 +350,16 @@ fn render_caveplan(seed: u32, out: &str, slice_y: i32, zoom: usize) {
     println!("wrote {out} ({w}x{w}, seed {seed:#x}, caveplan section of y={slice_y})");
 }
 
-/// Cave + ore census over a chunk region, from the cubic per-section generator:
-/// per-depth-band carved-air share, marble share, per-ore block counts, and the
-/// surface entrance-mouth rate. The tuning instrument for the cave update.
 fn cave_stats(seed: u32) {
     use petramond::tooling::worldgen::{
         ChunkGenerator, SectionPos, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y,
     };
     use std::collections::HashMap;
 
-    const R: i32 = 6; // 13x13 chunks
+    const R: i32 = 6;
     const BAND: i32 = 32;
     let generator = ChunkGenerator::new(seed);
 
-    // Per 32-block band: (sub-surface cells, carved air, marble).
     let bands = ((256 - WORLD_MIN_Y) / BAND) as usize;
     let mut band_cells = vec![0u64; bands];
     let mut band_air = vec![0u64; bands];
@@ -498,8 +449,6 @@ fn cave_stats(seed: u32) {
     }
 }
 
-/// Audit overhangs + floating debris across a region (computed by
-/// `worldgen::audit::audit`); prints its `DebrisAudit` in the previewer format.
 fn audit(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let a = audit::audit(seed);
@@ -525,8 +474,6 @@ fn audit(seed: u32) {
     println!("  biomes: {}", line.join(", "));
 }
 
-/// True 3-D detached-debris census (computed by `worldgen::audit::flood_audit`);
-/// prints its `FloodAudit` in the previewer format.
 fn flood_audit(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let f = audit::flood_audit(seed);
@@ -539,8 +486,6 @@ fn flood_audit(seed: u32) {
     );
 }
 
-/// Lowland-relief diagnostic (computed by `worldgen::audit::relief_audit`);
-/// prints its `ReliefStats` in the previewer format.
 fn relief_audit(seed: u32) {
     use petramond::tooling::worldgen::audit::{self, RELIEF_HIST_LABELS};
     let r = audit::relief_audit(seed);
@@ -573,10 +518,6 @@ fn relief_audit(seed: u32) {
     println!("  hist  {}", bars.join("  "));
 }
 
-/// Hillshaded top-down relief: colour each column by its top block, then light it
-/// by the surface-height gradient (Lambert against a NW light). Jagged terrain
-/// shows as sharp speckled relief; smooth domes show as soft gradients — so this
-/// directly reveals whether mountains are craggy ranges or "boobs".
 fn render_shaded(
     seed: u32,
     out: &str,
@@ -586,13 +527,13 @@ fn render_shaded(
     px_scale: i32,
 ) {
     let r = radius_chunks;
-    let s = px_scale.max(1) as usize; // upscale: each world column -> s×s pixels
+    let s = px_scale.max(1) as usize;
     let n = (r * 2) as usize;
     let w = n * CHUNK_SX;
     let h = n * CHUNK_SZ;
     let ccx = center_x.div_euclid(CHUNK_SX as i32);
     let ccz = center_z.div_euclid(CHUNK_SZ as i32);
-    let mut top = vec![0u16; w * h]; // block id
+    let mut top = vec![0u16; w * h];
     let mut hgt = vec![0i32; w * h];
     for cz in 0..n {
         for cx in 0..n {
@@ -616,23 +557,20 @@ fn render_shaded(
     let mut buf = vec![0u8; pw * ph * 3];
     for z in 0..h as i32 {
         for x in 0..w as i32 {
-            // Surface-gradient hillshade (NW light), exaggerated for relief.
             let dzx = (at(x + 1, z) - at(x - 1, z)) as f32 * 0.5;
             let dzz = (at(x, z + 1) - at(x, z - 1)) as f32 * 0.5;
             let nx = -dzx;
             let nz = -dzz;
             let ny = 1.0;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
-            // light from NW, fairly low so slopes catch it
             let (lx, ly, lz) = (-0.55f32, 0.62, -0.55);
             let lambert = ((nx * lx + ny * ly + nz * lz) / len).clamp(0.0, 1.0);
-            let shade = 0.35 + 0.95 * lambert; // ambient + diffuse
+            let shade = 0.35 + 0.95 * lambert;
             let base = block_color(top[(z as usize) * w + x as usize]);
             let mut col = base;
             for c in &mut col {
                 *c = (*c as f32 * shade).clamp(0.0, 255.0) as u8;
             }
-            // splat the column into an s×s pixel block
             for dy in 0..s {
                 for dx in 0..s {
                     let pxp = (z as usize * s + dy) * pw + (x as usize * s + dx);
@@ -645,8 +583,6 @@ fn render_shaded(
     println!("wrote {out} ({pw}x{ph}, seed {seed:#x}, shaded @ ({center_x},{center_z}) r{radius_chunks}ch x{s})");
 }
 
-/// Walkability / spikiness metric (computed by `worldgen::audit::roughness`);
-/// prints its `RoughnessStats` in the previewer format.
 fn roughness(seed: u32) {
     use petramond::tooling::worldgen::audit;
     let Some(s) = audit::roughness(seed) else {
@@ -664,18 +600,15 @@ fn roughness(seed: u32) {
     );
 }
 
-/// Oblique 3-D heightfield render (Comanche/voxel-landscape style). This is the
-/// view a PLAYER sees — the one cross-sections and hillshades hid. Camera at
-/// `(cam_x, cam_y, cam_z)` looks in -Z; for each screen column a ray marches the
-/// per-column surface height front-to-back, projecting it to screen and painting
-/// vertical spans (painter's algorithm). Pillars/needles and walkable surfaces
-/// look exactly as in-game. (Heightfield only — overhang undersides aren't drawn.)
+/// Old-school Comanche heightfield renderer. Pillars and walkable ground look like they do in
+/// game, which cross-sections and hillshades never showed. Camera at `(cam_x, cam_y, cam_z)`
+/// facing -Z; overhang undersides don't show up.
 fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: f32) {
     use std::collections::HashMap;
     let (w, h) = (640usize, 360usize);
     let horizon = (h as f32) * 0.45;
-    let scale = if scale > 0.0 { scale } else { 150.0 }; // vertical proj / focal length
-    let fov = 0.7f32; // half-width spread per unit distance
+    let scale = if scale > 0.0 { scale } else { 150.0 };
+    let fov = 0.7f32;
     let max_d = 420i32;
 
     let mut cache: HashMap<(i32, i32), Chunk> = HashMap::new();
@@ -690,8 +623,6 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
         top_block(c, lx, lz)
     };
 
-    // Auto-frame: scan the frustum for the tallest column, sit the camera below it
-    // so the peak lands in the upper third regardless of the region's scale.
     let mut peak = 64;
     for d in (20..max_d).step_by(4) {
         let half = fov * d as f32;
@@ -701,15 +632,13 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
             peak = peak.max(surf(wx.round() as i32, wz, &mut cache).1);
         }
     }
-    let cam_y = (peak - 58).max(cam_y).max(70); // passed cam_y is a floor
+    let cam_y = (peak - 58).max(cam_y).max(70);
 
     let mut buf = vec![0u8; w * h * 3];
-    // sky
     for px in buf.chunks_mut(3) {
         px.copy_from_slice(&[150, 190, 232]);
     }
-    let mut ybuf = vec![h as f32; w]; // lowest sky-free y per column (start at bottom)
-                                      // Front-to-back: nearer distances drawn first own the column top.
+    let mut ybuf = vec![h as f32; w];
     for d in 1..max_d {
         let df = d as f32;
         let half = fov * df;
@@ -721,7 +650,6 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
             let sy = horizon + (cam_y as f32 - hy as f32) * scale / df;
             let sy = sy.clamp(0.0, h as f32);
             if sy < *yb {
-                // simple depth + slope shade
                 let shade = (1.15 - df / (max_d as f32) * 0.85).clamp(0.25, 1.0);
                 let mut col = block_color(b);
                 for c in &mut col {
@@ -741,10 +669,6 @@ fn render_view(seed: u32, out: &str, cam_x: i32, cam_y: i32, cam_z: i32, scale: 
     println!("wrote {out} ({w}x{h}, seed {seed:#x}, view cam=({cam_x},{cam_y},{cam_z}))");
 }
 
-/// Km-scale overview: biome colour shaded by the base-height relief, sampled
-/// from the climate graph on a stride grid (no chunk generation, so an
-/// 8192-block window renders in seconds). Mountain belts, valley networks and
-/// coast shapes are only visible at this scale.
 fn render_macro(seed: u32, out: &str, stride: i32) {
     let side = 512usize;
     let map = macro_surface_map(seed, side, stride.max(1));
@@ -769,8 +693,6 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
-    // Map colours are pixel-derived; compose the atlas up front so
-    // `tile::map_rgb` answers real colours, not the headless gray.
     petramond_render::atlas::ensure_composed();
     let mut args = std::env::args().skip(1);
     let seed: u32 = args
@@ -789,27 +711,14 @@ fn main() {
     let center_x = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
     let proj = args.next().and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
 
-    // Held for the whole run: the packs' worldgen hooks stay installed only as
-    // long as this guard lives. Without it every mode previews a world with the
-    // packs' DATA applied but none of their worldgen CODE run — a picture that
-    // looks right and is not the world the game generates.
     let _mods = petramond::tooling::mods::load(seed);
 
     match mode.as_str() {
         "biome" => render_topdown(seed, &out, true),
-        // macro <stride>: km-scale biome+relief overview straight from the
-        // climate graph (no chunk gen) — 512 samples/edge, default stride 16
-        // blocks ⇒ an 8192-block window. For world-structure verification.
         "macro" => render_macro(seed, &out, arg.unwrap_or(16)),
         "side" => render_side(seed, &out, arg.unwrap_or(0), zoom, center_x, proj),
-        // deep <z>: full-depth (-64..255) cross-section from the cubic
-        // per-section generator — caves below y=0, marble lining, deep ores.
         "deep" => render_deep(seed, &out, arg.unwrap_or(0), zoom, center_x),
-        // caveplan <y>: horizontal cave-network slice at world Y (tunnel
-        // topology: branches, junctions, caverns).
         "caveplan" => render_caveplan(seed, &out, arg.unwrap_or(-16), zoom),
-        // cavestats: cave/ore census (carved share per depth band, marble share,
-        // ore per chunk, entrance rate).
         "cavestats" => cave_stats(seed),
         "shade" => render_shaded(
             seed,

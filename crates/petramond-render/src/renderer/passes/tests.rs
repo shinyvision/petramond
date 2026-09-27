@@ -1,7 +1,3 @@
-//! The frame's pass table against the contracts it encodes: ordering rules
-//! that used to be comments, the render passes a typical frame collapses
-//! into, and a valid plan for every combination of active nodes.
-
 use super::super::graph::{FrameShape, PassGroup};
 use super::*;
 
@@ -151,10 +147,6 @@ const GRADED: FrameShape = FrameShape {
     keep_scene: false,
 };
 
-/// Every node active: the frame that used to open 26 render passes (the
-/// MSAA resolve included). A mod's world marks that can hide behind the
-/// world copy its depth in a pass of their own, only on the frames that
-/// draw such a mark.
 #[test]
 fn a_full_frame_collapses_into_seven_render_passes() {
     let p = plan(GRADED, |n| n != Node::WorldMarksDepth);
@@ -168,8 +160,6 @@ fn a_full_frame_collapses_into_seven_render_passes() {
         "grade pass",
     ];
     assert_eq!(group_labels(&p), seven);
-    // Opaque through fluid is one pass; the volumetrics split it only
-    // because they sample the depth it writes.
     let world = &p.groups[0];
     assert_eq!(world.nodes.len(), 15);
     assert!(world.depth.unwrap().store, "the volumetrics sample depth");
@@ -258,9 +248,6 @@ fn screen_chrome_shares_the_post_process_pass() {
     );
 }
 
-/// Every route, with and without MSAA, over pseudo-random subsets of the
-/// optional nodes: the plan must always be runnable. The always-on nodes
-/// are on, and the grade runs exactly when the route post-processes.
 #[test]
 fn every_activity_combination_plans_validly() {
     let shapes = [
@@ -297,7 +284,6 @@ fn every_activity_combination_plans_validly() {
             let active = |n: Node| match n {
                 Node::Opaque | Node::Sky => true,
                 Node::Grade => shape.route == SceneRoute::PostProcess,
-                // The volumetric chain shares one gate.
                 Node::Environment | Node::EnvComposite => bit(Node::EnvDownsample),
                 _ => bit(n),
             };

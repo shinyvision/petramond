@@ -2,12 +2,9 @@ use super::builders::{
     color_target, pipeline_layout, shader_module, single_pipeline, texture_sampler_bgl, DepthPreset,
 };
 
-/// UI pipeline (2D HUD / inventory).
-/// group(0) is the SEPARATE gui sprite atlas (texture + sampler) — NOT the
-/// block atlas. Vertices are NDC pos (vec2) + uv (vec2) + color (vec4); the
-/// fragment shader outputs the vertex color for the solid sentinel (uv.x < 0)
-/// and otherwise samples the gui atlas * color. Alpha-blended, NO depth, drawn
-/// LAST so it sits over every world / hand / crosshair pass.
+/// HUD and inventory pipeline, using the gui atlas at `group(0)` rather than the block one.
+/// uv.x < 0 is the solid-color sentinel. Drawn last with no depth so it sits over the world,
+/// hand and crosshair.
 pub(super) fn create_ui_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -37,8 +34,6 @@ pub(super) fn create_ui_pipeline(
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &ui_vbuf_attrs,
     };
-    // UI quads are CPU-emitted CCW but disabling cull is robust against either
-    // winding; no depth (last pass). Alpha blend.
     let ui_targets = color_target(
         format,
         Some(wgpu::BlendState::ALPHA_BLENDING),

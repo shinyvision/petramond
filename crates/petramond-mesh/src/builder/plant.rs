@@ -6,13 +6,9 @@ use super::super::face::{crop_quads, cross_quads};
 use super::super::face_emit::FlatLit;
 use super::super::vertex::Vertex;
 
-/// Emit a billboard plant — the X cross (two diagonal quads) or the planted
-/// crop lattice (four axis-aligned quads, see `crop_quads`) — into the opaque
-/// (cutout) buffer, each plane drawn in BOTH windings so the plant is visible
-/// from both sides under back-face culling. Flat-lit (AO = 3, shade index 0 =
-/// "top", no directional darkening), biome-tinted for grass/fern;
-/// `fs_opaque`'s alpha discard handles the transparent texels exactly like
-/// leaves. `base` is the cell's mesh-space origin.
+/// X-cross or crop-lattice plant (see `crop_quads`) into the cutout buffer. Both windings get
+/// drawn so it shows from either side. No directional shading, and grass and fern take the
+/// biome tint. `base` is the cell's mesh-space origin.
 pub(super) fn emit_plant(
     opaque: &mut Vec<Vertex>,
     layout: PlantPlanes,
@@ -40,7 +36,6 @@ pub(super) fn emit_plant(
         for (corner, p) in plane.iter().enumerate() {
             opaque.push(lit.vertex(*p, tile, corner as u32));
         }
-        // A plant plane is seen from both sides.
         crate::vertex::push_back_face(opaque, start);
     }
 }

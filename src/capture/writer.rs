@@ -1,20 +1,16 @@
-//! How engine records reach a mod's file: through that file's ordered
-//! queue in the mod file store, in the turn the call took, while their
-//! bytes are still being encoded off the frame.
+//! Records reach a mod's file through that file's queue in the mod file store, in the same turn
+//! as the call, while their bytes are still encoding off the frame.
 //!
-//! A Frame record is small and encoded whole, so it takes one queued slot
-//! and reaches the OS in one write with its final head.
+//! Frame records are small and encoded whole: one slot, one write with the final head.
 //!
-//! A State record can be hundreds of MB, so it is STREAMED and never
-//! buffered whole: the call reserves one slot per chunk of pieces plus one
-//! for the envelope, in order. The first slot opens with the record's head,
-//! incomplete. Each chunk fills its slot as the job pool encodes it, and the
-//! file's queue writes the slots in order as they fill. Once every chunk
-//! has landed, the envelope names each piece by where it actually landed,
-//! relative to the record's start; once the envelope has landed, the head is
-//! rewritten in place with the record's final length and CRC. Only then does
-//! the ticket answer, and only then is the record's entry appended to the
-//! envelope file.
+//! State records can be hundreds of MB, so they're streamed, never buffered whole. The call
+//! reserves one slot per chunk plus one for the envelope. The first slot opens with the head,
+//! incomplete. Chunks fill their slots as the job pool encodes them, and the queue writes them in
+//! order as they land.
+//!
+//! After all chunks land, the envelope records where each piece landed relative to the record
+//! start. After the envelope lands, the head is rewritten in place with the final length and CRC.
+//! Only then does the ticket answer and the record get appended to the envelope file.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -30,10 +26,6 @@ use crate::modding::client::files::{self, FileRef, RecordSlot};
 
 use super::pieces::Piece;
 
-/// Where a record's envelope entry goes, in the order the records were
-/// issued: entries land in issue order whatever order their records finish
-/// in, so an envelope file reads front to back like its records. Dropped
-/// unsettled (its record never started), it gives its turn up.
 pub struct EnvelopeTarget {
     turn: Option<(FileRef, u64)>,
 }
@@ -42,8 +34,6 @@ pub struct EnvelopeTarget {
 struct EnvelopeQueue {
     next_issue: u64,
     next_write: u64,
-    /// Entries (or `None` for a record that never completed) waiting for an
-    /// earlier record's.
     ready: BTreeMap<u64, Option<Vec<u8>>>,
 }
 
@@ -56,8 +46,6 @@ fn envelope_queues() -> MutexGuard<'static, HashMap<PathBuf, EnvelopeQueue>> {
 }
 
 impl EnvelopeTarget {
-    /// The next entry's place in `file`: taken at the call that issues the
-    /// record, so entries keep call order.
     pub fn issue(file: FileRef) -> Self {
         let mut queues = envelope_queues();
         let queue = queues.entry(file.path()).or_default();
@@ -68,8 +56,6 @@ impl EnvelopeTarget {
         }
     }
 
-    /// Hand this record's entry over (`None`: the record failed and has
-    /// none); it is appended once every earlier record's has been.
     fn settle(mut self, entry: Option<Vec<u8>>) {
         self.settle_turn(entry);
     }
@@ -90,8 +76,6 @@ impl EnvelopeTarget {
                 continue;
             };
             let target = file.clone();
-            // No events log or media file claims an envelope file whole, so
-            // an engine's own entries are never refused for being in use.
             if let Err(why) = files::append(&file, bytes, move |landed| {
                 if let Err(why) = landed {
                     log::warn!("capture envelope entry into {} failed: {why}", target.rel());
@@ -112,17 +96,10 @@ impl Drop for EnvelopeTarget {
     }
 }
 
-/// The entry for a record at absolute `[offset, len]`.
 fn entry_bytes(record: [u64; 2], envelope: ClientEnvelope) -> Option<Vec<u8>> {
     write_envelope_entry(&ClientEnvelopeEntry { record, envelope }).ok()
 }
 
-// --- Frame records --------------------------------------------------------
-
-/// One Frame record laid out whole: head · envelope · pieces. The envelope
-/// lists every piece's range relative to the record's start, which depends
-/// on the envelope's own length, so the layout settles on the length the
-/// envelope has once it names those ranges.
 pub fn frame_record(
     pieces: &[Piece],
     envelope_of: impl Fn(Vec<ClientPieceInfo>) -> ClientEnvelope,
@@ -171,14 +148,11 @@ fn encode_envelope(envelope: &ClientEnvelope) -> Result<Vec<u8>, String> {
     .map_err(|e| format!("envelope: {e}"))
 }
 
-/// A reserved Frame record: filled once, whole.
 pub struct FrameSlot {
     slot: RecordSlot,
 }
 
 impl FrameSlot {
-    /// Reserve the record's turn in `file`. `landed` answers where it
-    /// landed (or why it did not); the envelope entry follows it.
     pub fn reserve(
         file: &FileRef,
         envelopes: Option<EnvelopeTarget>,
@@ -210,29 +184,20 @@ impl FrameSlot {
     }
 }
 
-/// Where a filled Frame record's envelope waits for its landing.
 pub struct FrameFill {
     envelope: Arc<Mutex<Option<ClientEnvelope>>>,
 }
 
-// --- State records --------------------------------------------------------
-
-/// One streamed State record in flight.
 pub struct StateRecord {
     file: FileRef,
     shared: Arc<Mutex<StateProgress>>,
 }
 
 struct StateProgress {
-    /// Chunk slots not yet filled, by index; the envelope's last.
     slots: Vec<Option<RecordSlot>>,
-    /// Each filled chunk's pieces, with their offsets inside the chunk.
     chunks: Vec<Option<Vec<(ClientPieceInfo, u64)>>>,
-    /// Where each chunk landed.
     landed: Vec<Option<[u64; 2]>>,
-    /// Makes the envelope from the pieces' placed ranges.
     make_envelope: Option<Box<dyn FnOnce(Vec<ClientPieceInfo>) -> ClientEnvelope + Send>>,
-    /// The envelope as written, and its CRC.
     envelope: Option<(ClientEnvelope, u32)>,
     error: Option<String>,
     finish: Option<StateFinish>,
@@ -248,8 +213,6 @@ fn lock(shared: &Mutex<StateProgress>) -> MutexGuard<'_, StateProgress> {
 }
 
 impl StateRecord {
-    /// Reserve `chunks` chunk slots and the envelope's in `file`, in one
-    /// turn. `done` answers once the record is complete on disk.
     pub fn reserve(
         file: FileRef,
         chunks: usize,
@@ -278,8 +241,6 @@ impl StateRecord {
             match slot {
                 Ok(slot) => lock(&shared).slots.push(Some(slot)),
                 Err(why) => {
-                    // Nothing was reserved before the first refusal but slots
-                    // that now fail: the record never starts.
                     let slots: Vec<_> = lock(&shared).slots.drain(..).flatten().collect();
                     lock(&shared).finish = None;
                     for slot in slots {
@@ -292,7 +253,6 @@ impl StateRecord {
         Ok(Self { file, shared })
     }
 
-    /// How the envelope is made from the pieces' placed ranges.
     pub fn set_envelope(
         &self,
         envelope: impl FnOnce(Vec<ClientPieceInfo>) -> ClientEnvelope + Send + 'static,
@@ -304,8 +264,6 @@ impl StateRecord {
         lock(&self.shared).chunks.len()
     }
 
-    /// Chunk `index`'s pieces, encoded. The first chunk opens with the
-    /// record's head, incomplete.
     pub fn fill(&self, index: usize, pieces: Vec<Piece>) {
         let mut bytes = Vec::with_capacity(pieces.len() + 1);
         let mut at = 0u64;
@@ -337,7 +295,6 @@ impl StateRecord {
         }
     }
 
-    /// The record cannot be made: every slot not yet filled fails.
     pub fn fail(&self, why: String) {
         let slots: Vec<_> = {
             let mut progress = lock(&self.shared);
@@ -354,7 +311,6 @@ impl StateRecord {
     }
 }
 
-/// Slot `index` of a State record landed (or failed).
 fn landed(
     shared: &Arc<Mutex<StateProgress>>,
     file: &FileRef,
@@ -375,7 +331,6 @@ fn landed(
         let all_chunks = progress.landed[..chunk_count].iter().all(Option::is_some);
         if !all_chunks {
             if progress.error.is_some() {
-                // A later chunk can no longer make a whole record.
                 fail_envelope_slot(progress);
             }
             return;
@@ -413,7 +368,6 @@ fn landed(
         }
         return;
     }
-    // The envelope landed (or failed): complete the head, then answer.
     let finish = progress.finish.take();
     let error = progress.error.clone();
     let start = progress.landed[0].map(|r| r[0]);

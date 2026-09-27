@@ -1,6 +1,3 @@
-//! Operator editing: the ordered request queue each session submits edits
-//! through, and the stage that works it off one request per tick.
-
 mod edits;
 pub mod history;
 mod transfer;
@@ -15,13 +12,9 @@ use crate::{
 use history::Replay;
 use std::collections::VecDeque;
 
-/// Requests one session may have waiting. A paste holds its place from its
-/// request, so a queued edit cannot overtake a design still arriving.
 const QUEUE_DEPTH: usize = 4;
-/// Refusals kept for a client that floods a full queue.
 const BUSY_REPLIES: usize = 8;
 
-/// A finished capture: its wire archive and the digest naming it.
 type Captured = Result<(Digest, std::sync::Arc<[u8]>), String>;
 
 #[derive(Default)]
@@ -50,8 +43,6 @@ impl CreativeSession {
         self.pending.len() < QUEUE_DEPTH
     }
 
-    /// Queue a request behind the ones already waiting; a full queue refuses
-    /// it and tells the client.
     pub(super) fn try_enqueue(&mut self, request: Pending) -> bool {
         if self.has_room() {
             self.pending.push_back(request);
@@ -69,7 +60,6 @@ impl CreativeSession {
 }
 
 impl ServerGame {
-    /// Whether session `s` may change the world through operator edits.
     pub(super) fn may_edit(&self, s: usize) -> bool {
         let player = &self.sessions[s].player;
         self.is_operator(s) && player.abilities().edits_cells && player.health() > 0
@@ -79,7 +69,6 @@ impl ServerGame {
         if !self.poll_capture(s) {
             return;
         }
-        // An edit in progress holds the queue: requests apply in order.
         if self.sessions[s].sim.creative.job.is_some() {
             if let Err(message) = self.step_edit_job(s, events) {
                 self.sessions[s].sim.creative.refuse(message);
@@ -97,8 +86,6 @@ impl ServerGame {
                 Some(Err(message)) => return self.sessions[s].sim.creative.refuse(message),
             }
         }
-        // Saving a selection is authoring, not editing: a player choosing a
-        // design for a mod may save one in any mode.
         let authoring = matches!(request, Pending::Action(CreativeAction::Capture { .. }))
             && self.sessions[s].sim.schematic.choice_open()
             && self.sessions[s].player.health() > 0;
@@ -111,8 +98,6 @@ impl ServerGame {
                     Some(design) => {
                         self.place_schematic(s, design.schematic(), origin, turns, events)
                     }
-                    // Only a decoded placement reaches its turn; one that
-                    // did not is refused, never a server-wide panic.
                     None => Err("That design is not ready to place".into()),
                 },
             }

@@ -63,11 +63,7 @@ fn zero_gravity_preserves_vertical_drive_but_still_collides() {
 
 #[test]
 fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
-    // A trunk grew around the sheep (a door shut on it, ...): the foot heal
-    // lifts it by its cap, gravity drops it back through the box it still
-    // overlaps, forever. It must leave sideways, with the feet never rising.
     let full = Block::Stone.collision_boxes();
-    // Floor at y < 0; a 3-high column in cell (0, 0..3, 0).
     let boxes = |x: i32, y: i32, z: i32| {
         if y < 0 || (x == 0 && z == 0 && (0..3).contains(&y)) {
             full
@@ -102,10 +98,6 @@ fn a_body_embedded_in_a_grown_column_slides_out_sideways_without_bobbing() {
 
 #[test]
 fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
-    // Model-aware body collision: a mob settling onto an INSET block (a chest, top at
-    // 14/16) rests its feet on that real top, not the full-cube cell top (y = 1). The
-    // mob body now collides through the shared `collision_boxes_at` shape (nav stays
-    // cell-based, but that's a separate concern).
     let chest = petramond_world::block::Block::Chest.collision_boxes();
     let chest_top = chest.iter().map(|b| b.max[1]).fold(0.0, f32::max);
     assert!(
@@ -136,8 +128,6 @@ fn mob_body_rests_on_an_inset_block_top_not_the_cell_top() {
 
 #[test]
 fn grounded_mob_auto_steps_up_a_half_block() {
-    // A grounded mob walking into a 0.5-tall ledge auto-climbs it (same STEP_HEIGHT as
-    // the player), without needing a jump.
     let half_step = |x: i32, y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] {
         if y == 0 {
             Block::Stone.collision_boxes()
@@ -174,10 +164,9 @@ fn grounded_mob_auto_steps_up_a_half_block() {
 
 #[test]
 fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
-    // A one-block navigation jump has an airborne phase where the body is still below
-    // the ledge top and colliding with the block side. The mob must keep applying the
-    // current route wish while rising, otherwise that side hit zeros horizontal
-    // velocity and the jump stalls at the face.
+    // Mid-air on a one-block jump the body is still below the ledge top, so it hits the block
+    // side. Keep feeding the route wish while rising, or that side hit zeroes horizontal velocity
+    // and the jump stalls at the face.
     let solid = |c: IVec3| c.y < 1 || (c.x >= 1 && c.y < 2);
     let wish = Vec3::new(1.0, 0.0, 0.0);
     let mut sheep = Instance::new(Mob::Sheep, WorldPos::new(0.5, 1.0, 0.5), 0.0, 1);
@@ -230,7 +219,6 @@ fn navigation_jump_keeps_steering_until_it_clears_a_full_block_step() {
 #[test]
 fn wish_direction_drives_horizontal_motion_and_facing() {
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
-    // Settle on the ground first.
     owl.integrate(1.0 / 60.0, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
     for _ in 0..30 {
@@ -249,7 +237,6 @@ fn wish_direction_drives_horizontal_motion_and_facing() {
         owl.pos.x
     );
     assert!(owl.moving, "moving flag set while walking");
-    // Faces +X: heading_yaw((+,0,0)) = atan2(-1, 0) = -PI/2.
     assert!(
         (wrap_angle(owl.yaw - (-PI / 2.0))).abs() < 0.2,
         "turns to face travel: {}",
@@ -348,10 +335,6 @@ fn idle_mob_is_not_moving() {
 
 #[test]
 fn a_drive_intent_moves_the_mob_for_one_tick_then_expires() {
-    // A mod's kinematic drive replaces the wish overwrite for exactly the
-    // tick it was issued: the mob moves at the driven velocity with its
-    // yaw set, does not read as walking, and — like the brain's wish —
-    // the intent must be re-issued or the next tick's overwrite parks it.
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([2.0, 0.0]),
@@ -409,10 +392,8 @@ fn a_driven_step_walks_and_a_carried_body_does_not() {
 
 #[test]
 fn knockback_stagger_overrides_a_drive_intent() {
-    // A punched vehicle takes its knockback: the decaying knockback owns
-    // horizontal velocity for the stagger, the drive is consumed unused.
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
-    let from = WorldPos::new(2.0, 0.0, 0.5); // hit from +X: knockback pushes -X
+    let from = WorldPos::new(2.0, 0.0, 0.5);
     owl.damage(1.0, Some(from), true, None, &default_feedback());
     assert!(owl.set_drive(DriveIntent {
         horizontal: Some([5.0, 0.0]),
@@ -437,11 +418,8 @@ fn knockback_stagger_overrides_a_drive_intent() {
 #[test]
 fn knockback_pushes_away_and_overrides_the_wish() {
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
-    // Settle on the floor first.
     owl.integrate(0.05, owl_def(), Vec3::ZERO, false, &floor_at_zero);
     let x0 = owl.pos.x;
-    // Hit from the +X side → knockback toward -X. This is the key invariant: the
-    // knockback survives `integrate`'s per-tick wish-velocity overwrite.
     assert!(!owl.damage(
         1.0,
         Some(WorldPos::new(5.0, 0.0, 0.5)),
@@ -449,7 +427,6 @@ fn knockback_pushes_away_and_overrides_the_wish() {
         None,
         &default_feedback()
     ));
-    // Wish toward +X (toward the attacker); the knockback must win during the stagger.
     for _ in 0..4 {
         owl.integrate(
             0.05,
@@ -467,11 +444,9 @@ fn knockback_pushes_away_and_overrides_the_wish() {
     assert!(!owl.moving, "a staggered mob doesn't read as walking");
 }
 
-/// The generic velocity seam a pack authors a gait (a hop) from: a VERTICAL
-/// drive composes with the brain's own walking — launch, arc, the walking
-/// expression carried through the unsteered descent, and the walk clip
-/// re-phased FORWARD onto a cycle boundary at each takeoff. No gait
-/// vocabulary exists engine-side; this drives exactly what a mod does.
+/// A hop is just a vertical drive on top of normal walking. The engine has no gait concept, so
+/// this test drives it the way a pack would and checks the launch, the arc, walking through the
+/// descent, and the walk clip snapping forward to a cycle boundary on each takeoff.
 #[test]
 fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     let d = owl_def();
@@ -484,10 +459,9 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     let dt = 1.0 / 60.0;
     let mut mob = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
 
-    // Walk +X under the real steering gate, issuing the launch the way a mod
-    // does: a vertical-only drive latched whenever the LAST tick ended
-    // grounded and walking (the mod's tick system reads post-move state and
-    // its intent is consumed by the next integration).
+    // Walk +X under the real steering gate, launching like a mod would: vertical-only drive latched
+    // when last tick ended grounded and walking. Mod's tick system reads post-move state, intent
+    // gets consumed next integration.
     let mut launches = 0;
     let mut descent_ticks = 0;
     let mut unmoving_descent_ticks = 0;
@@ -555,9 +529,6 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         mob.pos.x
     );
 
-    // A navigation step jump keeps priority over the vertical drive on the
-    // tick both fire: launched at the full jump_speed, which clears the
-    // one-block ledge the route depends on.
     let mut jumper = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         jumper.integrate(dt, d, Vec3::ZERO, false, &solid);
@@ -577,7 +548,6 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
         jumper.vel().y
     );
 
-    // A HORIZONTAL drive keeps its vehicle semantics: driven is not walking.
     let mut driven = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         driven.integrate(dt, d, Vec3::ZERO, false, &solid);
@@ -597,9 +567,6 @@ fn a_vertical_drive_launch_composes_with_walking_and_carries_the_gait() {
     assert!(driven.vel().x > 1.9, "the drive velocity applies");
 }
 
-/// A shove is not a walk: the soft entity push moves the body but never sets
-/// `moving` — mod gait policies (the rabbit hop) gate launches on the
-/// deliberate-locomotion fact, so a pushed-around mob must slide, not gait.
 #[test]
 fn a_shoved_mob_moves_without_reading_as_walking() {
     let d = owl_def();
@@ -614,7 +581,6 @@ fn a_shoved_mob_moves_without_reading_as_walking() {
     assert!(owl.pos.x > 0.5, "the push displaces the body");
     assert!(!owl.moving, "a shove never reads as walking");
 
-    // A WALKING mob that also gets shoved keeps its intent.
     owl.set_push(Vec3::new(0.0, 0.0, 3.0));
     owl.integrate(
         1.0 / 60.0,
@@ -626,10 +592,6 @@ fn a_shoved_mob_moves_without_reading_as_walking() {
     assert!(owl.moving, "walking while shoved is still walking");
 }
 
-/// A walking-gated drive validates its premise at CONSUMPTION: the intent is
-/// decided from last tick's state, and if the walk it was premised on ended
-/// in between (arrival, an abandoned route), it must drop whole — or every
-/// wander leg ends with one stale in-place bounce at the destination.
 #[test]
 fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     let d = owl_def();
@@ -639,7 +601,6 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
     }
     assert!(owl.on_ground());
 
-    // Premise broken: latched while walking, consumed on an idle tick.
     assert!(owl.set_drive(DriveIntent {
         horizontal: None,
         vertical: Some(4.6),
@@ -657,7 +618,6 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         "the dropped intent still expires"
     );
 
-    // Premise holds: same intent on a walking tick launches.
     assert!(owl.set_drive(DriveIntent {
         horizontal: None,
         vertical: Some(4.6),
@@ -677,7 +637,6 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
         "a gated intent whose premise holds launches normally"
     );
 
-    // An UNGATED intent stays unconditional (a startle jump from standstill).
     let mut idle = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     for _ in 0..60 {
         idle.integrate(1.0 / 60.0, d, Vec3::ZERO, false, &floor_at_zero);
@@ -698,11 +657,6 @@ fn a_walking_gated_drive_drops_when_the_walk_ended_before_consumption() {
 
 #[test]
 fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
-    // A mod-authored pose replaces the tick's motion wholesale: the body is
-    // exactly where it was put, tilted as it was told, and the placement's
-    // implied velocity survives it — so a body the mod stops placing keeps
-    // that velocity into the engine's own integration instead of being
-    // zeroed as a standing body's would be.
     let mut cart = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     let dt = 1.0 / 20.0;
     assert!(cart.set_kinematic(KinematicPose {
@@ -725,9 +679,6 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
         "re-anchored: no fall latched"
     );
 
-    // Released: the next ordinary integration — steering gated exactly as
-    // the tick gates it, off the airborne flag the placement left — carries
-    // the implied velocity instead of parking the body like a standing one.
     let x = cart.pos.x;
     let can_steer = route_steering_supported(cart.motion.on_ground, false, cart.motion.vel.y);
     assert!(!can_steer, "a placed body is left airborne");
@@ -746,8 +697,6 @@ fn a_kinematic_pose_is_written_verbatim_and_a_released_body_flies_on() {
         cart.motion.kinematic.is_none(),
         "a pose is consumed by the tick it was issued for"
     );
-    // Back in the engine's hands the body settles level over a few ticks —
-    // eased, never snapped, and never left lying tilted where it landed.
     let before = cart.tilt;
     cart.level_body(dt);
     assert!(
@@ -813,7 +762,6 @@ fn brain_speed_scale_changes_horizontal_travel_and_gait_together() {
 
 #[test]
 fn an_edge_guarded_body_stops_at_a_tall_ledge_but_steps_down_a_short_one() {
-    // A platform 6 tall ending at x = 3; a body walking +x off it.
     let tall = |c: IVec3| c.y < 0 || (c.x < 3 && c.y < 6);
     let short = |c: IVec3| c.y < 0 || (c.x < 3 && c.y < 2);
     let walk_off = |d: &MobDef, solid: &dyn Fn(IVec3) -> bool, top: f64| {
@@ -843,8 +791,6 @@ fn an_edge_guarded_body_stops_at_a_tall_ledge_but_steps_down_a_short_one() {
     );
     let fell = walk_off(sheep_def(), &tall, 6.0);
     assert!(fell.y < 0.1, "unguarded bodies still walk off: {fell:?}");
-    // Four tall onto a slab is the three-cell drop a route plans, half a block
-    // further than three: the guard measures it as the route does.
     let slab = |x: i32, y: i32, _z: i32| -> &'static [petramond_world::block::Aabb] {
         if y < 0 || (x < 3 && y < 4) {
             Block::Stone.collision_boxes()

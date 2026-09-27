@@ -1,20 +1,7 @@
-//! Raster pipelines whose sample count follows the scene targets.
-//!
-//! A scene pipeline is compiled for a sample count the first time that count
-//! is drawn, never ahead of it: the world's ~25 pipelines would otherwise each
-//! compile a 1x, 4x and 8x variant at start-up when a session usually draws
-//! one. Screen pipelines (UI, crosshair, the scene resolve) always draw at one
-//! sample and are plain `wgpu::RenderPipeline`s built by
-//! [`super::builders::single_pipeline`].
-
 use std::sync::{Arc, OnceLock};
 
-/// Sample counts a scene target can have — the ladder
-/// `renderer::construct::max_scene_samples` picks from.
 pub(crate) const SAMPLE_COUNTS: [u32; 3] = [1, 4, 8];
 
-/// An owned `wgpu::VertexBufferLayout`, so a pipeline description outlives the
-/// constructor's stack-allocated attribute arrays.
 pub(super) struct VertexLayout {
     array_stride: wgpu::BufferAddress,
     step_mode: wgpu::VertexStepMode,
@@ -39,7 +26,6 @@ impl VertexLayout {
     }
 }
 
-/// Everything a render pipeline is made of except its sample count.
 pub(super) struct PipelineSpec {
     pub label: String,
     pub layout: wgpu::PipelineLayout,
@@ -52,15 +38,10 @@ pub(super) struct PipelineSpec {
     pub depth: Option<wgpu::DepthStencilState>,
 }
 
-/// One scene pipeline in every sample count the device supports, compiled on
-/// first use. Clones share the compiled variants: the pass constructors hand
-/// the same pipeline to several dynamic draws.
 #[derive(Clone)]
 pub(crate) struct SampledPipeline {
     device: wgpu::Device,
     spec: Arc<PipelineSpec>,
-    /// The device's ceiling; a request above it is a renderer bug, not a
-    /// fallback case (the scene mode is clamped before it reaches a draw).
     max_samples: u32,
     variants: Arc<[OnceLock<wgpu::RenderPipeline>; SAMPLE_COUNTS.len()]>,
 }
@@ -75,8 +56,6 @@ impl SampledPipeline {
         }
     }
 
-    /// The variant rasterizing `samples` per pixel, compiled now if this is
-    /// the first draw at that count.
     pub(crate) fn get(&self, samples: u32) -> &wgpu::RenderPipeline {
         let slot = SAMPLE_COUNTS
             .iter()

@@ -1,44 +1,3 @@
-//! The content registry: every pack-extensible catalog as ONE explicit,
-//! immutable value, built by a fallible loader from a [`PackSet`].
-//!
-//! # Building
-//!
-//! [`ContentLoader`] builds a [`ContentRegistry`] in a fixed stage order
-//! (tiles before the catalogs that name tiles, the shared block/item name
-//! tables before either definition table, ...; see `load::WORLD_STAGES`).
-//! Every stage runs eagerly; a stage that fails records its errors — one
-//! [`ContentError`] per bad row where the catalog reports rows — and the
-//! stages that declared a dependency on it are skipped rather than run
-//! against missing data. The loader returns every error at once
-//! ([`ContentErrors`]), so a bad pack produces a load report, never a panic
-//! on whichever worker thread happened to touch a catalog first.
-//!
-//! Crates above this one attach their own catalogs through [`Slot`]s: a
-//! `static` slot names its builder, the crate's loader passes it to
-//! [`ContentLoader::stage`], and it builds in order with the world stages.
-//!
-//! # Using
-//!
-//! A built registry is a [`Content`] handle — `Copy`, and cheap to hand to a
-//! world, a server, a client or a job. Registries are immutable and are
-//! retained for the rest of the process once built: every definition row is
-//! handed out as `&'static`, which is what keeps the per-cell hot paths an
-//! index into a table instead of a lock or a refcount. Reloading packs means
-//! building a new registry and making it current; the old one stays valid
-//! for anything still holding its rows.
-//!
-//! # The current registry
-//!
-//! The typed accessors all over the codebase (`Block::is_opaque`,
-//! `ItemType::def`, `sound_registry::by_name`, ...) resolve through
-//! [`current`]: the registry PINNED on this thread ([`pin`]; worker pools pin
-//! the submitter's registry around every job), else the one INSTALLED for the
-//! process ([`install`]). Binaries install a registry at startup, before any
-//! content is touched; a thread with neither is a bootstrap bug and panics
-//! with a clear message. Test builds instead fall back to one shared default
-//! built from [`PackRoots::from_env`], and a test that needs its own content
-//! builds a registry and pins it.
-
 use std::any::Any;
 use std::cell::Cell;
 use std::fmt;
@@ -52,8 +11,6 @@ mod load;
 
 pub use load::{ContentLoader, Stage};
 
-/// The world crate's stage names — what a [`Slot`]'s `needs` lists to build
-/// after (and be skipped with) one of them.
 pub mod stage {
     pub const TILES: &str = "textures/atlas.json";
     pub const SOUNDS: &str = "sounds.json";
@@ -64,16 +21,13 @@ pub mod stage {
     pub const ANIMATED_MODELS: &str = "animated_models.json";
     pub const SHAPES: &str = "shapes.json";
     pub const MODELS: &str = "models.json";
-    /// The shared block + item name tables (keys of both catalogs).
     pub const NAMES: &str = "content names";
     pub const BLOCKS: &str = "blocks.json";
-    /// The dense per-id tables derived from the block rows.
     pub const BLOCK_VIEWS: &str = "block views";
     pub const ITEMS: &str = "items.json";
     pub const LOOT: &str = "loot_tables.json";
     pub const STRUCTURES: &str = "structures.json";
     pub const TEXTURE_TRANSITIONS: &str = "texture_transitions.json";
-    /// Per-tile cutout alpha masks (decoded from the tile textures).
     pub const TILE_ALPHA: &str = "tile alpha";
     pub const FLUID_MEDIA: &str = "fluid media";
     pub const SECTION_METRICS: &str = "section metrics";
@@ -83,15 +37,11 @@ pub mod stage {
 #[cfg(test)]
 mod tests;
 
-/// Most [`Slot`]s one process may declare. Slots are `static`s in code, so
-/// the count is fixed at compile time; this only sizes the per-registry
-/// table.
 const SLOT_CAPACITY: usize = 96;
 
 static NEXT_SLOT: AtomicUsize = AtomicUsize::new(0);
 static NEXT_SERIAL: AtomicU64 = AtomicU64::new(1);
 
-/// Every pack-extensible catalog of one pack set (see the module docs).
 pub struct ContentRegistry {
     serial: u64,
     packs: PackSet,
@@ -121,24 +71,18 @@ impl ContentRegistry {
         }
     }
 
-    /// Build a registry over `packs` with the world crate's stages only (no
-    /// extension slots) — [`ContentLoader::new`]`(packs).load()`.
     pub fn load(packs: PackSet) -> Result<Content, ContentErrors> {
         ContentLoader::new(packs).load()
     }
 
-    /// A process-unique number for this registry (diagnostics; derived caches
-    /// outside the registry key on it).
     pub fn serial(&self) -> u64 {
         self.serial
     }
 
-    /// The pack set this registry was built from.
     pub fn packs(&self) -> &PackSet {
         &self.packs
     }
 
-    /// The shared block + item name tables.
     #[inline]
     pub fn names(&self) -> &crate::registry::ContentNames {
         self.names.get().unwrap_or_else(|| unbuilt("content names"))
@@ -161,8 +105,6 @@ impl ContentRegistry {
         self.items.get().unwrap_or_else(|| unbuilt("items.json"))
     }
 
-    /// This registry's item instance-data table (variant ids are only
-    /// meaningful against the registry that minted them).
     #[inline]
     pub fn variants(&self) -> &crate::item::variant::VariantTable {
         &self.variants
@@ -188,23 +130,18 @@ fn unbuilt(stage: &str) -> ! {
     )
 }
 
-/// A built, retained registry (see the module docs). `Copy`; derefs to the
-/// registry.
 #[derive(Clone, Copy)]
 pub struct Content(&'static ContentRegistry);
 
 impl Content {
-    /// The registry [`current`] resolves to on this thread.
     pub fn current() -> Content {
         Content(current())
     }
 
-    /// The registry, for the rest of the process.
     pub fn registry(self) -> &'static ContentRegistry {
         self.0
     }
 
-    /// Whether both handles name the same registry.
     pub fn same(self, other: Content) -> bool {
         std::ptr::eq(self.0, other.0)
     }
@@ -224,10 +161,8 @@ impl fmt::Debug for Content {
     }
 }
 
-/// One content problem, attributed to the catalog stage that found it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentError {
-    /// The stage (catalog file) that failed, e.g. `blocks.json`.
     pub stage: &'static str,
     pub message: String,
 }
@@ -238,13 +173,9 @@ impl fmt::Display for ContentError {
     }
 }
 
-/// Everything a failed [`ContentLoader::load`] found: every error of every
-/// stage that ran, the stages skipped because something they need failed,
-/// and the packs discovery had already refused.
 #[derive(Clone, Debug, Default)]
 pub struct ContentErrors {
     pub errors: Vec<ContentError>,
-    /// `(stage, the failed stage it needed)`.
     pub skipped: Vec<(&'static str, &'static str)>,
     pub refused: Vec<PackRefusal>,
 }
@@ -267,12 +198,6 @@ impl fmt::Display for ContentErrors {
 
 impl std::error::Error for ContentErrors {}
 
-/// A catalog a crate above this one keeps in every registry — a `static`
-/// with a name, the stages it needs, and a builder over the registry being
-/// built. Pass it to [`ContentLoader::stage`] so it builds (and reports its
-/// errors) with the rest; a slot nobody registered builds on first use
-/// instead, which is reserved for INFALLIBLE derived views (a failing builder
-/// there panics with its message).
 pub struct Slot<T> {
     name: &'static str,
     needs: &'static [&'static str],
@@ -306,7 +231,6 @@ impl<T: Send + Sync + 'static> Slot<T> {
         &reg.slots[index]
     }
 
-    /// This slot's value in `reg`.
     pub fn get<'r>(&self, reg: &'r ContentRegistry) -> &'r T {
         self.cell(reg)
             .get_or_init(|| match (self.build)(reg) {
@@ -317,7 +241,6 @@ impl<T: Send + Sync + 'static> Slot<T> {
             .expect("a slot's cell holds its own type")
     }
 
-    /// This slot's value in the [`current`] registry.
     pub fn current(&self) -> &'static T {
         self.get(current())
     }
@@ -336,21 +259,15 @@ impl<T: Send + Sync + 'static> Stage for Slot<T> {
         let cell = self.cell(reg);
         if cell.get().is_none() {
             let value = (self.build)(reg)?;
-            // A dependent stage may have forced the slot in the meantime.
             let _ = cell.set(Box::new(value));
         }
         Ok(())
     }
 }
 
-// ---------------------------------------------------------------------------
-// The current registry: per-thread pin, then the process install.
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy)]
 struct ThreadSlot {
     pinned: Option<&'static ContentRegistry>,
-    /// The install this thread last resolved, and its generation.
     cached: Option<&'static ContentRegistry>,
     generation: u64,
 }
@@ -370,12 +287,8 @@ static INSTALLED: RwLock<Installed> = RwLock::new(Installed {
     registry: None,
     generation: 0,
 });
-/// Mirrors `INSTALLED.generation` so the hot path checks it without a lock.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// The registry content accessors read on this thread: the pinned one, else
-/// the process install (see the module docs). One thread-local read and one
-/// atomic load on the hot path.
 #[inline]
 pub fn current() -> &'static ContentRegistry {
     let slot = THREAD.with(Cell::get);
@@ -388,8 +301,6 @@ pub fn current() -> &'static ContentRegistry {
     }
 }
 
-/// [`current`], or `None` on a thread with neither a pin nor an install —
-/// never falls back or panics.
 pub fn try_current() -> Option<Content> {
     let slot = THREAD.with(Cell::get);
     slot.pinned.or_else(|| read_installed().0).map(Content)
@@ -442,9 +353,6 @@ fn not_installed() -> &'static ContentRegistry {
     }
 }
 
-/// Make `content` the process registry for every thread without a pin.
-/// Threads pick the change up on their next content access; rows of the
-/// previous registry stay valid (registries are retained).
 pub fn install(content: Content) {
     let mut installed = INSTALLED.write().unwrap_or_else(PoisonError::into_inner);
     installed.generation += 1;
@@ -453,9 +361,6 @@ pub fn install(content: Content) {
     log::info!("content registry #{} installed", content.serial());
 }
 
-/// Build the environment's registry ([`PackRoots::from_env`]) with `stages`
-/// as the extra (extension) stages and install it — the binaries' startup
-/// step. On error nothing is installed and the full report comes back.
 pub fn install_from_env(stages: &[&'static dyn Stage]) -> Result<Content, ContentErrors> {
     let content = ContentLoader::new(PackSet::discover(&PackRoots::from_env()))
         .stages(stages)
@@ -464,16 +369,12 @@ pub fn install_from_env(stages: &[&'static dyn Stage]) -> Result<Content, Conten
     Ok(content)
 }
 
-/// Pins a registry on the current thread until dropped (see [`pin`]).
 #[must_use = "the pin lasts only while the guard lives"]
 pub struct PinGuard {
     previous: Option<&'static ContentRegistry>,
     _not_send: PhantomData<*const ()>,
 }
 
-/// Make `content` this thread's [`current`] registry until the guard drops,
-/// restoring whatever was pinned before. Worker pools pin the submitting
-/// thread's registry around every job; a test pins the registry it built.
 pub fn pin(content: Content) -> PinGuard {
     let previous = THREAD.with(|t| {
         let mut slot = t.get();
@@ -497,14 +398,10 @@ impl Drop for PinGuard {
     }
 }
 
-/// The registry pinned on this thread, if any.
 pub fn pinned() -> Option<Content> {
     THREAD.with(Cell::get).pinned.map(Content)
 }
 
-/// Switch the content a world runs on: on a thread with a pinned registry
-/// (a test, a thread serving its own world) the pin is replaced for the rest
-/// of that pin's scope; otherwise `content` is installed for the process.
 pub fn activate(content: Content) {
     let replaced = THREAD.with(|t| {
         let mut slot = t.get();
@@ -520,11 +417,6 @@ pub fn activate(content: Content) {
     }
 }
 
-/// The registry for a world that switched `disabled` off, derived from the
-/// current registry's installed packs with `stages` as the extra stages. The
-/// current registry itself when it already has exactly that enablement;
-/// otherwise a previously built registry for the same set is reused before a
-/// new one is built. Does NOT make the result current — see [`activate`].
 pub fn for_world(
     disabled: &std::collections::BTreeSet<String>,
     stages: &[&'static dyn Stage],
@@ -548,8 +440,6 @@ pub fn for_world(
     Ok(content)
 }
 
-/// Registries for tests: the shared default the test fallback installs, and
-/// fixture registries a test builds and pins for itself.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use std::path::Path;
@@ -558,9 +448,6 @@ pub mod test_support {
     use super::{Content, ContentRegistry};
     use crate::assets::{PackRoots, PackSet};
 
-    /// The registry test binaries fall back to: base assets plus whatever
-    /// [`PackRoots::from_env`] discovers, built once per process. Panics with
-    /// the full load report when the shipped content does not load.
     pub fn default_content() -> Content {
         static DEFAULT: OnceLock<Content> = OnceLock::new();
         *DEFAULT.get_or_init(|| {
@@ -569,9 +456,6 @@ pub mod test_support {
         })
     }
 
-    /// A registry over the base assets plus EXACTLY the packs under `mods` —
-    /// build it, [`pin`](super::pin) it, run the test body in-process.
-    /// Panics with the full load report when the fixture does not load.
     pub fn with_mods(mods: &Path) -> Content {
         ContentRegistry::load(PackSet::discover(&PackRoots::with_mods([
             mods.to_path_buf()

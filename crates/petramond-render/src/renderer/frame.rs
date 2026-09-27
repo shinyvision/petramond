@@ -1,29 +1,19 @@
-//! The renderer's frame orchestration and public knobs: fog coupling, the
-//! census/profile readouts, and `render` → acquire, bake, plan, encode, submit.
-
 use std::time::Instant;
 
 use super::graph::FrameShape;
 use super::*;
 
 impl Renderer {
-    /// Couple the fog band (and with it the terrain draw-cull distance) to the
-    /// streaming render distance, so the fade always ends at the loaded edge.
     pub(super) fn set_render_distance(&mut self, chunks: i32) {
         let (start, end) = crate::uniforms::fog_range(chunks);
         self.sky.fog_start = start;
         self.sky.fog_end = end;
     }
 
-    /// Terrain draw-cull distance: nothing beyond this is fully un-fogged.
     pub(crate) fn terrain_cull_dist(&self) -> f32 {
         self.sky.fog_end + TERRAIN_FOG_CULL_PAD
     }
 
-    /// What this frame can draw, as published by the last
-    /// [`update_uniforms`](Self::update_uniforms): the culling frustum and the
-    /// fog cull distance. Hand it to a per-frame gather so the gather's cost
-    /// tracks what is visible instead of what is loaded.
     pub fn view_volume(&self) -> ViewVolume {
         ViewVolume::new(
             self.view.frustum,
@@ -34,24 +24,14 @@ impl Renderer {
         )
     }
 
-    /// Presented pixels one world block spans at one block of distance. The
-    /// PRESENTED size, not the supersampled scene's: a gather asking "can this
-    /// be seen" is asking about the display, and SSAA must not quietly extend
-    /// how far small detail is built.
     fn pixel_scale(&self) -> f32 {
         0.5 * self.screen_size().1 as f32 * self.view.proj_y_scale
     }
 
-    /// Emitter-derived particle density from the particles graphics option
-    /// (`0` = off, `0.5` = reduced, `1` = full). Scales each looping emitter's
-    /// active-particle count; zero skips emitter baking entirely.
     pub fn set_particle_density(&mut self, density: f32) {
         self.particle.density = density.clamp(0.0, 1.0);
     }
 
-    /// Accumulated GPU nanoseconds per pass over the frames measured since the last
-    /// [`Renderer::reset_gpu_profile`], as `(label, total_ns, frames)`. Empty
-    /// unless `PETRAMOND_GPU_TIMING` is set.
     pub fn gpu_profile(&self) -> Vec<(&'static str, f64, u32)> {
         self.gpu_timer
             .as_ref()
@@ -59,9 +39,6 @@ impl Renderer {
             .unwrap_or_default()
     }
 
-    /// Where the packed terrain columns' GPU memory actually is. The
-    /// renderer's dominant VRAM consumer at high render distance, and the
-    /// number that says whether an allocation-policy change paid.
     pub fn terrain_memory(&self) -> TerrainMemory {
         let mut suballocated = 0u64;
         let mut live_allocs = 0usize;
@@ -85,20 +62,14 @@ impl Renderer {
         }
     }
 
-    /// `(bytes, count)` of every GPU texture created this process (see
-    /// [`crate::gpu_mem`]). Gross, not net: resize-replaced targets are
-    /// counted each time.
     pub fn texture_memory(&self) -> (u64, u64) {
         crate::gpu_mem::texture_totals()
     }
 
-    /// Texture bytes per descriptor label, largest first.
     pub fn texture_memory_by_label(&self) -> Vec<(String, u64)> {
         crate::gpu_mem::texture_by_label()
     }
 
-    /// Terrain draw work submitted by the last encoded frame:
-    /// `(opaque draws, opaque indices, transparent draws, transparent indices)`.
     pub fn last_terrain_draws(&self) -> (u32, u64, u32, u64) {
         let s = self.last_stats;
         (
@@ -109,7 +80,6 @@ impl Renderer {
         )
     }
 
-    /// Mean CPU nanoseconds per frame stage, same shape as [`Renderer::gpu_profile`].
     pub fn cpu_profile(&self) -> Vec<(&'static str, f64, u32)> {
         self.gpu_timer
             .as_ref()
@@ -123,10 +93,6 @@ impl Renderer {
         }
     }
 
-    /// The failure that stopped this renderer, if any: the device was lost
-    /// or the GPU ran out of memory. A renderer that reports one draws
-    /// nothing more; the host rebuilds it (device loss) or reports the error
-    /// (out of memory). Check after every [`render`](Self::render).
     pub fn failure(&self) -> Option<RenderFailure> {
         self.health.failure()
     }
@@ -149,18 +115,9 @@ impl Renderer {
         frame.present();
     }
 
-    /// The swapchain image to draw into, or `None` when this frame draws
-    /// nothing: a surfaceless renderer, a swapchain that needed rebuilding
-    /// first, an acquire that timed out or failed, or no memory left for a
-    /// frame (recorded as this renderer's [`failure`](Self::failure)).
     pub(super) fn acquire_swapchain_frame(&mut self) -> Option<wgpu::SurfaceTexture> {
         let surface = self.surface.as_ref()?;
         match surface.get_current_texture() {
-            // A suboptimal frame still presents (with a per-present driver
-            // warning), but the swapchain no longer matches the surface —
-            // rebuild it once and draw from the fresh one next frame. The
-            // frame must drop BEFORE the reconfigure (a live SurfaceTexture
-            // across a swapchain rebuild panics).
             Ok(t) if t.suboptimal && !self.suboptimal_retried => {
                 self.suboptimal_retried = true;
                 drop(t);
@@ -171,15 +128,10 @@ impl Renderer {
                 self.suboptimal_retried = t.suboptimal;
                 Some(t)
             }
-            // Stale/lost swapchain (a resize or compositor change the events
-            // haven't delivered yet): reconfigure at the current size and let
-            // the next frame draw.
             Err(wgpu::SurfaceError::Outdated | wgpu::SurfaceError::Lost) => {
                 surface.configure(&self.device, &self.surface_config());
                 None
             }
-            // The compositor did not hand an image back in time (a hidden or
-            // minimized window, a stalled present queue): skip this frame.
             Err(wgpu::SurfaceError::Timeout) => {
                 log::warn!("swapchain acquire timed out; skipping a frame");
                 None
@@ -190,7 +142,6 @@ impl Renderer {
                 ));
                 None
             }
-            // The device's error callback has the details.
             Err(wgpu::SurfaceError::Other) => {
                 log::warn!("swapchain acquire failed; skipping a frame");
                 None
@@ -198,17 +149,6 @@ impl Renderer {
         }
     }
 
-    /// Everything between "here are the targets" and "the GPU has this
-    /// frame": the per-frame CPU bakes, draw planning, the frame graph's
-    /// plan, pass encoding, submit. Target-agnostic, so the windowed
-    /// swapchain, set-size frames and an offscreen capture share one frame
-    /// graph.
-    ///
-    /// The order is the frame's contract: the SCENE (the graph: world, hand,
-    /// aim marks, the scene's UI layer), then the CAPTURE POINT, then the
-    /// WINDOW (the scene shown on it, the world marks, and the window's UI
-    /// layer over it). Nothing drawn after the capture point can reach a
-    /// capture.
     pub(super) fn encode_frame(&mut self, out: FrameOut<'_>) -> wgpu::SubmissionIndex {
         let t = Instant::now();
         self.refresh_overlay_buffers();
@@ -227,8 +167,6 @@ impl Renderer {
             msaa: self.targets.anti_aliasing.sample_count() > 1,
             keep_scene: self.captures.world_due,
         };
-        // The reusable plan is taken out while `self` is read to fill it,
-        // then put back (capacity retained next frame).
         let mut plan = std::mem::take(&mut self.frame_plan);
         self.graph
             .plan(shape, |node| self.node_active(node, route), &mut plan);
@@ -275,8 +213,6 @@ impl Renderer {
         submitted
     }
 
-    /// Fold the CPU time since `since` into the profile under `label` (a
-    /// no-op unless GPU timing is on).
     fn cpu_stage(&self, label: &'static str, since: Instant) {
         if let Some(timer) = &self.gpu_timer {
             timer.cpu_stage(label, since.elapsed().as_nanos() as f64);
@@ -284,22 +220,14 @@ impl Renderer {
     }
 }
 
-/// Where one frame goes (see [`Renderer::encode_frame`]).
 pub(super) struct FrameOut<'a> {
-    /// Where the scene lands.
     pub(super) scene: &'a wgpu::TextureView,
-    /// The owned image `scene` views, when it is one: this frame's captures
-    /// copy it at the capture point, before any window UI draws.
     pub(super) scene_texture: Option<&'a super::sized_frames::FrameTarget>,
-    /// Where the window's UI lands; `None` = this frame shows no window.
     pub(super) window: Option<WindowOut<'a>>,
 }
 
 pub(super) enum WindowOut<'a> {
-    /// The scene target is the window.
     Scene,
-    /// The window is an image of its own: it is shown the frame first,
-    /// scaled into `rect`.
     Letterboxed {
         view: &'a wgpu::TextureView,
         frame: &'a super::sized_frames::FrameTarget,

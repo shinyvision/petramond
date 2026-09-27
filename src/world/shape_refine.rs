@@ -30,15 +30,9 @@ use petramond_math::math::{IVec3, FACE_NEIGHBORS};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
 
-/// Runaway backstop for one cascade. Real cascades touch a handful of cells
-/// (the dependency chain is two layers deep — see the module doc).
 const REFINE_BUDGET: usize = 4096;
 
 impl<S: WorldSide> World<S> {
-    /// Re-resolve the refined shape state of the edited cell and its
-    /// neighbourhood, cascading through cells whose stored state changed.
-    /// Called from every edit chokepoint (`set_block_world`,
-    /// `apply_cell_changes`) on the server AND the predicting replica.
     pub fn refine_shape_states_around(&mut self, wx: i32, wy: i32, wz: i32) {
         let seed = IVec3::new(wx, wy, wz);
         let mut queue: VecDeque<IVec3> = VecDeque::with_capacity(8);
@@ -54,9 +48,6 @@ impl<S: WorldSide> World<S> {
             }
             budget -= 1;
             let block = Block::from_id(self.data.chunk_block(p.x, p.y, p.z));
-            // The dense per-id gate, so the seven probes an ordinary edit makes
-            // cost seven array reads when nothing shaped is nearby — the `def()`
-            // load happens only for a cell that actually refines.
             if !block.shape_refines() {
                 continue;
             }
@@ -78,16 +69,8 @@ impl<S: WorldSide> World<S> {
             if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(p.x, p.y, p.z) {
                 c.set_cell_state(lx, ly, lz, next);
             }
-            // The refined shape is drawn geometry: redraw every section whose
-            // pad samples the cell, and ship the cell's new state to clients
-            // (the replica applies it verbatim — it does not re-refine
-            // authoritative deltas).
             self.queue_dirty_meshes_sampling_cell(p.x, p.y, p.z);
             self.record_block_delta(p.x, p.y, p.z);
-            // A refined state can move the cell's light apertures (a stair's
-            // corner join), and the edit's own relight never seeded this cell:
-            // the server relights it in its own right. The replica's light
-            // follows the server's.
             if self.side.server().is_some()
                 && petramond_world::world::light::incremental::light_depends_on_state(block)
             {
@@ -99,26 +82,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Re-refine every refining cell of a freshly-LOADED section — the
-    /// load-time twin of the edit cascade, called from `note_section_loaded`.
-    ///
-    /// A section load sets its cells in bulk, bypassing the cascade. That is
-    /// sound while the stored bytes were refined when saved — but a kind can
-    /// START refining after cells of its block were placed (a pack update
-    /// giving an existing row connection semantics, an engine family growing
-    /// a refined byte), and those cells would keep stale bytes forever: the
-    /// cascade only ever runs on edits. This sweep is what lets refinement
-    /// vocabulary EVOLVE over a live world instead of forcing a save wipe.
-    ///
-    /// Also seeds the refining cells in the six adjacent loaded sections'
-    /// FACING boundary layers: a boundary cell refined while its neighbour
-    /// section was still unloaded resolved against air, and nothing else
-    /// would ever revisit it (its dependency — a plain tagged cube, say —
-    /// need not refine itself, so sweeping only the new section can miss it).
-    ///
-    /// The SERVER only: the replica ingests the server's refined bytes
-    /// verbatim, and re-refining at ingest against a half-streamed
-    /// neighbourhood would clobber correct state with locally-wrong answers.
     pub(in crate::world) fn refine_section_shapes(&mut self, pos: SectionPos) {
         if self.side.server().is_none() {
             return;
@@ -175,9 +138,6 @@ impl<S: WorldSide> World<S> {
             );
             return;
         };
-        // The neighbour lies at `+d`, so the layer of it touching `pos` is its
-        // LOW side along that axis when `d` is positive, its high side when
-        // negative.
         let fixed = if d.x + d.y + d.z > 0 {
             0
         } else {
@@ -208,8 +168,6 @@ mod tests {
     use petramond_world::chunk::SectionPos;
     use petramond_world::section::Section;
 
-    /// The oracle: what the cell's own family would refine its state to right
-    /// now — the sweep must leave every cell agreeing with it.
     fn refined_now(world: &ServerWorld, p: IVec3) -> petramond_world::block::ShapeState {
         let block = Block::from_id(world.data.chunk_block(p.x, p.y, p.z));
         let k = block.shape_kind_def();
@@ -234,8 +192,6 @@ mod tests {
     #[test]
     fn loading_a_section_re_refines_stale_stored_shape_state() {
         let mut world = ServerWorld::new(1, 2);
-        // Stair A on the +X boundary of section (0,0,0), facing the boundary;
-        // stair B just across it, perpendicular — the pair resolves a corner.
         let a = IVec3::new(15, 8, 8);
         let b = IVec3::new(16, 8, 8);
         let mut sa = Section::new(0, 0, 0);
@@ -248,8 +204,6 @@ mod tests {
         );
         let pa = SectionPos::new(0, 0, 0);
         world.insert_section_for_test(pa, sa);
-        // Installed alone, A refines against the unloaded neighbour: a
-        // straight stair, and already byte-for-byte the oracle's answer.
         let alone = world.data.shape_state(a);
         assert_eq!(alone, refined_now(&world, a), "swept at own install");
 
@@ -262,7 +216,6 @@ mod tests {
             StairState::new(Facing::South, StairHalf::Bottom).to_cell(),
         );
         world.insert_section_for_test(SectionPos::new(1, 0, 0), sb);
-        // B's install must reach BACK across the boundary: A's join changed.
         assert_eq!(world.data.shape_state(a), refined_now(&world, a));
         assert_eq!(world.data.shape_state(b), refined_now(&world, b));
         assert_ne!(

@@ -1,14 +1,3 @@
-//! Headless feature previewer (dev tool).
-//!
-//! Renders one configured terrain feature into PNGs without terrain or chunks, so
-//! feature shape can be reviewed directly.
-//!
-//! Run:
-//!   cargo run --quiet --bin genfeature -- `feature` [out.png] `seed` `view` `scale`
-//! e.g.
-//!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 side 8
-//!   cargo run --quiet --bin genfeature -- redwood /tmp/redwood.png 42 all 8
-
 use petramond_world::block::Block;
 use petramond_worldgen::preview::{feature_preview_names, preview_feature, FeaturePreview};
 

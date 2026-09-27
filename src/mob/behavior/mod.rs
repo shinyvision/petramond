@@ -1,15 +1,3 @@
-//! Mob AI behaviors — one composable unit each, à la the block behaviors — plus the
-//! string-keyed AI-NODE REGISTRY that `mobs.json` brain rows resolve through.
-//!
-//! A species' brain is a data list `[{node, priority, params}]` on its `mobs.json`
-//! row; [`factory`] maps each `node` key to the engine constructor that builds the
-//! behavior from its (load-validated) `params` + the owning [`MobDef`] row. Adding an
-//! engine behavior is: add a file, add its `mod` + `pub use`, add its key here — no
-//! change to the brain's arbitration or the navigator. A NAMESPACED
-//! (`mod_id:key`) node key resolves to the scripted [`wasm::WasmNodeAi`],
-//! which forwards each decision to the mod that claimed the key via
-//! `RegisterAiNode` (see that module).
-
 mod chase;
 mod contact;
 mod escape;
@@ -43,17 +31,11 @@ use super::brain::{
 use super::load::NodeFactory;
 use super::MobDef;
 
-/// One engine AI node's registry entry: its factory plus the canonical priority
-/// slot a brain row gets when it doesn't state one.
 pub(super) struct NodeSpec {
     pub factory: NodeFactory,
     pub default_priority: u8,
 }
 
-/// Resolve an AI-node key to its registry entry, or `None` for a key the
-/// engine doesn't implement (the loader turns that into a load error). A
-/// namespaced non-engine key resolves to the scripted WASM node; brains
-/// should state its `priority` explicitly (the default slots it with wander).
 pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
     Some(match name {
         "wander" => NodeSpec {
@@ -92,7 +74,6 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
             factory: melee_attack_node,
             default_priority: PRIORITY_ATTACK,
         },
-        // The reserved engine namespace never dispatches to a mod.
         _ if petramond_world::registry::namespace(name)
             .is_some_and(|ns| ns != petramond_world::registry::ENGINE_NAMESPACE) =>
         {
@@ -105,9 +86,6 @@ pub(super) fn node_spec(name: &str) -> Option<NodeSpec> {
     })
 }
 
-/// Idle roaming, tuned entirely by the owning row's `wander` / `habitat` /
-/// `avoid_fluids` fields (they stay row data because spawn and habitat code read
-/// them too) — the node itself takes no params.
 fn wander_node(
     _node: &'static str,
     params: &serde_json::Value,
@@ -214,8 +192,6 @@ fn melee_attack_node(
     Ok(Box::new(MeleeAttackAi::from_params(params)?))
 }
 
-/// Reject params on a node that takes none, so a typo'd tuning key fails the load
-/// instead of being silently ignored.
 fn no_params(params: &serde_json::Value) -> Result<(), String> {
     match params {
         serde_json::Value::Null => Ok(()),
@@ -224,9 +200,6 @@ fn no_params(params: &serde_json::Value) -> Result<(), String> {
     }
 }
 
-/// Reject a declared `inputs` list on an engine node — engine behaviors read
-/// `AiCtx` directly; declared inputs exist to bound what crosses the ABI to a
-/// scripted node, and accepting them here would silently do nothing.
 fn no_inputs(inputs: ScriptedInputs) -> Result<(), String> {
     if inputs.is_empty() {
         Ok(())
@@ -235,10 +208,6 @@ fn no_inputs(inputs: ScriptedInputs) -> Result<(), String> {
     }
 }
 
-/// Scripted WASM node: routes each decision on its row key. Takes no params
-/// (a mod configures itself from its own pack data); the row's declared
-/// `inputs` select which perception facts are computed and shipped per
-/// dispatch.
 fn wasm_node(
     node: &'static str,
     params: &serde_json::Value,

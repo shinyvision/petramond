@@ -1,18 +1,3 @@
-//! Presentation-only state for the searchable player-crafting browser.
-//!
-//! Search, hover and selection deliberately stay out of the simulation. The
-//! server owns only the immutable joined catalog, inventory, and transient
-//! output; an explicit CRAFT request carries the selected stable recipe key.
-//! The craftable-only filter is the one preference that leaves this module:
-//! the toggle updates the game, which persists it in the world's player data.
-//!
-//! The browser is a GRID of result icons: what a recipe is called and what it
-//! costs are revealed on HOVER (the floating tooltip), because a row per
-//! recipe only ever showed a handful of a catalog that grows combinatorially
-//! with material families. The selection is shown by the cell's own selected
-//! face — spelling it out again in a detail line cost two grid rows, which is
-//! the scrolling this grid exists to remove.
-
 use std::sync::Arc;
 
 use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
@@ -21,7 +6,6 @@ use crate::game::Game;
 use petramond::gui::CraftingRecipeView;
 use petramond_world::crafting::CraftingStation;
 
-/// The document id of the recipe grid, whose hovered stamp drives the tooltip.
 pub(super) const RECIPE_LIST_ID: &str = "craft_recipes_list";
 
 #[derive(Default)]
@@ -31,8 +15,6 @@ pub(super) struct CraftingBrowser {
     visible: Vec<VisibleRecipe>,
     rows: Arc<Vec<UiMap>>,
     cache_key: Option<BrowserCacheKey>,
-    /// Filtered-row index under the cursor, resolved each frame from the
-    /// previous frame's hovered grid stamp.
     hovered: Option<usize>,
 }
 
@@ -42,9 +24,6 @@ struct BrowserCacheKey {
     inventory_revision: u64,
     query: String,
     craftable_only: bool,
-    /// How many recipes are unlocked. Unlocking only appends, so the count is
-    /// a complete change signal — and a rebuild is exactly what a fresh
-    /// unlock needs.
     unlocked: usize,
 }
 
@@ -52,7 +31,6 @@ struct VisibleRecipe {
     key: String,
     view: CraftingRecipeView,
     craftable: bool,
-    /// Result name plus its `×N` count — the tooltip and detail headline.
     label: String,
 }
 
@@ -65,7 +43,6 @@ impl CraftingBrowser {
         self.visible.iter().map(|row| &row.view)
     }
 
-    /// The hovered recipe, drawn in the floating tooltip.
     pub(super) fn tip_view(&self) -> Option<&CraftingRecipeView> {
         self.visible.get(self.hovered?).map(|row| &row.view)
     }
@@ -92,8 +69,6 @@ impl CraftingBrowser {
         if self.cache_key.as_ref() != Some(&next_key) {
             self.visible.clear();
             for recipe in game.crafting_catalog().at(station) {
-                // A locked recipe is not shown at all — the point of unlocks
-                // is that the catalog reveals itself as the player earns it.
                 if !progression.is_unlocked(recipe.key()) {
                     continue;
                 }
@@ -133,9 +108,6 @@ impl CraftingBrowser {
                     label,
                 });
             }
-            // Craftable recipes lead the grid; the stable sort keeps joined
-            // catalog order within each group, so material families stay
-            // clustered instead of scattering across the cells.
             self.visible.sort_by_key(|row| !row.craftable);
             self.rows = Arc::new(
                 self.visible
@@ -151,8 +123,6 @@ impl CraftingBrowser {
             self.cache_key = Some(next_key);
         }
 
-        // A tooltip that follows the cursor would fight the held stack for the
-        // same pixels, so a drag suppresses it.
         self.hovered = hovered
             .filter(|&index| index < self.visible.len())
             .filter(|_| inventory.cursor().is_none());
@@ -165,8 +135,6 @@ impl CraftingBrowser {
             .filter(|row| row.craftable)
             .is_some_and(|row| self.output_accepts(game, &row.key));
 
-        // The station's screen title: its block item's display name (a pack
-        // workbench key is its block item's key), or the engine table's.
         let title = petramond_world::item::ItemType::by_key(station.key())
             .map(|item| item.name().to_owned())
             .unwrap_or_else(|| "Crafting Table".to_owned());
@@ -180,10 +148,6 @@ impl CraftingBrowser {
         state.set("can_craft", UiValue::Bool(can_craft));
         state.set("craft_filter_on", UiValue::Bool(craftable_only));
         state.set("no_craft_results", UiValue::Bool(self.visible.is_empty()));
-        // An empty grid means two different things now. A player who has
-        // unlocked nothing at this station is not filtering badly — they have
-        // not found anything yet, and saying "no matching recipes" to someone
-        // who typed nothing reads as a bug.
         let unfiltered = self.search.trim().is_empty() && !craftable_only;
         state.set(
             "craft_empty_hint",
@@ -203,10 +167,6 @@ impl CraftingBrowser {
             "craft_tip_name",
             UiValue::Str(tip.map(|row| row.label.clone()).unwrap_or_default()),
         );
-        // How wide this recipe's ingredient strip needs to be. The tooltip
-        // binds its hook's `min_w` to it and grows, because an ingredient the
-        // player cannot see is a recipe they cannot read — the strip is never
-        // asked to drop one to fit.
         state.set(
             "craft_tip_ingredients_w",
             UiValue::I32(
@@ -216,8 +176,6 @@ impl CraftingBrowser {
         );
     }
 
-    /// UI enablement mirror of the server's output rule: empty output, or the
-    /// same item with room for one more full result.
     fn output_accepts(&self, game: &Game, key: &str) -> bool {
         game.crafting_catalog().get(key).is_some_and(|recipe| {
             petramond_world::crafting::output_accepts(recipe, game.menu_read_model().craft_output)

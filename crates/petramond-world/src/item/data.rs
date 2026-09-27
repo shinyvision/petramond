@@ -1,23 +1,8 @@
-//! Item table plumbing: the engine name list + the JSON-loaded table.
-//!
-//! The rows themselves live in `assets/items.json` (see `super::load`), so item
-//! data (keys, names, stack sizes, held poses, tags, uses) is editable — and
-//! moddable — without a rebuild. This module keeps only what must stay compiled
-//! in: the engine item NAMES in frozen id order (index == id — the completeness
-//! oracle the loader validates the file against, and the low half of the
-//! runtime name table packs extend; see `crate::registry`) and the accessors
-//! over the current content registry's item table (see `crate::content`).
-
 use crate::block::Block;
 
 use super::definition::ItemDef;
 use super::{load, ItemType};
 
-/// Engine item names in frozen id order (`ENGINE_ITEM_NAMES[id]` names
-/// `ItemType(id)`). Append-only: save palettes identify items by these
-/// ids/names. Must stay in lockstep with the consts on [`ItemType`]; the
-/// shipped `items.json` covering every name keeps a typo here from going
-/// unnoticed.
 pub const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:air",
     "petramond:grass",
@@ -182,27 +167,13 @@ pub const ENGINE_ITEM_NAMES: &[&str] = &[
     "petramond:redwood_trapdoor",
 ];
 
-/// One content registry's item table plus the lookups derived from it (see
-/// `crate::content`; the rows come from `super::load`).
 pub(crate) struct ItemTables {
     defs: &'static [ItemDef],
-    /// Every registered item in id order (engine + pack-registered).
     all: Box<[ItemType]>,
-    /// Dense block-id → item LUT, inverted from the rows' `block` links
-    /// (`"block"` in `items.json`). A block no row links to maps to `Air`
-    /// (nothing to hold); if several rows link one block, the lowest item id
-    /// wins (the growth-stage pattern: only the planting item links the
-    /// stage-0 block, later stages link nothing).
     block_to_item: Box<[ItemType]>,
-    /// Keyed hash index over the rows' recipe `key`s (unique — the loader
-    /// enforces it). The engine-internal keyed lookup (recipes, loot tables);
-    /// mod-facing identity is the registry NAME.
     key_to_item: std::collections::HashMap<&'static str, ItemType>,
 }
 
-/// The content loader's items stage: load every `items.json` layer of `packs`
-/// against `names`, then derive the lookups. Reads the block table (the
-/// block-link LUT is sized to it), so it runs after the blocks stage.
 pub(crate) fn load_tables(
     packs: &crate::assets::PackSet,
     names: &crate::registry::ContentNames,
@@ -235,7 +206,6 @@ fn tables() -> &'static ItemTables {
     crate::content::current().items()
 }
 
-/// Every registered item in id order (engine + pack-registered).
 pub(super) fn all() -> &'static [ItemType] {
     &tables().all
 }
@@ -254,7 +224,6 @@ pub(super) fn def(item: ItemType) -> &'static ItemDef {
     defs.get(item.id() as usize).unwrap_or(&defs[0])
 }
 
-/// The item whose row links it to `block`, or `Air` if none does.
 #[inline]
 pub(super) fn item_for_block(block: Block) -> ItemType {
     tables()
@@ -264,7 +233,6 @@ pub(super) fn item_for_block(block: Block) -> ItemType {
         .unwrap_or(ItemType::Air)
 }
 
-/// The item whose row carries recipe `key`, or `None`.
 #[inline]
 pub(super) fn item_for_key(key: &str) -> Option<ItemType> {
     tables().key_to_item.get(key).copied()

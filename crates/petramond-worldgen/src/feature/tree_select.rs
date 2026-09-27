@@ -20,13 +20,7 @@ use crate::salts;
 mod groves;
 use groves::{GroveField, Window};
 
-/// How far from the trunk a branch may have fallen. Well inside
-/// `MAX_TREE_SPACING_RADIUS`, which bounds the surface reads this scatter is
-/// allowed to make (see the note on the anchoring gate below).
 const BRANCH_REACH: i32 = 8;
-/// Branches dropped per accepted tree, inclusive. Most land; some fall on a
-/// cell that already holds a plant and are skipped, so the effective rate is
-/// lower than the mean of this range.
 const BRANCH_PER_TREE: (i32, i32) = (0, 2);
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -52,24 +46,19 @@ fn tree_candidate_beats(
     rhs_wx: i32,
     rhs_wz: i32,
 ) -> bool {
-    // Reserve larger crowns first, so dense small trees cannot eliminate oaks.
     lhs.spacing_radius > rhs.spacing_radius
         || (lhs.spacing_radius == rhs.spacing_radius
             && (lhs.priority > rhs.priority
                 || (lhs.priority == rhs.priority && (lhs_wz, lhs_wx) < (rhs_wz, rhs_wx))))
 }
 
-/// The outcome of walking a profile's rule list for one site.
 struct Selection<'p> {
-    /// `None` only for a profile that roots nothing.
     species: Option<&'p SpeciesTable>,
     density: f32,
     spacing_radius: i32,
-    /// Index of the rule that claimed the site, `None` for the base table.
     rule: Option<usize>,
 }
 
-/// One memoised site of the candidate window.
 #[derive(Copy, Clone)]
 enum Slot {
     Unknown,
@@ -77,9 +66,6 @@ enum Slot {
     Present(TreeCandidate),
 }
 
-/// The candidate window of one placement pass — every site an origin loop over
-/// `[o - MARGIN, o + 16 + MARGIN)` can probe, dense so the spacing scans'
-/// repeated lookups are an index, not a hash.
 pub(super) struct TreeCandidates {
     seed: u32,
     window: Window,
@@ -140,8 +126,6 @@ impl TreeCandidates {
         wz: i32,
     ) -> Option<TreeCandidate> {
         let seed = self.seed;
-        // Anchor on the final region surface. Ocean and wet river-channel columns sit
-        // at/below their waterline, so the water guard keeps trees off them.
         let (surf, biome) = field.column_at(wx, wz);
         let anchor = surf;
         if anchor <= SEA_LEVEL || surf > TREELINE {
@@ -149,8 +133,6 @@ impl TreeCandidates {
         }
 
         let profile = trees::profile(biome);
-        // The anchor is above the sea already; the crown must fit under the
-        // top of the world.
         if anchor + profile.height_clearance >= WORLD_MAX_Y {
             return None;
         }
@@ -165,8 +147,6 @@ impl TreeCandidates {
             return None;
         }
 
-        // Spacing probes reach every site of the window, so only rules that
-        // need no terrain reads decide here; the rest wait for acceptance.
         let selection = self.select(profile, RuleStage::Candidate, field, wx, wz);
         if density_roll >= selection.density {
             return None;
@@ -181,8 +161,6 @@ impl TreeCandidates {
             }
         }
 
-        // A rule decided only at acceptance inherits the profile's spacing, so
-        // a site it may still claim reserves that much now.
         let mut spacing_radius = selection.spacing_radius;
         if profile.deferred_rule_may_win(selection.rule) {
             spacing_radius = spacing_radius.max(profile.spacing_radius);
@@ -196,8 +174,6 @@ impl TreeCandidates {
         })
     }
 
-    /// Walk `profile`'s rules in order; the first whose territory holds — and
-    /// is answerable at `stage` — decides the site, else the base table does.
     fn select<'p>(
         &mut self,
         profile: &'p TreeProfile,
@@ -233,8 +209,6 @@ impl TreeCandidates {
         }
     }
 
-    /// The species table an ACCEPTED origin draws from: every rule is
-    /// answerable now, terrain-reading ones included.
     fn accepted_species<'p>(
         &mut self,
         profile: &'p TreeProfile,
@@ -276,9 +250,6 @@ impl TreeCandidates {
     }
 }
 
-/// Whether a column of `biome` lies within `radius` (Chebyshev) of the site,
-/// nearest ring first. Only accepted origins ask, and their neighbourhood fits
-/// the candidate window, so column and section replays read the same cells.
 fn biome_within(
     field: &mut impl FeatureField,
     wx: i32,
@@ -341,10 +312,6 @@ pub(super) fn place_features_section(
     place_feature_origins(&mut ctx, field, seed, ox, oz);
 }
 
-/// The shared feature origin loop: iterate candidate origins across one column's XZ
-/// footprint plus a `MARGIN` border, thin by the spacing rule, and generate each
-/// accepted tree into `ctx` (whose sink clips to wherever the caller is writing —
-/// a chunk or one section). `ox,oz` is the column's world origin.
 pub(crate) fn place_feature_origins(
     ctx: &mut FeatureCtx,
     field: &mut impl FeatureField,
@@ -364,8 +331,6 @@ pub(crate) fn place_feature_origins(
                 continue;
             }
 
-            // Recreate the accepted origin's stream and consume the already-proven
-            // density roll so variant and geometry draws stay on the tree stream.
             let mut rng = FeatureRng::positional(seed, salts::TREE_FEATURE, wx, 0, wz);
             let density_hit = rng.chance(candidate.density);
             debug_assert!(density_hit);
@@ -373,26 +338,12 @@ pub(crate) fn place_feature_origins(
                 .accepted_species(trees::profile(candidate.biome), field, wx, wz)
                 .pick(&mut rng);
             let origin = IVec3::new(wx, candidate.anchor, wz);
-            // Ground-anchoring gate, on the accepted origin only. Spacing-scan
-            // neighbours are NOT gated, so an unanchorable neighbour still
-            // suppresses candidates around it — deterministic either way, and
-            // it keeps the gate's surface reads inside the candidate window
-            // (origins lie within MARGIN of the chunk; the gate adds at most
-            // MAX_TREE_SPACING_RADIUS). Every chunk replaying this origin
-            // reaches the same verdict: the window values are world-anchored.
             if !cf
                 .feature
                 .is_anchored(&mut |sx, sz| field.surf_at(sx, sz), origin, rng)
             {
                 continue;
             }
-            // Canopy-open oracle: a leaf may exist (or route support) only
-            // above the cave-adjusted surface — never inside a hillside, and
-            // never in carved cave air behind one. World-anchored like the
-            // anchoring gate's surface reads, so every chunk replaying this
-            // origin keeps the identical leaf set; the load-time reach fence
-            // in `data::features` keeps these reads inside the candidate
-            // window.
             cf.feature.generate(
                 ctx,
                 &mut |p: IVec3| p.y > field.surf_at(p.x, p.z),
@@ -404,22 +355,6 @@ pub(crate) fn place_feature_origins(
     }
 }
 
-/// Drop a few fallen branches around an accepted tree.
-///
-/// This lives on the TREE path, not in the ground-vegetation pass, because
-/// "within `BRANCH_REACH` of a tree" is not a question a column can answer:
-/// vegetation runs BEFORE trees are placed, and asking it there would mean
-/// re-running the candidate + spacing scan for every column in the world.
-/// Coming from the tree itself, the constraint holds by construction and costs
-/// one positional stream per tree that actually exists.
-///
-/// Seam rules this obeys, all of them the same ones the tree obeys:
-/// - the stream is positional on the tree's ORIGIN, so every chunk that
-///   replays this origin scatters identically and the sink clips the rest;
-/// - the ground is read from the world-anchored `field`, never from the sink
-///   (an out-of-footprint sink read returns Air and would differ per chunk);
-/// - reads stay within `MAX_TREE_SPACING_RADIUS` of the origin, the window the
-///   anchoring gate already established.
 fn scatter_fallen_branches(
     ctx: &mut FeatureCtx,
     field: &mut impl FeatureField,
@@ -433,8 +368,6 @@ fn scatter_fallen_branches(
         let dx = rng.next_i32(-BRANCH_REACH, BRANCH_REACH);
         let dz = rng.next_i32(-BRANCH_REACH, BRANCH_REACH);
         let variant = rng.next_i32(0, 2);
-        // Under the trunk itself the branch would be buried by the tree's own
-        // logs and roots.
         if dx.abs() <= 1 && dz.abs() <= 1 {
             continue;
         }
@@ -457,10 +390,6 @@ fn scatter_fallen_branches(
         if !super::vegetation::litter_ground(skin) {
             continue;
         }
-        // `set_ground_litter` writes over Air/Water and a snow layer, so a
-        // branch never buries the tuft or flower the vegetation pass already
-        // put there but is not shut out of a snowy forest either — and, being a
-        // read of its OWN cell, it stays seam-safe.
         ctx.set_ground_litter(
             IVec3::new(sx, surf + 1, sz),
             match variant {

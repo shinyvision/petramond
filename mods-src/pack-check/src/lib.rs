@@ -1,18 +1,3 @@
-//! Pack validation for the bundled mods' typed ids.
-//!
-//! Every mod declares the pack ids it uses through [`mod_sdk::pack_keys!`],
-//! which records each key with the [`PackKeyKind`] of declaration it must
-//! match. This crate indexes the declarations the shipped data actually makes
-//! — every `mods-src/*/pack` JSON file plus the engine's `assets/` — and
-//! [`assert_declared`] fails with the full list of keys that name nothing.
-//!
-//! The index is deliberately workspace-wide rather than per pack: a mod may
-//! legitimately name another pack's row (an engine block, a sibling pack's
-//! tag), and the key text already carries its namespace. What the check
-//! guarantees is that the declaration exists somewhere shipped, of the right
-//! kind — a renamed row, sound, bind key or widget id fails here instead of
-//! degrading a feature with a runtime log line.
-
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +5,6 @@ use std::path::{Path, PathBuf};
 use mod_sdk::json::Value;
 use mod_sdk::{PackKey, PackKeyKind};
 
-/// Row arrays whose elements declare an id, and the field that carries it.
 const ROW_FIELDS: &[(&str, &str, PackKeyKind)] = &[
     ("blocks", "block", PackKeyKind::Block),
     ("items", "item", PackKeyKind::Item),
@@ -41,8 +25,6 @@ const ROW_FIELDS: &[(&str, &str, PackKeyKind)] = &[
     ),
 ];
 
-/// Asset subdirectories that hold no declaration catalogs (model, texture,
-/// animation and audio payloads).
 const SKIPPED_DIRS: &[&str] = &[
     "models",
     "textures",
@@ -53,17 +35,13 @@ const SKIPPED_DIRS: &[&str] = &[
     "palettes",
 ];
 
-/// A declaration's index entry: the kind label (widgets are scoped by their
-/// document's kind) and the key text.
 type Entry = (String, String);
 
-/// Every declaration the shipped packs and engine assets make.
 pub struct PackIndex {
     entries: HashSet<Entry>,
 }
 
 impl PackIndex {
-    /// Index every pack under `mods-src/*/pack` and the engine's `assets/`.
     pub fn shipped() -> Self {
         let mods_src = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -85,8 +63,6 @@ impl PackIndex {
         index
     }
 
-    /// Index in-memory documents, each as `(file name, JSON text)` — the
-    /// file name decides the GUI and shader rules, as on disk.
     pub fn from_documents(docs: &[(&str, &str)]) -> Self {
         let mut index = Self {
             entries: HashSet::new(),
@@ -98,13 +74,11 @@ impl PackIndex {
         index
     }
 
-    /// Include a pack outside the bundled mod workspace.
     pub fn with_pack_dir(mut self, pack_dir: &Path) -> Self {
         self.add_dir(pack_dir);
         self
     }
 
-    /// Whether the shipped data declares `key`.
     pub fn declares(&self, key: &PackKey) -> bool {
         self.entries
             .contains(&(label(key.kind), canonical(key.kind, key.key)))
@@ -211,8 +185,6 @@ impl PackIndex {
         }
     }
 
-    /// Index a catalog's declaring rows: the elements of its TOP-LEVEL row
-    /// arrays (a nested `"items"` list is a reference list, never rows).
     fn add_rows(&mut self, value: &Value) {
         for (array, rows) in value.as_object().unwrap_or_default() {
             for (name, field, kind) in ROW_FIELDS {
@@ -228,8 +200,6 @@ impl PackIndex {
         }
     }
 
-    /// Walk a catalog tree for the declarations any row may carry at any
-    /// depth: tags, data keys, behavior hooks and brain nodes.
     fn walk_catalog(&mut self, value: &Value) {
         match value {
             Value::Obj(fields) => {
@@ -274,9 +244,6 @@ fn label(kind: PackKeyKind) -> String {
     }
 }
 
-/// The key as the host resolves it: engine tags answer to their bare name
-/// and to `petramond:<name>` alike (`blocks.json` writes them bare), so tags
-/// compare without that prefix.
 fn canonical(kind: PackKeyKind, key: &str) -> String {
     match kind {
         PackKeyKind::Tag => key.strip_prefix("petramond:").unwrap_or(key).to_owned(),
@@ -288,8 +255,6 @@ fn widget_label(doc_kind: &str) -> String {
     format!("Widget({doc_kind})")
 }
 
-/// Assert that every key in every group names a shipped declaration of its
-/// kind; the panic lists every missing key at once.
 pub fn assert_declared(groups: &[&[PackKey]]) {
     PackIndex::shipped().assert_declared(groups);
 }

@@ -132,8 +132,6 @@ fn generate_surface_chunk(system: &SurfaceDensitySystem, cx: i32, cz: i32) -> Ch
     section_fill(system, cx, cz, &region)
 }
 
-/// The production fill over one chunk column: `fill_section` for cy 0..16,
-/// assembled.
 fn section_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &RegionCells) -> Chunk {
     let biomes: Vec<u8> = region.biomes.iter().map(|b| b.id()).collect();
     let mut chunk = Chunk::new(cx, cz);
@@ -158,9 +156,6 @@ fn section_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &Region
     chunk
 }
 
-/// An independent reference fill: walk the master-density lattice top-down,
-/// skinning each solid run from its own top. `fill_section` derives the same
-/// blocks from the column surface alone; this is what pins that shortcut.
 fn lattice_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &RegionCells) -> Chunk {
     let lattice = master_density_lattice(&system.density, DensityLatticeBounds::chunk(cx, cz));
     let mut chunk = Chunk::new(cx, cz);
@@ -212,11 +207,6 @@ fn top_solid_excluding_water(chunk: &Chunk, x: usize, z: usize) -> Option<i32> {
     })
 }
 
-/// The deep fast path in `fill_section` requires every biome rule to be
-/// depth-independent below `MAX_SKIN_BAND_DEPTH`, and `SurfaceCond::Underwater`
-/// is a whole-column predicate — a depth-ungated underwater branch skins the
-/// column to bedrock, so cave carving exposes all-sand/all-dirt caves under
-/// water bodies.
 #[test]
 fn deep_skin_is_depth_independent_and_ignores_underwater_status() {
     let surface = SurfaceSystem;
@@ -281,8 +271,6 @@ fn region_top_solid_matches_filled_chunk_excluding_water() {
     }
 }
 
-/// The section fill is the only production terrain fill; it must reproduce
-/// the density lattice walk byte for byte, waterline ice included.
 #[test]
 fn section_fill_matches_the_lattice_reference() {
     for (seed, cx, cz) in [
@@ -365,9 +353,6 @@ fn climate_classification_uses_variance_derived_ridge() {
     );
 }
 
-/// Surfaces are searched from the terrain density's floor to the top of the
-/// cubic world — no 0..256 column of its own — and every column finds its
-/// surface inside that range.
 #[test]
 fn surfaces_are_searched_from_the_density_floor_to_the_world_top() {
     assert_eq!(SURFACE_SEARCH_Y.end, WORLD_MAX_Y);

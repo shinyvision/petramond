@@ -1,13 +1,3 @@
-//! The Mason Golem at work.
-//!
-//! The tick system owns the golem's work: it reads the golem's body and
-//! carried slots, decides the next step, and acts through the generic actor
-//! calls (dig, place, transfer). The golem's brain node only steers — it
-//! follows the goal and facing this module leaves in the golem's tags — so
-//! the job survives a reload with nothing but the tags and the project
-//! record: every other piece of state here is re-derived from the world.
-
-/// Log a diagnostic line. Compiled out unless [`TRACE`] is set.
 macro_rules! trace {
     ($($arg:tt)*) => {
         if $crate::worker::TRACE {
@@ -78,11 +68,8 @@ pub const PROJECT_TAG: &str = "builder:project";
 pub const GOAL_TAG: &str = "builder:goal";
 pub const HOLD_TAG: &str = "builder:hold";
 pub const FACE_TAG: &str = "builder:face";
-/// The cell the golem's head turns to while it works on it.
 pub const LOOK_TAG: &str = "builder:look";
-/// The golem row's `eye_height`.
 pub const EYE_HEIGHT: f64 = 1.3;
-/// The golem's health when summoned, which it mends back toward.
 pub const FULL_HEALTH_TAG: &str = "builder:full_health";
 const HEALTH_TAG: &str = "petramond:health";
 
@@ -93,22 +80,13 @@ pub struct Ctx<'a> {
     pub content: &'a Content,
     pub supplies: &'a Supplies,
     pub caches: &'a mut Caches,
-    /// Route-search nodes this tick may still spend.
     pub probe_nodes: &'a mut u32,
-    /// Recent route answers by `(from, to, blocked cells' hash)` and the tick
-    /// they were asked.
     pub routes: &'a mut route::Routes,
-    /// Recent walkable-region floods over the site.
     pub regions: &'a mut route::Regions,
-    /// Golems a player has a panel open on, and who.
     pub asked: &'a [(u64, PlayerId)],
-    /// The box the job's walking is judged in: the design with room around it
-    /// and home.
     pub site: ([i32; 3], [i32; 3]),
 }
 
-/// The box a job's walking is judged in: the design, the ground around it a
-/// golem works from, and home.
 pub fn site(job: &Job, home: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let (min, max) = (job.design.min, job.design.max);
     (

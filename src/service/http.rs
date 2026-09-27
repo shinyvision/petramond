@@ -1,42 +1,24 @@
-//! The transport: JSON round trips (the account's calls) and a streamed GET
-//! with the timeouts a large download needs (the content library's).
-//!
-//! Nothing here decides what an answer MEANS beyond "the service answered"
-//! and "it did not": the status and body go back to the caller, which maps
-//! them onto its own errors. A refusal's BODY carries the reason a caller
-//! branches on, so a 4xx arrives as an answer, never as a transport error.
-
 use std::io::{self, Read};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use serde_json::Value;
 
-/// A JSON call's whole budget. A join waits on one, so it is short enough
-/// that a dead service fails the join instead of hanging the connect screen.
 pub const JSON_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The most of a JSON body read, success or refusal.
 const JSON_MAX: u64 = 4 << 20;
 
-/// Nothing answered, or not in time.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransportError {
     pub timed_out: bool,
     pub detail: String,
 }
 
-/// How a streamed call answered, as a caller other than the account sorts
-/// it: only the content library's classification uses the `Busy` arm.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServiceError {
-    /// The stored sign-in is worthless; the caller clears it.
     SignInRequired(String),
-    /// The service understood and refused.
     Refused(String),
-    /// The service is rate-limiting this client: try again after the wait.
     Busy { retry_after: Duration },
-    /// Nothing answered, or not usefully.
     Unreachable(String),
 }
 
@@ -54,15 +36,11 @@ impl ServiceError {
     }
 }
 
-/// The budgets of a streamed GET.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timeouts {
     pub connect: Duration,
-    /// Until the response headers are in.
     pub headers: Duration,
-    /// The longest gap between two bytes of the body.
     pub idle_read: Duration,
-    /// The whole call, body included.
     pub total: Duration,
 }
 
@@ -82,9 +60,6 @@ fn url(path: &str) -> String {
     format!("{}{path}", super::origin())
 }
 
-/// POST `body` as JSON to `path`; `bearer` adds the `Authorization` header.
-/// Any HTTP answer is `Ok((status, body))`, a body that is not JSON reading
-/// as `null`.
 pub fn post_json(
     path: &str,
     body: &Value,
@@ -99,7 +74,6 @@ pub fn post_json(
     answered(request.send_json(body))
 }
 
-/// GET `path` as JSON; `bearer` adds the `Authorization` header.
 pub fn get_json(path: &str, bearer: Option<&str>) -> Result<(u16, Value), TransportError> {
     let mut request = json_agent()
         .get(&url(path))
@@ -131,22 +105,15 @@ fn transport(e: ureq::Error) -> TransportError {
     }
 }
 
-/// A streamed answer: its status, the headers a download checks, and the
-/// body as a reader that fails once no byte has arrived for
-/// `Timeouts::idle_read`.
 pub struct Stream {
     pub status: u16,
     pub content_length: Option<u64>,
-    /// `X-Content-Sha256`, lowercased.
     pub sha256: Option<String>,
-    /// `Retry-After`, as sent.
     pub retry_after: Option<String>,
     body: IdleBody,
 }
 
 impl Stream {
-    /// A body read as JSON (a refusal's reason), bounded; `null` when it is
-    /// not JSON.
     pub fn json(self) -> Value {
         let mut bytes = Vec::new();
         if self.take(JSON_MAX).read_to_end(&mut bytes).is_err() {
@@ -155,7 +122,6 @@ impl Stream {
         serde_json::from_slice(&bytes).unwrap_or(Value::Null)
     }
 
-    /// A stream over any reader: what a test hands the classifiers.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_test(
         status: u16,
@@ -185,8 +151,6 @@ impl Read for Stream {
     }
 }
 
-/// GET `path`, streamed. Any HTTP answer is a [`Stream`]; only a transport
-/// failure is an error, and it is always [`ServiceError::Unreachable`].
 pub fn get_stream(
     path: &str,
     bearer: Option<&str>,

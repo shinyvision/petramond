@@ -1,17 +1,9 @@
-//! Server-side chat formatting, sanitization, and delivery targeting.
-//!
-//! Chat is server-authoritative but not simulation state: accepted lines are
-//! delivered to currently connected clients and never retained server-side.
-
 use crate::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
 use crate::player::PlayerId;
 
-/// Who should receive one accepted chat line on the next pump.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatTargets {
-    /// Every currently connected session (console `say`, player chat, join/leave).
     All,
-    /// Only the listed player ids; unknown / already-left ids are ignored.
     Players(Vec<PlayerId>),
 }
 
@@ -25,17 +17,12 @@ impl ChatTargets {
     }
 }
 
-/// One accepted line waiting to ship on the next pump.
 #[derive(Clone, Debug)]
 pub struct PendingChat {
     pub line: ChatLine,
     pub targets: ChatTargets,
 }
 
-/// The server's chat outbox: every accepted line — whatever authored it —
-/// takes its seq from the one counter here and waits for the next pump.
-/// Delivered to currently connected sessions only; intentionally not
-/// history.
 #[derive(Default)]
 pub struct ChatService {
     pending: Vec<PendingChat>,
@@ -43,15 +30,10 @@ pub struct ChatService {
 }
 
 impl ChatService {
-    /// Queue one accepted chat line for the next pump. Console `say`, player
-    /// chat, and join/leave always use [`ChatTargets::All`]; mods may target a
-    /// player-id list.
     pub fn enqueue(&mut self, line: ChatLine, targets: ChatTargets) {
         self.pending.push(PendingChat { line, targets });
     }
 
-    /// Ordinary player chat (`<Name> text`). `echo` also logs the line — a
-    /// headless server has no local client that would otherwise show it.
     pub fn player(&mut self, name: &str, text: &str, echo: bool) {
         let seq = self.alloc_seq();
         if let Some(line) = player_line(seq, name, text) {
@@ -67,7 +49,6 @@ impl ChatService {
         self.enqueue_line(server_line(seq, text), ChatTargets::All);
     }
 
-    /// Mod-/engine-authored helper text (markup allowed; no `[Server]` prefix).
     pub fn authored(&mut self, text: &str, targets: ChatTargets) {
         let seq = self.alloc_seq();
         self.enqueue_line(authored_line(seq, text), targets);
@@ -88,12 +69,10 @@ impl ChatService {
         self.enqueue(left_line(seq, name), ChatTargets::All);
     }
 
-    /// Everything accepted since the last pump, oldest first.
     pub fn take_pending(&mut self) -> Vec<PendingChat> {
         std::mem::take(&mut self.pending)
     }
 
-    /// The lines waiting for the next pump (test inspection).
     #[cfg(test)]
     pub fn pending(&self) -> &[PendingChat] {
         &self.pending
@@ -129,15 +108,11 @@ pub fn server_line(seq: u64, text: &str) -> Option<ChatLine> {
     Some(parse_markup(seq, &source))
 }
 
-/// Mod-/engine-authored helper text: sanitized, markup-parsed, no forced prefix.
 pub fn authored_line(seq: u64, text: &str) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(parse_markup(seq, &text))
 }
 
-/// Engine-authored plain text with an explicit color. Unlike mod-authored
-/// helper text, this never parses markup; command feedback may include a
-/// player name and player-controlled names must not become formatting.
 pub fn plain_line(seq: u64, text: &str, fg: ChatColor) -> Option<ChatLine> {
     let text = clean_text(text)?;
     Some(ChatLine {
@@ -150,13 +125,10 @@ pub fn display_text(line: &ChatLine) -> String {
     line.spans.iter().map(|span| span.text.as_str()).collect()
 }
 
-/// `{name} has joined the game`, in yellow. Built from an explicit span like
-/// [`plain_line`], never through markup: the name is player-controlled.
 pub fn joined_line(seq: u64, name: &str) -> ChatLine {
     presence_line(seq, name, "has joined the game")
 }
 
-/// `{name} has left the game`, in yellow (see [`joined_line`]).
 pub fn left_line(seq: u64, name: &str) -> ChatLine {
     presence_line(seq, name, "has left the game")
 }
@@ -172,10 +144,6 @@ fn presence_line(seq: u64, name: &str, what: &str) -> ChatLine {
     }
 }
 
-/// Control characters become spaces, the result is capped at
-/// [`MAX_CHAT_CHARS`] characters and trimmed; `None` when nothing is left.
-/// Linear in the kept prefix: the cap is applied while iterating, never by
-/// recounting the output.
 pub fn clean_text(text: &str) -> Option<String> {
     let out: String = text
         .chars()
@@ -240,8 +208,6 @@ mod tests {
     use super::*;
     use crate::player::PlayerId;
 
-    /// Every accepted line takes the next seq from the one counter and waits,
-    /// in order, for the next pump; a pump takes them all.
     #[test]
     fn the_outbox_orders_lines_by_one_seq_counter() {
         let mut chat = ChatService::default();
@@ -278,8 +244,6 @@ mod tests {
         assert_eq!(line.spans[0].text, "Alex has joined the game");
     }
 
-    /// A name is never parsed as formatting, even one that slipped past
-    /// validation: the markup survives as literal text in the yellow span.
     #[test]
     fn presence_lines_never_parse_the_name_as_markup() {
         let line = left_line(4, "$[fg=red]Mallory");
@@ -292,8 +256,6 @@ mod tests {
         );
     }
 
-    /// The cap counts characters (not bytes) and a huge input costs only its
-    /// kept prefix.
     #[test]
     fn clean_text_caps_by_characters() {
         let long = "é".repeat(MAX_CHAT_CHARS * 50);

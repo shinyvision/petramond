@@ -8,7 +8,6 @@
 use crate::assets::PackSet;
 use crate::tile::Tile;
 
-/// Fixed tile edge length in texels (the atlas cell size).
 const TILE_SIZE: usize = 16;
 const ALPHA_CUTOFF: u8 = 128;
 
@@ -38,7 +37,6 @@ fn cell_alpha(packs: &PackSet, file: &str, frame: u32) -> Result<image::RgbaImag
 pub struct TileAlphaBounds {
     pub u_min: f32,
     pub u_max: f32,
-    /// Bottom-up texture-space v, matching plant model vertical coordinates.
     pub v_min: f32,
     pub v_max: f32,
 }
@@ -48,18 +46,12 @@ pub(crate) struct TileAlphaData {
     bounds: Vec<Option<TileAlphaBounds>>,
 }
 
-/// The cutout masks of every tile — a content-registry stage after the
-/// tiles, so a missing or undecodable texture fails the registry build with
-/// the tile named, instead of panicking the first cutout raycast (on a
-/// headless server too).
 pub(crate) static TABLE: crate::content::Slot<TileAlphaData> = crate::content::Slot::new(
     crate::content::stage::TILE_ALPHA,
     &[crate::content::stage::TILES],
     build_tile_alpha_data,
 );
 
-/// True when a bottom-up tile coordinate lands on a texel that survives the
-/// cutout alpha test used by `fs_opaque`.
 pub fn tile_alpha_opaque(tile: Tile, u: f32, v_bottom_up: f32) -> bool {
     let alpha = tile_alpha_data();
     let x = texel_coord(u);

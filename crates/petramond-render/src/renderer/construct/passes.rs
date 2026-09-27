@@ -1,6 +1,3 @@
-//! Each pass building itself from the pipeline resources it owns — the
-//! pieces the renderer's constructor used to spell out as one struct literal.
-
 use super::super::*;
 use super::actors::{build_mob_gpu, build_player_gpu};
 use super::hud::build_hud_layers;
@@ -36,7 +33,6 @@ impl TerrainPass {
 }
 
 impl ViewState {
-    /// Before the first `update_uniforms`: nothing culled, origin at zero.
     pub(super) fn initial() -> Self {
         Self {
             frustum: Frustum::permissive(),
@@ -48,7 +44,6 @@ impl ViewState {
     }
 }
 
-/// The sky's share of the pipeline build.
 pub(super) struct SkyParts {
     pub(super) pipe: SampledPipeline,
     pub(super) bind: wgpu::BindGroup,
@@ -59,9 +54,6 @@ pub(super) struct SkyParts {
     pub(super) env_scaler: EnvScalers,
 }
 
-/// The half-res volumetric targets and the binds that read the frame depth
-/// — everything of the environment chain that a scene-target rebuild
-/// invalidates.
 struct EnvTargets {
     color: wgpu::TextureView,
     depth: wgpu::TextureView,
@@ -69,10 +61,6 @@ struct EnvTargets {
     comp_bind: wgpu::BindGroup,
 }
 
-/// The environment targets at half the scene dims, bound over
-/// `frame_depth` through the scaler for `samples`. Env passes march at half
-/// resolution against a downsampled depth; the composite lifts the result
-/// back (see `pipeline::EnvScaler`).
 fn env_targets(
     device: &wgpu::Device,
     scalers: &EnvScalers,
@@ -155,8 +143,6 @@ impl SkyPass {
         }
     }
 
-    /// Rebuild the environment targets for a new scene size or sample count,
-    /// and every bind that references them or the recreated frame depth.
     pub(in crate::renderer) fn recreate_env_targets(
         &mut self,
         device: &wgpu::Device,
@@ -214,7 +200,6 @@ impl ChromePass {
     }
 }
 
-/// The first-person hand's share of the pipeline build.
 pub(super) struct HandParts {
     pub(super) model3d_pipe: SampledPipeline,
     pub(super) model3d_mvp_buf: wgpu::Buffer,
@@ -271,9 +256,6 @@ impl HandPass {
 }
 
 impl UiPass {
-    /// `texture_bgl` is the texture+sampler layout every UI texture binds
-    /// with. The scene and window layers each get their own HUD layer
-    /// buffers over the same art.
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -351,9 +333,6 @@ impl ShadowPass {
 }
 
 impl ItemEntityPass {
-    /// Cubes draw through the absolute-vertex opaque pipeline (a clone of
-    /// its Arc-backed handle over this pass's own buffers); bbmodel items and
-    /// extruded sprites through the mob-layout one, each in its own stream.
     pub(super) fn new(
         device: &wgpu::Device,
         dynamic_opaque: &SampledPipeline,
@@ -391,9 +370,6 @@ impl BlockEntityPass {
 }
 
 impl ActorPass {
-    /// Every species' resources from the mob registry, the player body's,
-    /// the frame's skin batch (skinned pipeline + bone-palette layout), and
-    /// the three held-item streams attached to posed hands.
     pub(super) fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,

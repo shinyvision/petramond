@@ -1,12 +1,3 @@
-//! Per-project session state and the tick that drives it: compiling the
-//! anchored design, surveying it while anyone looks at it or a golem works
-//! it, and handing each working golem its turn.
-//!
-//! - [`admission`] — whether Start may go ahead, and why not.
-//! - [`holds`] — pausing, resuming, cancelling, and the holds that lift
-//!   themselves.
-//! - [`ghosts`] — the ghosts standing in the world.
-
 mod admission;
 mod ghosts;
 mod holds;
@@ -26,34 +17,20 @@ use crate::worker::{self, Job};
 
 pub use admission::Refusal;
 
-/// Stored sections compiled per tick, across every project.
 const COMPILE_SECTIONS: u32 = 8;
-/// Units measured per tick while someone watches a table, and while a golem
-/// works unwatched.
 const SURVEY_WATCHED: usize = 1024;
 const SURVEY_WORKING: usize = 256;
-/// A project nobody has looked at or worked for this long is dropped from
-/// memory (its record stays in the world), and so is everything else the
-/// session remembers on its behalf.
 const FORGET_AFTER: u64 = 1200;
 const FORGET: Cadence = Cadence::every(FORGET_AFTER);
-/// Route-search nodes the golems may spend per tick.
 const PROBE_NODES: u32 = 28_000;
-/// How long a route answer stands, and how often the stale ones are dropped.
 const ROUTE_TICKS: u64 = 200;
 const ROUTE_SWEEP: Cadence = Cadence::every(ROUTE_TICKS);
-/// How often a live project checks its table still stands and, working, that
-/// its supplies still cover the rest.
 const TABLE_CHECK: Cadence = Cadence::every(40);
 
 #[derive(Default)]
 pub struct Jobs {
     pub map: BTreeMap<ProjectId, Job>,
-    /// Which job each golem was last found working for. A memo, checked
-    /// against the job's crew before it is trusted, so a crew change never
-    /// has to report here.
     mobs: HashMap<u64, ProjectId>,
-    /// The tick each job was last attended.
     seen: BTreeMap<ProjectId, u64>,
 }
 
@@ -75,7 +52,6 @@ impl Jobs {
         Some(job)
     }
 
-    /// The job `mob` works (or last worked) for.
     pub fn by_mob(&mut self, mob: u64) -> Option<&mut Job> {
         let works = |j: &Job| j.crew.mob == Some(mob) || j.crew.last_mob == Some(mob);
         let id = match self.mobs.get(&mob) {
@@ -89,8 +65,6 @@ impl Jobs {
         self.map.get_mut(&id)
     }
 
-    /// Drop the jobs nobody has attended for [`FORGET_AFTER`] ticks and that
-    /// have no golem out, with what the memo remembers of them.
     fn forget_idle(&mut self, now: u64) {
         let seen = &self.seen;
         self.map.retain(|id, j| {
@@ -157,8 +131,6 @@ impl Builder {
                 .filter(|id| !watched.contains(id))
                 .map(|id| (id, false)),
         );
-        // The tick's budgets are one for every golem: whoever goes first may
-        // spend them, so the first turn goes round.
         if !attended.is_empty() {
             let first = (now % attended.len() as u64) as usize;
             attended.rotate_left(first);
@@ -216,8 +188,6 @@ impl Builder {
         }
     }
 
-    /// Compile more of the job's design out of what is left of the tick's
-    /// sections.
     fn compile(&mut self, id: ProjectId, sections: &mut u32) {
         let Some(job) = self.jobs.map.get_mut(&id) else {
             return;
@@ -242,8 +212,6 @@ impl Builder {
         }
     }
 
-    /// The job and everything the worker may touch while it has it. `home`
-    /// is the project's, where the caller already knows it.
     pub(crate) fn at_work<'a>(
         &'a mut self,
         id: ProjectId,
@@ -270,10 +238,6 @@ impl Builder {
         Some((ctx, &mut self.projects, job))
     }
 
-    /// Fill every open panel. Runs right AFTER the menu stage, where a panel
-    /// opens: an unset `enabled`/`visible` reads as true, so a panel filled a
-    /// tick later flashes every button live first. A panel seen for the first
-    /// time is filled at once; the rest keep their cadence.
     pub fn publish_panels(&mut self) {
         let now = current_tick();
         let viewers = gui_viewers();

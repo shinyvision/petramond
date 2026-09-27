@@ -1,10 +1,3 @@
-//! Client-side chat UI state and drawing.
-//!
-//! The server owns accepted/formatted chat lines. This module owns only local
-//! presentation: history retention, draft editing, scrolling, and fade timing.
-//! Each history line keeps its wrapped form for the current panel width, so a
-//! frame re-wraps nothing unless the width changed.
-
 use std::collections::VecDeque;
 
 use petramond::net::protocol::{ChatColor, ChatLine, ChatSpan, MAX_CHAT_CHARS};
@@ -22,7 +15,6 @@ const INPUT_PREFIX: &str = "> ";
 struct TimedLine {
     line: ChatLine,
     received_at: f64,
-    /// The line flowed to [`ChatUi::wrap_chars`].
     wrapped: Vec<Vec<ColoredText>>,
 }
 
@@ -41,9 +33,7 @@ pub(super) struct ChatUi {
     draft_backup: Option<String>,
     editor: petramond_ui::TextInput,
     scroll_lines: usize,
-    /// The characters per visual line every history entry is wrapped to.
     wrap_chars: usize,
-    /// Visual lines across the whole history at `wrap_chars`.
     visual_lines: usize,
     input_layout: Option<InputLayout>,
     drag_anchor: Option<usize>,
@@ -83,8 +73,6 @@ impl ChatUi {
         self.scroll_lines = self.scroll_lines.min(self.max_scroll_lines());
     }
 
-    /// Flow the history to `max_chars` per visual line — only when the panel
-    /// width changed since the last flow.
     fn rewrap(&mut self, max_chars: usize) {
         if max_chars == self.wrap_chars {
             return;
@@ -277,7 +265,6 @@ impl ChatUi {
             (viewport.size.0 as i32 / scale).max(1),
             (viewport.size.1 as i32 / scale).max(1),
         );
-        // Chat is not document-backed; it paints with the theme font.
         let font = ui_font();
         let mut p = petramond_ui::Painter {
             list: draw,
@@ -385,7 +372,6 @@ impl ChatUi {
         );
     }
 
-    /// Every visual line of the history, oldest first, as currently wrapped.
     fn visual_history(&self) -> impl Iterator<Item = &Vec<ColoredText>> {
         self.history.iter().flat_map(|line| line.wrapped.iter())
     }
@@ -417,11 +403,6 @@ struct ColoredText {
     text: String,
 }
 
-/// How many characters of history text fit in `w` logical px.
-///
-/// History wrapping is character-based (spans are re-flowed by count), so it
-/// needs one representative advance: the WIDEST glyph, which guarantees a
-/// wrapped line never overruns the panel even in all-caps.
 fn chars_for_width(w: i32) -> usize {
     let widest = ui_font().max_advance().max(1);
     (w / widest).max(1) as usize
@@ -446,8 +427,6 @@ fn open_history_first_line_y(history: petramond_ui::RectI, line_count: usize) ->
     last_y - line_count.saturating_sub(1) as i32 * font.line_advance()
 }
 
-/// Chat is not document-backed: it measures and paints with the UI theme's
-/// font, so its text matches document text and its hit tests match its paint.
 fn ui_font() -> std::sync::Arc<petramond_ui::text::Font> {
     petramond::gui::doc_theme::ui_font()
 }
@@ -560,9 +539,6 @@ mod tests {
         assert_eq!(chat.history.front().unwrap().line.seq, 44);
     }
 
-    /// Wrapped lines are cached per width: the running visual-line count
-    /// always equals a fresh wrap of the whole history, through pushes, cap
-    /// evictions and width changes.
     #[test]
     fn wrapped_history_is_cached_per_width() {
         let fresh = |chat: &ChatUi, width: usize| -> usize {
@@ -587,7 +563,6 @@ mod tests {
         assert_eq!(chat.visual_lines, fresh(&chat, 12));
         assert_eq!(chat.visual_history().count(), chat.visual_lines);
 
-        // The same width again re-flows nothing (entries keep their lines).
         let first = chat.history[0].wrapped.as_ptr();
         chat.rewrap(12);
         assert_eq!(chat.history[0].wrapped.as_ptr(), first);
@@ -633,7 +608,6 @@ mod tests {
         assert_eq!(chat.editor.text(), "/time set day");
         press(&mut chat, petramond_ui::NavKey::Up);
         assert_eq!(chat.editor.text(), "hello");
-        // Already at the oldest entry: stays put.
         press(&mut chat, petramond_ui::NavKey::Up);
         assert_eq!(chat.editor.text(), "hello");
         press(&mut chat, petramond_ui::NavKey::Down);

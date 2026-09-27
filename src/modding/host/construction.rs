@@ -1,7 +1,3 @@
-//! Construction calls: cells read as portable records and records measured
-//! against the world. What a record costs on its own is registry-only and
-//! lives in the registry domain; the live-world questions live here.
-
 use mod_api::{BlockRecord, ConstructionCall, HostRet, RecordPlan, RecordStatus};
 use petramond_math::math::IVec3;
 use petramond_world::construction::{Plan, Record};
@@ -51,7 +47,6 @@ pub(super) fn handle_construction_call(call: ConstructionCall) -> HostRet {
     }
 }
 
-/// A record in names, resolved and stripped to what construction builds.
 pub(in crate::modding) fn record_in(record: &BlockRecord) -> Result<Record, String> {
     CellData {
         block: record.block.clone(),
@@ -75,7 +70,6 @@ pub(in crate::modding) fn record_out(record: &Record) -> BlockRecord {
     }
 }
 
-/// What `record` asks of construction, offsets relative to its own cell.
 pub(in crate::modding) fn plan_out(record: &BlockRecord) -> RecordPlan {
     let record = match record_in(record) {
         Ok(record) => record,

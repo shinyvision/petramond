@@ -1,24 +1,13 @@
-//! Player-anchored mob sweeps: the live mobs near any of several anchors,
-//! each mob once, from as few radius queries as the anchors allow.
-
 use std::collections::HashSet;
 
 use mod_api::MobSnapshot;
 
 use crate::mobs_in_radius;
 
-/// Every live mob within `radius` of ANY of `anchors` (typically the
-/// connected players), each exactly ONCE, in first-seen order — anchor
-/// order, then the host's storage order within an anchor's reply. The order
-/// is what a per-anchor loop that skips already-seen ids would visit, so a
-/// sweep keeps its determinism; what it drops is the duplicate work where
-/// the anchors' ranges overlap. Anchors at the very same point (co-op
-/// players sharing a seat or a spawn) share one query.
 pub fn mobs_near_any(anchors: &[[f64; 3]], radius: f32) -> Vec<MobSnapshot> {
     first_seen(anchors, |at| mobs_in_radius(at, radius))
 }
 
-/// The sweep over any radius query (the host call, or a test's fake).
 fn first_seen(
     anchors: &[[f64; 3]],
     mut query: impl FnMut([f64; 3]) -> Vec<MobSnapshot>,

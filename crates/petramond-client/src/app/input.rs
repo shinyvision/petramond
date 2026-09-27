@@ -2,21 +2,11 @@ use crate::app::pointer::PointerState;
 use crate::game::MovementInput;
 use petramond_input::controls::{ActionTable, BindingEngine, Control, Modifiers};
 
-/// Everything between the platform's raw input and the app's controls: the
-/// held-control aggregator, the pointer, the physical modifier keys, the
-/// session's remappable-action table and the bindings currently held.
 pub(super) struct Controls {
     pub(super) input: InputController,
     pub(super) pointer: PointerState,
-    /// Physical Ctrl/Shift/Alt/Meta modifier state from the windowing system,
-    /// tracked apart from the rebindable controls. Drives UI modifiers (Ctrl =
-    /// drop whole stack, Shift = inventory quick-move) and binding chords.
     pub(super) modifiers: Modifiers,
-    /// Every remappable action of the current session: the engine actions
-    /// plus what the loaded client mods registered. Rebuilt on session
-    /// start/end (`rebuild_action_table`).
     pub(super) action_table: ActionTable,
-    /// Which bound actions are currently held (raw input → action edges).
     pub(super) binding_engine: BindingEngine,
 }
 
@@ -35,44 +25,27 @@ impl Controls {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ControlEvent {
     ToggleInventory,
-    OpenChat {
-        command: bool,
-    },
+    OpenChat { command: bool },
     TogglePlayerMode,
     ToggleCreative,
     UndoEdit,
     RedoEdit,
-    /// Step whatever is adjustable by this many notches (positive = next).
     AdjustTool(i32),
     JumpPressed,
     CloseScreen,
     SelectHotbar(u8),
-    /// Attack / mine state change (both edges — the App mirrors it into the
-    /// pointer's break-held/attack-click state, wherever it was bound).
-    Attack {
-        down: bool,
-    },
-    /// Interact / place state change (both edges), like [`Attack`](Self::Attack).
-    Interact {
-        down: bool,
-    },
-    /// Drop the held item this press (edge-triggered). Whether it's one item
-    /// or the whole stack is decided by the App: holding the SPRINT control
-    /// (wherever it's bound) drops the stack.
+    Attack { down: bool },
+    Interact { down: bool },
     DropItem,
-    /// Swap the selected hotbar stack with the off-hand slot (edge-triggered).
     SwapOffHand,
     RotateHeldBlock,
     TogglePerspective,
 }
 
-/// The controls currently down. `Control` is a small closed catalog, so a
-/// scan beats hashing.
 #[derive(Default)]
 struct HeldControls(Vec<Control>);
 
 impl HeldControls {
-    /// Record `control`'s state; `true` on the edge from up to down.
     fn set(&mut self, control: Control, down: bool) -> bool {
         let held = self.is_held(control);
         if down && !held {
@@ -91,10 +64,7 @@ impl HeldControls {
 #[derive(Default)]
 pub struct InputController {
     held: HeldControls,
-    /// The sprint + toggle-mode chord is down (its own edge).
     mode_chord: bool,
-    /// Whole hotbar steps accumulated by HotbarNext/HotbarPrev edges since the
-    /// last frame (positive = next), drained into `GameInput.hotbar_scroll`.
     hotbar_steps: i32,
 }
 
@@ -102,10 +72,8 @@ impl InputController {
     pub fn set_control(&mut self, control: Control, down: bool) -> Option<ControlEvent> {
         let pressed = self.held.set(control, down);
         let event = match control {
-            // Both edges, wherever they are bound.
             Control::Attack => Some(ControlEvent::Attack { down }),
             Control::Interact => Some(ControlEvent::Interact { down }),
-            // Level-triggered: every down report fires, key repeat included.
             Control::CloseScreen => down.then_some(ControlEvent::CloseScreen),
             Control::SelectHotbar(slot) => down.then_some(ControlEvent::SelectHotbar(slot)),
             _ if !pressed => None,
@@ -126,8 +94,6 @@ impl InputController {
             Control::ToggleInventory => Some(ControlEvent::ToggleInventory),
             Control::OpenChat => Some(ControlEvent::OpenChat { command: false }),
             Control::OpenCommandChat => Some(ControlEvent::OpenChat { command: true }),
-            // Whole stack vs one item is the App's call, read from the held
-            // SPRINT state.
             Control::DropItem => Some(ControlEvent::DropItem),
             Control::SwapOffHand => Some(ControlEvent::SwapOffHand),
             Control::RotateHeldBlock => Some(ControlEvent::RotateHeldBlock),
@@ -144,18 +110,14 @@ impl InputController {
         event.or_else(|| self.mode_chord_event())
     }
 
-    /// Whether the SPRINT control is held — the drop-whole-stack modifier
-    /// (follows the sprint binding, wherever it points).
     pub fn sprint_held(&self) -> bool {
         self.held.is_held(Control::Sprint)
     }
 
-    /// Step the hotbar as its own controls would (positive = next slot).
     pub fn step_hotbar(&mut self, steps: i32) {
         self.hotbar_steps += steps;
     }
 
-    /// Drain the accumulated hotbar steps (positive = next slot).
     pub fn take_hotbar_steps(&mut self) -> i32 {
         std::mem::take(&mut self.hotbar_steps)
     }

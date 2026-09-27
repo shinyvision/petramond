@@ -1,4 +1,3 @@
-//! A quarter turn of a cell, dispatched through its owning shape family.
 use super::{Block, CellCodec, CellView, ShapeState};
 use crate::block_state::{EntityFront, LogAxis};
 use crate::facing::Facing;
@@ -16,7 +15,6 @@ pub fn facing(f: Facing) -> Facing {
 pub struct CellRotation {
     pub block: Block,
     pub state: ShapeState,
-    /// The negative and positive sub-cell parts exchange addresses.
     pub swap_parts: bool,
 }
 

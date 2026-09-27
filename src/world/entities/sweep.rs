@@ -1,8 +1,3 @@
-//! The flight sweep: the first thing along a flying item's motion —
-//! collidable terrain, a player body, or a mob — with the mobs bucketed by
-//! section once per tick, so each sweep asks only the ones its segment can
-//! reach instead of every instance in the world.
-
 use crate::world::ServerWorld;
 use petramond_world::world::raycast;
 use std::collections::HashMap;
@@ -15,19 +10,12 @@ use petramond_world::world::raycast::RayFilter;
 use super::step::StepCtx;
 use super::ImpactTarget;
 
-/// The live mobs, bucketed by the 16³ section holding their position.
 pub(super) struct SweepBodies {
-    /// Instance indices per section, in instance order.
     buckets: HashMap<IVec3, Vec<u32>>,
-    /// The largest extent any bucketed body reaches from its position, in
-    /// blocks: the margin a segment's section range grows by so a body
-    /// standing in a neighbouring section is still a candidate.
     reach: f32,
 }
 
 impl SweepBodies {
-    /// Bucket every mob that can be struck. Gathered once per tick, only
-    /// while something is in flight.
     pub(super) fn gather(world: &ServerWorld) -> Self {
         let mut buckets: HashMap<IVec3, Vec<u32>> = HashMap::new();
         let mut reach: f32 = 0.0;
@@ -45,10 +33,6 @@ impl SweepBodies {
         SweepBodies { buckets, reach }
     }
 
-    /// Instance indices of the mobs whose section the segment `from`→`to`
-    /// crosses, grown by the bodies' reach, in instance order (the same
-    /// candidates in the same order whatever the segment, so the nearest-hit
-    /// rule stays deterministic).
     fn near(&self, from: WorldPos, to: WorldPos) -> Vec<u32> {
         if self.buckets.is_empty() {
             return Vec::new();
@@ -79,8 +63,6 @@ impl SweepBodies {
     }
 }
 
-/// The section holding world position `p` (a plain floor-divide per axis;
-/// the vertical range is irrelevant to a bucket key).
 fn section_of(p: WorldPos) -> IVec3 {
     IVec3::new(
         (p.x.floor() as i32) >> 4,
@@ -145,10 +127,6 @@ pub(super) fn sweep(
         }
     }
     if let Some(bodies) = &ctx.bodies {
-        // A sphere around the swept segment rejects the rest of the
-        // candidates before their body boxes are built: only a body that
-        // could reach the segment is tested — the flight's half-length plus
-        // the body's own extent.
         let mid = from + dir * (limit * 0.5);
         let near = |pos: WorldPos, size: crate::mob::MobSize| {
             let reach =

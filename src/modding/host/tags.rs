@@ -1,9 +1,3 @@
-//! Mob tag HostCalls: typed key/value pairs attached to live mob instances.
-//!
-//! Tags are namespaced like KV entries (caller must own the `mod_id:` prefix or
-//! use the engine-reserved `petramond:` namespace), but they are typed and
-//! visible to AI via [`AiMob::tags`](crate::mob::brain::AiMob).
-
 use mod_api::{HostRet, MobTagLookup, MobTagOp, MobTagValue as ApiMobTagValue, TagCall};
 
 use crate::mob::MobTagValue;
@@ -43,9 +37,6 @@ pub(super) fn handle_tag_call(mod_id: &str, call: TagCall) -> HostRet {
                     let Some(mob) = live_mob(ctx, mob_id) else {
                         return HostRet::Bool(false);
                     };
-                    // Presence transition = the mob_tag_added post event
-                    // (value overwrites are silent — else the hot deadline
-                    // rewrites would spam the queue).
                     let (kind, fresh) = (mob.kind, !mob.tags().contains_key(&key));
                     let value = from_api(value);
                     let set = ctx
@@ -154,10 +145,6 @@ mod tests {
     use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
-    /// The tag lifecycle events fire on PRESENCE TRANSITIONS through the ABI
-    /// surface: a NEW key emits `mob_tag_added`, deleting a present key emits
-    /// `mob_tag_removed` (carrying the evicted value) — while overwriting an
-    /// existing key and deleting an absent one emit nothing.
     #[test]
     fn tag_presence_transitions_emit_post_events() {
         let mut data = ModStoreData::new("alpha", 1);
@@ -221,7 +208,6 @@ mod tests {
             events[1]
         );
 
-        // MobInfo: the single-mob snapshot answers live mobs and only them.
         let mut ctx = SimCtx {
             world: &mut world,
             actor: None,

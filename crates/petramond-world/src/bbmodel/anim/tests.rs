@@ -16,7 +16,6 @@ fn close(a: f32, b: f32) -> bool {
     (a - b).abs() < 1e-4
 }
 
-/// three.js's uniform Catmull-Rom, written out independently of the sampler.
 fn uniform_catmull(t: f32, p0: f32, p1: f32, p2: f32, p3: f32) -> f32 {
     0.5 * (2.0 * p1
         + (p2 - p0) * t
@@ -53,9 +52,6 @@ fn a_two_point_key_arrives_at_its_pre_and_leaves_from_its_post() {
     assert!(close(at(&keys, 1.5), 10.0), "leaves from the leaving value");
 }
 
-/// The spline is UNIFORM over neighbouring key values at the time fraction —
-/// not time-aware tangents — and a missing neighbour duplicates the end key.
-/// That is what Blockbench previews, so it is what plays.
 #[test]
 fn catmull_rom_is_the_uniform_spline_over_neighbouring_keys() {
     let keys = [

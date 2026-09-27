@@ -1,5 +1,3 @@
-//! Setting out for a pillar's foot to climb it.
-
 use super::sealing::cutting;
 use super::unreached::fall_out;
 use super::verdict::waits_there;
@@ -11,10 +9,6 @@ use crate::worker::waiting::{Probe, Waiting};
 use crate::worker::Job;
 use crate::worker::{pillar, scaffold, stance, Body, Ctx, Task, Then};
 
-/// Walk to a pillar's foot to climb it (in legs when the way is long); `None`
-/// when the task waits instead: the foot cannot be walked to, or the task
-/// would be refused at the top anyway (a climb for nothing, then the pillar
-/// comes straight down).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn climb_toward(
     ctx: &mut Ctx,
@@ -39,8 +33,6 @@ pub(super) fn climb_toward(
             return Some(Flow::Busy(Waiting::Probe(Probe::ClimbSealing)));
         }
     }
-    // A pillar is made of blocks the golem carries: short of its height,
-    // the chests are asked first.
     let levels = (pillar.top - pillar.base).max(0) as u32;
     if scaffold::in_hand(ctx, job, &body.slots) < levels {
         job.crew.scaffolding.want = levels;
@@ -63,8 +55,6 @@ pub(super) fn climb_toward(
     }
 }
 
-/// Work no stance on foot reaches gets a pillar, or one whose top walks on
-/// to it; work nothing reaches falls out of the plan for a while.
 pub(super) fn pillars(
     ctx: &mut Ctx,
     projects: &mut Projects,

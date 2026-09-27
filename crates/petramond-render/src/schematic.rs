@@ -1,4 +1,3 @@
-//! Geometry shared by schematic ghosts and isolated structure screenshots.
 use petramond::schematic::Scene;
 use petramond_math::math::IVec3;
 use petramond_mesh::{ModelVertex, Vertex};
@@ -21,8 +20,6 @@ impl Geometry {
         Self::build_sections(scene, None)
     }
 
-    /// Mesh only the scene section `only` (or every section): one piece of a
-    /// larger ghost, its bordering cells present for culling but not drawn.
     pub fn build_sections(scene: &Scene, only: Option<SectionPos>) -> Self {
         let mut out = Self {
             size: scene.size,
@@ -96,8 +93,6 @@ impl Geometry {
                 v
             }));
         }
-        // Animated blocks draw from their models, posed by the captured
-        // state and resting where it says (closed, or a door standing open).
         let entities: Vec<crate::BlockEntityInstance> = scene
             .cells
             .iter()

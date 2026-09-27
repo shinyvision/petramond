@@ -1,46 +1,19 @@
-//! Mod-declared procedural shapes: the `shapes.json` catalog a pack
-//! ships to declare custom shape kinds its WASM bakes. A block row references
-//! one by name (`"shape": "mymod:gate"`); the geometry comes from the pack's
-//! bake (see the shape bake ABI), while this row carries the static metadata the
-//! engine needs WITHOUT dispatching — the light shape, the nav profile, and
-//! whether the block is a grass-decay participant — plus the fallback the
-//! failure policy freezes a trapped bake to.
-//!
-//! The catalog is empty unless a pack ships `shapes.json`; engine shapes are the
-//! compiled families, never rows here.
-
 use serde::Deserialize;
 
-/// How a custom shape's cells participate in light propagation when the sim bake
-/// has not (yet) produced an aperture — the simple declared tier.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CustomLight {
-    /// Passes light like open air (the default).
     Open,
-    /// Blocks light like a full cube.
     OpaqueCube,
-    /// The sim bake supplies a per-half-cell aperture; the flood reads it.
     CustomAperture,
 }
 
-/// One `shapes.json` row: a custom shape kind's static declaration.
 #[derive(Debug, PartialEq)]
 pub struct CustomShapeDef {
     pub key: &'static str,
-    /// Light behaviour (simple tier, or a marker that the bake supplies an
-    /// aperture).
     pub light_shape: CustomLight,
-    /// Whether navigation reads a cell of this shape as solid (the fence rule
-    /// generalised): `nav_profile: "solid"`.
     pub nav_solid: bool,
-    /// Whether the block participates in grass-decay / neighbour-update fan-out.
     pub grass_decay_eligible: bool,
-    /// The cell-KV key this shape's per-cell STATE lives under, or `None` for a
-    /// stateless shape (block-identity only, the chain/cauldron pattern). When
-    /// set, the bake input carries this key's replicated value for the cell and
-    /// its six neighbours ([`mod_api::CellInput::state`]), so the shape resolves
-    /// like a stair — from state, not just block id.
     pub state_key: Option<&'static str>,
 }
 
@@ -50,12 +23,10 @@ struct RawCustomShapeDef {
     key: String,
     #[serde(default = "default_light")]
     light_shape: CustomLight,
-    /// `"solid"` reads the cell solid to nav; anything else (or absent) does not.
     #[serde(default)]
     nav_profile: Option<String>,
     #[serde(default = "default_true")]
     grass_decay_eligible: bool,
-    /// The cell-KV key holding this shape's per-cell state; absent = stateless.
     #[serde(default)]
     state_key: Option<String>,
 }
@@ -73,9 +44,6 @@ struct RawCustomShapeFile {
     shapes: Vec<RawCustomShapeDef>,
 }
 
-/// The custom-shape catalog of a content registry — id-ordered, or empty when
-/// no pack ships `shapes.json`. A malformed `shapes.json` fails the registry
-/// build (the pack should have been disabled at admission).
 pub(crate) static CUSTOM_SHAPES: crate::content::Slot<&'static [CustomShapeDef]> =
     crate::content::Slot::new(crate::content::stage::SHAPES, &[], load);
 
@@ -89,7 +57,7 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<&'static [CustomShapeDe
         &texts,
         |t| serde_json::from_str::<RawCustomShapeFile>(t).map(|f| f.shapes),
         |r| &r.key,
-        &[], // no engine custom shapes — the compiled families cover those
+        &[],
         "shape",
         |r, id, names| {
             Ok(CustomShapeDef {
@@ -108,8 +76,6 @@ fn defs() -> &'static [CustomShapeDef] {
     CUSTOM_SHAPES.current()
 }
 
-/// The custom shape declared under `key`, or `None` — used by the loader to
-/// resolve a block row's `"shape": "mod:key"` reference.
 pub(super) fn by_key(key: &str) -> Option<&'static CustomShapeDef> {
     defs().iter().find(|d| d.key == key)
 }
@@ -152,10 +118,7 @@ mod tests {
         assert_eq!(defs[0].light_shape, CustomLight::OpaqueCube);
         assert!(defs[0].nav_solid);
         assert!(!defs[0].grass_decay_eligible);
-        // A declared state key rides onto the shape def (the stateful-family
-        // primitive: the bake input carries this key's value per cell).
         assert_eq!(defs[0].state_key, Some("mymod:facing"));
-        // Defaults: open light, non-solid nav, grass-decay eligible, stateless.
         assert_eq!(defs[1].light_shape, CustomLight::Open);
         assert!(!defs[1].nav_solid);
         assert!(defs[1].grass_decay_eligible);

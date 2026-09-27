@@ -1,26 +1,14 @@
-//! The ordered, fallible registry build (see the parent module docs).
-
 use std::sync::OnceLock;
 
 use super::{pin, stage, Content, ContentError, ContentErrors, ContentRegistry};
 use crate::assets::PackSet;
 
-/// One step of a registry build: a catalog (or derived table) with a name,
-/// the stages it reads, and a builder that stores its result in the
-/// registry. [`Slot`](super::Slot) is the implementation crates above this
-/// one use.
 pub trait Stage: Sync {
-    /// The stage's name — its catalog file where it has one. Other stages
-    /// name it in their [`needs`](Self::needs).
     fn name(&self) -> &'static str;
-    /// The stages this one reads; if any of them failed, this one is skipped.
     fn needs(&self) -> &'static [&'static str];
-    /// Build into `reg` (the registry being built, which is also the
-    /// thread's current registry while the build runs).
     fn build(&self, reg: &ContentRegistry) -> Result<(), String>;
 }
 
-/// A stage that fills one of the registry's typed fields.
 struct FieldStage {
     name: &'static str,
     needs: &'static [&'static str],
@@ -120,8 +108,6 @@ static ITEMS: FieldStage = FieldStage {
     build: build_items,
 };
 
-/// The world crate's stages, in build order. Everything a later stage reads
-/// comes earlier; `needs` makes the skip-on-failure explicit.
 static WORLD_STAGES: &[&dyn Stage] = &[
     &TILES,
     &crate::sound_registry::CATALOG,
@@ -145,8 +131,6 @@ static WORLD_STAGES: &[&dyn Stage] = &[
     &crate::construction::PLACED_BY,
 ];
 
-/// Builds a [`ContentRegistry`] from a [`PackSet`]: the world crate's stages,
-/// then any extension stages in the order given.
 pub struct ContentLoader {
     packs: PackSet,
     extra: Vec<&'static dyn Stage>,
@@ -160,27 +144,18 @@ impl ContentLoader {
         }
     }
 
-    /// Append one extension stage (built after every world stage and every
-    /// extension stage added before it).
     pub fn stage(mut self, stage: &'static dyn Stage) -> ContentLoader {
         self.extra.push(stage);
         self
     }
 
-    /// Append several extension stages, in order.
     pub fn stages(mut self, stages: &[&'static dyn Stage]) -> ContentLoader {
         self.extra.extend_from_slice(stages);
         self
     }
 
-    /// Run every stage. `Ok` only when all of them built; otherwise every
-    /// error found, with the skipped stages and refused packs.
     pub fn load(self) -> Result<Content, ContentErrors> {
         let refused = self.packs.refused().to_vec();
-        // Retained from the start: while the build runs the registry is this
-        // thread's current one, so the catalogs' own cross-references (a
-        // block row naming a tile, an item naming a sound) resolve against
-        // the stages already built — never against another registry.
         let reg: &'static ContentRegistry = Box::leak(Box::new(ContentRegistry::empty(self.packs)));
         let content = Content(reg);
         let mut report = ContentErrors {

@@ -1,45 +1,28 @@
-//! World marks: lines and screen-facing art pinned to world points, drawn over
-//! the finished frame on the WINDOW (the pass is `renderer::world_marks`).
-//!
-//! A mark's geometry is world-anchored but its size is the window's pixels,
-//! so the CPU bakes only the anchors, relative to the frame's integer render
-//! origin; the vertex stage projects them and grows each mark to its pixel
-//! size. A line is a quad spanning its two projected ends; pinned art is a run
-//! of window-pixel quads around one projected point.
-
 use std::ops::Range;
 
 use glam::IVec3;
 use petramond_math::world_pos::WorldPos;
 
-/// This frame's world marks, in draw order.
 #[derive(Default)]
 pub struct WorldMarks {
     pub items: Vec<WorldMark>,
-    /// Pinned paint: quads in window pixels relative to their item's point,
-    /// y down (see [`WorldMarks::paint`]).
     pub paint: petramond_ui::DrawList,
 }
 
-/// One world mark. `occluded` is its opacity where the world stands in front
-/// of it: `0` hides it, `1` draws it straight through.
 pub enum WorldMark {
     Line {
         from: WorldPos,
         to: WorldPos,
         color: [f32; 4],
-        /// Window pixels.
         width: f32,
         occluded: f32,
     },
-    /// An image drawn at `image.rect`, window pixels relative to `at`.
     Image {
         at: WorldPos,
         occluded: f32,
         tint: [f32; 4],
         image: crate::ClientOverlayImage,
     },
-    /// Batches `[start, end)` of [`WorldMarks::paint`], pinned to `at`.
     Paint {
         at: WorldPos,
         occluded: f32,
@@ -57,14 +40,12 @@ impl WorldMarks {
         self.items.is_empty()
     }
 
-    /// Paint one run pinned to `at`, in window pixels around it (y down).
     pub fn paint(
         &mut self,
         at: WorldPos,
         occluded: f32,
         draw: impl FnOnce(&mut petramond_ui::DrawList),
     ) {
-        // A sealed run never merges into the previous point's last batch.
         self.paint.begin_overlay();
         let start = self.paint.batches.len();
         draw(&mut self.paint);
@@ -78,7 +59,6 @@ impl WorldMarks {
         }
     }
 
-    /// Whether any mark hides behind the world, i.e. needs the world's depth.
     pub(crate) fn tests_depth(&self) -> bool {
         self.items.iter().any(|item| {
             let occluded = match item {
@@ -91,10 +71,6 @@ impl WorldMarks {
     }
 }
 
-/// One mark vertex. `at` is this vertex's anchor, render-relative. A line's
-/// vertex also carries the segment's `other` end and `offset = [side, half
-/// width]`; a pinned vertex carries its window-pixel `offset` from `at`.
-/// `style = [occluded, 1 for a line end else 0]`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct MarkVertex {
@@ -106,13 +82,10 @@ pub(crate) struct MarkVertex {
     pub style: [f32; 2],
 }
 
-/// What a batch samples. `Image` names the first [`WorldMark::Image`] item of
-/// the batch; every item in it shows the same image.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum MarkTex {
     Solid,
     Font,
-    /// A theme atlas page.
     Theme(u16),
     Image(usize),
 }
@@ -126,8 +99,6 @@ pub(crate) struct MarkBatch {
 
 const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 
-/// Bake `marks` against the frame's render `origin` into `verts` + `batches`
-/// (both cleared first).
 pub(crate) fn bake(
     marks: &WorldMarks,
     origin: IVec3,
@@ -177,8 +148,6 @@ pub(crate) fn bake(
                     color: *color,
                     style: [*occluded, 1.0],
                 };
-                // The side flips with the end: each end measures its normal
-                // from its own outward direction, which is the other's negated.
                 let (a_left, a_right) = (end(a, b, 1.0), end(a, b, -1.0));
                 let (b_left, b_right) = (end(b, a, -1.0), end(b, a, 1.0));
                 push(

@@ -1,12 +1,7 @@
-//! The small transient line above the hotbar: a held world tool announcing
-//! its setting, and refusals or failures the game reports. Held two seconds,
-//! then faded over one.
-
 use petramond_ui::{UiState, UiValue};
 
 #[derive(Default)]
 pub(in crate::app) struct HotbarNotice {
-    /// The hotbar slot and setting label last announced.
     previous: Option<(u8, &'static str)>,
     started: f64,
     text: String,

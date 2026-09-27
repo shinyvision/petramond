@@ -8,8 +8,6 @@ use super::{
     Animation, BezierHandles, Bone, Channel, Cube, Interpolation, Keyframe, Marker, MarkerKind,
 };
 
-/// Recursively assign bone parents + cube bones from one `outliner` node. A node
-/// is either a cube-uuid string (a leaf) or a group object (`uuid` + `children`).
 pub(super) fn walk_outliner(
     node: &Value,
     parent_bone: Option<usize>,
@@ -19,13 +17,11 @@ pub(super) fn walk_outliner(
     cubes: &mut [Cube],
 ) {
     match node {
-        // A bare string is a cube uuid parented to the current bone.
         Value::String(uuid) => {
             if let (Some(&ci), Some(pb)) = (cube_by_uuid.get(uuid), parent_bone) {
                 cubes[ci].bone = pb;
             }
         }
-        // An object is a group (bone); recurse into its children.
         Value::Object(_) => {
             let uuid = node.get("uuid").and_then(Value::as_str).unwrap_or("");
             let this_bone = bone_by_uuid.get(uuid).copied();
@@ -42,20 +38,17 @@ pub(super) fn walk_outliner(
     }
 }
 
-/// Parse one element's `faces` map into the `Face::ALL`-ordered UV array, each
-/// face's UVs normalized into its referenced texture's band of the sheet.
 pub(super) fn parse_faces(
     faces: Option<&Value>,
     sheet: &TextureSheet,
 ) -> [Option<super::FaceUv>; 6] {
-    // Blockbench face name -> our `Face::ALL` slot (PosX, NegX, PosY, NegY, PosZ, NegZ).
     const NAMES: [(&str, usize); 6] = [
-        ("east", 0),  // +X
-        ("west", 1),  // -X
-        ("up", 2),    // +Y
-        ("down", 3),  // -Y
-        ("south", 4), // +Z
-        ("north", 5), // -Z
+        ("east", 0),
+        ("west", 1),
+        ("up", 2),
+        ("down", 3),
+        ("south", 4),
+        ("north", 5),
     ];
     let mut out = [None; 6];
     let Some(faces) = faces else { return out };
@@ -72,14 +65,8 @@ pub(super) fn parse_faces(
                         .and_then(Value::as_u64)
                         .map(|i| i as usize);
                     if let Some(r) = sheet.rect(tex) {
-                        // Normalize into the texture's sheet band; keep raw corner
-                        // order so per-face flips (a reversed rect) reproduce on
-                        // render.
                         let (u0, v0) = r.remap(v[0], v[1]);
                         let (u1, v1) = r.remap(v[2], v[3]);
-                        // Blockbench's per-face `rotation` is degrees clockwise
-                        // on the face; a quarter turn swaps the u/v axes, so it
-                        // cannot be folded into the rect and rides along.
                         let rot = face
                             .get("rotation")
                             .and_then(num)
@@ -97,9 +84,6 @@ pub(super) fn parse_faces(
     out
 }
 
-/// Parse the `animations` array into named [`Animation`]s: per-bone rotation
-/// and position tracks (animators keyed by group uuid → bone index) with every
-/// key's interpolation, plus the Effects animator's markers.
 pub(super) fn parse_animations(
     root: &Value,
     bone_by_uuid: &HashMap<String, usize>,
@@ -115,8 +99,6 @@ pub(super) fn parse_animations(
             .unwrap_or("")
             .to_string();
         let length = a.get("length").and_then(Value::as_f64).unwrap_or(0.0) as f32;
-        // Blockbench loop modes: "loop" loops, "hold" plays once and keeps its
-        // last frame, "once" (or absent) plays once. Some formats store a bool.
         let (looping, hold) = match a.get("loop") {
             Some(Value::String(s)) => (s == "loop", s == "hold"),
             Some(Value::Bool(b)) => (*b, false),
@@ -155,8 +137,6 @@ pub(super) fn parse_animations(
     out
 }
 
-/// One bone keyframe: its time, one or two data points (pre/post), its
-/// interpolation, and — on a Bezier key — its handles.
 fn parse_keyframe(k: &Value) -> Option<Keyframe> {
     let time = k.get("time").and_then(num)?;
     let points = k.get("data_points").and_then(Value::as_array)?;
@@ -189,8 +169,6 @@ fn parse_keyframe(k: &Value) -> Option<Keyframe> {
     })
 }
 
-/// A Blockbench interpolation name; anything unrecognised is linear, the
-/// Blockbench default.
 pub(super) fn interpolation_named(name: Option<&str>) -> Interpolation {
     match name {
         Some("catmullrom") => Interpolation::CatmullRom,
@@ -200,8 +178,6 @@ pub(super) fn interpolation_named(name: Option<&str>) -> Interpolation {
     }
 }
 
-/// One keyframe of the Effects animator as markers: a timeline key gives one
-/// marker per script line, a sound or particle key one per named effect.
 fn push_effect_markers(anim: &mut Animation, k: &Value) {
     let Some(time) = k.get("time").and_then(num) else {
         return;
@@ -241,8 +217,6 @@ fn push_effect_markers(anim: &mut Animation, k: &Value) {
     }
 }
 
-/// A timeline script's lines as marker names: trimmed, trailing `;` dropped,
-/// empty lines skipped.
 pub(super) fn script_lines(script: &str) -> impl Iterator<Item = String> + '_ {
     script
         .lines()
@@ -251,13 +225,6 @@ pub(super) fn script_lines(script: &str) -> impl Iterator<Item = String> + '_ {
         .map(str::to_string)
 }
 
-/// Whether face UVs are authored in each TEXTURE's own pixel space rather than
-/// the project `resolution`. Bedrock formats give every texture its own UV
-/// size; a Java block model has ONE project-wide UV space, and the `uv_width`
-/// Blockbench writes beside a Java texture is merely that image's natural size.
-/// Reading it as an override there scales every face by the ratio between the
-/// image and the project — a 32² texture in a 128² project authors UVs up to
-/// 128, and dividing those by 32 sends them clean off the sheet.
 pub(super) fn per_texture_uv_size(root: &Value) -> bool {
     root.get("meta")
         .and_then(|m| m.get("model_format"))
@@ -265,9 +232,6 @@ pub(super) fn per_texture_uv_size(root: &Value) -> bool {
         .is_some_and(|f| f.starts_with("bedrock"))
 }
 
-/// The project `resolution` `(width, height)` — the UV divisor for every face
-/// unless [`per_texture_uv_size`] says the textures carry their own. Falls
-/// back to 16.
 pub(super) fn project_resolution(root: &Value) -> (f32, f32) {
     if let Some(res) = root.get("resolution") {
         let w = res.get("width").and_then(Value::as_f64).unwrap_or(16.0);
@@ -279,8 +243,6 @@ pub(super) fn project_resolution(root: &Value) -> (f32, f32) {
     (16.0, 16.0)
 }
 
-/// Minimal standard-alphabet base64 decoder (skips `=` padding + whitespace). Kept
-/// in-tree so the loader needs no base64 dependency.
 pub(super) fn base64_decode(s: &str) -> Option<Vec<u8>> {
     fn val(c: u8) -> Option<u32> {
         match c {
@@ -310,7 +272,6 @@ pub(super) fn base64_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// A `[x, y, z]` JSON array -> `Vec3` (accepts numbers; tolerant of stringified).
 pub(super) fn arr3(v: Option<&Value>) -> Option<Vec3> {
     let a = v?.as_array()?;
     if a.len() != 3 {
@@ -319,8 +280,6 @@ pub(super) fn arr3(v: Option<&Value>) -> Option<Vec3> {
     Some(Vec3::new(num(&a[0])?, num(&a[1])?, num(&a[2])?))
 }
 
-/// A JSON value as `f32`, accepting both numbers and numeric strings (Blockbench
-/// keyframe data points are stored as strings, e.g. `"20"`).
 pub(super) fn num(v: &Value) -> Option<f32> {
     match v {
         Value::Number(n) => n.as_f64().map(|f| f as f32),

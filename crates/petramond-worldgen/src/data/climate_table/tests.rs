@@ -8,9 +8,6 @@ fn base() -> String {
         .0
 }
 
-/// The shipped table is the compiled builder's output, row for row and in
-/// order (order is the classifier's tiebreak), so loading placement from
-/// data moved no biome.
 #[test]
 fn shipped_table_reproduces_the_compiled_builder_exactly() {
     let loaded = parse_layers(&[&base()]).expect("shipped table loads");
@@ -22,9 +19,6 @@ fn shipped_table_reproduces_the_compiled_builder_exactly() {
     assert_eq!(loaded.frozen_temperature_max, FROZEN_TEMPERATURE_MAX);
 }
 
-/// Sampled climates — inside, on the edges of and beyond the normalized
-/// axes — classify identically through the loaded index and an index over
-/// the compiled rows.
 #[test]
 fn loaded_index_classifies_sampled_climates_like_the_compiled_one() {
     let compiled = BiomeClimateIndex::from_rects(&surface_biome_table());
@@ -37,8 +31,6 @@ fn loaded_index_classifies_sampled_climates_like_the_compiled_one() {
     for (a, &t) in axis.iter().enumerate() {
         for (b, &h) in axis.iter().enumerate() {
             for &c in &axis {
-                // Walk erosion and variance on a rotating diagonal so every
-                // value meets every other within the budget of a unit test.
                 for k in 0..axis.len() {
                     let e = axis[(k + a) % axis.len()];
                     let v = axis[(k * 7 + b) % axis.len()];
@@ -56,8 +48,6 @@ fn loaded_index_classifies_sampled_climates_like_the_compiled_one() {
     assert!(checked > 100_000);
 }
 
-/// A pack layer's rows go ahead of the base table, so a row that contains
-/// a climate claims it; `replace` drops the earlier rows instead.
 #[test]
 fn pack_rows_claim_their_niche_ahead_of_the_base_table() {
     let niche = r#"{"bands": {"humidity": {"soaked": [0.9, 1.0]}},
@@ -87,8 +77,6 @@ fn pack_rows_claim_their_niche_ahead_of_the_base_table() {
     assert_eq!(only.classify_surface(outside), Some(Biome::WETLAND));
 }
 
-/// Bands merge before rows resolve: retuning a base band in a pack moves
-/// every base row that names it, and the sea-ice line follows `frozen`.
 #[test]
 fn a_pack_band_override_retunes_the_base_rows() {
     let retune = r#"{"bands": {"temperature": {
@@ -110,7 +98,6 @@ fn a_pack_band_override_retunes_the_base_rows() {
     }
 }
 
-/// The vocabulary refuses what it cannot place exactly instead of guessing.
 #[test]
 fn malformed_tables_are_refused() {
     let bands = r#""bands": {
@@ -178,7 +165,6 @@ fn malformed_tables_are_refused() {
     }
 }
 
-/// The fingerprint covers placement: moving one biome changes it.
 #[test]
 fn the_fingerprint_tracks_placement() {
     let shipped = parse_layers(&[&base()]).expect("shipped table loads");

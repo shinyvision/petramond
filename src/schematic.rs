@@ -1,5 +1,3 @@
-//! Portable, sparse structures and complete cell snapshots for creative edits.
-
 mod cell;
 mod sections;
 pub use sections::{CellRef, SchematicBuilder, SchematicSection, SectionCell};
@@ -43,8 +41,6 @@ pub enum CreativeAction {
         regions: Vec<SelectionBox>,
         include_air: bool,
     },
-    /// Paste the design `digest` names; the server asks for its archive
-    /// (`SchematicNotice::Want`) when the world does not hold it.
     Place {
         digest: store::Digest,
         origin: [i32; 3],
@@ -56,10 +52,7 @@ pub enum CreativeAction {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum CreativeReply {
-    /// The capture asked for is arriving as the blob `digest`.
-    Captured {
-        digest: store::Digest,
-    },
+    Captured { digest: store::Digest },
     Message(String),
 }
 

@@ -63,9 +63,6 @@ fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
     });
 }
 
-/// Run `f` with a live SimCtx published, as if inside a guest dispatch.
-/// The world gets one flat-floored loaded chunk so section-cell KV writes
-/// have a writable target.
 fn with_ctx(f: impl FnOnce()) {
     let mut world = ServerWorld::new(1, 1);
     let mut c = petramond_world::chunk::Chunk::new(0, 0);
@@ -88,17 +85,11 @@ fn with_ctx(f: impl FnOnce()) {
     scope::enter(&mut ctx, f);
 }
 
-/// The KV namespace contract: writes must carry the CALLER's own
-/// `mod_id:` prefix or an engine-owned `petramond:` key (foreign and bare keys
-/// are rejected with an error), while reads may cross namespaces — that
-/// asymmetry IS the cross-mod interop surface. Size caps reject oversized
-/// values.
 #[test]
 fn kv_writes_enforce_own_namespace_and_reads_cross() {
     let mut alpha = ModStoreData::new("alpha", 1);
     let mut beta = ModStoreData::new("beta", 1);
     with_ctx(|| {
-        // Own-prefix write lands.
         assert_eq!(
             handle_host_call(
                 &mut alpha,
@@ -109,7 +100,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             ),
             HostRet::Unit
         );
-        // Engine-owned public surfaces are intentionally writable.
         assert_eq!(
             handle_host_call(
                 &mut beta,
@@ -120,7 +110,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             ),
             HostRet::Unit
         );
-        // A foreign-prefix write is rejected...
         assert!(matches!(
             handle_host_call(
                 &mut beta,
@@ -131,7 +120,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             ),
             HostRet::Err(_)
         ));
-        // ...and so are bare / degenerate keys.
         for bad in ["x", "alpha:", "petramond:", "alphax:y", "beta"] {
             assert!(
                 matches!(
@@ -147,7 +135,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
                 "write with key '{bad}' must be rejected"
             );
         }
-        // The rejected write changed nothing; a cross-namespace READ works.
         assert_eq!(
             handle_host_call(
                 &mut beta,
@@ -166,7 +153,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             ),
             HostRet::Bytes(Some(vec![1]))
         );
-        // Deletes are writes: foreign rejected, own applies.
         assert!(matches!(
             handle_host_call(
                 &mut beta,
@@ -185,7 +171,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             ),
             HostRet::Bool(true)
         );
-        // The value size cap holds (same guard on every KV write surface).
         assert!(matches!(
             handle_host_call(
                 &mut alpha,
@@ -197,7 +182,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
             HostRet::Err(_)
         ));
     });
-    // Outside any dispatch scope, sim-touching KV calls are rejected.
     assert!(matches!(
         handle_host_call(
             &mut alpha,
@@ -209,11 +193,6 @@ fn kv_writes_enforce_own_namespace_and_reads_cross() {
     ));
 }
 
-/// The per-cell AGGREGATE cap: one more DISTINCT key on a cell already
-/// holding `CELL_KV_MAX_KEYS` errors, while overwriting an existing key
-/// at the cap passes (the cap bounds the map, not writes) and removing a
-/// key frees a slot. The cap is what keeps every `BlockDelta` — which
-/// ships the cell's whole KV map — a bounded wire payload.
 #[test]
 fn section_kv_caps_distinct_keys_per_cell() {
     use crate::modding::host::guards::CELL_KV_MAX_KEYS;

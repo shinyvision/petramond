@@ -1,11 +1,3 @@
-//! Launching the in-process listen server for a local session.
-//!
-//! The one door the client uses to start a singleplayer world: it gets back
-//! the same two things a remote join yields — a [`ServerHandle`] and the
-//! session's [`JoinData`] — plus the few process-local resources an
-//! in-process host can share. The client never sees the server's memory; the
-//! server is built, seeded, and moved onto its own thread here.
-
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -17,27 +9,13 @@ use crate::server::session_build::{build_server_with_pool, LocalPlayer};
 use crate::worker::JobPool;
 use petramond_worldgen::SurfaceDensitySystem;
 
-/// Everything a local session's client needs beyond the handle.
 pub struct LocalSession {
-    /// The local player's join payload, exactly what a remote client
-    /// receives on `JoinAccept` (in local ids — the loopback skips the remap).
     pub join: Box<JoinData>,
-    /// The server's job pool. One process shares one pool: the client
-    /// replica lights and meshes on it instead of spawning a second
-    /// machine-sized thread set.
     pub jobs: Arc<JobPool>,
-    /// The world seed's surface density, the mesh tint fallback for missing
-    /// edge columns.
     pub fallback_world: SurfaceDensitySystem,
-    /// The mod ids enabled for this world (installed minus its disabled set) —
-    /// the same authority the server's mod host uses, so client mods activate
-    /// for exactly these.
     pub enabled_mods: BTreeSet<String>,
 }
 
-/// Open (or create) `world_name`, build the full server session with the
-/// identity `key` (display name `name`) as its permanent local player, and
-/// move it onto its own self-clocked thread.
 pub fn launch(
     world_name: &str,
     new_seed: u32,
@@ -56,10 +34,6 @@ pub fn launch(
     (crate::server::handle::spawn(server), session)
 }
 
-/// [`launch`] without the thread: the built server stays with the caller,
-/// for test harnesses that pump it synchronously over a loopback pipe
-/// (usually with an inline `pool`, so streaming work completes inside the
-/// pump that queued it).
 #[cfg(any(test, feature = "test-support"))]
 pub fn build_in_process(
     world_name: &str,

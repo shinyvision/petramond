@@ -1,6 +1,3 @@
-//! Optimistic client prediction: ledger rollback, menu and placement
-//! prediction, mining deny. Movement claims live in `movement_claims.rs`.
-
 use super::common::*;
 use crate::game::prediction::PredictionSnapshot;
 use crate::game::tick::{GameInput, PlacePrediction};
@@ -205,8 +202,6 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
         .set_block_world(3, 64, 3, Block::Furnace);
     game.server_world_mut()
         .insert_furnace(pos, petramond_world::block_model::DEFAULT_MODEL_FACING);
-    // Grass is neither fuel nor smeltable, so the furnace's fuel slot refuses
-    // it — the one slot of the gesture that is not a destination.
     game.server_player_mut()
         .inventory
         .add(petramond_world::item::ItemStack::new(
@@ -253,10 +248,6 @@ fn a_drag_leg_over_a_filtered_slot_predicts_what_the_server_applies() {
     );
 }
 
-/// The one-by-one container fill: a plain click on an open chest's slot is a
-/// P1 prediction — the mirror slot and cursor move at click time, and the
-/// outcome batch reconciles to the same state, never back through the
-/// pre-click view (the counter up-down-up flicker, 2026-07-21).
 #[test]
 fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     let mut game = game_on_empty_chunk();
@@ -332,10 +323,8 @@ fn predicted_chest_slot_click_applies_immediately_and_survives_reconcile() {
     );
 }
 
-/// Pipelined one-by-one clicks: a batch answering only the FIRST click
-/// carries inventory/menu truth that predates the still-pending second — it
-/// must not stomp the newer prediction (the rapid-click regress). The second
-/// click's own forced outcome batch installs the final truth.
+/// With two clicks in flight, the batch answering the first one predates
+/// the second and must not stomp its prediction. The second click's own batch sets the final state.
 #[test]
 fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
     use petramond::net::protocol::{ItemSlotWire, MenuSyncMsg, MenuTargetWire, SelfState};
@@ -434,7 +423,6 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
         }
     };
 
-    // The first click's batch: truth as of click #1 only.
     game.game.apply_tick_update(Box::new(TickUpdate {
         tick: 0,
         clock: 0,
@@ -453,7 +441,6 @@ fn a_stale_authoritative_pair_does_not_stomp_a_newer_pending_click() {
     );
     assert_eq!(cursor_count(&game), Some(8));
 
-    // The second click's own batch: final truth, pending queue drains.
     game.game.apply_tick_update(Box::new(TickUpdate {
         tick: 0,
         clock: 0,
@@ -481,8 +468,6 @@ fn break_finished_without_observed_mining_is_denied() {
     game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
     game.session_mut().input_mut().claim_pos = game.server_player().pos;
 
-    // Never started mining: the finish is TooFast-deferred, then abandoned
-    // in the same tick (no active target) — deny + corrective, no clear.
     game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
         request_id: 7,
         pos,
@@ -523,7 +508,6 @@ fn two_instabreak_finishes_in_one_tick_window_both_accept() {
     game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 4.5);
     game.session_mut().input_mut().claim_pos = game.server_player().pos;
 
-    // Two instabreak blocks broken back-to-back land in the same tick window.
     game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
         request_id: 1,
         pos: a,
@@ -581,7 +565,6 @@ fn lagged_break_finished_after_hold_path_accepts_without_restore() {
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
     game.send_to_server(ClientToServer::PlayerUpdate(u));
 
-    // Hold-path clears the cell BEFORE BreakFinished arrives (slow uplink).
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
@@ -639,13 +622,11 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
     game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
     game.session_mut().input_mut().claim_pos = game.server_player().pos;
 
-    // Start the server's observed mining window.
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
     game.send_to_server(ClientToServer::PlayerUpdate(u));
 
-    // One tick of progress — far short of stone's break time.
     game.sim_mut().tick_mining(0, &mut TickEvents::default());
     game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
         request_id: 11,
@@ -678,7 +659,6 @@ fn early_break_finished_defers_then_accepts_on_hold_path_without_restore() {
         "server cell stays until the hold-path finishes"
     );
 
-    // Hold until the server's timer breaks the block.
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
     for _ in 0..expected_ticks + 2 {
@@ -713,8 +693,6 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
         .set_block_world(pos.x, pos.y, pos.z, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(8.5, 65.0, 10.5);
 
-    // Latch a held break on the target: the server's own mining timer is the
-    // observation the finish is validated against.
     let mut u = player_update(&game, true);
     u.break_held = true;
     u.target = Some(hit(pos, IVec3::new(0, 0, 1)));
@@ -722,7 +700,6 @@ fn break_finished_after_the_observed_mining_window_is_accepted() {
 
     let expected_ticks =
         (petramond_world::mining::break_time(Block::Stone, None) / TICK_DT).round() as usize;
-    // Hold just short of the server's own finish, then deliver the client's.
     for _ in 0..expected_ticks - 2 {
         game.sim_mut().tick_mining(0, &mut TickEvents::default());
     }
@@ -754,7 +731,6 @@ fn each_queued_drop_in_one_tick_window_gets_its_own_outcome() {
         all: false,
         request_id: 12,
     }));
-    // Nothing on the cursor: the throw cannot even queue, denied immediately.
     game.send_to_server(ClientToServer::Action(PlayerAction::ThrowCursor {
         amount: petramond::net::protocol::ThrowAmount::One,
         request_id: 13,
@@ -779,12 +755,9 @@ fn multi_deny_rollback_restores_the_oldest_snapshot() {
     game.sync_self_view_for_test();
     let before = game.replica.self_view.inventory.clone();
 
-    // Two predicted drops back to back: the second snapshot already embeds
-    // the first prediction's effect.
-    game.game.drop_selected_item(false); // id 0
-    game.game.drop_selected_item(false); // id 1
+    game.game.drop_selected_item(false);
+    game.game.drop_selected_item(false);
 
-    // Both denied in one batch: the restore must end on the OLDEST snapshot.
     let update = TickUpdate {
         tick: 0,
         clock: 0,
@@ -807,14 +780,12 @@ fn multi_deny_rollback_restores_the_oldest_snapshot() {
 #[test]
 fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
     let mut game = game();
-    // A loaded replica cell the ghost writes into.
     let pos = IVec3::new(3, 64, 3);
     game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
     );
 
-    // Predict a ghost placement (World snapshot, prev = air).
     let id = game.game.prediction.begin(PredictionSnapshot::World {
         inventory: None,
         cells: vec![(pos, Block::Air.0)],
@@ -825,8 +796,6 @@ fn denied_cell_rollback_yields_to_a_same_batch_authoritative_delta() {
         .world
         .set_block_world(pos.x, pos.y, pos.z, Block::Dirt));
 
-    // Same batch: the deny AND an authoritative delta at the cell (another
-    // player's block won it). The delta must survive the rollback.
     let update = TickUpdate {
         tick: 0,
         clock: 0,
@@ -871,9 +840,8 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
         .server_world_mut()
         .set_block_world(b.x, b.y, b.z, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(9.5, 63.0, 9.5);
-    game.server_player_mut().inventory = filled_inventory(); // dirt
+    game.server_player_mut().inventory = filled_inventory();
 
-    // Click aimed at A...
     let mut u = player_update(&game, true);
     u.target = Some(hit(a, IVec3::Y));
     game.send_to_server(ClientToServer::PlayerUpdate(u));
@@ -884,7 +852,6 @@ fn place_resolves_at_the_click_target_not_the_freshest_look() {
         predicted: true,
         jabbed: false,
     }));
-    // ...then the crosshair moves to B before the tick resolves the click.
     let mut u2 = player_update(&game, true);
     u2.target = Some(hit(b, IVec3::Y));
     game.send_to_server(ClientToServer::PlayerUpdate(u2));
@@ -913,9 +880,6 @@ fn no_op_use_click_queues_the_disputed_cells_for_corrective_sync() {
         .set_block_world(t.x, t.y, t.z, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(8.5, 65.5, 10.5);
 
-    // Empty hand, non-interactable stone: the server consumes nothing — the
-    // client may have clicked a cell that only exists in ITS replica, so the
-    // authoritative state of the disputed cells ships back.
     let mut u = player_update(&game, true);
     u.target = Some(hit(t, IVec3::Y));
     game.send_to_server(ClientToServer::PlayerUpdate(u));
@@ -956,7 +920,6 @@ fn menu_click_ships_request_id_and_server_accepts() {
 #[test]
 fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
     let mut game = game_on_empty_chunk();
-    // Mirror the chunk onto the replica so the place ghost can write.
     game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
         petramond_world::chunk::Chunk::new(0, 0),
@@ -967,8 +930,6 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
         .replica
         .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    // Park the body clear of the place cell so placement_blocked_by_body
-    // does not refuse the ghost.
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     game.server_player_mut().inventory = filled_inventory();
     game.sync_self_view_for_test();
@@ -1018,16 +979,12 @@ fn optimistic_place_mutates_replica_hotbar_and_queues_world_event() {
 /// An interactive block (chest, crafting table, furnace…) clicked without
 /// sneaking is claimed by the server's BUILT-IN consumer before the place rung
 /// ever runs — so the client's place prediction must cancel EVERY placement
-/// arm, the mod custom-shape arm included (the chain-into-chest regression,
-/// 2026-07-22: the custom plan dispatched before the built-in claim gate and
-/// ghosted a block the server never places). Sneaking defers the built-in
+/// arm, including mod custom shapes, so it cannot ghost a block the server
+/// never places. Sneaking defers the built-in
 /// claim, so the same click then ghosts normally.
 #[test]
 fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
     use petramond_world::block::ShapeFamily;
-    // Any mod-registered custom-shape block with a linked item (the
-    // furniture chain, when the pack is installed). The engine ships no
-    // custom rows, so without an installed pack there is nothing to pin.
     let Some(item) = petramond_world::item::ItemType::all()
         .iter()
         .copied()
@@ -1049,12 +1006,9 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
         .replica
         .world
         .set_block_world(chest.x, chest.y, chest.z, Block::Chest));
-    // Park the body clear of the build cell so occupancy never refuses.
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     give(&mut game, item, 8);
     game.sync_self_view_for_test();
-    // Scripted accepted plan on the build cell — the deterministic answer a
-    // loaded client instance would compute (no wasm in this harness).
     let place_pos = chest + IVec3::Y;
     game.game.client_mods.scripted_shape_plan = Some(mod_api::ShapePlacementResult {
         accepted: true,
@@ -1063,7 +1017,6 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
         block: None,
     });
 
-    // Non-sneak: the built-in chest claim wins — silent, and no ghost cell.
     assert!(matches!(
         game.game.predict_place_at_for_test(chest, IVec3::Y, false),
         PlacePrediction::No
@@ -1078,9 +1031,6 @@ fn interactive_block_click_cancels_the_custom_shape_ghost_unless_sneaking() {
         "an interactive target must never ghost a mod block"
     );
 
-    // Sneaking defers the built-in claim: the same click ghosts in full —
-    // proof the custom arm itself still works (the gate is ordering, not a
-    // blanket veto).
     assert!(matches!(
         game.game.predict_place_at_for_test(chest, IVec3::Y, true),
         PlacePrediction::Predicted(_)
@@ -1113,9 +1063,6 @@ fn optimistic_torch_place_records_wall_mount_immediately() {
     give(&mut game, petramond_world::item::ItemType::Torch, 1);
     game.sync_self_view_for_test();
 
-    // Click the wall's west face: the predicted torch must carry its mount
-    // BEFORE the frame's remesh, or it renders the Floor default until the
-    // authoritative delta lands (the one-frame floor-torch flicker).
     assert!(matches!(
         game.game.predict_place_at_for_test(wall, -IVec3::X, false),
         PlacePrediction::Predicted(_)
@@ -1156,9 +1103,6 @@ fn optimistic_stair_place_records_orientation_immediately() {
     give(&mut game, petramond_world::item::ItemType::OakStairs, 1);
     game.sync_self_view_for_test();
 
-    // The absent-state fallback the mesher would read pre-fix; make the
-    // player's facing produce something else, so the assert can tell a
-    // recorded orientation from the fallback.
     let default_state = game
         .game
         .replica
@@ -1259,10 +1203,6 @@ fn optimistic_chest_place_records_front_facing_immediately() {
 
 #[test]
 fn optimistic_ladder_place_commits_the_facing_row() {
-    // Ladder facing is block IDENTITY (one row per facing): the ghost must
-    // write the sibling row matching the clicked wall face — same-frame mesh,
-    // panel collision, and climb probe all read that id — and must leave the
-    // entity-facing map untouched (a ladder is not a block entity).
     let mut game = game_on_empty_chunk();
     game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
@@ -1278,8 +1218,6 @@ fn optimistic_ladder_place_commits_the_facing_row() {
     give(&mut game, petramond_world::item::ItemType::Ladder, 1);
     game.sync_self_view_for_test();
 
-    // Click the wall's +X face: the panel front points east, hanging on the
-    // wall to its west.
     assert!(matches!(
         game.game.predict_place_at_for_test(wall, IVec3::X, false),
         PlacePrediction::Predicted(_)
@@ -1315,9 +1253,6 @@ fn slab_stack_click_is_not_predicted() {
         petramond_world::chunk::Chunk::new(0, 0),
     );
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
-    // A bottom slab in the cell: clicking its top face stacks INTO that cell
-    // server-side, off the ghost convention (`target + normal`), so the
-    // request denies by design — the client must not ghost a slab above.
     let cell = IVec3::new(8, 64, 8);
     let facing = petramond::rules::placement::facing_from_forward(game.game.local.player.forward());
     let slot = petramond_world::slab::slot_for_rotation(Default::default(), IVec3::Y, facing);
@@ -1486,8 +1421,6 @@ fn unpredicted_break_finish_keeps_the_initiators_break_event() {
     for _ in 0..expected_ticks - 2 {
         game.sim_mut().tick_mining(0, &mut TickEvents::default());
     }
-    // A TRACK-ONLY finish (frozen ledger / replica disagreement): the client
-    // never presented, so the accept must not strip its BlockBroken.
     game.send_to_server(ClientToServer::Action(PlayerAction::BreakFinished {
         request_id: 31,
         pos,
@@ -1516,12 +1449,9 @@ fn multi_deny_rollback_is_emission_order_independent() {
     game.sync_self_view_for_test();
     let before = game.replica.self_view.inventory.clone();
 
-    game.game.drop_selected_item(false); // id 0
-    game.game.drop_selected_item(false); // id 1
+    game.game.drop_selected_item(false);
+    game.game.drop_selected_item(false);
 
-    // The server may emit an immediate deny for the NEWER id before a
-    // tick-time deny for the older one — the restore must still end on the
-    // oldest snapshot.
     let update = TickUpdate {
         tick: 0,
         clock: 0,

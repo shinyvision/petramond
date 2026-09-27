@@ -1,39 +1,21 @@
-//! Fluid-cell metadata layout and pure surface math, shared by the flow SIM
-//! (which owns spreading/re-levelling over the world) and the MESHER (surface
-//! heights, flow direction for the flowing-fluid texture) — one canonical
-//! meta→height/flow mapping so geometry and simulation cannot drift.
-//!
-//! Every function here is fluid-generic: the cell's fluid block rides in as a
-//! parameter, because a cell holds exactly one fluid and every fluid shares the
-//! meta byte layout, surface heights, and flow rules.
-
 use crate::block::Block;
 use crate::mathh::{IVec3, Vec3};
 
-/// `meta` byte layout for a fluid cell (every fluid shares it):
-///   bit 7     — FALLING: a vertical stream (full amount, renders full).
-///   bits 0..4 — `level`: 0 = source, 1..=7 = flowing distance from a source.
 pub const FALLING: u8 = 0x80;
 pub const LEVEL_MASK: u8 = 0x0F;
 
 #[inline]
 pub fn level(meta: u8) -> u8 {
-    // Clamped: metadata written before the 7-cell reach (and its retired
-    // thickness bits, 0x70) may still be in old saves; the first flow check
-    // rewrites such a cell clean.
     (meta & LEVEL_MASK).min(7)
 }
 #[inline]
 pub fn is_falling(meta: u8) -> bool {
     meta & FALLING != 0
 }
-/// A full, still source: level 0 and not falling (worldgen fluid is all this).
 #[inline]
 pub fn is_source(meta: u8) -> bool {
     meta & (LEVEL_MASK | FALLING) == 0
 }
-/// How much fluid the cell holds, 1..=8: full for sources and falling cells,
-/// `8 - level` for flowing ones. Drives spreading strength and surface height.
 #[inline]
 pub fn amount(meta: u8) -> u8 {
     if is_source(meta) || is_falling(meta) {
@@ -62,22 +44,15 @@ pub fn fluid_height(meta: u8, above: Block, fluid: Block) -> f32 {
 /// (a full column that joins seamlessly to the cell above and to the fluid it
 /// lands in — no mid-waterfall step).
 ///
-/// SOLID lids deliberately do NOT cap: fluid under ANY block — ice, stone, a
-/// placed block — keeps the same recessed 8/9 pocket under it, uniformly
-/// (three lid variants were tried on 2026-07-16 and all rejected by playtest:
-/// any-solid seals, still-source-under-solid seals, still-source-under-ice
-/// seals). The calm look of those pockets comes from the STILL-SOURCE flow
-/// rules instead ([`surface_flow_dir`] + the mesher's still side tiles), not
-/// from faking the height. The flow SIM is untouched by all of this; the
+/// Solid lids do not cap fluid: a cell under any solid block keeps its
+/// recessed 8/9 surface. Still-source flow rules ([`surface_flow_dir`] and
+/// the mesher's still side tiles) keep these pockets calm. The
 /// mesher, buoyancy/contact probes, and the submerged-camera test share this
 /// one rule.
 pub fn fills_cell(meta: u8, above: Block, fluid: Block) -> bool {
     above.fluid() == Some(fluid) || is_falling(meta)
 }
 
-/// Whether this fluid meta is a STILL SOURCE — exposed for the mesher's flow
-/// probe (see [`surface_flow_dir`]): two adjacent still sources never flow
-/// into each other, whatever their rendered heights.
 #[inline]
 pub fn is_still_source(meta: u8) -> bool {
     is_source(meta)
@@ -122,7 +97,7 @@ where
         let nb = block_at(nx, wy, nz);
         let nh = if nb.fluid() == Some(fluid) {
             if i_am_still && still_at(nx, wy, nz) {
-                continue; // still source ↔ still source: no flow between them
+                continue;
             }
             fluid_at(nx, wy, nz).unwrap_or(my_h)
         } else if nb == Block::Air {
@@ -145,7 +120,6 @@ where
 
 pub const DOWN: IVec3 = IVec3::new(0, -1, 0);
 pub const UP: IVec3 = IVec3::new(0, 1, 0);
-/// North (-Z), east (+X), south (+Z), west (-X) — the horizontal flow set.
 pub const CARDINALS: [IVec3; 4] = [
     IVec3::new(0, 0, -1),
     IVec3::new(1, 0, 0),

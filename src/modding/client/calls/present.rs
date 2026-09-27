@@ -1,7 +1,3 @@
-//! Presenting a world from mod-file byte ranges, as a client instance drives
-//! it: each call validates, answers from the presentation desk, and leaves a
-//! request the client carries out in issue order at its next frame.
-
 use mod_api::{ClientFileRange, ClientFileRanges, ClientPose, ClientPresentationCall, HostRet};
 
 use super::files::checked_path;
@@ -15,7 +11,6 @@ fn finite_pose(pose: &ClientPose) -> bool {
     pose.pos.iter().all(|v| v.is_finite()) && pose.yaw.is_finite() && pose.pitch.is_finite()
 }
 
-/// The file `scope`/`path` names, as the presentation reads it.
 fn source(
     client: &ClientStoreData,
     call: &str,

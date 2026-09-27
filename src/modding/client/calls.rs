@@ -1,11 +1,3 @@
-//! The client-instance host-call handlers: the [`ClientCall`] domain,
-//! size/namespace-capped, plus the read-only replica scope; the mod-file,
-//! capture, presentation and media domains; and the [`BodyCall`] domain and
-//! the replica `Raycast` answered as PREDICTIONS against the local mirror.
-//! Which calls a client instance may make at all — and which also on the
-//! shell — is the switchboard's decision, read from each call's declared
-//! legality.
-
 mod entities;
 mod events;
 mod facts;
@@ -39,16 +31,12 @@ use validate::{
     CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX,
 };
 
-/// The client instance's store, or the refusal for an instance without one.
 fn client_store(data: &mut ModStoreData) -> Result<&mut ClientStoreData, HostRet> {
     data.client
         .as_mut()
         .ok_or_else(|| HostRet::invalid("client instance has no client state".into()))
 }
 
-/// The presentation surface. Only a client instance reaches it (the
-/// switchboard admits a call by its declared sides), and the registrations
-/// only inside `mod_init` (their declared scope).
 pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: ClientCall) -> HostRet {
     let mod_id = data.mod_id.clone();
     let guest_memory_max = data.guest_memory_max;
@@ -193,8 +181,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                     cells.len()
                 ));
             }
-            // Reads cross namespaces (the KV interop contract); only the key's
-            // shape is validated, like the server-side KV read.
             if key.is_empty() || key.len() > KV_MAX_KEY_BYTES {
                 return HostRet::invalid(format!("invalid cell KV key '{key}'"));
             }
@@ -224,8 +210,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                     "ClientAmbientSet: intensity and wind must be finite (|wind| ≤ 64)".into(),
                 );
             }
-            // Unknown keys and non-ambient bundles are forgiving `false`
-            // (a disabled pack's bundle is not a protocol break).
             let Some(bundle) = petramond_world::particle_emitters::by_key(&key) else {
                 return HostRet::Bool(false);
             };
@@ -251,8 +235,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if !darken.is_finite() || !desaturate.is_finite() {
                 return HostRet::invalid("ClientMoodSet: values must be finite".into());
             }
-            // The clamp IS the safety contract: no mod can black the screen
-            // out; it can only be moody about it.
             client.mood = [darken.clamp(0.0, 0.5), desaturate.clamp(0.0, 0.5)];
             HostRet::Bool(true)
         }
@@ -271,9 +253,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                         let pos =
                             petramond_world::chunk::ChunkPos::new(query.coord[0], query.coord[1]);
                         let revision = world.client_surface_column_revision(pos)?;
-                        // A zero query revision means "never seen complete" —
-                        // it must never match, even against a defaulted host
-                        // revision.
                         if query.revision != 0 && query.revision == revision {
                             return Some(mod_api::ClientSurfaceColumn {
                                 revision,
@@ -384,7 +363,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if text.len() > CLIENT_TEXT_BYTES_MAX || text.contains(['\n', '\r']) {
                 return HostRet::invalid("invalid single-line client text".into());
             }
-            // Mod canvases measure and draw with the UI theme's font.
             let [width, height] = crate::gui::doc_theme::ui_font().measure_scaled(&text, scale);
             let Ok(width) = u16::try_from(width) else {
                 return HostRet::invalid("client text width exceeds u16".into());
@@ -428,8 +406,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                 );
             }
             image.revision = revision;
-            // Text bounds aren't tracked as a rect: break the partial-update
-            // chain so consumers re-upload the whole image once.
             image.recent_blits.clear();
             HostRet::Unit
         }
@@ -597,8 +573,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             {
                 return refused;
             }
-            // A presented world is no session's; its bucket keeps nothing.
-            // The pack's bucket belongs to no world, so it keeps taking writes.
             if scope == ClientStorageScope::World
                 && matches!(
                     client.presented.lock().context,
@@ -707,7 +681,6 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
     }
 }
 
-/// A client mod's own files, in its buckets.
 pub(in crate::modding) fn handle_file_call(
     data: &mut ModStoreData,
     call: ClientFileCall,
@@ -719,7 +692,6 @@ pub(in crate::modding) fn handle_file_call(
     }
 }
 
-/// The presented world's state and events, into mod files.
 pub(in crate::modding) fn handle_capture_call(
     data: &mut ModStoreData,
     call: ClientCaptureCall,
@@ -737,7 +709,6 @@ pub(in crate::modding) fn handle_capture_call(
     }
 }
 
-/// A world presented from mod-file byte ranges.
 pub(in crate::modding) fn handle_presentation_call(
     data: &mut ModStoreData,
     call: ClientPresentationCall,
@@ -749,7 +720,6 @@ pub(in crate::modding) fn handle_presentation_call(
     }
 }
 
-/// Frames, the stepped clock, sound taps and media files.
 pub(in crate::modding) fn handle_media_call(
     data: &mut ModStoreData,
     call: ClientMediaCall,
@@ -761,7 +731,6 @@ pub(in crate::modding) fn handle_media_call(
     }
 }
 
-/// The ray a sim instance casts, cast against the replica.
 pub(in crate::modding) fn raycast(
     from: [f64; 3],
     dir: [f32; 3],
@@ -775,7 +744,6 @@ pub(in crate::modding) fn raycast(
     }
 }
 
-/// The bucket a storage call names. Only the shell lacks a world one.
 fn bucket(
     client: &mut ClientStoreData,
     scope: ClientStorageScope,
@@ -795,7 +763,6 @@ fn bucket(
     }
 }
 
-/// Every bucket is the caller's alone, and so is every key in it.
 fn foreign_storage_key<'a>(
     mod_id: &str,
     mut keys: impl Iterator<Item = &'a String>,
@@ -808,8 +775,6 @@ fn foreign_storage_key<'a>(
         })
 }
 
-/// Publish (or replace) one of this mod's images — the one path every image a
-/// mod names enters by, whoever produced its pixels.
 fn publish_image(
     client: &mut ClientStoreData,
     mod_id: &str,
@@ -849,18 +814,11 @@ fn publish_image(
     HostRet::Unit
 }
 
-/// Image revisions are unique across every client instance, so a renderer's
-/// cached upload of a key can never be mistaken for another instance's
-/// same-keyed image.
 fn next_image_revision() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The body domain on a client instance: every write is a PREDICTION
-/// against the local mirror, addressed at the local player, and the actor is
-/// the snapshot the prediction dispatch published (see `scope::enter_actor`)
-/// — the same query-the-snapshot doctrine as the server side.
 pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCall) -> HostRet {
     let mod_id = data.mod_id.clone();
     let client = match client_store(data) {
@@ -876,14 +834,9 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
                     .into(),
             ),
         },
-        // Outside a prediction dispatch a client instance acts for nobody.
         BodyCall::ActingPlayer => {
             HostRet::ActingPlayer(super::scope::active_actor().and_then(|actor| actor.id))
         }
-        // The PREDICTED twin of the server's `SetPlayerHeldPose`: the same
-        // call, the same `BodyClaims`, addressed at the local player. A client
-        // has exactly one addressable body, so naming anybody else is a mod
-        // bug worth saying out loud rather than a silent no-op.
         BodyCall::SetPlayerHeldPose { player, main, off } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {
@@ -902,12 +855,6 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
                 )
             }
         }
-        // The PREDICTED twins of the server's animator primitives, addressed
-        // at the local player like every body write here. The latch is per
-        // `(rig, param)` / `(rig, slot)`, like bones: a mod setting one param
-        // owns that param locally from then on, and leaves every other
-        // replicated claim exactly where it was. A refused write latches
-        // nothing, or a NaN would hide the replicated claim for good.
         BodyCall::SetPlayerAnimatorParams { player, params } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {
@@ -979,7 +926,6 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
                 None => HostRet::invalid("PlayerInventory: no inventory is published".into()),
             }
         }
-        // What the hand displays: the same predicted path, the same latch.
         BodyCall::SetPlayerHeldDisplay { player, main, off } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {
@@ -1003,7 +949,6 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
             client.body.set_held_display(&mod_id, main, off);
             HostRet::Bool(true)
         }
-        // The body counterpart, same predicted path and same local-only rule.
         BodyCall::SetPlayerBonePose { player, bones } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {
@@ -1012,13 +957,9 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
                      ({local:?}), not {player:?}"
                 ));
             }
-            // Names resolve to rig ids here, exactly as on the server.
             let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
                 return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
             };
-            // Latch per BONE, not per body: a mod bending an arm owns that
-            // arm locally, but must not blank an unrelated bone another pack
-            // is bending server-side.
             let keys: Vec<u16> = bones.iter().map(|b| b.bone).collect();
             if !client.body.set_bone_poses(&mod_id, bones) {
                 return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
@@ -1026,9 +967,6 @@ pub(in crate::modding) fn handle_body_call(data: &mut ModStoreData, call: BodyCa
             client.poses_bones.extend(keys);
             HostRet::Bool(true)
         }
-        // The PREDICTED twin of the server's `HoldUse`: a client has one
-        // addressable body, so the only question is whether this mod is taking
-        // its press.
         BodyCall::HoldUse { player } => {
             let local = super::scope::active_actor().and_then(|a| a.id);
             if local != Some(player) {

@@ -1,9 +1,3 @@
-//! Particle emitters attached to bodies. Every body — mob or player — presents
-//! from ONE list of emitter bundle ids ([`BodyEmitters`]): its attached bundles
-//! plus its active condition stages' emitters. Its particles, body tint and
-//! body self-lighting all read that list, which is re-derived only when the
-//! body's replicated inputs change — never per frame.
-
 use super::*;
 use petramond_world::particle_emitters::{self as emitters, EmitterBundle};
 
@@ -16,11 +10,6 @@ pub(super) struct EmitterBody {
     blocklight: petramond_world::light::BlockLight6,
 }
 
-/// A body's emitter ids — its `attached` bundles and each active condition
-/// stage's emitter, sorted, each id once — with the body tint and
-/// self-lighting they compose. Kept on the replicated entry (and on the
-/// gather for the local body) and refreshed from the row's inputs, so a
-/// steady body re-derives nothing and allocates nothing.
 #[derive(Clone, Debug)]
 pub struct BodyEmitters {
     attached: Vec<u8>,
@@ -31,7 +20,6 @@ pub struct BodyEmitters {
 }
 
 impl Default for BodyEmitters {
-    /// A body wearing nothing: no ids, white tint, no self-light.
     fn default() -> Self {
         Self {
             attached: Vec::new(),
@@ -44,8 +32,6 @@ impl Default for BodyEmitters {
 }
 
 impl BodyEmitters {
-    /// Re-derive from a row's `attached` bundles and `conditions`, only when
-    /// either differs from what this set was derived from.
     pub fn refresh(&mut self, attached: &[u8], conditions: &[(u8, u8)]) {
         if self.attached == attached && self.conditions == conditions {
             return;
@@ -66,17 +52,14 @@ impl BodyEmitters {
         self.self_lit = emitter_self_lit(self.ids.iter().copied());
     }
 
-    /// The emitter bundle ids, sorted, each once.
     pub fn ids(&self) -> &[u8] {
         &self.ids
     }
 
-    /// The multiply body tint of these emitters (white when none declares one).
     pub fn tint(&self) -> [f32; 3] {
         self.tint
     }
 
-    /// How much of its light the body provides itself: the strongest wins.
     pub fn self_lit(&self) -> f32 {
         self.self_lit
     }
@@ -86,14 +69,12 @@ fn bundles(ids: impl IntoIterator<Item = u8>) -> impl Iterator<Item = &'static E
     ids.into_iter().filter_map(emitters::def)
 }
 
-/// The multiply body tint of a body's emitters (white when none declares one).
 fn emitter_tint(ids: impl IntoIterator<Item = u8>) -> [f32; 3] {
     bundles(ids)
         .filter_map(|bundle| bundle.tint)
         .fold([1.0; 3], |t, b| [t[0] * b[0], t[1] * b[1], t[2] * b[2]])
 }
 
-/// How much of its light a body provides itself: the strongest emitter wins.
 fn emitter_self_lit(ids: impl IntoIterator<Item = u8>) -> f32 {
     bundles(ids)
         .map(|bundle| bundle.body_self_lit)
@@ -160,9 +141,6 @@ fn append(
 }
 
 impl GamePresentationScratch {
-    /// Every mob's attached emitters, at the body as presented. The ids come
-    /// from each entry's cached [`BodyEmitters`]; the light is the row's
-    /// already-gathered presentation light (the rows share the store's order).
     pub(super) fn collect_mob_emitters(&mut self, game: &Game, tick_alpha: f32, view: &ViewVolume) {
         for (entry, m) in game.replica.entities.mobs().iter().zip(&self.mobs) {
             let ids = entry.emitters().ids();
@@ -191,9 +169,6 @@ impl GamePresentationScratch {
         }
     }
 
-    /// The local body's emitters, from the body as presented. A first-person
-    /// frame presents no body, yet a burning player must still see their own
-    /// flames, so there they follow the simulated body instead.
     pub(super) fn collect_local_player_emitters(
         &mut self,
         game: &Game,
@@ -226,7 +201,6 @@ impl GamePresentationScratch {
         );
     }
 
-    /// A player body's emitters (from its cached [`BodyEmitters`]).
     pub(super) fn append_player_emitters(
         &mut self,
         emitters: &BodyEmitters,
@@ -243,7 +217,6 @@ impl GamePresentationScratch {
 }
 
 impl EmitterBody {
-    /// A player body at its presented feet and body yaw; `id` seeds its streams.
     pub(super) fn player(
         feet: petramond_math::world_pos::WorldPos,
         yaw: f32,

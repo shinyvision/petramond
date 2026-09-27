@@ -1,18 +1,3 @@
-//! `petramond_content`: the content library's build and install side, with
-//! no GPU and no window.
-//!
-//!   pack <pack dir> [--wasm <file>] --out <dir> [--content-packs a,b,...]
-//!   check <zip> [--content-packs a,b,...]
-//!   install <zip> --kind addon|mod
-//!
-//! `pack` writes `<out>/<id>-<version>.zip` and prints its path, after the
-//! archive passes `check`: the installer's own reader, the website's limits,
-//! an id that is not a content pack's, and pack admission as the game runs
-//! it. `--content-packs` names the content pack ids (default: the packs in
-//! the game's shipped roots). `install` stages the archive exactly as the
-//! content browser stages a download, as a local install (no content id);
-//! the next start of the game applies it.
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -140,8 +125,6 @@ fn install(args: &Args) -> Result<(), String> {
     let bytes = read(path)?;
     let checked = archive::check(&bytes, &shipped)?;
 
-    // Rebuilding a local install before the game has applied the last one
-    // replaces it; a change the content browser staged is left alone.
     if let Some(waiting) = install::pending(&dirs)
         .into_iter()
         .find(|c| c.dir == checked.id)
@@ -160,7 +143,6 @@ fn install(args: &Args) -> Result<(), String> {
         }
     }
 
-    // Staging consumes its zip, and the build output must stay.
     std::fs::create_dir_all(dirs.staging()).map_err(|e| e.to_string())?;
     let copy = dirs.staging().join(format!(
         "{}-local-{}.zip.partial",
@@ -186,8 +168,6 @@ fn install(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// The archive reader's verdict, then admission as the game runs it on the
-/// unpacked files: a pack the game would refuse at startup fails here.
 fn check(bytes: &[u8], content_packs: &BTreeSet<String>) -> Result<Checked, String> {
     let checked = archive::check(bytes, content_packs)?;
     let scratch =
@@ -207,8 +187,6 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("could not read {}: {e}", path.display()))
 }
 
-/// `<id>-<version>.zip`, the website's download name, with anything a file
-/// name cannot hold in the version made `_`.
 fn zip_name(checked: &Checked) -> String {
     let version: String = checked
         .version

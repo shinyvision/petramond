@@ -19,13 +19,11 @@ impl Schematic {
         size
     }
 
-    /// The bottom center cell, snapped toward the higher index for even footprints.
     pub fn placement_pivot(&self, turns: u8) -> IVec3 {
         let [x, _, z] = self.rotated_size(turns);
         IVec3::new(x / 2, 0, z / 2)
     }
 
-    /// Resolve every name and rotate all records before a world write can begin.
     pub fn placed_cells(
         &self,
         origin: IVec3,
@@ -66,7 +64,6 @@ impl Schematic {
                         == Some(original);
                 let data = palette[usize::from(reference.palette)].clone();
                 let relative = IVec3::from_array(rotate_position(cell.pos, self.size, turns));
-                // The validated rotated bounds already guarantee this addition is in range.
                 let pos = origin + relative;
                 if was_anchor {
                     if let Some(base) = model_base(pos, &data) {
@@ -81,8 +78,6 @@ impl Schematic {
         if moved_anchors.is_empty() {
             return Ok(cells);
         }
-        // Model machine records live at the rotated footprint's minimum cell,
-        // while each cell's shape offset stays in authored model coordinates.
         let indices: std::collections::HashMap<_, _> = cells
             .iter()
             .enumerate()
@@ -102,8 +97,6 @@ impl Schematic {
     }
 }
 
-/// Turn one cell's row, shape state and part-addressed data `turns` quarter
-/// turns clockwise, as its family and rows declare.
 pub fn rotate_record(
     mut block: petramond_world::block::Block,
     mut state: petramond_world::block::ShapeState,
@@ -137,16 +130,9 @@ pub fn rotate_record(
     (block, state, kv)
 }
 
-/// A section as construction reads it: each cell's position with an index
-/// into the record palette, and that palette.
 pub type ConstructionSection = (Vec<([i32; 3], u16)>, Vec<super::CellData>);
 
 impl Schematic {
-    /// Section `index` turned `turns` quarter turns, as construction records:
-    /// each stored cell's position within the turned design (its minimum
-    /// corner at the origin) and an index into the section's record palette.
-    /// A record whose names do not resolve stays in its stored names, and
-    /// construction reports why it cannot be built. `None` = no such section.
     pub fn construction_section(&self, index: usize, turns: u8) -> Option<ConstructionSection> {
         let section = self.sections.get(index)?;
         let palette = section

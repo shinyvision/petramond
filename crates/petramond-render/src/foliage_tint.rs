@@ -1,66 +1,25 @@
-//! Fixed-biome foliage tinting for the **out-of-world** model3d renders (held
-//! item, dropped item-entity cubes, hotbar/inventory icons).
-//!
-//! The chunk mesher (`petramond_mesh::builder`) biome-tints grass tops / short
-//! grass / ferns by the column's grass colour, leaves by its foliage colour, and
-//! renders grass-block SIDES as an untinted dirt tile with a biome-tinted
-//! grayscale `grass_block_side_overlay` composited on top (vertex overlay bits).
-//! Icons / held items / dropped cubes have **no biome context**, so they pick a
-//! single fixed temperate grass/foliage colour and classify each *tile* exactly
-//! the way the mesher does (`mesh::builder::tile_tint` + the grass-side special
-//! case) so a held grass block / leaf icon / dropped fern reads green like the
-//! world block instead of gray.
-//!
-//! The classification itself is atlas-manifest data (each tile's `icon_tint`,
-//! defaulting to its in-world `tint`), so both this CPU path
-//! ([`super::item_cube`] vertex packing) and `model3d.wgsl` (GPU composite)
-//! stay in lock-step with the mesher by construction.
-
 use petramond_world::biome::Biome;
 use petramond_world::tile::{Tile, TileTint};
 
-/// Fixed temperate grass colour for out-of-world tints. Plains is the canonical
-/// default temperate biome (`biome::data::TEMPERATE_DRY_DEFAULT`), so its grass
-/// colour is what an icon/held grass block greens to.
 #[inline]
 pub fn default_grass_color() -> [f32; 3] {
     Biome::PLAINS.grass_color()
 }
 
-/// Fixed temperate foliage colour for out-of-world tints (Plains foliage colour),
-/// used to tint all `*Leaves` tiles.
 #[inline]
 pub fn default_foliage_color() -> [f32; 3] {
     Biome::PLAINS.foliage_color()
 }
 
-/// White (no tint) for everything that the mesher leaves untinted.
 pub const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 
-/// The per-face material for an out-of-world render: which tile to sample, an
-/// optional grayscale overlay tile composited on top (grass-block side), and the
-/// RGB tint multiplied into the (overlay or base) colour.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct FaceMaterial {
-    /// Base tile sampled by the fragment shader.
     pub base_tile: Tile,
-    /// Overlay tile composited over `base_tile` by its own alpha, tinted by
-    /// `tint`. `None` for every non-grass-side face.
     pub overlay_tile: Option<Tile>,
-    /// Tint multiplied into the base (or overlay) colour. `NO_TINT` for blocks the
-    /// mesher does not tint.
     pub tint: [f32; 3],
 }
 
-/// Classify one face `tile` (as produced by `Block::tiles()`) into its
-/// out-of-world [`FaceMaterial`], mirroring the chunk mesher:
-/// - `icon_tint` class `Grass` (grass top, short grass, fern) -> grass tint.
-/// - `icon_tint` class `Foliage` (every leaf tile) -> foliage tint.
-/// - the grass-block side -> dirt base + tinted `grass_side_overlay`, matching
-///   the mesher's grass-side compositing so the side greens to match the top
-///   instead of showing the stale pre-greened texture.
-/// - everything else (dirt, stone, logs, sand, flowers, mushrooms, cactus, dead
-///   bush, water, ...) -> the tile untinted.
 #[inline]
 pub fn face_material(tile: Tile) -> FaceMaterial {
     let e = petramond_world::tile::engine();

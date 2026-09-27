@@ -1,7 +1,3 @@
-//! Frames, the stepped clock, taps and media files at the app: what the
-//! media desk holds, carried out against a real (offscreen) renderer. The
-//! encoder is a stand-in script; the normal suite never runs ffmpeg.
-
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
@@ -19,7 +15,6 @@ use super::app;
 
 const SCREEN: (u32, u32) = (320, 180);
 const FPS: u32 = 30;
-/// A client mod the test app runs, standing in as the owner of everything.
 const OWNER: &str = "minimap";
 
 fn renderer() -> Option<petramond_render::Renderer> {
@@ -184,7 +179,6 @@ fn captures_into_a_media_file_step_the_clock_exactly_and_carry_their_tap() {
         Some(video(SCREEN)),
         Some(stereo.clone()),
     );
-    // A second tap at another format, into a file of sound alone.
     let (track, track_input) = open(&desk, dir.join("track.mkv"), None, Some(mono.clone()));
     let step = 1.0 / f64::from(FPS);
     assert!(desk.set_clock(
@@ -202,20 +196,17 @@ fn captures_into_a_media_file_step_the_clock_exactly_and_carry_their_tap() {
     for k in 0..N {
         let id = capture(&desk, film, true);
         frames_until(&mut app, &mut renderer, |_| !armed(&desk, id));
-        // Redraws with no update in between take nothing more.
         for _ in 0..3 {
             app.render(&mut renderer);
         }
         assert!(desk.armed_captures().is_empty(), "capture {k}");
     }
-    // The last capture's step moves the frame after it.
     frame(&mut app, &mut renderer);
     let elapsed = app.now() - start;
     assert!(
         (elapsed - N as f64 * step).abs() < 1e-9,
         "{N} captures moved {elapsed} s"
     );
-    // Nothing advances any more: held frames move no time.
     frame(&mut app, &mut renderer);
     assert!((app.now() - start - N as f64 * step).abs() < 1e-9);
 
@@ -256,7 +247,6 @@ fn a_held_frame_draws_only_for_a_capture_or_a_due_present_and_only_an_advance_li
     frame(&mut app, &mut renderer);
     use_stand_in(&mut app, &dir, RAW);
     let desk = desk(&app);
-    // A display so slow that no present is due again during the test.
     app.set_display_refresh_hz(1e-6);
     assert!(desk.set_clock(
         OWNER,
@@ -388,8 +378,6 @@ fn opens_beyond_the_running_encoders_wait_queued_and_start_in_order() {
     });
 }
 
-/// The live App: a mod's canvas opened on the window never reaches a scene
-/// capture, which keeps showing the scene.
 #[test]
 fn a_scene_capture_never_holds_a_mods_canvas_on_the_window() {
     use petramond_input::keycode::KeyCode;
@@ -406,7 +394,6 @@ fn a_scene_capture_never_holds_a_mods_canvas_on_the_window() {
         let id = capture(&desk, film, false);
         frames_until(app, renderer, |_| !armed(&desk, id));
     };
-    // Let the body land and the terrain settle before the frame compared.
     for _ in 0..30 {
         frame(&mut app, &mut renderer);
     }
@@ -431,16 +418,12 @@ fn a_scene_capture_never_holds_a_mods_canvas_on_the_window() {
         .zip(pixels(1))
         .filter(|(a, b)| (0..3).any(|c| a[c].abs_diff(b[c]) > 24))
         .count();
-    // The canvas dims the whole window behind it; the world a few frames on
-    // moves a few pixels.
     assert!(
         changed * 50 < (SCREEN.0 * SCREEN.1) as usize,
         "{changed} pixels of the capture changed when the canvas opened on the window"
     );
 }
 
-/// The live App: a mod's world marks draw on the window, and not one pixel
-/// of them reaches a scene capture.
 #[test]
 fn a_scene_capture_never_holds_a_mods_world_marks() {
     use petramond::modding::client::view::{ViewCameraClaim, ViewClaims};
@@ -455,8 +438,6 @@ fn a_scene_capture_never_holds_a_mods_world_marks() {
     let dir = TestScratchDir::new("media-marks");
     let mut app = app();
     frame(&mut app, &mut renderer);
-    // A claimed eye above the world looking down +z, a thick magenta line
-    // across its view drawn straight through anything in between.
     let eye = [0.5, 300.0, 0.5];
     let game = app.game_mut();
     assert!(game.claim_view_for_test(
@@ -508,10 +489,6 @@ fn a_scene_capture_never_holds_a_mods_world_marks() {
     assert_eq!(magenta(&video), 0, "a world mark reached a capture");
 }
 
-/// Capture throughput: frames captured into a media file per wall second at
-/// 1080p60 on the stepped clock with a tap, into an encoder that swallows its
-/// input (the pipeline's own ceiling) or, with
-/// `PETRAMOND_CAPTURE_BENCH_FFMPEG=1`, the machine's ffmpeg.
 #[test]
 #[ignore = "throughput measurement"]
 fn capture_throughput() {

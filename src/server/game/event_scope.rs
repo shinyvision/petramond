@@ -26,31 +26,19 @@ use petramond_math::world_pos::WorldPos;
 
 use crate::net::spatial_loops::{is_looped, LiveSpatialLoops};
 
-/// Slack on every hearing range: the listener's ears sit above the feet
-/// position a recipient is measured from.
 pub const HEARING_MARGIN_BLOCKS: f64 = 2.0;
 
-/// How far past its hearing range a loop a recipient already hears keeps
-/// playing for it, so a listener pacing the edge does not restart it.
 pub const LOOP_HYSTERESIS_BLOCKS: f64 = 8.0;
 
-/// Who can perceive one world event.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(super) enum Reach {
-    /// Non-positional: every recipient.
     Everyone,
-    /// A cell's presentation: recipients holding the cell's section.
     Cell(IVec3),
-    /// A sound at `at`, silent beyond `range` blocks.
     Heard { at: WorldPos, range: f64 },
-    /// A visual effect at `at`: recipients whose view reaches it.
     Seen { at: WorldPos },
-    /// The play of a looping row — delivered by the per-recipient loop sync
-    /// ([`sync_loops`]), never from the window's stream.
     Loop,
 }
 
-/// The travel distance of sound row `sound_id`.
 fn sound_range(sound_id: u8) -> f64 {
     f64::from(
         petramond_world::sound_registry::Sound(sound_id)
@@ -59,8 +47,6 @@ fn sound_range(sound_id: u8) -> f64 {
     )
 }
 
-/// The farthest any loaded sound row travels — the range of events whose
-/// row the CLIENT picks (a species' hurt call, the pickup pop).
 fn loudest_sound_range() -> f64 {
     static LOUDEST: OnceLock<f64> = OnceLock::new();
     *LOUDEST.get_or_init(|| {
@@ -74,7 +60,6 @@ fn loudest_sound_range() -> f64 {
     })
 }
 
-/// Who can perceive `ev`. Exhaustive: a new event kind states its reach here.
 pub(super) fn reach(ev: &WorldEventMsg) -> Reach {
     match *ev {
         WorldEventMsg::BlockBroken { pos, .. } | WorldEventMsg::BlockPlaced { pos, .. } => {
@@ -113,9 +98,6 @@ pub(super) fn reach(ev: &WorldEventMsg) -> Reach {
                 at: last_pos,
                 range: sound_range(sound_id),
             },
-            // Handle-addressed commands are tiny and a stop for a handle the
-            // recipient never heard is a no-op: they reach everyone, so no
-            // recipient can miss the end of something it heard start.
             SpatialSoundMsg::Set { .. } | SpatialSoundMsg::Stop { .. } => Reach::Everyone,
         },
     }
@@ -125,13 +107,9 @@ fn distance_sq(a: WorldPos, b: WorldPos) -> f64 {
     (a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)
 }
 
-/// One recipient, as the event filter sees it.
 pub(super) struct Viewer<'a> {
-    /// Where the recipient's player stands.
     pub pos: WorldPos,
-    /// How far (horizontally) its view reaches, in blocks.
     pub view_blocks: f64,
-    /// Whether it holds the section of a cell.
     pub holds_cell: &'a dyn Fn(IVec3) -> bool,
 }
 
@@ -140,7 +118,6 @@ impl Viewer<'_> {
         distance_sq(self.pos, at) <= (range + HEARING_MARGIN_BLOCKS).powi(2)
     }
 
-    /// Whether this recipient perceives an event of reach `reach`.
     pub(super) fn perceives(&self, reach: Reach) -> bool {
         match reach {
             Reach::Everyone => true,
@@ -155,17 +132,13 @@ impl Viewer<'_> {
     }
 }
 
-/// One loop still playing this window, placed where it sounds from.
 pub(super) struct LiveLoop {
     pub handle: u64,
-    /// The command that (re)starts it, retunes folded in.
     pub cmd: SpatialSoundMsg,
     pub at: WorldPos,
     pub range: f64,
 }
 
-/// Place every live loop for this window: a pinned loop sounds from its mob's
-/// current position (`mob_pos`), or where it was started if the mob is gone.
 pub(super) fn live_loops(
     live: &LiveSpatialLoops,
     mob_pos: impl Fn(u64) -> Option<WorldPos>,
@@ -182,9 +155,6 @@ pub(super) fn live_loops(
                 } => (mob_pos(mob_id).unwrap_or(last_pos), sound_id),
                 SpatialSoundMsg::Set { .. } | SpatialSoundMsg::Stop { .. } => return None,
             };
-            // A loop can enter a listener's range long after it first
-            // started. Its replay needs the mob's current fallback position
-            // in case this listener has no replica row for that mob.
             let mut replay = cmd;
             if let SpatialSoundMsg::PlayOnMob { last_pos, .. } = &mut replay {
                 *last_pos = at;
@@ -199,10 +169,6 @@ pub(super) fn live_loops(
         .collect()
 }
 
-/// Bring one recipient's heard-loop set up to this window: start (as their
-/// restart command) the loops that came within earshot, stop the ones that
-/// left it past the hysteresis band, and forget handles no longer live (their
-/// stop rides the window to everyone). Returns `(starts, stops)`.
 pub(super) fn sync_loops(
     viewer: &Viewer,
     heard: &mut FxHashSet<u64>,

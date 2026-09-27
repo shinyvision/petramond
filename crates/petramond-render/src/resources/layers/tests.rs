@@ -11,8 +11,6 @@ fn every_table_indexes_its_own_slots() {
     }
 }
 
-/// Every buffer holds at least one stream, and every quad layer has a buffer:
-/// a layer added to one table and not the other would pack nowhere.
 #[test]
 fn every_buffer_is_fed_by_a_stream() {
     for buffer in ColumnBuffer::ALL {
@@ -31,8 +29,6 @@ fn every_buffer_is_fed_by_a_stream() {
     }
 }
 
-/// A stride that does not divide the arena's copy alignment would break both
-/// staging writes and base-vertex addressing.
 #[test]
 fn every_stride_is_copy_aligned() {
     for buffer in ColumnBuffer::ALL {
@@ -53,8 +49,6 @@ fn quad(y: f32) -> [Vertex; 4] {
     })
 }
 
-/// A sealed mesh's streams, split along the far/tail boundary, cover its
-/// opaque stream exactly, and each count is its bytes over the stride.
 #[test]
 fn the_opaque_stream_splits_at_the_far_lod() {
     let mut mesh = ChunkMesh::empty();
@@ -74,7 +68,6 @@ fn the_opaque_stream_splits_at_the_far_lod() {
         [far, tail].concat(),
         bytemuck::cast_slice::<_, u8>(mesh.gpu_quads(QuadLayer::Opaque))
     );
-    // A section without a far LOD lands wholly in the far region.
     mesh.far_opaque_len = 0;
     assert_eq!(mesh_count(&mesh, SectionStream::OpaqueFar), 12);
     assert_eq!(mesh_count(&mesh, SectionStream::OpaqueTail), 0);

@@ -3,13 +3,8 @@ use crate::data::underground::pattern::{ColumnCache, MaterialPattern};
 
 pub(super) const MAX_FLOOR_DEPTH: usize = crate::data::underground::MAX_FLOOR_DEPTH as usize;
 
-/// A course slot whose cell was not stone when the walk reached it. It still
-/// OCCUPIES its depth — a course's reach is geometry, not block ids, because
-/// only the batch owning a cell can see its id and a course crosses batches.
 const NOT_STONE: usize = usize::MAX;
 
-/// Per-carve scratch every column reuses: pattern evaluations rebound to the
-/// column instead of rebuilt, and one scan per geology pattern met.
 #[derive(Default)]
 pub(super) struct Scratch {
     patterns: ColumnCache,
@@ -19,13 +14,9 @@ pub(super) struct Scratch {
 #[derive(Default)]
 struct Geology {
     scans: Vec<(usize, crate::formula::Scan<'static>)>,
-    /// The column's stone heights — the only lanes a pattern is asked for —
-    /// and each walked height's lane, `u16::MAX` where the cell is not stone.
     ys: Vec<f64>,
     lane: Vec<u16>,
     values: Vec<[f64; 1]>,
-    /// The biomes met in the current column, and each one's materials over
-    /// the column's height (pooled so a column never allocates).
     biomes: Vec<u8>,
     materials: Vec<Vec<u16>>,
 }
@@ -75,23 +66,12 @@ impl Geology {
     }
 }
 
-/// One batch carve's shared state: the column walk a section carve drives.
-/// The orientation lining is loop-shaped (it reads what the cell above turned
-/// out to be), so the walk's carry has to be seeded and flushed by ASKING the
-/// carve field, never by assuming the box floor is a world floor: both ends of
-/// a section's column are box boundaries, and anything remembered across a
-/// voxel is container-shaped state unless the neighbouring section can
-/// re-derive it.
 pub(super) struct BatchCarve<'a> {
     field: &'a CaveField,
     lat: &'a CaveLattice,
     may_cut: Vec<bool>,
     mx: usize,
     mz: usize,
-    /// Hoisted: does any loaded row line per orientation? Everything the
-    /// orientation rule needs — the run bookkeeping, the top-of-column probe,
-    /// the biome read on a SOLID cell — hangs off this, so a table without it
-    /// walks exactly the loop it always did.
     pub(super) faces: bool,
     air: u16,
     water: u16,
@@ -139,22 +119,13 @@ impl<'a> BatchCarve<'a> {
         let cxc = (wx.div_euclid(LATTICE_STEP) - self.lat.lx0) as usize;
         let czc = (wz.div_euclid(LATTICE_STEP) - self.lat.lz0) as usize;
         let col = czc * self.mx + cxc;
-        // One cursor for the whole walk: x and z are fixed, so every lane's
-        // xz interpolation is computed once per lattice cell instead of once
-        // per lane per voxel.
         let mut cur = Col::new(self.lat, wx, wz);
         let patterns = &mut scratch.patterns;
         let stride = self.mz * self.mx;
         let ly0 = self.lat.ly0;
         let mut carved = false;
-        // The contiguous run of solid cells immediately below the cursor, in
-        // ascending Y — what a cave floor opening at the cursor paints.
         let mut run = [(0i32, NOT_STONE); MAX_FLOOR_DEPTH];
         let mut run_len = 0usize;
-        // Seeded, not assumed: the voxel under the box floor is the other
-        // batch's, so whether the box's lowest rock is a CEILING is a question
-        // for the carve field. Guessing `false` here is one whole voxel plane
-        // per section taking the WALL rule.
         let mut below_open = FACES
             && self.field.batch_y_pad_low(y0) != 0
             && self.field.cut_col(&mut cur, y0 - 1, surf_y).is_open();
@@ -162,7 +133,6 @@ impl<'a> BatchCarve<'a> {
         while y <= y1 {
             let cyc = (y.div_euclid(LATTICE_STEP) - ly0) as usize;
             if !self.may_cut[cyc * stride + col] {
-                // Provably solid cell: jump to the next cell floor.
                 y = (y.div_euclid(LATTICE_STEP) + 1) * LATTICE_STEP;
                 if FACES {
                     run_len = 0;
@@ -183,8 +153,6 @@ impl<'a> BatchCarve<'a> {
             }
             let cut = self.field.cut_col_treated(&mut cur, y, surf_y, treatment);
             match cut {
-                // Open air, or the block the cell generates as instead: a
-                // positioned field's content or a pool's fluid.
                 CaveCut::Air | CaveCut::Fill(_) => {
                     let block = match cut {
                         CaveCut::Fill(block) => block,
@@ -223,16 +191,9 @@ impl<'a> BatchCarve<'a> {
             }
             y += 1;
         }
-        // The column ended on rock. Whether that rock is a cave FLOOR, and how
-        // far below the floor it sits, is the next batch's business — so this
-        // is the other place the rule has to ask rather than remember, and the
-        // lattice was padded by the deepest declared course for it.
         if FACES && run_len > 0 {
             self.paint_floor_below_top(blocks, &run[..run_len], &mut cur, patterns, y1, surf_y);
         }
-        // A column with no regional candidate can only resolve to a
-        // nearest-climate row, so when none of those has a pattern the pass
-        // would visit every stone cell to write nothing.
         if self.lat.geology
             && (cur.region.has_candidates() || self.field.underground.geology_via_climate)
         {
@@ -249,8 +210,6 @@ impl<'a> BatchCarve<'a> {
                 };
                 geology.lane.push(lane);
             }
-            // The regional answer holds over a span of cells; only the
-            // nearest-climate fallback has to be asked per cell.
             let mut y = y0;
             while y <= y1 && !geology.ys.is_empty() {
                 let (span, end) = cur.region.id_span(self.field, y, y1);
@@ -273,8 +232,6 @@ impl<'a> BatchCarve<'a> {
                 y = end + 1;
             }
         }
-        // A field's courses lie on the rock the walk just settled: laid now
-        // that the anchor's block is known, over geology and lining alike.
         for course in self.lat.volumes.column_courses(wx, y0, wz) {
             let ty = course.y(y0.div_euclid(16));
             if ty < y0 || ty > y1 {
@@ -306,11 +263,6 @@ impl<'a> BatchCarve<'a> {
         carved
     }
 
-    /// The floor rule owning a course whose TOP cell is `top_y`. The whole
-    /// course resolves against that one cell: it is the only cell BOTH batches
-    /// sharing a course can name, so resolving per cell — or against whichever
-    /// end of the course happened to fall inside this box — would hand the two
-    /// paths different rows wherever a course crosses a band edge.
     #[inline]
     fn floor_rule(&self, cur: &mut Col, top_y: i32) -> Option<&'static LiningFaces> {
         let id = self.field.biome_id_col(cur, top_y);
@@ -318,16 +270,6 @@ impl<'a> BatchCarve<'a> {
         (f.floor.block != self.air).then_some(f)
     }
 
-    /// Paint the top `take` cells of a course. Slots the walk saw as non-stone
-    /// are skipped but still spent, so how deep the course reaches does not
-    /// depend on what the rock happened to be made of above this box.
-    ///
-    /// `depth0` is the COURSE depth of the run's top cell — `0` when this run
-    /// starts at the course top, and the number of cells already spent above
-    /// this box otherwise. It is what tells a `floor_under` layering which
-    /// cell is the surface, and it must come from the caller: a run that
-    /// begins mid-course cannot see its own top, and guessing `0` would paint
-    /// a second surface on every box boundary.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn paint_run(
@@ -359,8 +301,6 @@ impl<'a> BatchCarve<'a> {
         }
     }
 
-    /// Paint the rock under a cave floor the walk just cut, whose open cell
-    /// holds `over`: the run's top cell IS the course top.
     #[inline]
     fn paint_floor(
         &self,
@@ -382,11 +322,6 @@ impl<'a> BatchCarve<'a> {
         self.paint_run(blocks, run, f, cur, patterns, take, 0, over);
     }
 
-    /// Paint a run left at the box's top voxel. The cave floor that owns it can
-    /// be up to a full course above the box, so both the floor's existence and
-    /// the run's DEPTH under it are probed — and the rule is resolved at the
-    /// course's real top cell, which is what the batch containing that cell
-    /// resolves against too.
     fn paint_floor_below_top(
         &self,
         blocks: &mut [u16],
@@ -409,8 +344,6 @@ impl<'a> BatchCarve<'a> {
                     .at_cached(self.field.seed, [cur.x, y1 + above, cur.z], patterns)
                     - above;
             if reach > 0 {
-                // The block the in-box floor would have read: an open cell's
-                // fill is its cut.
                 let over = match cut {
                     CaveCut::Fill(block) => block,
                     _ => self.air,
@@ -421,9 +354,6 @@ impl<'a> BatchCarve<'a> {
         }
     }
 
-    /// Paint a cell that hugs a cave wall: the CEILING rule when the voxel
-    /// below it was carved, the WALL rule otherwise. A floor repaints over this
-    /// on the next step, which is the precedence a floor GUARANTEE needs.
     #[inline]
     fn paint_side<const FACES: bool>(
         &self,
@@ -448,8 +378,6 @@ impl<'a> BatchCarve<'a> {
                 );
             }
         };
-        // A table with no orientation rule never reads the (dense, and two
-        // orders of magnitude larger) per-orientation array at all.
         if !FACES {
             return bare(blocks, patterns);
         }
@@ -469,8 +397,6 @@ impl<'a> BatchCarve<'a> {
     }
 }
 
-/// Positional dither for a partial-coverage face rule. A weight of 1 takes NO
-/// draw at all — that is what separates a guarantee from a 0.99.
 #[inline]
 fn face_roll(seed: u32, salt: u64, weight: f32, x: i32, y: i32, z: i32) -> bool {
     if weight >= 1.0 {

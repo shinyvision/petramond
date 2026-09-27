@@ -1,25 +1,14 @@
-//! What dripstone does to bodies: a falling piece strikes what it lands on,
-//! and a stalagmite doubles the damage of a fall onto it. Both ride the
-//! engine's ordinary damage pipeline — the pack only names the amount.
-
 use mod_sdk::*;
 
 use super::Dripstone;
 use crate::keys;
 
-/// Damage a falling piece deals per m/s of arrival speed, and its bounds in
-/// half-hearts. A one-block drop lands at ~6 m/s (three half-hearts); a
-/// nine-block drop caps out.
 const IMPACT_PER_SPEED: f32 = 0.5;
 const IMPACT_MIN: f32 = 2.0;
 const IMPACT_MAX: f32 = 12.0;
-/// A fall onto a spike hurts this many times over — and at least this much.
 const SPIKE_FACTOR: i32 = 2;
 const SPIKE_MIN: i32 = 2;
 
-/// A flying piece of pointed dripstone struck something: a body takes
-/// impact damage; the piece drops as an item either way (a shattered
-/// stalactite is still dripstone). Anything else in flight is not ours.
 pub fn on_projectile_hit(payload: &mut EventPayload) -> Outcome {
     let EventPayload::ProjectileHit {
         entity,
@@ -51,9 +40,6 @@ pub fn on_projectile_hit(payload: &mut EventPayload) -> Outcome {
     Outcome::Continue
 }
 
-/// A player's fall damage doubles when the block under their feet is a
-/// stalagmite. The dispatch names its victim, so the acting snapshot is the
-/// player who landed.
 pub fn on_player_damage(d: &Dripstone, payload: &mut EventPayload) -> Outcome {
     let EventPayload::PlayerDamagePre {
         amount,
@@ -69,7 +55,6 @@ pub fn on_player_damage(d: &Dripstone, payload: &mut EventPayload) -> Outcome {
     Outcome::Continue
 }
 
-/// The same rule for a mob.
 pub fn on_mob_damage(d: &Dripstone, payload: &mut EventPayload) -> Outcome {
     let EventPayload::MobDamagePre {
         mob_id,
@@ -86,8 +71,6 @@ pub fn on_mob_damage(d: &Dripstone, payload: &mut EventPayload) -> Outcome {
     Outcome::Continue
 }
 
-/// Whether the cell under a body standing at `feet` is a stalagmite. The
-/// probe sits just below the feet plane, which rests ON the block's top.
 fn spike_under(d: &Dripstone, feet: [f64; 3]) -> bool {
     let c = [
         feet[0].floor() as i32,
@@ -97,13 +80,10 @@ fn spike_under(d: &Dripstone, feet: [f64; 3]) -> bool {
     get_block(c) == Some(d.stalagmite)
 }
 
-/// Impact damage by arrival speed: linear, floored so a short drop still
-/// hurts, capped so a long one is survivable.
 pub fn impact_damage(speed: f32) -> f32 {
     (speed * IMPACT_PER_SPEED).clamp(IMPACT_MIN, IMPACT_MAX)
 }
 
-/// A fall's damage once a spike is under it.
 fn spiked(amount: i32) -> i32 {
     (amount * SPIKE_FACTOR).max(SPIKE_MIN)
 }
@@ -112,9 +92,6 @@ fn spiked(amount: i32) -> i32 {
 mod tests {
     use super::*;
 
-    /// The curve is what makes the height of a stalactite matter: strictly
-    /// more damage for a faster arrival between the floor and the cap, and
-    /// never outside them.
     #[test]
     fn impact_damage_grows_with_speed_between_its_bounds() {
         assert_eq!(impact_damage(0.0), IMPACT_MIN);

@@ -1,13 +1,3 @@
-//! The replica's write functions over a DETACHED view: a scratch replica
-//! seeded with the presented content of the columns a stretch of events
-//! touches, as shared `Arc`s. Sections are copy-on-write, so a write copies
-//! only the buffers it changes and the presented sections stay exactly as
-//! they are; the fold's result is read back per key and compared.
-//!
-//! The same seams the live replica ingests through run here, in the same
-//! order, so a stretch folded detached lands on exactly what ingesting it on
-//! the presented replica would have left.
-
 use std::sync::Arc;
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
@@ -20,16 +10,13 @@ use crate::world::replication::{
 use crate::world::store::column_cy_bit;
 use crate::world::ReplicaWorld;
 
-/// One terrain write a replica applies, as the stream carries it.
 #[derive(Clone, Debug)]
 pub enum TerrainEdit {
-    /// A section arriving in full, from the piece at the range when one states it.
     Section(Arc<SectionPayload>, Option<PieceRange>),
     Column(Arc<ColumnPayload>, Option<PieceRange>),
     Light(LightPayload),
     SectionUnload(SectionPos),
     ColumnUnload(ChunkPos),
-    /// A tick batch's terrain writes, in the batch's order.
     Tick {
         deltas: Vec<BlockDelta>,
         draws: Vec<BlockDrawDelta>,
@@ -38,7 +25,6 @@ pub enum TerrainEdit {
 }
 
 impl TerrainEdit {
-    /// The columns this edit writes.
     pub fn columns(&self, mut each: impl FnMut(ChunkPos)) {
         let cell = |p: petramond_math::math::IVec3| {
             SectionPos::from_world(p.x, p.y, p.z).map(|s| s.chunk_pos())
@@ -60,7 +46,6 @@ impl TerrainEdit {
         }
     }
 
-    /// The part of this edit that writes column `pos`, if any.
     pub fn for_column(&self, pos: ChunkPos) -> Option<TerrainEdit> {
         let within = |p: petramond_math::math::IVec3| {
             SectionPos::from_world(p.x, p.y, p.z).is_some_and(|s| s.chunk_pos() == pos)
@@ -91,9 +76,6 @@ impl TerrainEdit {
 }
 
 impl ReplicaWorld {
-    /// A tick batch's terrain writes, in the one order every replica applies
-    /// them: blocks first (a block write wipes the cell's draw set and KV on
-    /// both sides), then draw sets, then cell KV.
     pub fn apply_remote_tick_terrain(
         &mut self,
         deltas: Vec<BlockDelta>,
@@ -111,8 +93,6 @@ impl ReplicaWorld {
         }
     }
 
-    /// Apply one terrain edit through the ordinary ingest seams. Answers the
-    /// section it installed in full, for the caller's install batch.
     pub fn apply_terrain_edit(&mut self, edit: TerrainEdit) -> Option<SectionPos> {
         match edit {
             TerrainEdit::Section(payload, origin) => {
@@ -149,7 +129,6 @@ impl ReplicaWorld {
     }
 }
 
-/// A scratch replica a fold runs in. It holds only what it was seeded with.
 pub struct DetachedFold {
     world: ReplicaWorld,
 }
@@ -167,7 +146,6 @@ impl DetachedFold {
         Self { world }
     }
 
-    /// Seed column `payload` as presented, holding the piece at `origin`.
     pub fn seed_column(&mut self, payload: ColumnPayload, origin: Option<PieceRange>) {
         let pos = payload.pos;
         self.world.expect_origins([origin]);
@@ -176,8 +154,6 @@ impl DetachedFold {
         self.world.set_origin(Resident::Column(pos), origin);
     }
 
-    /// Seed section `pos` as presented: the presented `Arc` itself, shared,
-    /// with its draws. No install work runs; nothing here is presented.
     pub fn seed_section(
         &mut self,
         pos: SectionPos,
@@ -211,7 +187,6 @@ impl DetachedFold {
         self.world.data().columns.contains_key(&pos)
     }
 
-    /// Column `pos` as the fold left it, with the piece it still holds.
     pub fn column(&self, pos: ChunkPos) -> Option<(ColumnPayload, Option<PieceRange>)> {
         Some((
             self.world.column_content(pos)?,

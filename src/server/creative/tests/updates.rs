@@ -107,7 +107,6 @@ fn schematic_placement_updates_skipped_interior_cells_and_the_rotated_one_block_
         ]) {
             server.world.set_block_world(p.x, p.y, p.z, b);
         }
-        // Generated decorations have no outstanding edit notification to rescue them.
         server.world.clear_update_notifications_for_test();
         server
             .place_schematic(

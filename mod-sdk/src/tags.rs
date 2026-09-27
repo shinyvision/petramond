@@ -1,77 +1,43 @@
-//! Per-mob tags: typed key/value pairs attached to a live mob instance — THE
-//! per-mob keyed store (there is no separate per-mob byte KV).
-//!
-//! Tags are TYPED ([`MobTagValue`]), persist with the mob's save record, and
-//! are visible to the engine's AI (a mod can steer herd behavior by tagging
-//! mobs). A species' `mobs.json` row seeds spawn tags (the engine's own
-//! `petramond:health` rides there). Keys are namespaced exactly like KV:
-//! writes need this mod's own prefix or an engine-exposed `petramond:*` key;
-//! reads may cross namespaces. A mob carries at most 32 tags; replacing an
-//! existing key never counts against the cap.
-
 use mod_api::{MobSnapshot, MobTagLookup, MobTagOp, MobTagValue};
 
 use crate::__rt::host_fn;
 use crate::__rt::try_host_fn;
 
 try_host_fn! {
-    /// Read whole tag maps, returning a batch-size refusal so callers can split it.
     pub fn try_mob_tags_get_many(mob_ids: Vec<u64>) -> Vec<Option<Vec<(String, MobTagValue)>>>
         => MobTagsGetMany { mob_ids } => MobTagsMany
 }
 
 try_host_fn! {
-    /// Write tags, returning a batch-size refusal so callers can split it.
     pub fn try_mob_tags_write(writes: Vec<MobTagOp>) -> Vec<bool>
         => MobTagsWrite { writes } => Bools
 }
 
 host_fn! {
-    /// Read one tag on a live mob (STABLE mob id). The [`MobTagLookup`]
-    /// outcome tells a GONE mob (dead/unloaded — give up) apart from a live
-    /// mob simply not carrying the key.
     pub fn mob_tag_get(mob_id: u64, key: &str) -> MobTagLookup
         => MobTagGet { mob_id, key: key.into() } => MobTag
 }
 
 host_fn! {
-    /// Write a tag on a live mob (own-namespace or exposed `petramond:*` key
-    /// required); persists with the mob's save record. `false` = no such live
-    /// mob, or the mob already carries 32 tags and `key` would be a NEW one.
     pub fn mob_tag_set(mob_id: u64, key: &str, value: MobTagValue) -> bool
         => MobTagSet { mob_id, key: key.into(), value } => Bool
 }
 
 host_fn! {
-    /// Delete a tag from a live mob (own-namespace key required); `false` =
-    /// the key (or the mob) was absent.
     pub fn mob_tag_delete(mob_id: u64, key: &str) -> bool
         => MobTagDelete { mob_id, key: key.into() } => Bool
 }
 
 host_fn! {
-    /// Read a live mob's WHOLE tag map, sorted by key — one call instead of
-    /// one [`mob_tag_get`] per key. `None` = no such live mob.
     pub fn mob_tags_get(mob_id: u64) -> Option<Vec<(String, MobTagValue)>>
         => MobTagsGet { mob_id } => MobTags
 }
 
 host_fn! {
-    /// Snapshot every live mob carrying `key` (any value); with `value:
-    /// Some(v)` only those whose stored value EQUALS `v` (exact match — a
-    /// `F64` NaN matches nothing). Resolved host-side; dead mobs excluded,
-    /// exactly like [`mobs_in_radius`](crate::mobs_in_radius).
     pub fn mobs_with_tag(key: &str, value: Option<MobTagValue>) -> Vec<MobSnapshot>
         => MobsWithTag { key: key.into(), value } => Mobs
 }
 
-/// A value with no [`MobTagValue`] variant of its own, carried in a tag
-/// through ONE shared, lossless encoding — so a tick system and the AI node
-/// it steers never hand-roll text coordinates, never round them, and decode
-/// without allocating. A value that does not decode reads as absent.
-///
-/// Cells and points ride in [`MobTagValue::Str`] as fixed-width lowercase
-/// hex of their exact bits (8 digits per `i32`, 16 per `f64`).
 pub trait TagValue: Sized {
     fn to_tag(&self) -> MobTagValue;
     fn from_tag(tag: &MobTagValue) -> Option<Self>;
@@ -101,8 +67,6 @@ impl TagValue for [f64; 3] {
     }
 }
 
-/// Three fixed-width hex words, `width` (at most 16) digits each, filling
-/// the whole tag.
 fn hex_words(tag: &MobTagValue, width: usize) -> Option<[u64; 3]> {
     let MobTagValue::Str(text) = tag else {
         return None;
@@ -157,13 +121,11 @@ mod tests {
 }
 
 host_fn! {
-    /// Read whole tag maps for a population in one host call.
     pub fn mob_tags_get_many(mob_ids: Vec<u64>) -> Vec<Option<Vec<(String, MobTagValue)>>>
         => MobTagsGetMany { mob_ids } => MobTagsMany
 }
 
 host_fn! {
-    /// Apply tag writes in order; one success flag per write.
     pub fn mob_tags_write(writes: Vec<MobTagOp>) -> Vec<bool>
         => MobTagsWrite { writes } => Bools
 }

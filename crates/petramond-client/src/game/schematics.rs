@@ -1,10 +1,3 @@
-//! The client half of schematic sharing: a choice the server opened (the
-//! library screen), uploading a chosen archive the world lacks, positioning a
-//! world-held design with the placement controls, fetching designs this
-//! client does not hold, and the anchored ghosts it should draw.
-//!
-//! The personal library is only read here; downloaded designs live in memory.
-
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -18,7 +11,6 @@ use petramond_render::job::Job;
 
 use super::Game;
 
-/// How many decoded designs this client keeps.
 const DESIGNS_RESIDENT: usize = 16;
 
 type Prepared = Result<(Digest, Arc<[u8]>, Arc<Schematic>), String>;
@@ -26,26 +18,18 @@ type Encoded = Result<(Digest, Arc<[u8]>), String>;
 
 #[derive(Default)]
 pub struct SchematicShare {
-    /// The open choice the server asked for.
     pub choice: Option<String>,
-    /// A choice arrived that the app has not opened a screen for yet.
     open_library: bool,
-    /// The library entry being read and hashed for the open choice.
     choosing: Option<(String, Job<Prepared>)>,
-    /// A paste being encoded for the wire, and where it goes.
     pasting: Option<(Job<Encoded>, [i32; 3], u8)>,
-    /// Captures the server said are on their way, saved once they decode.
     captures: std::collections::HashSet<Digest>,
-    /// The chosen archive, kept until the server says whether it needs it.
     offered: Option<(Digest, Arc<[u8]>)>,
     upload: Option<BlobSender>,
     downloads: HashMap<Digest, BlobReceiver>,
     decoding: HashMap<Digest, Job<Result<Schematic, String>>>,
     designs: HashMap<Digest, Arc<Schematic>>,
     design_order: Vec<Digest>,
-    /// A positioning the server opened, waiting for its design.
     positioning: Option<(String, Digest, Option<[i32; 3]>, u8)>,
-    /// Anchored ghosts by key, as the server last sent them.
     pub ghosts: BTreeMap<String, GhostPlacement>,
 }
 
@@ -126,7 +110,6 @@ impl Game {
         }
     }
 
-    /// Make `digest` available: decoded already, or fetched from the server.
     fn want_design(&mut self, digest: Digest) {
         let share = &self.tools.share;
         if share.designs.contains_key(&digest)
@@ -141,8 +124,6 @@ impl Game {
             )));
     }
 
-    /// Paste `schematic` at `origin`: its archive is offered to the server
-    /// under its digest, which asks for the bytes only if the world lacks them.
     pub(super) fn paste_schematic(
         &mut self,
         schematic: Arc<Schematic>,
@@ -160,13 +141,10 @@ impl Game {
         self.tools.share.pasting = Some((job, origin, turns));
     }
 
-    /// The server captured a selection: its blob `digest` is saved to the
-    /// library once it is here.
     pub(super) fn expect_capture(&mut self, digest: Digest) {
         self.tools.share.captures.insert(digest);
     }
 
-    /// A decoded design this client holds.
     pub fn schematic_design(&self, digest: &Digest) -> Option<&Arc<Schematic>> {
         self.tools.share.designs.get(digest)
     }
@@ -188,18 +166,14 @@ impl Game {
         }
     }
 
-    /// Whether the app should open the library for a new choice (an edge).
     pub fn take_schematic_library_request(&mut self) -> bool {
         std::mem::take(&mut self.tools.share.open_library)
     }
 
-    /// The library screen is up for a choice, not for creative placement.
     pub fn schematic_choice_open(&self) -> bool {
         self.tools.share.choice.is_some()
     }
 
-    /// Choose library entry `index` for the open choice: read and hash it
-    /// off the frame thread, then tell the server.
     pub fn choose_schematic(&mut self, index: usize) -> bool {
         let Some(tag) = self.tools.share.choice.clone() else {
             return false;
@@ -219,7 +193,6 @@ impl Game {
         true
     }
 
-    /// Advance the sharing lane once per frame.
     pub(super) fn poll_schematic_share(&mut self) {
         let chosen = self
             .tools
@@ -321,8 +294,6 @@ impl Game {
         self.start_ready_positioning();
     }
 
-    /// Begin placement preview for an opened positioning once its design is
-    /// here.
     fn start_ready_positioning(&mut self) {
         let Some((_, id, _, _)) = self.tools.share.positioning.as_ref() else {
             return;

@@ -6,8 +6,6 @@ use crate::strike::Aim;
 const BOW: ItemId = ItemId(11);
 const OTHER: ItemId = ItemId(12);
 
-/// A synthetic bow: twelve ticks to full, eight of strain, four pull
-/// frames with one missing.
 fn draw() -> Draw {
     Draw {
         full_ticks: 12,
@@ -61,8 +59,6 @@ fn actor(held: Option<ItemId>, holds_use: bool) -> PlayerSnapshot {
     }
 }
 
-/// The law under the press the composition hands it: the snapshot's own
-/// `holds_use`.
 fn bow<'a>(rows: &'a Rows, state: &PlayerSnapshot, clock: State) -> Bow<'a> {
     bow_of(rows, state, state.holds_use, clock)
 }
@@ -87,9 +83,6 @@ fn a_draw_needs_the_press_and_the_bow_in_the_main_hand() {
     assert!(!bow(&rows, &spectator, t).drawing);
 }
 
-/// A press the strain SPENT stays the bow's until the button comes up —
-/// inert, but held — or the off-hand shield pops up unasked the instant
-/// the arrow leaves.
 #[test]
 fn a_spent_press_stays_the_bows_and_claims_nothing_else() {
     let rows = rows();
@@ -107,9 +100,6 @@ fn a_spent_press_stays_the_bows_and_claims_nothing_else() {
     assert!(!released.claims().holds_press);
 }
 
-/// The bow HOLDS its place through the draw (a bow that crept read as
-/// the hand wandering) and only the strain moves it — a tremor that
-/// grows, and rests exactly at the drawn pose when it starts.
 #[test]
 fn the_bow_holds_still_through_the_draw_and_shakes_only_under_strain() {
     let rows = rows();
@@ -144,9 +134,6 @@ fn the_bow_holds_still_through_the_draw_and_shakes_only_under_strain() {
     );
 }
 
-/// The draw's states show through the row's frames, the last of which
-/// is ALWAYS the full draw: a frame that came a tick early would show a
-/// full bow that looses a weak arrow.
 #[test]
 fn the_last_frame_is_the_full_draw_and_nothing_less() {
     let rows = rows();
@@ -163,7 +150,6 @@ fn the_last_frame_is_the_full_draw_and_nothing_less() {
     let mut seen: Vec<usize> = (0..=draw().full_ticks).map(|t| stage(t as f32)).collect();
     seen.dedup();
     assert_eq!(seen, vec![0, 1, 2, 3], "every frame shows, in order");
-    // A missing pull frame holds the previous one rather than blanking.
     let b = bow(&rows, &actor(Some(BOW), true), drawing(full * 0.7));
     assert_eq!(b.stage(), 2);
     assert_eq!(b.display(), Some("m:pull_1"));
@@ -177,10 +163,6 @@ fn the_last_frame_is_the_full_draw_and_nothing_less() {
     );
 }
 
-/// The clock reports a loose ONCE per press — on the release with the
-/// draw held there, capped at full, or by itself when a full draw has
-/// been held through the whole strain window, after which the press is
-/// SPENT until the button comes up. A tap under a tick looses nothing.
 #[test]
 fn the_clock_looses_on_the_release_or_when_the_strain_runs_out() {
     let d = draw();
@@ -200,7 +182,6 @@ fn the_clock_looses_on_the_release_or_when_the_strain_runs_out() {
     c.step(held, 0.4);
     assert_eq!(c.step(Press::Released, 1.0), None, "a tap is not a draw");
 
-    // Held on past the strain: it looses itself, once, and shows spent.
     let mut fired = Vec::new();
     for _ in 0..(d.full_ticks + d.strain_ticks + 40) {
         if let Some(t) = c.step(held, 1.0) {
@@ -218,10 +199,6 @@ fn the_clock_looses_on_the_release_or_when_the_strain_runs_out() {
     assert_eq!(c.state(), State::Drawing(1.0), "a fresh press draws again");
 }
 
-/// A press LOST mid-draw — the bow scrolled out of the hand, the body
-/// dead or spectating — is a cancel, never a release: no arrow, the clock
-/// reset, and the next press draws from nothing. Reading it as a release
-/// loosed the arrow at the current draw with a pickaxe in hand.
 #[test]
 fn a_lost_press_cancels_the_draw_without_loosing() {
     let d = draw();
@@ -239,7 +216,6 @@ fn a_lost_press_cancels_the_draw_without_loosing() {
         "a fresh draw starts from nothing"
     );
 
-    // Lost while spent clears the spent latch too.
     let mut c = Clock::default();
     for _ in 0..(d.full_ticks + d.strain_ticks + 1) {
         c.step(Press::Held(&d), 1.0);
@@ -249,9 +225,6 @@ fn a_lost_press_cancels_the_draw_without_loosing() {
     assert_eq!(c.state(), State::Idle);
 }
 
-/// Damage follows arrival speed between the arrow row's two rungs, so a
-/// half draw lands halfway and a spent arrow lands soft; speed follows the
-/// draw between the bow row's two.
 #[test]
 fn damage_runs_between_the_arrows_rungs_by_speed_and_speed_by_draw() {
     let rows = rows();
@@ -280,8 +253,6 @@ fn damage_runs_between_the_arrows_rungs_by_speed_and_speed_by_draw() {
     assert_eq!(d.launch_speed(99), d.launch_speed(12), "clamped above");
 }
 
-/// A row missing any of its numbers is refused whole — a bow with half a
-/// draw would draw under defaults nobody authored.
 #[test]
 fn an_incomplete_row_is_refused_whole() {
     let bow = |text: &str| parse_row_data::<BowSpec>(text);
@@ -319,11 +290,6 @@ fn an_incomplete_row_is_refused_whole() {
     assert!(ArrowRow::from_spec(ItemId(13), "m:arrow".into(), &inverted).is_err());
 }
 
-/// The nock sits beside the eye (the player's right; getting the yaw
-/// convention backwards shoots from the left, or behind, and no other
-/// test would notice) and the shot CONVERGES on the crosshair: aimed at
-/// what is under it, a shot from the offset nock passes through that
-/// exact point.
 #[test]
 fn the_arrow_leaves_beside_the_eye_and_converges_on_the_crosshair() {
     let mut a = actor(Some(BOW), true);
@@ -374,7 +340,6 @@ fn a_ray_enters_a_box_at_its_near_face_and_misses_beside_it() {
     );
 }
 
-/// Every bow and arrow entry this pack ships matches its schema.
 #[test]
 fn every_shipped_bow_and_arrow_parses() {
     let items = include_str!("../../pack/items.json");

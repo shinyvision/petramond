@@ -1,21 +1,17 @@
-//! Mobs: a data-driven creature registry plus the live entity manager + AI.
+//! Mobs: a data-driven creature registry, plus the live entity manager and AI.
 //!
-//! Each species is an opaque [`Mob`] id indexing the runtime def table loaded from
-//! `assets/mobs.json` (a layered catalog like `blocks.json`): engine species own the
-//! low ids in the frozen [`ENGINE_MOB_NAMES`] order, and mod packs register more
-//! through namespaced (`mod_id:name`) rows in load order. A row carries the species'
-//! model asset path, render scale, body size, movement stats, spawn pack size, and a
-//! `brain` list of `{node, priority, params}` rows resolved through the string-keyed
-//! AI-node registry (see `behavior`). So **adding an animal is a `mobs.json` row**
-//! — no engine edit, no change to the game loop, the scene, or the renderer (which
-//! iterate the table generically).
+//! Adding an animal is a `mobs.json` row. You don't touch the engine, the game loop, the scene or
+//! the renderer; they all iterate the table.
 //!
-//! Layering: `load` (the catalog loader), `path` (pure A*), `brain` + `behavior`
-//! (composable per-tick AI), `nav` (path following + jumps), `instance` (shared
-//! kinematics), `manager` (the live set). Nothing here depends on `crate::render`:
-//! each species' `.bbmodel` (read through the pack overlay) is precached into a
-//! compiled [`Model`] (via [`model`]) that the renderer and
-//! the simulation both read — the renderer also reads `scale` off the table.
+//! Species live in `assets/mobs.json`, layered like `blocks.json`, and each is an opaque [`Mob`] id
+//! into that table. Engine species have the low ids, in the frozen [`ENGINE_MOB_NAMES`] order. Mod
+//! packs add theirs as namespaced `mod_id:name` rows in load order. A row gives the model path,
+//! render scale, body size, movement stats, spawn pack size and `brain` nodes (see `behavior`).
+//!
+//! Layering: `load` (catalog loader), `path` (pure A*), `brain` + `behavior` (per-tick AI), `nav`
+//! (path following + jumps), `instance` (shared kinematics), `manager` (the live set). Nothing here
+//! depends on `crate::render`. Each species' `.bbmodel` is precached into a compiled [`Model`] (via
+//! [`model`]) that the renderer and simulation both read.
 
 mod anim;
 pub(crate) mod behavior;
@@ -75,46 +71,27 @@ use petramond_world::item::ItemType;
 
 use brain::AiBehavior;
 
-/// A registered mob species, identified by its opaque runtime id (the row index in
-/// the loaded def table). Engine species own the low ids in a compiled, frozen order
-/// (the named consts below — the save palette identifies species by those ids/names);
-/// mod packs register additional ids at load through namespaced `mobs.json` rows.
-/// Serde carries a species as its registered NAME string
-/// (`"petramond:owl"`, `"mod:zombie"`).
+/// A mob species. The id is opaque at runtime, just the row in the loaded def table. Engine species
+/// take the low ids in a frozen order (the consts below), and saves identify species by those ids
+/// and names. Mod packs get more ids at load from namespaced `mobs.json` rows. Serde writes a
+/// species as its name, like `"petramond:owl"`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Mob(pub u8);
 
-/// Engine species consts, named like the enum variants they replaced so every
-/// existing `Mob::Owl` expression and match pattern keeps compiling.
 #[allow(non_upper_case_globals)]
 impl Mob {
     pub const Owl: Mob = Mob(0);
     pub const Sheep: Mob = Mob(1);
 }
 
-/// A reference to a combat-capable entity: a connected player (by session id)
-/// or a live mob (by its STABLE session id — never a storage index, which
-/// `swap_remove` renumbers between the tick that captured it and the tick that
-/// resolves it). This is the shared identity vocabulary for AI targeting
-/// (`BehaviorOutput::target`), noise attribution ([`Noise::source`]), and
-/// attacker memory (retaliation) — one type, so a perception node can lock
-/// onto exactly what a noise or a hit named.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EntityRef {
     Player(crate::player::PlayerId),
     Mob(MobId),
 }
 
-/// A live mob's STABLE session handle — the spawn-counter identity it keeps
-/// for its whole life in the live set. Every public [`Mobs`] method addresses
-/// a mob by it (the manager resolves it to its storage slot through a map it
-/// maintains on every insert and removal), and it is the same value the wire,
-/// the mod ABI, noise sources and attacker memory speak. Storage slots never
-/// leave the manager: a removal renumbers slots, never handles.
 pub type MobId = u64;
 impl EntityRef {
-    /// The player this names, if it names one — the actor a dispatch on its
-    /// behalf acts for (a mob's action is actor-less).
     #[inline]
     pub fn player(self) -> Option<crate::player::PlayerId> {
         match self {
@@ -124,10 +101,6 @@ impl EntityRef {
     }
 }
 
-/// A typed value in a mob's tag map. Tags are engine- or mod-owned key/value
-/// pairs attached to a live mob instance; they persist with the mob's chunk
-/// and are visible to AI and HostCalls. The engine reserves the `petramond:`
-/// namespace; mods may invent their own `mod_id:` keys.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MobTagValue {
     Bool(bool),
@@ -159,8 +132,6 @@ impl From<&MobTagValue> for mod_api::MobTagValue {
 }
 
 impl MobTagValue {
-    /// The carried `bool`, or `None` when the value is another type — a
-    /// mismatched type reads as ABSENT, never as a default.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Bool(b) => Some(*b),
@@ -168,7 +139,6 @@ impl MobTagValue {
         }
     }
 
-    /// The carried `i64`, or `None` when the value is another type.
     pub fn as_int(&self) -> Option<i64> {
         match self {
             Self::Int(i) => Some(*i),
@@ -176,7 +146,6 @@ impl MobTagValue {
         }
     }
 
-    /// The carried `f64`, or `None` when the value is another type.
     pub fn as_float(&self) -> Option<f64> {
         match self {
             Self::Float(f) => Some(*f),
@@ -184,7 +153,6 @@ impl MobTagValue {
         }
     }
 
-    /// The carried string, or `None` when the value is another type.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(s) => Some(s),
@@ -193,16 +161,10 @@ impl MobTagValue {
     }
 }
 
-/// Engine mob names in frozen id order (`ENGINE_MOB_NAMES[id]` names `Mob(id)`).
-/// Append-only: save palettes identify mobs by these ids/names. Must stay in
-/// lockstep with the consts above; the shipped `mobs.json` covering every name
-/// keeps a typo here from going unnoticed.
 pub const ENGINE_MOB_NAMES: &[&str] = &["petramond:owl", "petramond:sheep"];
 
 impl std::fmt::Debug for Mob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Engine names come from the compiled table only, so Debug works
-        // mid-bootstrap; dynamic ids print numerically.
         match ENGINE_MOB_NAMES.get(self.0 as usize) {
             Some(name) => write!(f, "Mob({name})"),
             None => write!(f, "Mob(#{})", self.0),
@@ -234,36 +196,20 @@ impl<'de> serde::Deserialize<'de> for Mob {
 }
 
 impl Mob {
-    /// The raw registry id.
     #[inline]
     pub fn id(self) -> u8 {
         self.0
     }
 
-    /// Every registered species in id order (engine + pack-registered).
     pub fn all() -> &'static [Mob] {
         &catalog().all
     }
 }
 
-/// Compatibility default for hostile rows that omit `despawn_radius`.
 pub const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
 
-/// The outer edge of player-reactive mob AI (blocks): beyond this distance a
-/// mob no longer reacts to a player at all. One design constant, two
-/// consumers: random-despawn eligibility (`instance`) and the scripted-node
-/// foothold scan gate (`behavior::wasm`) — retune it here, never re-literal it.
 pub const PLAYER_REACTIVE_RANGE: f32 = 32.0;
 
-/// The population group a species belongs to. Natural spawning caps each group
-/// independently across the loaded area (so the world can't fill with one kind),
-/// alongside the per-species [`MobDef::cap`]. A [`Passive`] mob defaults to persisting
-/// when far from the player — it leaves the live set only by being saved into its
-/// unloading chunk — while a [`Hostile`] one defaults to being culled immediately
-/// at its row-resolved [`MobDef::despawn_radius`].
-///
-/// [`Passive`]: MobCategory::Passive
-/// [`Hostile`]: MobCategory::Hostile
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobCategory {
@@ -272,8 +218,6 @@ pub enum MobCategory {
 }
 
 impl MobCategory {
-    /// The most individuals of this category that may exist in the loaded area at
-    /// once; natural spawning stops the category here.
     pub fn cap(self) -> u32 {
         match self {
             MobCategory::Passive => 25,
@@ -281,7 +225,6 @@ impl MobCategory {
         }
     }
 
-    /// Compatibility default for rows that omit `despawn_radius`.
     pub fn default_despawn_radius(self) -> Option<f32> {
         match self {
             MobCategory::Passive => None,
@@ -290,49 +233,22 @@ impl MobCategory {
     }
 }
 
-/// A species' natural-spawn site criteria. The spawner runs its universal checks
-/// first (player distance, footing, headroom for the body) and only then asks the
-/// species' rule, so a rule only describes what's *species-specific*: the biomes it
-/// settles in and the blocks it will stand on. Declarative on purpose — adding a
-/// species is data, not a new branch in the spawner. A rule without any climate
-/// or underground territory, or without ground and a volume constraint, permits only programmatic spawns.
 pub struct SpawnRule {
-    /// Biomes the species may spawn in.
     pub biomes: &'static [Biome],
-    /// Optional underground territory constraint, independent of surface climate.
     pub underground: &'static [u8],
-    /// Feet-height search interval. Absent selects the exposed surface.
     pub y: Option<[i32; 2]>,
-    /// Allowed cells throughout the body volume; absent requires dry footing.
     pub space: Option<&'static [Block]>,
-    /// Species-wide spawn chance in `(0, 1]`, multiplied into every biome's
-    /// own chance below. This is how RARE the species is as a species — a
-    /// `0.25` row is a quarter as common as a full-chance neighbour
-    /// everywhere it lives, including biomes no other species competes for.
-    /// Per-biome tuning stays in `chances`, so climate rarity and species
-    /// rarity can be retuned independently.
     pub chance: f32,
-    /// Per-biome spawn chance in `(0, 1]`, aligned index-for-index with
-    /// `biomes`; empty = every listed biome spawns at the species' own
-    /// `chance`. A value below 1 makes natural spawns in that biome
-    /// proportionally rarer — the spawner rolls the combined chance ONCE per
-    /// trickle attempt / worldgen herd (see [`spawn::biome_chance_passes`]),
-    /// never per group member, so rarity thins spawn events, not group size.
     pub chances: &'static [f32],
-    /// Blocks the species accepts as the ground under its feet (the cell it rests on).
     pub ground: &'static [Block],
 }
 
 impl SpawnRule {
-    /// Whether a site in `biome`, standing on `ground`, satisfies this rule.
     pub fn admits(&self, biome: Biome, ground: Block) -> bool {
         (self.biomes.contains(&biome) || (self.biomes.is_empty() && !self.underground.is_empty()))
             && (self.ground.contains(&ground) || (self.ground.is_empty() && self.space.is_some()))
     }
 
-    /// The chance in `[0, 1]` that a spawn event in `biome` passes this rule's
-    /// rarity: the species-wide `chance` times the row's per-biome chance
-    /// (default 1 for a listed biome). A territory-only rule accepts every climate.
     pub fn chance_in(&self, biome: Biome) -> f32 {
         if self.biomes.is_empty() && !self.underground.is_empty() {
             return self.chance;
@@ -343,17 +259,12 @@ impl SpawnRule {
         }
     }
 
-    /// Whether this rule can admit any site at all — `false` marks a species the
-    /// natural spawner never attempts (spawnable only programmatically).
     pub fn is_spawnable(&self) -> bool {
         (!self.biomes.is_empty() || !self.underground.is_empty())
             && (!self.ground.is_empty() || self.space.is_some())
     }
 }
 
-/// How many individuals a successful natural spawn attempt tries to place near the
-/// first valid site. Singleton species use `1..=1`; herd animals can request a
-/// larger bounded group.
 #[derive(Copy, Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnGroup {
@@ -373,25 +284,14 @@ impl SpawnGroup {
     }
 }
 
-/// A species' biome affinity while idly wandering (distinct from where it *spawns*).
-/// The wander AI never targets an `avoid` biome — save a bounded escape hatch so a
-/// mob hemmed in by avoided terrain still moves — and, among the rest, leans toward
-/// `prefer` biomes. The two lists should be disjoint (a biome isn't both).
 pub struct Habitat {
-    /// Biomes the wander AI refuses to walk into (until the escape hatch lifts it).
     pub avoid: &'static [Biome],
-    /// Biomes the wander AI is drawn to when one is in reach.
     pub prefer: &'static [Biome],
 }
 
-/// Optional group preference for idle wandering. When present, a mob that has a
-/// companion of `companion` inside the configured search radius will only choose
-/// destinations that also keep one within its wander radius.
 #[derive(Copy, Clone, Debug)]
 pub struct WanderCohesion {
     pub companion: Mob,
-    /// How many wander radii out to search before treating this mob as already
-    /// lonely. Destinations still need a companion within one wander radius.
     pub search_radius_multiplier: u8,
 }
 
@@ -402,36 +302,20 @@ impl WanderCohesion {
     }
 }
 
-/// Data that controls idle wander cadence, range, and optional group preference. The
-/// biome/water filters live beside it on [`MobDef`] because they are reused by spawn
-/// and habitat-facing code.
 #[derive(Copy, Clone, Debug)]
 pub struct WanderTuning {
     pub chance_per_tick: f32,
     pub radius: i32,
-    /// Blocks the wander AI refuses as the FLOOR under a destination —
-    /// resolved at load from the row's `avoid_ground` BLOCK-TAG list (e.g.
-    /// `"petramond:rock"`: stone, ores, marble), empty = no preference. A
-    /// destination policy exactly like fluid aversion: it steers where the
-    /// mob CHOOSES to head (so surface animals stop strolling into cave
-    /// mouths), never where routes may pass, and a bounded escape hatch
-    /// keeps a mob standing amid avoided ground moving.
     pub avoid_ground: &'static [Block],
     pub cohesion: Option<WanderCohesion>,
 }
 
 petramond_math::wire_enum::wire_enum! {
-    /// The semantic reason a mob sound is played. The sound clip itself stays in
-    /// `sounds.json`; this category maps a species to a row in that catalog.
-    /// The byte form is the net protocol's (`WorldEventMsg::MobSound`).
     #[derive(Hash, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
     pub enum MobSoundCategory: u8 {
-        /// Periodic ambient call while the mob is alive and present to the client.
         Idle = 0,
-        /// A non-lethal hit landed on the mob.
         Hurt = 1,
-        /// The killing hit landed on the mob.
         Death = 2,
     }
     default Idle
@@ -440,9 +324,6 @@ petramond_math::wire_enum::wire_enum! {
 pub const DEFAULT_DAMAGE_FLASH_SECS: f32 = 0.3;
 pub const DEFAULT_DAMAGE_KNOCKBACK_SECS: f32 = 0.3;
 
-/// Damage feedback components a species applies when a damage request survives
-/// `mob_damage_pre`. Empty `damage_feedback` rows resolve to [`Default`], so a mob
-/// row can opt into the normal engine bundle without enumerating it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MobDamageFeedback {
     pub components: Vec<MobDamageFeedbackComponent>,
@@ -451,25 +332,11 @@ pub struct MobDamageFeedback {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MobDamageFeedbackComponent {
     DecreaseHealth,
-    Flash {
-        duration: f32,
-    },
-    Knockback {
-        scale: f32,
-        duration: f32,
-    },
-    Sound {
-        category: MobDamageSound,
-    },
+    Flash { duration: f32 },
+    Knockback { scale: f32, duration: f32 },
+    Sound { category: MobDamageSound },
     Ragdoll,
-    /// Engine damage immunity: while present, a hit that decreases health
-    /// grants `ticks` of the victim-global i-frame window, and the request is
-    /// REJECTED while a window is active. A pipeline without this component
-    /// neither grants nor is blocked — steady damage-over-time (burn) simply
-    /// omits it.
-    Immunity {
-        ticks: u32,
-    },
+    Immunity { ticks: u32 },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -490,8 +357,6 @@ impl MobDamageFeedback {
         !self.components.is_empty()
     }
 
-    /// Whether this pipeline participates in the engine i-frame window
-    /// (granting on a hit, blocked while one is active).
     #[inline]
     pub fn has_immunity(&self) -> bool {
         self.components
@@ -537,8 +402,6 @@ impl Default for MobDamageFeedback {
     }
 }
 
-/// One species sound hook. Idle sounds carry a client-side tick cadence; hurt
-/// and death sounds are fired from semantic hit/death events.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MobSoundSpec {
     pub category: MobSoundCategory,
@@ -551,16 +414,8 @@ pub const MAX_MOB_BODY_HALF_EXTENT: f32 = 32.0;
 pub const MAX_MOB_BODY_HEIGHT: f32 = 32.0;
 pub const MAX_MOB_BODY_SEGMENTS: usize = 64;
 pub const MAX_MOB_SEAT_OFFSET: f32 = 32.0;
-/// Longest block reach a species row may declare.
 pub const MAX_MOB_REACH: f32 = 16.0;
 
-/// A mob's collision/render footprint: a centred AABB `half_width` across and
-/// `height` tall, with the feet at the mob position. A LONG body (a hull) may
-/// also declare `half_length` along its FACING axis: its terrain movement,
-/// SOLID-collision presence (see [`MobCollision::Solid`] and [`solid_boxes`]),
-/// and targeting all use the oriented `half_length × half_width` rectangle as
-/// a run of overlapping square boxes, so a boat's bow and stern behave like
-/// its middle.
 #[derive(Copy, Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobSize {
@@ -571,9 +426,6 @@ pub struct MobSize {
 }
 
 impl MobSize {
-    /// Validate the geometry envelope shared by collision, targeting, and
-    /// riding. Pack rows are untrusted input, and long-body segment count is
-    /// bounded independently of absolute dimensions.
     pub fn validate(self) -> Result<(), String> {
         if !self.half_width.is_finite()
             || self.half_width <= 0.0
@@ -618,34 +470,23 @@ impl MobSize {
         (half_length / self.half_width).ceil().max(1.0) as usize
     }
 
-    /// Whole cells of vertical clearance the body needs (for standable/pathfinding
-    /// tests): the height rounded up, at least one.
     #[inline]
     pub fn head_cells(self) -> i32 {
         (self.height.ceil() as i32).max(1)
     }
 }
 
-/// What shearing a species yields, when it can be shorn at all: the item dropped, the
-/// per-shear count range, and how long (game ticks) the coat takes to grow back —
-/// during which the mob renders without its coat and can't be shorn again. Row data on
-/// [`MobDef`], so a new shearable species is a data edit, not new code.
 #[derive(Copy, Clone, Debug, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShearSpec {
     pub drop: ItemType,
-    /// Inclusive drop-count range rolled per shear.
     pub min: u8,
     pub max: u8,
-    /// Inclusive regrow-duration range (game ticks) rolled per shear.
     pub regrow_min: u32,
     pub regrow_max: u32,
-    /// The authored name of the model cubes that ARE the coat: not drawn
-    /// while the mob is shorn, and casting no self-shadow on the body.
     pub coat: CubeName,
 }
 
-/// A model cube's authored name, as a registry row spells it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct CubeName(pub &'static str);
 
@@ -655,30 +496,16 @@ impl<'de> serde::Deserialize<'de> for CubeName {
     }
 }
 
-/// A mob in its persisted form: just what survives a save — the species, where it
-/// stands, which way it faces, and its tag map. A live [`Instance`] projects to
-/// this when its chunk unloads (so it rides that chunk's save record, like a
-/// dropped item) and is rebuilt from it on reload with a fresh brain. Transient
-/// AI/physics state (velocity, animation, the despawn timer) is deliberately
-/// *not* saved: a reloaded mob simply resumes wandering. Everything per-mob and
-/// gameplay-semantic rides the TAG MAP — health (`petramond:health`, a wounded
-/// sheep reloads wounded), shear regrowth (`petramond:shear_regrow`, a shorn
-/// sheep must not reload with its wool back), confinement, and any mod keys.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SavedMob {
     pub kind: Mob,
     pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
-    /// Engine- and mod-owned tags attached to this mob instance. The engine
-    /// reserves the `petramond:` namespace (e.g., `petramond:confined`).
     pub tags: std::collections::BTreeMap<String, MobTagValue>,
-    /// The carried slots, exactly as held (a species whose declared capacity
-    /// shrank since keeps every saved slot rather than losing items).
     pub container: petramond_world::container::Container,
 }
 
 impl SavedMob {
-    /// Capture a live mob's persisted fields.
     pub fn of(inst: &Instance) -> Self {
         Self {
             kind: inst.kind,
@@ -690,36 +517,20 @@ impl SavedMob {
     }
 }
 
-/// One resolved row of a species' data-driven brain: an AI-node key, its priority,
-/// the engine factory the key resolved to, and the row's (load-validated) params.
-/// [`build_brain`] instantiates a fresh behavior per spawned mob from these.
 pub struct BrainNode {
-    /// The node key as written in the row (`"wander"`, `"chase_player"`, ...).
     pub node: &'static str,
     pub priority: u8,
     factory: load::NodeFactory,
     params: &'static serde_json::Value,
-    /// The scripted-node facts the row declared it reads (`"inputs"`) — only
-    /// these are computed and shipped per dispatch. Empty for engine nodes.
     inputs: behavior::ScriptedInputs,
 }
 
 impl BrainNode {
-    /// Run the factory once, discarding the behavior — the loader's validation pass,
-    /// so a bad row fails the catalog load instead of the first spawn. `all` is the
-    /// in-flight def table (validation runs inside the catalog's own build, so the
-    /// factory must never reach for `defs()` itself).
     fn validate(&self, def: &'static MobDef, all: &[MobDef]) -> Result<(), String> {
         (self.factory)(self.node, self.params, self.inputs, def, all).map(|_| ())
     }
 }
 
-/// Compose a species' AI [`Brain`] from its resolved brain rows plus any
-/// loaded brain-extension nodes targeting the species (appended after the
-/// row's own, preserving extension order — the "final merged row" a pack's
-/// extension composes onto). Called per spawned mob (behaviors hold
-/// per-instance state). Factories were validated at catalog load, so a
-/// failure here is a loader bug, not bad data.
 pub fn build_brain(def: &'static MobDef) -> Brain {
     let mut brain = Brain::new();
     let extension_nodes = loaded()
@@ -740,141 +551,53 @@ pub fn build_brain(def: &'static MobDef) -> Brain {
     brain
 }
 
-/// What a species is unaffected by (`"tolerates"` in `mobs.json`); the exposure
-/// component enforces it, and navigation reads its blocks.
 pub use petramond_world::exposure::Tolerance;
 
-/// One row of the mob registry: everything that makes a species what it is. `model`
-/// and `scale` feed the renderer; the rest drives the simulation. (`model` names the
-/// `.bbmodel` asset, compiled once into the shared [`Model`] —
-/// see [`model`].)
 pub struct MobDef {
     pub mob: Mob,
-    /// Registry name — the row key in `mobs.json` (`"petramond:owl"`, or
-    /// `"mod_id:name"` for a pack species). The identity serde and the save
-    /// palette speak.
     pub name: &'static str,
-    /// Stable identity key (e.g. `"petramond:owl"`), independent of any display name
-    /// — the key a loot table is looked up by. Mirrors [`petramond_world::item::ItemType::key`].
     pub key: &'static str,
-    /// Asset-relative `.bbmodel` path (`models/owl.bbmodel`), resolved through the
-    /// pack overlay ([`petramond_world::assets::read_bytes`]) at precache time (see [`model`]);
-    /// at runtime the compiled [`Model`] is authoritative.
     pub model: &'static str,
-    /// Model-unit → metre scale for rendering.
     pub scale: f32,
-    /// Body AABB (collision + pathfinding clearance).
     pub size: MobSize,
-    /// Spawn tags: the tag map every individual of this species is born with,
-    /// straight from the row's `tags` (see [`tags`] for the engine keys). The
-    /// loader guarantees a positive `Float` [`tags::HEALTH`] — health IS a
-    /// tag, so it persists with the mob like any other tag. On restore, saved
-    /// tags OVERLAY these (per-key), so a species gaining a new spawn tag
-    /// reaches previously saved individuals too.
     pub tags: &'static std::collections::BTreeMap<String, MobTagValue>,
-    /// Immutable, namespaced consumer metadata shared by every instance.
     pub data: &'static [(&'static str, &'static str)],
-    /// The reward table declared by the `petramond:loot` consumer entry.
     pub loot: Option<String>,
-    /// Ground walk speed (m/s).
     pub walk_speed: f32,
-    /// Upward launch speed of a jump (m/s); sized to clear a one-block step.
     pub jump_speed: f32,
-    /// How fast the mob turns to face travel (rad/s).
     pub turn_rate: f32,
-    /// Walk-cycle playback rate (animation-seconds per real second) while moving.
     pub walk_anim_rate: f32,
-    /// Which population cap this species counts against (with [`MobCategory::cap`]).
     pub category: MobCategory,
-    /// Distance (blocks) at or beyond which this species is distance-despawned
-    /// immediately, or `None` for species that persist while loaded.
     pub despawn_radius: Option<f32>,
-    /// Most individuals of this species allowed in the loaded area; natural spawning
-    /// stops here even if the category cap has room.
     pub cap: u32,
-    /// Where this species spawns naturally (biome + the block it stands on).
     pub spawn: SpawnRule,
-    /// Number of nearby individuals produced by one successful natural spawn attempt.
     pub spawn_group: SpawnGroup,
-    /// Idle wander cadence, radius, and optional group preference.
     pub wander: WanderTuning,
-    /// Biome affinity for idle wandering (avoid / prefer) — see [`Habitat`].
     pub habitat: Habitat,
-    /// Whether the wander AI steers destinations away from fluids (it still re-rolls a
-    /// bounded number of times before settling for a wet spot — see the wander
-    /// behavior). Crossing a fluid en route is always allowed; this is only about where
-    /// the mob chooses to head.
     pub avoid_fluids: bool,
-    /// Whether its walking is heard: a footstep per stride from the block
-    /// underfoot, paced like a player's (`"footsteps"` row).
     pub footsteps: bool,
-    /// Whether its walking makes gameplay NOISE that hearing AI can lock onto
-    /// (`"step_noise"` row; omitted = it does). Independent of `footsteps`,
-    /// which is presentation: a creature may step silently for the player
-    /// yet still be heard by a hunter, while a boat or a cart makes neither.
     pub step_noise: bool,
-    /// Strength of the model's self ambient occlusion, 0 (none) to 1
-    /// (`"self_ao"` row): where its parts meet, they shade each other.
     pub self_ao: f32,
-    /// Whether a grounded body refuses to walk off a ledge taller than its
-    /// routes plan to drop (`"edge_guard"` row), as a sneaking player does;
-    /// knockback and jumps still carry it off.
     pub edge_guard: bool,
-    /// Route-search tuning (`"nav"` row, optional): the navigator's search
-    /// cap and same-goal refresh cadence — see [`nav::NavTuning`].
     pub nav: nav::NavTuning,
-    /// How this species behaves in fluids (`"buoyancy"` row, default `swim`) —
-    /// see [`Buoyancy`].
     pub buoyancy: Buoyancy,
-    /// What this species is unaffected by (`"tolerates"` row) — see [`Tolerance`].
     pub tolerates: Tolerance,
-    /// Multiplier of downward acceleration; zero supports driven airborne bodies.
     pub gravity_scale: f32,
-    /// Whether locomotion may steer without ground, fluid, or a rising jump.
     pub air_control: bool,
-    /// This species' body collision role (`"collision"` row, default `soft`) —
-    /// see [`MobCollision`].
     pub collision: MobCollision,
-    /// What shearing this species yields, or `None` for species that can't be shorn.
     pub shear: Option<ShearSpec>,
-    /// Damage feedback components resolved from this species' `damage_feedback` row.
     pub damage_feedback: MobDamageFeedback,
-    /// Presentation sound hooks keyed by semantic mob event. The actual clip
-    /// variants, gain, pitch jitter, and attenuation live in `sounds.json`.
     pub sounds: &'static [MobSoundSpec],
-    /// The species' AI as data: priority-ordered node rows resolved against the
-    /// engine AI-node registry at load (see `behavior` and [`build_brain`]).
     pub brain: &'static [BrainNode],
-    /// Rider seat offsets in mob-local blocks — `+z` toward the mob's facing,
-    /// `+x` to its right, `y` up from the feet. Empty = not rideable. The seat
-    /// INDEX is the stable seat identity (mount calls and the replicated rider
-    /// rows both speak it); the riding mechanism rotates the offset by the
-    /// mob's live yaw each tick. Mount/dismount POLICY (who may sit where)
-    /// stays with mods — the engine only owns the attachment.
     pub seats: &'static [[f32; 3]],
-    /// Carried item slots every individual owns (`"container_slots"` row,
-    /// default 0): ordinary container storage addressed by the stable mob id,
-    /// saved with the mob and scattered when it leaves the world any other
-    /// way — items a mob carries are never destroyed with it.
     pub container_slots: usize,
-    /// How far this species reaches from its eye to act on a block (the
-    /// closest point of the cell), the rule a player's reach uses.
     pub reach: f32,
-    /// Eye height above the feet: where reach and line of sight start.
     pub eye_height: f32,
-    /// The bones a held item is drawn at (`"hands"` row), or `None` for a
-    /// species that holds nothing.
     pub hands: Option<MobHands>,
 }
 
-/// A species' holding bones: each hand's bone name and the point in the
-/// model's rest pose where its fist closes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MobHands {
-    /// Radians a held sprite is rolled about its own length (handle to
-    /// head), so the rig's hand bone presents a tool's EDGE to its swing —
-    /// an axe blade down, not lying flat. Face-led items
-    /// (`ItemType::sprite_face_leads`) turn a quarter back.
     pub roll: f32,
     pub main: (&'static str, [f32; 3]),
     pub off: Option<(&'static str, [f32; 3])>,
@@ -891,9 +614,6 @@ impl MobDef {
         self.sounds.iter().find(|s| s.category == category)
     }
 
-    /// The species' spawn health — the row's `petramond:health` spawn tag,
-    /// which doubles as the species maximum. The loader validated presence
-    /// and type, so a miss here is a loader bug.
     #[inline]
     pub fn spawn_health(&self) -> f32 {
         match self.tags.get(tags::HEALTH) {
@@ -903,15 +623,6 @@ impl MobDef {
     }
 }
 
-/// A species' body collision role (`mobs.json` `"collision"`, default
-/// `soft`). SOFT bodies interact through the overlap push only (every
-/// creature — bodies jostle apart but never block). A SOLID body's AABB is
-/// ALSO a rigid obstacle in the shared swept resolver: players and mobs walk
-/// into it and stop, land on it and stand, and solid peers propose motion for
-/// one deterministic pairwise solve before committing together (a hull). A
-/// solid body never receives soft push and never soft-pushes a
-/// player, because that would fight rigid contact; it still pushes overlapping
-/// SOFT mobs through their own separation pass.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MobCollision {
@@ -920,12 +631,6 @@ pub enum MobCollision {
     Solid,
 }
 
-/// Emit the SOLID-collision boxes for one live body into `out`: the square
-/// `half_width` box, or — when the species declares `half_length` — a run of
-/// overlapping square boxes whose centres march along the FACING axis so the
-/// union covers the oriented hull rectangle (axis-aligned staircase under a
-/// diagonal yaw; exact on the axes). One shared emitter so the server's live
-/// instances and the client's interpolated rows produce identical geometry.
 pub fn solid_boxes(
     id: u64,
     pos: petramond_math::world_pos::WorldPos,
@@ -938,39 +643,20 @@ pub fn solid_boxes(
     }
 }
 
-/// Most particle-emitter bundles active on one mob at a time — bounds the
-/// per-mob replicated id list.
 pub const MAX_ACTIVE_MOB_EMITTERS: usize = 4;
 
-/// Most named animations active on one mob at a time — bounds the per-mob
-/// replicated name list exactly like [`MAX_ACTIVE_MOB_EMITTERS`] bounds
-/// emitters.
 pub const MAX_ACTIVE_MOB_ANIMS: usize = 4;
 
-/// Most tags on one mob at a time — bounds the per-mob tag map that rides the
-/// AI snapshot and the save record, exactly like [`MAX_ACTIVE_MOB_EMITTERS`]
-/// bounds the replicated id list. Refusing only NEW keys past the cap:
-/// replacing an existing key always succeeds, and the engine's own reserved
-/// (`petramond:`) writes bypass it, so a mod filling the map can't lock the
-/// engine out of its own tags.
 pub const MAX_MOB_TAGS: usize = 32;
 
-/// Most rider seats one species may declare — bounds the `seats` row list and
-/// keeps the wire-facing seat index an honest small integer.
 pub const MAX_MOB_SEATS: usize = 8;
 
-/// One content registry's mob catalog: the def table plus the
-/// brain-extension side table [`build_brain`] appends from, and the lookups
-/// derived from them.
 pub(crate) struct MobCatalog {
     loaded: load::LoadedMobs,
     all: Box<[Mob]>,
-    /// [`MobDef::key`] → species, so a key lookup never scans `defs()`.
     by_key: rustc_hash::FxHashMap<&'static str, Mob>,
 }
 
-/// The mob catalog as a content-registry stage (see [`crate::content::stages`]);
-/// a missing or inconsistent `mobs.json` fails the registry build.
 pub(crate) static CATALOG: petramond_world::content::Slot<MobCatalog> =
     petramond_world::content::Slot::new(
         "mobs.json",
@@ -1007,14 +693,11 @@ fn loaded() -> &'static load::LoadedMobs {
     &catalog().loaded
 }
 
-/// The loaded, id-ordered mob def table (engine rows first, then pack rows in load
-/// order).
 pub fn defs() -> &'static [MobDef] {
     loaded().defs
 }
 
 impl MobDef {
-    /// Navigation params for this species' real body and tolerances.
     pub fn path_params(&self) -> path::PathParams {
         path::PathParams::for_body(self.size.head_cells(), self.size.half_width)
             .tolerating(self.tolerates.blocks)
@@ -1026,19 +709,10 @@ pub fn def(mob: Mob) -> &'static MobDef {
     &defs()[mob.0 as usize]
 }
 
-/// The species registered under `key` ([`MobDef::key`] — the mod-facing
-/// species vocabulary), O(1) through the catalog's hash index. `None` =
-/// unregistered. Never scan `defs()` per call for a key lookup.
 pub fn by_key(key: &str) -> Option<Mob> {
     catalog().by_key.get(key).copied()
 }
 
-/// Every species' compiled [`Model`](petramond_world::bbmodel::Model), indexed by `Mob` id —
-/// the in-memory golden asset, precached once on first use (compiling each `.bbmodel` →
-/// `.llmob` on a cache miss, else fast-loading the `.llmob`) and shared by the renderer and
-/// the simulation. Sources are read through the pack overlay, so a pack can override a
-/// species' art by shipping the same relative path. After this builds, nothing in the
-/// running engine reads a `.bbmodel`. A derived view of the content registry.
 static MODELS: petramond_world::content::Slot<Vec<Model>> =
     petramond_world::content::Slot::new("mob models", &["mobs.json"], compile_models);
 
@@ -1061,16 +735,10 @@ fn compile_models(_: &petramond_world::content::ContentRegistry) -> Result<Vec<M
         .collect())
 }
 
-/// This species' precached [`Model`], borrowed from the current content registry: the
-/// renderer bakes geometry from it each frame and the simulation derives its skeleton +
-/// idle metadata from it (see `model_meta`).
 pub fn model(mob: Mob) -> &'static Model {
     &MODELS.current()[mob.0 as usize]
 }
 
-/// A deterministic per-mob RNG (a SplitMix64-style finalizer over a seed + counter).
-/// Reuses [`crate::entity::hash01`] so mobs need no `rand` crate and their wander is
-/// fully reproducible.
 pub struct MobRng {
     seed: u64,
     counter: u64,
@@ -1081,14 +749,11 @@ impl MobRng {
         MobRng { seed, counter: 0 }
     }
 
-    /// Next value in `[0, 1)`.
     pub fn next_f32(&mut self) -> f32 {
         self.counter = self.counter.wrapping_add(1);
         crate::entity::hash01(self.seed ^ self.counter.wrapping_mul(0x9E37_79B9_7F4A_7C15))
     }
 
-    /// Next full 64-bit value — a fresh seed for a sub-system (e.g. a death ragdoll's
-    /// per-bone fling). A SplitMix64 finalizer over the seed + advanced counter.
     pub fn next_u64(&mut self) -> u64 {
         self.counter = self.counter.wrapping_add(1);
         let mut z = (self.seed ^ self.counter.wrapping_mul(0x9E37_79B9_7F4A_7C15))
@@ -1098,7 +763,6 @@ impl MobRng {
         z ^ (z >> 31)
     }
 
-    /// Next integer in `[lo, hi]` (inclusive). Returns `lo` if the range is empty.
     pub fn next_range(&mut self, lo: i32, hi: i32) -> i32 {
         if hi <= lo {
             return lo;
@@ -1107,7 +771,6 @@ impl MobRng {
         lo + (self.next_f32() * span) as i32
     }
 
-    /// Next value in `[-1, 1)` — a symmetric glance/jitter amount.
     pub fn next_signed(&mut self) -> f32 {
         self.next_f32() * 2.0 - 1.0
     }

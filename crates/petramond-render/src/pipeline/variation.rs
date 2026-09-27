@@ -1,7 +1,3 @@
-//! Static tile variation on the GPU: the spatial hash shared with the
-//! mesher's per-face selection, and the per-cell family table, both emitted
-//! from the registry at pipeline construction.
-
 use petramond_world::tile::{
     self, VariationSelect, SPATIAL_HASH_AXIS_MULTIPLIERS, SPATIAL_HASH_MIX_MULTIPLIERS,
     SPATIAL_HASH_SALT_MULTIPLIER,
@@ -12,7 +8,6 @@ pub(super) fn declarations() -> String {
     hash_declaration() + &family_declaration()
 }
 
-/// `spatial_hash(cell, salt)`, the WGSL twin of `tile::spatial_hash`.
 pub(super) fn hash_declaration() -> String {
     let [mx, my, mz] = SPATIAL_HASH_AXIS_MULTIPLIERS;
     let [a, b] = SPATIAL_HASH_MIX_MULTIPLIERS;
@@ -29,8 +24,6 @@ pub(super) fn hash_declaration() -> String {
     )
 }
 
-/// `block_variation_count(tile)`: how many alternatives a CELL-selecting
-/// base tile heads; 1 for everything else (face selection happened on the CPU).
 fn family_declaration() -> String {
     let mut text =
         String::from("fn block_variation_count(tile: u32) -> u32 {\n    switch tile {\n");

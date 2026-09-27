@@ -1,7 +1,3 @@
-//! Face emission for one fluid cell: which faces survive the neighbourhood,
-//! the surface-shaped quad each one draws, the medium lane it carries and the
-//! stream it rides. Every per-fluid decision reads the fluid's own row.
-
 use std::cell::OnceCell;
 
 use glam::IVec3;
@@ -24,18 +20,12 @@ use super::lighting::{boundary_plane, face_lighting, self_lit_face};
 use super::mesher::Cell;
 use super::neighbourhood::Neighbourhood;
 
-/// The vertex streams a fluid face can land in.
 pub(super) struct FluidStreams<'m> {
     pub opaque: &'m mut Vec<Vertex>,
     pub transparent: &'m mut Vec<Vertex>,
     pub transparent_two_sided: &'m mut Vec<Vertex>,
 }
 
-/// Emit every visible face of the fluid `cell` (its block is the fluid). When
-/// the cell is `resident` the fluid owns the cell's meta; otherwise the fluid is
-/// contained in a host block and always renders a stationary surface. `cell_tint` is the
-/// cell's `petramond:tint` multiply. Face positions are emitted relative to the
-/// mesh-space origin `anchor`.
 pub(super) fn emit_fluid_cell(
     nb: &Neighbourhood<'_>,
     out: FluidStreams<'_>,
@@ -50,7 +40,6 @@ pub(super) fn emit_fluid_cell(
         .expect("a fluid-class block carries its fluid row");
     let medium = &def.medium;
     let lane_index = medium_index(fluid).expect("every fluid row has a medium index");
-    // A contained fluid has no meta: it fills its cell only under more of itself.
     let fills = |p: IVec3| {
         if resident {
             nb.fluid_fills(p, fluid)
@@ -59,15 +48,11 @@ pub(super) fn emit_fluid_cell(
         }
     };
     let full = fills(pos);
-    // A submerged cell draws nothing; ocean and lava-sea interiors are the
-    // bulk of every fluid cell, so one test beats six culled faces.
     if resident && full && FACES.iter().all(|f| nb.fluid_fills(pos + f.dir(), fluid)) {
         return;
     }
     let opaque = medium.is_opaque();
     let self_lit = self_lit(fluid, medium.self_lit);
-    // Sixteen corner-height samples plus a flow gradient: deferred to the
-    // first face that survives culling.
     let surface_cell = OnceCell::new();
     let surface = || {
         surface_cell.get_or_init(|| {
@@ -104,9 +89,6 @@ pub(super) fn emit_fluid_cell(
         let front = pos + face.dir();
         let is_top = matches!(face, Face::PosY);
         let is_side = matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ);
-        // A covered top still draws when it cannot meet the cover's underside:
-        // a see-through body writes no depth, and a recessed surface sits below
-        // the lid. An opaque full-height top would z-fight the lid instead.
         if nb.covers_face(front, face) && !(is_top && (!opaque || !full)) {
             continue;
         }
@@ -130,8 +112,6 @@ pub(super) fn emit_fluid_cell(
             let (tile, flow_strip) = match face {
                 Face::PosY => (surface().top_tile(), surface().flows()),
                 Face::NegY => (still, false),
-                // A still source's sides are calm fluid: the step walls of the
-                // recessed pocket under a block sitting in the sea must not stream.
                 _ if nb.fluid_still(pos, fluid) => (still, false),
                 _ => (fluid.fluid_flow_tile(), true),
             };
@@ -187,14 +167,12 @@ pub(super) fn emit_fluid_cell(
             );
             v.packed2 |= lane;
         }
-        // The opaque stream culls back faces; the surface must read from inside.
         if opaque && is_top {
             push_back_face(stream, start);
         }
     }
 }
 
-/// The emission a fluid's faces light themselves with, and the fraction.
 fn self_lit(fluid: Block, fraction: f32) -> Option<(BlockLight6, f32)> {
     let [r, g, b] = fluid.light_emission_rgb();
     (fraction > 0.0 && r | g | b != 0)

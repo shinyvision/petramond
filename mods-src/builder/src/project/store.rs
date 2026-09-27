@@ -1,8 +1,3 @@
-//! The session's view of the project records: read once, written only when
-//! an edit changed them, and the index of the live ones. Each record's
-//! scaffold list is joined to it on load and stored beside it (see
-//! [`super::scaffolds`]).
-
 use std::collections::BTreeSet;
 
 use crate::host::prelude::*;
@@ -14,8 +9,6 @@ use crate::project::{scaffolds, Project, ProjectId, RECORD_PREFIX};
 const NONCE_KEY: &str = "builder:nonce";
 const NEXT_KEY: &str = "builder:next_project";
 const INDEX_PREFIX: &str = "builder:live";
-/// Per table, the newest project that finished there: the table's report,
-/// found again after the record has left memory.
 const REPORT_PREFIX: &str = "builder:report";
 const TABLE_CHECK_TICKS: usize = 40;
 
@@ -31,8 +24,6 @@ pub struct Projects {
     nonce: u64,
     records: RecordStore<Project>,
     live: IdShards,
-    /// Per loaded project, its scaffold list as last stored: what an edit is
-    /// compared against, and the mark that the list was joined to the record.
     stored_scaffolds: HashMap<ProjectId, Vec<[i32; 3]>>,
     active: BTreeSet<ProjectId>,
     table_check: Vec<Vec<ProjectId>>,
@@ -55,8 +46,6 @@ impl Projects {
             active: BTreeSet::new(),
             table_check: vec![Vec::new(); TABLE_CHECK_TICKS],
         };
-        // Rebuild the in-memory work index once per session. The persisted
-        // live shards remain authoritative, without a per-tick scan.
         for id in projects.live.iter() {
             projects.table_check[(id % TABLE_CHECK_TICKS as u64) as usize].push(id);
             if projects
@@ -72,17 +61,14 @@ impl Projects {
         projects
     }
 
-    /// Every project before Complete/Cancelled, oldest first.
     pub fn live(&self) -> impl Iterator<Item = ProjectId> + '_ {
         self.live.iter()
     }
 
-    /// Working projects in stable id order.
     pub fn active(&self) -> impl Iterator<Item = ProjectId> + '_ {
         self.active.iter().copied()
     }
 
-    /// Only live projects whose table check is due this tick.
     pub fn table_check_due(&self, now: u64) -> &[ProjectId] {
         &self.table_check[(now % TABLE_CHECK_TICKS as u64) as usize]
     }
@@ -104,23 +90,17 @@ impl Projects {
     pub fn get(&mut self, id: ProjectId) -> Option<&Project> {
         match self.records.get(id) {
             Ok(Some(_)) => {}
-            // A listed project with no record is no project.
             Ok(None) => {
                 self.live.set(id, false);
                 self.index_live(id, false);
                 return None;
             }
-            // An unreadable record (say, from a newer build) stays listed:
-            // the world keeps it for a build that can read it.
             Err(_) => return None,
         }
         self.join_scaffolds(id);
         self.records.peek(id)
     }
 
-    /// Give a record this session just read its scaffold list, once. A
-    /// project whose scaffolds were never stored beside it adopts the list
-    /// its (version 3) record carried inline, and stores it.
     fn join_scaffolds(&mut self, id: ProjectId) {
         if self.stored_scaffolds.contains_key(&id) {
             return;
@@ -136,7 +116,6 @@ impl Projects {
         self.stored_scaffolds.insert(id, cells);
     }
 
-    /// Store project `id`'s scaffold list if an edit changed it.
     fn store_scaffolds(&mut self, id: ProjectId) {
         let (Some(project), Some(stored)) =
             (self.records.peek(id), self.stored_scaffolds.get_mut(&id))
@@ -149,7 +128,6 @@ impl Projects {
         }
     }
 
-    /// A project this session already holds, without reading the world.
     pub fn peek(&self, id: ProjectId) -> Option<&Project> {
         self.records.peek(id)
     }
@@ -191,9 +169,6 @@ impl Projects {
         id
     }
 
-    /// The newest project at `table` with a golem out. Found by position,
-    /// not slot: a golem carries its blueprint away. The active index is
-    /// rebuilt on load and updated with every project transition.
     pub fn active_at(&self, table: [i32; 3]) -> Option<ProjectId> {
         self.active
             .iter()
@@ -206,9 +181,6 @@ impl Projects {
             .max()
     }
 
-    /// The newest finished project at `table` — its report. The filed
-    /// pointer finds it after a sweep or a reload; a loaded record finished
-    /// before reports were filed still counts.
     pub fn report_at(&self, table: [i32; 3]) -> Option<ProjectId> {
         let filed = world_kv_get(&report_key(table)).and_then(read_id);
         let loaded = self
@@ -220,8 +192,6 @@ impl Projects {
         filed.max(loaded)
     }
 
-    /// Let go of finished projects nobody has asked about since the last
-    /// sweep. The newest at each table stays: it is that table's report.
     pub fn sweep(&mut self) {
         let mut reports: HashMap<[i32; 3], ProjectId> = HashMap::default();
         for (id, project) in self.records.loaded() {
@@ -237,7 +207,6 @@ impl Projects {
             .retain(|id, _| records.peek(*id).is_some());
     }
 
-    /// The project a blueprint stack is bound to in this world.
     pub fn bound(&self, stack: &ItemStackData) -> Option<ProjectId> {
         let (_, bytes) = stack.data.iter().find(|(k, _)| k == PROJECT_DATA)?;
         let bytes: &[u8; 16] = bytes.as_slice().try_into().ok()?;
@@ -252,7 +221,6 @@ impl Projects {
     }
 }
 
-/// File `id` as `table`'s report unless a newer project already is.
 fn file_report(table: [i32; 3], id: ProjectId) {
     let key = report_key(table);
     if world_kv_get(&key)

@@ -1,23 +1,3 @@
-//! `.llgui` v2 project format: the petramond-ui [`Document`] verbatim plus
-//! editor-only settings that never ship to the game.
-//!
-//! ```json
-//! { "version": 2,
-//!   "document": { ...petramond_ui::Document JSON... },
-//!   "editor": { "sample_state": {...}, "zoom": 2.0, "preview_scale": 2,
-//!               "screen": [1280, 720] } }
-//! ```
-//!
-//! `sample_state` seeds the preview's `UiState` so bound content shows while
-//! authoring. Each entry is a tagged JSON value (the codec this module owns):
-//!
-//! ```json
-//! { "f32": 1.5 } | { "i32": 3 } | { "bool": true } | { "str": "hello" }
-//! | { "list": [ { "<key>": <tagged value>, ... }, ... ] }
-//! ```
-//!
-//! (list items are string-keyed maps of tagged values, mirroring `UiMap`).
-
 use petramond_ui::contract;
 use petramond_ui::{
     Anchor, AnchorEdge, DocClass, Document, LayoutProps, Node, NodeKind, UiMap, UiState, UiValue,
@@ -40,19 +20,11 @@ pub struct Project {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EditorSettings {
-    /// Tagged-JSON `UiState` seed for the preview (see module docs).
     pub sample_state: Map<String, Value>,
-    /// Canvas zoom (screen px per physical preview px).
     pub zoom: f32,
-    /// Integer gui scale the preview renders at (1-4).
     pub preview_scale: u32,
-    /// Physical preview screen size.
     pub screen: (u32, u32),
-    /// Draw the logical-pixel grid at high zoom.
     pub pixel_grid: bool,
-    /// Extra asset layers (pack roots, relative to the project file) the
-    /// preview and validation read through, above the base game and below
-    /// the pack the project is saved in.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub asset_roots: Vec<String>,
 }
@@ -71,10 +43,6 @@ impl Default for EditorSettings {
 }
 
 impl Project {
-    /// A fresh project for `kind`: a centered panel scaffolded with every
-    /// slot grid its engine contract requires (so it validates immediately),
-    /// authored as the class the engine table gives the kind. Mod kinds
-    /// start as a slotless screen.
     pub fn new(kind: &str) -> Project {
         let engine = contract::engine_kind(kind);
         let contract = engine.map(|k| k.contract()).unwrap_or_default();
@@ -164,7 +132,6 @@ impl Project {
         serde_json::to_string_pretty(self).expect("projects always serialize")
     }
 
-    /// The preview `UiState` decoded from `sample_state` (+ decode errors).
     pub fn sample_ui_state(&self) -> (UiState, Vec<String>) {
         let mut state = UiState::new();
         let mut errors = Vec::new();
@@ -177,9 +144,6 @@ impl Project {
         (state, errors)
     }
 
-    /// The preview `UiState`: the sample state plus non-destructive `catalog`
-    /// seeds for every key the author hasn't set — binding a list to
-    /// `worlds` shows rows immediately, without dirtying the file.
     pub fn preview_state(&self, catalog: Option<&crate::bindings::Catalog>) -> UiState {
         let (mut state, _) = self.sample_ui_state();
         if let Some(info) = catalog.and_then(|c| c.kind(&self.document.kind)) {
@@ -189,8 +153,6 @@ impl Project {
     }
 }
 
-/// A sensible grid shape for `count` slots (used when scaffolding a new
-/// document that must satisfy its contract).
 fn default_grid(count: usize) -> (u32, u32) {
     match count {
         27 => (9, 3),
@@ -201,8 +163,6 @@ fn default_grid(count: usize) -> (u32, u32) {
         n => (n as u32, 1),
     }
 }
-
-// ---- tagged UiValue codec -------------------------------------------------------
 
 pub fn value_to_json(v: &UiValue) -> Value {
     match v {
@@ -351,7 +311,6 @@ mod tests {
         let saved = p.to_json_pretty();
         let loaded = Project::from_json(&saved).unwrap();
         assert_eq!(p, loaded, "project save/load keeps fit + bind.image");
-        // …and survives export to the runtime format too.
         let doc = Document::from_json(&loaded.document.to_json_pretty()).unwrap();
         assert_eq!(doc, loaded.document);
         match &doc.root.children.last().unwrap().kind {

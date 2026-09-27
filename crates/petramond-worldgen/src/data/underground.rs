@@ -1,11 +1,3 @@
-//! Underground habitat identity, lining and local water configuration.
-//!
-//! Spatial regions gate habitat ranges before nearest-climate fallback.
-//! Equal-fitness rows resolve by name, independently of registry order.
-//! Excavation requests live in their own catalog and do not follow from biome identity.
-//!
-//! This table resolves blocks, so do not initialize it from a block registry loader.
-
 use serde::Deserialize;
 
 use crate::noise::settings::CAVE_MIN_Y;
@@ -13,50 +5,29 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::registry::Catalog;
 
-/// Engine underground-biome names in frozen id order. Id 0 is the structural
-/// fallback, competing with custom climate ranges at surface and deep levels.
 const ENGINE_UNDERGROUND_BIOME_NAMES: &[&str] = &["petramond:stone"];
 
 #[derive(Copy, Clone, Debug)]
 pub struct FaceLining {
-    /// Block written here; `0` (air) leaves the rock bare.
     pub block: u16,
-    /// Share of eligible cells painted. `1.0` takes NO roll at all, which is
-    /// what makes a floor rule a guarantee rather than a high probability.
     pub weight: f32,
     pub(crate) pattern: Option<&'static pattern::MaterialPattern>,
 }
 
-/// Per-orientation lining for one row. Absent (`UndergroundBiomes::faces`
-/// answers `None`) means the row lines its walls the one way it always did, so
-/// a table with no `faces` anywhere compiles to exactly the old code path.
 #[derive(Copy, Clone, Debug)]
 pub struct LiningFaces {
     pub biome: u8,
-    /// A cell directly under carved air. Painted whether or not it falls in the
-    /// carve's lining SHELL — that is the whole point of the clause, since the
-    /// shell is a level set in noise units and comes out thinnest exactly where
-    /// the field's Y gradient is steepest, i.e. on horizontal surfaces.
     pub floor: FaceLining,
-    /// A cell that hugs a wall (the shell band) and is neither floor nor
-    /// ceiling.
     pub wall: FaceLining,
-    /// A cell in the shell band directly above carved air.
     pub ceiling: FaceLining,
-    /// Bounded thickness sampled at the exposed floor.
     pub floor_depth: FloorDepth,
-    /// Subsurface material. Omit to use the top material throughout the course.
     pub floor_under: Option<FaceLining>,
     pub floor_submerged: Option<FaceLining>,
-    /// The fluids a floor counts as submerged under.
     pub submerged_in: &'static [u16],
-    /// Dither stream salt, from the row's namespaced NAME with its own prefix
-    /// so independent surface-treatment consumers do not share a random stream.
     pub salt: u64,
 }
 
 impl LiningFaces {
-    /// The surface lining of a floor course whose open cell holds `over`.
     #[inline]
     pub fn floor_surface(&self, over: u16) -> FaceLining {
         match self.floor_submerged {
@@ -79,28 +50,22 @@ pub(crate) use depth::MAX_FLOOR_DEPTH;
 
 #[derive(Copy, Clone, Debug)]
 pub struct Aquifer {
-    /// Highest filled voxel in the territory.
     pub level: i32,
     pub barrier: u16,
     pub fluid: u16,
 }
 
-/// One row of the loaded underground-biome table.
 pub struct UndergroundBiomeDef {
-    /// The row's registry name (`"petramond:marble"`, `"mymod:mushroom_cavern"`).
     pub name: &'static str,
     climate: Option<ClimateRange>,
     region: Option<regions::RawRegion>,
     y: (i32, i32),
     whole_column: bool,
-    /// Block id this biome lines cave walls with; `0` (air) = bare stone.
     lining: u16,
     lining_name: &'static str,
     aquifer: Option<Aquifer>,
     barrier_name: &'static str,
     aquifer_fluid_name: &'static str,
-    /// Per-orientation override of `lining`; `None` = the one-block-everywhere
-    /// shell every row had before.
     faces: Option<LiningFaces>,
     face_names: [&'static str; 3],
     shell: f64,
@@ -109,8 +74,6 @@ pub struct UndergroundBiomeDef {
     geology: Option<&'static pattern::MaterialPattern>,
 }
 
-/// A set over the closed row-id space (ids are `u8`), for the box queries that
-/// answer "which biomes CAN be here" without visiting a cell.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct IdSet([u64; 4]);
 
@@ -151,52 +114,27 @@ impl IdSet {
     }
 }
 
-/// The compiled underground-biome partition: everything the carver and the mod
-/// ABI read, in the shapes their hot paths need.
 pub struct UndergroundBiomes {
     catalog: Catalog<UndergroundBiomeDef>,
-    /// Name-sorted row ids make equal-fitness selection independent of load order.
     selectors: Box<[u8]>,
     pub(crate) regions: Box<[regions::RegionGroup]>,
     pub base: f64,
-    /// Dense lining block id per biome id (`0` = none): the carve inner loop's
-    /// only lining lookup.
     lining: [u16; 256],
     patterns: Box<[Option<&'static pattern::MaterialPattern>; 256]>,
     geology: Box<[Option<&'static pattern::MaterialPattern>; 256]>,
     pub(crate) geology_ids: IdSet,
-    /// Hoisted: some row the nearest-climate fallback can answer with has a
-    /// geology pattern, so a column with no regional candidate still needs
-    /// the per-cell pass.
     pub(crate) geology_via_climate: bool,
     aquifers: [Option<Aquifer>; 256],
     pub aquifer_y_span: Option<(i32, i32)>,
-    /// Dense per-orientation lining, parallel to [`Self::lining`].
     faces: Box<[Option<LiningFaces>; 256]>,
-    /// Hoisted from `faces`: whether ANY row declares one. The single gate on
-    /// the orientation machinery — the extra lattice row it needs in Y, the
-    /// skip mask's dilation, and the column bookkeeping all hang off it, so a
-    /// table with no `faces` (every shipped one) carves exactly as before.
     pub lining_faces_vary: bool,
-    /// Hoisted: some row paints FLOORS and claims depth `CAVE_MIN_Y - 1`. The
-    /// deepest cave floor in the world rests on the plane the carvers refuse to
-    /// cut, and that plane lives in a section the carve otherwise skips
-    /// entirely — so a floor guarantee has to reach one block below the carve.
+    /// Some row paints floors at `CAVE_MIN_Y - 1`. Cave floors at the very bottom rest on a plane
+    /// the carve never cuts or even visits, so floor painting has to go one block lower.
     pub lining_floor_under_world_floor: bool,
-    /// Hoisted: the deepest floor course any row paints (`0` when none does).
-    /// A course can start above a batch's top voxel and reach down into it, so
-    /// the carve lattice pads Y by this much — the batch has to be able to ASK
-    /// how far the cave floor above it is, and a remembered answer would make
-    /// the course depend on which batch generated the cell.
     pub lining_floor_depth_max: i32,
-    /// Maximum lining-shell multiplier over every loaded habitat.
     pub bounds: f64,
-    /// Generated pools, in priority order.
     pub pools: Box<[FluidPool]>,
-    /// Generated falls, in priority order.
     pub falls: Box<[FluidFall]>,
-    /// Hash of the compiled table — stamped into the column-gen cache so a
-    /// pack that changes cave shape cannot be served stale cached columns.
     pub fingerprint: u64,
 }
 
@@ -228,7 +166,6 @@ impl UndergroundBiomes {
         self.winner(climate, y).map_or(0, |(id, _, _)| id)
     }
 
-    /// The lining block id for a biome id (`0` = bare stone).
     #[inline]
     pub fn lining(&self, id: u8) -> u16 {
         self.lining[id as usize]
@@ -244,7 +181,6 @@ impl UndergroundBiomes {
         block
     }
 
-    /// [`Self::surface_material`] through a column's pattern cache.
     #[inline]
     pub(crate) fn surface_material_cached(
         &self,
@@ -262,7 +198,6 @@ impl UndergroundBiomes {
         block
     }
 
-    /// [`Self::face_material`] through a column's pattern cache.
     pub(crate) fn face_material_cached(
         &self,
         seed: u32,
@@ -281,14 +216,11 @@ impl UndergroundBiomes {
         self.geology[biome as usize]
     }
 
-    /// The per-orientation lining for a biome id, or `None` when the row lines
-    /// every cave surface with the same block.
     #[inline]
     pub fn faces(&self, id: u8) -> Option<&LiningFaces> {
         self.faces[id as usize].as_ref()
     }
 
-    /// Habitat treatment does not contribute to the density decision.
     pub fn shell_at(&self, climate: ClimatePoint, y: i32) -> f64 {
         match self.winner(climate, y) {
             Some((_, row, distance)) => {
@@ -311,7 +243,6 @@ impl UndergroundBiomes {
         }
     }
 
-    /// Conservative nearest-climate candidates throughout a spatial query.
     pub fn ids_in(&self, y: (i32, i32), climate: ClimateBox, out: &mut IdSet) {
         out.insert(0);
         let mut upper = ordinary_upper(climate[5]);
@@ -343,24 +274,20 @@ impl UndergroundBiomes {
         self.aquifers[id as usize]
     }
 
-    /// A row's inclusive world-height band.
     #[inline]
     pub fn row_y(&self, id: u8) -> (i32, i32) {
         self.catalog.rows()[id as usize].y
     }
 
-    /// The id registered under `name`, or `None` when no such row is loaded.
     pub fn id(&self, name: &str) -> Option<u8> {
         self.catalog.id(name).map(|id| id as u8)
     }
 
-    /// The registry name of `id`, or `None` when out of range.
     pub fn name(&self, id: u8) -> Option<&'static str> {
         self.catalog.rows().get(id as usize).map(|r| r.name)
     }
 }
 
-/// One underground-biome row as written in `underground_biomes.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawUndergroundBiome {
@@ -369,7 +296,6 @@ struct RawUndergroundBiome {
     climate: Option<ClimateRange>,
     #[serde(default)]
     region: Option<regions::RawRegion>,
-    /// Inclusive `[min, max]` world-height band; absent = the whole column.
     #[serde(default)]
     y: Option<[i32; 2]>,
     #[serde(default)]
@@ -416,16 +342,12 @@ struct RawFaces {
     wall: Option<RawFace>,
     #[serde(default)]
     ceiling: Option<RawFace>,
-    /// Blocks of rock below a cave floor the floor rule paints.
     #[serde(default)]
     floor_depth: depth::RawDepth,
-    /// The course BELOW its top cell — surface over subsurface, as grass sits
-    /// over dirt. Omit to paint the whole course with the floor block.
     #[serde(default)]
     floor_under: Option<RawFace>,
     #[serde(default)]
     floor_submerged: Option<RawFace>,
-    /// The fluids `floor_submerged` applies under; omit for the row's aquifer fluid.
     #[serde(default)]
     submerged_in: Option<Vec<Block>>,
 }
@@ -433,10 +355,8 @@ struct RawFaces {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFace {
-    /// Overrides `lining.block` for this orientation; omit to use it.
     #[serde(default)]
     block: Option<Block>,
-    /// Share of eligible cells painted; `1` (the default) is every one of them.
     #[serde(default = "one_f32")]
     weight: f32,
     #[serde(default)]
@@ -451,20 +371,14 @@ fn one_f32() -> f32 {
     1.0
 }
 
-/// Lining feather widths: climate fitness distance, then blocks.
 fn default_blend() -> [f64; 2] {
     [0.05, 8.0]
 }
-
-// Load bounds. Generous by design — they bound how far the carver's skip mask
-// has to widen (and hence generation cost), not the author's taste. Violations
-// are load errors: loud beats plausible.
 
 mod load;
 
 use load::parse_layers;
 
-/// The underground-biome catalog stage (see [`super::content_stages`]).
 pub(crate) static TABLE: petramond_world::content::Slot<UndergroundBiomes> =
     petramond_world::content::Slot::new(
         "underground_biomes.json",
@@ -486,15 +400,10 @@ fn load_table(
     )
 }
 
-/// The current registry's underground-biome table.
-///
-/// See the module docs: safe from worldgen and the host-call handlers, never
-/// from a block/item/shape loader.
 pub fn table() -> &'static UndergroundBiomes {
     TABLE.current()
 }
 
-/// The underground-biome id registered under `name` — the mod ABI's resolver.
 pub fn id_by_name(name: &str) -> Option<u8> {
     table().id(name)
 }
@@ -512,9 +421,6 @@ fn smoothstep(t: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Test seam: compile a table from the shipped engine layer plus synthetic pack
-/// layers, leaked so it can drive a [`CaveField`](crate::noise::cave_field::CaveField)
-/// without touching the process-wide catalog.
 #[cfg(test)]
 pub fn test_table(pack_layers: &[&str]) -> &'static UndergroundBiomes {
     let base = shipped_layer();
@@ -526,8 +432,6 @@ pub fn test_table(pack_layers: &[&str]) -> &'static UndergroundBiomes {
     ))
 }
 
-/// A table from synthetic layers over a bare ordinary-stone base: no shipped
-/// habitat, pool or fall row takes part.
 #[cfg(test)]
 pub fn synthetic_table(layers: &[&str]) -> &'static UndergroundBiomes {
     const BARE: &str = r#"{"underground_biomes":[{"underground_biome":"petramond:stone"}]}"#;
@@ -539,8 +443,6 @@ pub fn synthetic_table(layers: &[&str]) -> &'static UndergroundBiomes {
     ))
 }
 
-/// A test fixture is a whole PACK — habitats beside excavations in one text —
-/// while the loader reads only its own file, which rejects foreign keys.
 #[cfg(test)]
 fn own_keys(pack: &str) -> String {
     let mut value: serde_json::Value = serde_json::from_str(pack).expect("fixture JSON");
@@ -555,8 +457,6 @@ fn own_keys(pack: &str) -> String {
     value.to_string()
 }
 
-/// The BASE layer only — a synthetic table must mean the same thing whether or
-/// not a pack shipping its own cave biomes happens to be installed.
 #[cfg(test)]
 pub fn shipped_layer() -> String {
     petramond_world::assets::read_base_text("underground_biomes.json")

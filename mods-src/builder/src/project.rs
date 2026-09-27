@@ -1,15 +1,3 @@
-//! Projects: one anchored design and the job building it, kept in world KV.
-//!
-//! A blueprint names its project by the world's nonce and the project id, so
-//! a blueprint carried into another world reads as blank there. Live projects
-//! (every phase before Complete/Cancelled) are listed in a sharded index the
-//! tick walks; finished ones keep their record so their blueprint still says
-//! what it built.
-//!
-//! - [`store`] — the session's view of the records and the live index.
-//! - [`note`] — what a project's note says, as data.
-//! - [`scaffolds`] — each project's standing scaffolds, beside its record.
-
 pub mod note;
 mod scaffolds;
 mod store;
@@ -42,7 +30,6 @@ impl Phase {
         matches!(self, Phase::Complete | Phase::Cancelled)
     }
 
-    /// A golem is out in the world for this phase.
     pub fn active(self) -> bool {
         matches!(
             self,
@@ -51,21 +38,13 @@ impl Phase {
     }
 }
 
-/// Why an active job stopped taking new work.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Hold {
-    /// Someone pressed Pause.
     Player,
-    /// Supplies no longer cover the remaining work.
     Supplies,
-    /// The table or its blueprint is gone.
     Table,
-    /// The golem died.
     Worker,
-    /// Nowhere to put what the golem carries back.
     Storage,
-    /// The golem does not carry the blueprint bound to this job: without its
-    /// plans it does not know what to build.
     Blueprint,
 }
 
@@ -73,49 +52,30 @@ pub enum Hold {
 #[serde(from = "Record", into = "Record")]
 pub struct Project {
     pub id: ProjectId,
-    /// The player name allowed to change it (operators always may).
     pub owner: String,
     pub table: [i32; 3],
     pub asset: Option<SchematicId>,
     pub title: String,
-    /// The turned design's minimum corner, once anchored.
     pub origin: Option<[i32; 3]>,
     pub turns: u8,
-    /// Where the job stands. Changed only by the transitions below.
     state: State,
-    /// Where the golem emerged, and where it burrows back down.
     pub home: [i32; 3],
-    /// Scaffold cells the golem placed and has not taken down yet. Stored
-    /// beside the record, never in it (see [`scaffolds`]): the list grows
-    /// with the build, and the record must stay one world-KV value.
     pub scaffolds: Vec<[i32; 3]>,
-    /// The most recent specific reason work is waiting, as data; words only
-    /// when shown.
     pub note: Note,
-    /// The ghost stays up through repositioning and the build. Off, it shows
-    /// only a settled draft: it steps aside while being repositioned and
-    /// goes once the golem starts.
     pub show_ghost: bool,
 }
 
-/// Where a job stands. Only a job with a golem summoned for it can be held,
-/// be called off mid-way or lose its golem; a draft and an ended job carry
-/// none of that.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Draft,
     Active {
         stage: Stage,
-        /// A golem tagged with this project exists (loaded or not).
         golem: bool,
         hold: Option<Hold>,
-        /// Winding down to Cancelled rather than Complete.
         cancelling: bool,
     },
     Ended {
         cancelled: bool,
-        /// Start was pressed once: the blueprint bound to this project builds
-        /// this schematic here and nothing else, however the job ended.
         started: bool,
     },
 }
@@ -128,7 +88,6 @@ enum Stage {
     Burrowing,
 }
 
-/// The stored shape of a project (version 4).
 #[derive(Serialize, Deserialize)]
 struct Record {
     id: ProjectId,
@@ -143,17 +102,12 @@ struct Record {
     cancelling: bool,
     home: [i32; 3],
     worker: bool,
-    /// Scaffolds a version 3 record carried inline. Adopted into the
-    /// scaffold shards the first time the project is loaded, and always
-    /// written empty.
     legacy_scaffolds: Vec<[i32; 3]>,
     note: Note,
     started: bool,
     show_ghost: bool,
 }
 
-/// The stored shape of a version 3 project: the note in words, the
-/// scaffolds inline.
 #[derive(Serialize, Deserialize)]
 struct RecordV3 {
     id: ProjectId,
@@ -259,8 +213,6 @@ impl From<RecordV3> for Record {
     }
 }
 
-/// What a tick reads of a project, by value: the record stays in its store
-/// while the tick edits it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Brief {
     pub id: ProjectId,
@@ -277,23 +229,18 @@ pub struct Brief {
 }
 
 impl Brief {
-    /// A started job that has ended can be taken up again from a table
-    /// holding its blueprint: the one thing a used blueprint is still for.
     pub fn resumable(&self) -> bool {
         self.started && self.phase.finished()
     }
 
-    /// Its schematic and position can still be chosen.
     pub fn open_to_change(&self) -> bool {
         !self.started && self.phase == Phase::Draft
     }
 
-    /// Its golem died and no new one has been started.
     pub fn lost_worker(&self) -> bool {
         self.phase.active() && self.hold == Some(Hold::Worker) && !self.worker
     }
 
-    /// The same project as the table at `table` would run it.
     pub fn at(mut self, table: [i32; 3]) -> Self {
         self.table = table;
         self
@@ -346,7 +293,6 @@ impl Project {
         Some((self.asset?, self.origin?, self.turns))
     }
 }
-/// What the state says, in the words the rest of the mod reads.
 impl Project {
     pub fn phase(&self) -> Phase {
         match self.state {
@@ -371,7 +317,6 @@ impl Project {
         }
     }
 
-    /// Returning or burrowing ends as Cancelled rather than Complete.
     pub fn cancelling(&self) -> bool {
         matches!(
             self.state,
@@ -382,14 +327,10 @@ impl Project {
         )
     }
 
-    /// A golem tagged with this project exists (loaded or not).
     pub fn worker(&self) -> bool {
         matches!(self.state, State::Active { golem: true, .. })
     }
 
-    /// Start has been pressed once: from then on the blueprint bound to this
-    /// project builds this schematic here and nothing else, whether the job
-    /// was cancelled, finished or never got far.
     pub fn started(&self) -> bool {
         match self.state {
             State::Draft => false,
@@ -399,10 +340,7 @@ impl Project {
     }
 }
 
-/// Every change of a project's state, named.
 impl Project {
-    /// Start pressed and a golem set down at `home`: the job is on, and from
-    /// now on its blueprint is this build's for good.
     pub fn summon(&mut self, home: [i32; 3]) {
         self.state = State::Active {
             stage: Stage::Emerging,
@@ -414,7 +352,6 @@ impl Project {
         self.note = Note::None;
     }
 
-    /// The golem is up. A job called off while it rose goes straight home.
     pub fn emerged(&mut self) {
         if let State::Active {
             stage, cancelling, ..
@@ -428,7 +365,6 @@ impl Project {
         }
     }
 
-    /// Nothing is left to build: home, with `report` for the owner.
     pub fn wind_down(&mut self, report: Note) {
         if let State::Active { stage, .. } = &mut self.state {
             *stage = Stage::Returning;
@@ -436,14 +372,12 @@ impl Project {
         self.note = report;
     }
 
-    /// At home with nothing left to hand in: down it goes.
     pub fn burrow(&mut self) {
         if let State::Active { stage, .. } = &mut self.state {
             *stage = Stage::Burrowing;
         }
     }
 
-    /// The golem is gone into the ground: the job ends as it was heading.
     pub fn gone_home(&mut self) {
         self.state = State::Ended {
             cancelled: self.cancelling(),
@@ -451,8 +385,6 @@ impl Project {
         };
     }
 
-    /// The golem died. A job under way waits for its owner to start another;
-    /// one caught rising or sinking is work again for whoever comes next.
     pub fn golem_died(&mut self) {
         if let State::Active {
             stage, golem, hold, ..
@@ -467,8 +399,6 @@ impl Project {
         }
     }
 
-    /// Called off: a golem out winds the job down (its scaffolding first,
-    /// then home); with none out the project simply ends.
     pub fn cancel(&mut self) {
         match &mut self.state {
             State::Active {
@@ -492,8 +422,6 @@ impl Project {
         }
     }
 
-    /// Work stops for `hold`, with what to tell the owner. Only a job under
-    /// way can be held.
     pub fn hold_for(&mut self, hold: Hold, note: Note) {
         if let State::Active { hold: held, .. } = &mut self.state {
             *held = Some(hold);
@@ -501,7 +429,6 @@ impl Project {
         }
     }
 
-    /// Whatever held the work is over.
     pub fn release(&mut self) {
         if let State::Active { hold, .. } = &mut self.state {
             *hold = None;
@@ -521,7 +448,6 @@ impl KvRecord for Project {
         mod_sdk::decode(bytes).ok()
     }
 
-    /// Version 4 keeps the note as data and the scaffolds outside the record.
     fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
         match from {
             3 => {
@@ -537,7 +463,6 @@ pub fn tag_of(id: ProjectId) -> String {
     format!("{RECORD_PREFIX}{id}")
 }
 
-/// The project a schematic choice or positioning tag names.
 pub fn id_of_tag(tag: &str) -> Option<ProjectId> {
     tag.strip_prefix(RECORD_PREFIX)?.parse().ok()
 }

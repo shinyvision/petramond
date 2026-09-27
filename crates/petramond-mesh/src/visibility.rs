@@ -1,13 +1,3 @@
-//! Section face-to-face connectivity, the input of the renderer's occlusion
-//! culling (a visibility graph over sections, flooded from the camera).
-//!
-//! Two faces of a section CONNECT when a path of non-occluding cells joins a
-//! cell on one to a cell on the other. A straight sight line crossing the
-//! section in through one face and out through another passes only
-//! non-occluding cells, so it can only cross between connected faces — which
-//! is what lets the renderer skip sections no sight line from the camera can
-//! reach. The graph is computed on the mesh worker with the rest of the mesh.
-
 use std::sync::LazyLock;
 
 use petramond_world::block::{Block, MeshEmitter};
@@ -16,20 +6,13 @@ use petramond_world::section::Section;
 
 use crate::face::Face;
 
-/// Which pairs of a section's six faces see each other through it: a
-/// symmetric 6×6 bit matrix, bit `a * 6 + b` for faces `a` and `b` in
-/// [`Face::ALL`] order.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SectionVisibility(u64);
 
-/// Bits of the full 6×6 matrix.
 const ALL_BITS: u64 = (1 << 36) - 1;
 
 impl SectionVisibility {
-    /// Every face sees every other: air, and the conservative answer for a
-    /// section nothing is known about.
     pub const ALL: Self = Self(ALL_BITS);
-    /// No face sees any other: solid rock.
     pub const NONE: Self = Self(0);
 
     #[inline]
@@ -37,7 +20,6 @@ impl SectionVisibility {
         1 << (a as u32 * 6 + b as u32)
     }
 
-    /// Whether a sight line entering through `a` can leave through `b`.
     #[inline]
     pub fn connects(self, a: Face, b: Face) -> bool {
         self.0 & Self::bit(a, b) != 0
@@ -47,7 +29,6 @@ impl SectionVisibility {
         self.0 |= Self::bit(a, b) | Self::bit(b, a);
     }
 
-    /// Connectivity joining exactly the listed face pairs (both ways).
     pub fn from_pairs(pairs: &[(Face, Face)]) -> Self {
         let mut visibility = Self::NONE;
         for &(a, b) in pairs {
@@ -56,7 +37,6 @@ impl SectionVisibility {
         visibility
     }
 
-    /// The connectivity of `section`'s cells.
     pub fn of_section(section: &Section) -> Self {
         if section.is_empty_air() {
             return Self::ALL;
@@ -85,15 +65,11 @@ impl SectionVisibility {
 }
 
 impl Default for SectionVisibility {
-    /// Unknown connectivity is full connectivity: culling on it can only
-    /// draw too much, never hide a visible section.
     fn default() -> Self {
         Self::ALL
     }
 }
 
-/// Whether each block id occludes sight completely: an opaque full cube.
-/// Anything thinner, see-through or fluid lets some line through.
 fn occluders() -> &'static [bool] {
     static OCCLUDERS: LazyLock<Box<[bool]>> = LazyLock::new(|| {
         Block::all()
@@ -109,7 +85,6 @@ fn occluders() -> &'static [bool] {
     &OCCLUDERS
 }
 
-/// The section-local cell coordinates of a [`section_idx`] index.
 #[inline]
 fn coords(i: usize) -> (usize, usize, usize) {
     (
@@ -119,7 +94,6 @@ fn coords(i: usize) -> (usize, usize, usize) {
     )
 }
 
-/// The faces of the section a cell touches.
 fn touched(x: usize, y: usize, z: usize) -> u8 {
     let last = SECTION_SIZE - 1;
     let mut faces = 0u8;
@@ -138,8 +112,6 @@ fn touched(x: usize, y: usize, z: usize) -> u8 {
     faces
 }
 
-/// Flood every open region that reaches the section boundary and connect
-/// the faces each touches.
 fn flood(mut open: [u64; SECTION_VOLUME / 64]) -> SectionVisibility {
     let mut visibility = SectionVisibility::NONE;
     let mut stack: Vec<usize> = Vec::with_capacity(SECTION_VOLUME);

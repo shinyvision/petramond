@@ -1,29 +1,12 @@
-//! Where the builder reads game assets from: the base `assets/` root plus
-//! pack overlays, layered the way the game's asset loader layers them — a
-//! point file (the theme, a document image) comes from the highest-priority
-//! layer holding it, and a catalog (item tags, binding docs) merges every
-//! layer.
-//!
-//! Nothing is baked in at compile time. The base root is `--assets`, else
-//! found by walking up from the working directory and then from the
-//! executable (a repo checkout, or a release unpacked beside `assets/`).
-//! Packs come from `--pack`, from a project's own `asset_roots`, and from
-//! the pack a project is saved inside, in rising priority.
-
 use std::path::{Path, PathBuf};
 
-/// The layered asset roots one preview or validation reads through.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AssetRoots {
-    /// The base game `assets/` directory.
     base: Option<PathBuf>,
-    /// Pack roots (each mirrors the `assets/` layout), lowest priority first.
     packs: Vec<PathBuf>,
 }
 
 impl AssetRoots {
-    /// The roots named on the command line; with no `base`, the nearest
-    /// `assets/` above the working directory or the executable.
     pub fn new(base: Option<PathBuf>, packs: Vec<PathBuf>) -> AssetRoots {
         let mut roots = AssetRoots {
             base: base.or_else(discover_base),
@@ -35,9 +18,6 @@ impl AssetRoots {
         roots
     }
 
-    /// These roots as a project saved in `project_dir` sees them: its
-    /// `asset_roots` (relative to the project), then the pack enclosing it,
-    /// each layered above what came before.
     pub fn for_project(&self, project_dir: Option<&Path>, asset_roots: &[String]) -> AssetRoots {
         let mut roots = self.clone();
         if let Some(dir) = project_dir {
@@ -51,7 +31,6 @@ impl AssetRoots {
         roots
     }
 
-    /// Layer `dir` above every current pack (moving it up if already listed).
     fn push_pack(&mut self, dir: PathBuf) {
         self.packs.retain(|p| *p != dir);
         self.packs.push(dir);
@@ -62,12 +41,10 @@ impl AssetRoots {
         self.base.as_deref()
     }
 
-    /// Every layer directory, lowest priority first.
     pub fn layers(&self) -> impl DoubleEndedIterator<Item = &Path> {
         self.base.iter().chain(&self.packs).map(PathBuf::as_path)
     }
 
-    /// `rel` from the highest-priority layer that has it.
     pub fn find(&self, rel: &str) -> Option<PathBuf> {
         self.layers()
             .rev()
@@ -75,7 +52,6 @@ impl AssetRoots {
             .find(|path| path.is_file())
     }
 
-    /// `rel` from every layer that has it, lowest priority first.
     pub fn all(&self, rel: &str) -> Vec<PathBuf> {
         self.layers()
             .map(|layer| layer.join(rel))
@@ -83,14 +59,11 @@ impl AssetRoots {
             .collect()
     }
 
-    /// The base game's document dir (`assets/ui/documents`).
     pub fn documents_dir(&self) -> Option<PathBuf> {
         let dir = self.base.as_ref()?.join("ui/documents");
         dir.is_dir().then_some(dir)
     }
 
-    /// The builder's generated sample projects, beside the base assets in a
-    /// repo checkout (`gui-builder/samples`). `None` outside a checkout.
     pub fn samples_dir(&self) -> Option<PathBuf> {
         let repo = self.base.as_ref()?.parent()?;
         let builder = repo.join("gui-builder");
@@ -101,16 +74,12 @@ impl AssetRoots {
     }
 }
 
-/// The nearest ancestor of `dir` holding a `pack.json`: the pack a document
-/// saved there ships in.
 pub fn enclosing_pack(dir: &Path) -> Option<PathBuf> {
     dir.ancestors()
         .find(|d| d.join("pack.json").is_file())
         .map(Path::to_path_buf)
 }
 
-/// The first `assets/` (one holding `ui/`) above the working directory,
-/// else above the executable.
 fn discover_base() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok();
     let exe_dir = std::env::current_exe()
@@ -189,14 +158,12 @@ mod tests {
             ]
         );
         assert_eq!(enclosing_pack(&docs), Some(pack.clone()));
-        // A loose project adds nothing.
         assert_eq!(cli.for_project(None, &[]), cli);
         std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
     fn the_repo_checkout_is_discovered_without_compile_time_paths() {
-        // Tests run from the crate dir, inside the repo.
         let roots = AssetRoots::new(None, Vec::new());
         let base = roots
             .base()

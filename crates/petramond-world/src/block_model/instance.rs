@@ -18,32 +18,14 @@ use super::{
     BlockModelKind, CollisionSpec, FitMode, ModelCube,
 };
 
-// ---------------------------------------------------------------------------------
-// Runtime instance: footprint, per-cell split, collision, selection
-// ---------------------------------------------------------------------------------
-
-/// One occupied cell of a model's footprint: which cubes render from it, and its
-/// cell-local collision + selection box.
 pub struct CellInstance {
-    /// Offset of this cell from the footprint origin, `0..footprint` per axis.
     pub offset: [u8; 3],
-    /// Indices into [`ModelInstance::cubes`] of the cubes assigned to this cell (by
-    /// centre). The geometry is positioned in FOOTPRINT space, so the mesher places it
-    /// at `origin_world + cube` regardless of which cell emits it.
     pub cubes: Vec<u32>,
-    /// Cell-local collision boxes (`0..1`) — the model's per-cube collision SHAPE clipped
-    /// to this cell, so the player collides with the actual legs/top, not one coarse box.
     pub collision: Vec<Aabb>,
-    /// Cell-local selection/targeting box (`0..1`): the bbox of the cube geometry
-    /// OVERLAPPING this cell, so the raycast targets the cell where the model actually is
-    /// (the drawn outline is the whole-model box — see `ModelInstance::bounds`).
     pub selection_min: [f32; 3],
     pub selection_max: [f32; 3],
 }
 
-/// One occupied authored cell after applying a placement facing: collision/selection are
-/// expressed in the rotated world voxel's local coordinates, but keyed by the authored
-/// offset stored in the chunk.
 pub struct OrientedCellInstance {
     pub offset: [u8; 3],
     pub collision: Vec<Aabb>,
@@ -51,31 +33,17 @@ pub struct OrientedCellInstance {
     pub selection_max: [f32; 3],
 }
 
-/// One ready-to-stream vertex of a baked model cell: position in FOOTPRINT space already
-/// transformed through the cube's static rotation AND the placement facing (so the mesher
-/// only translates by the world base), the atlas UV, and the directional face shade
-/// (pre-light). The mesher folds in cell light × warm tint per placement — see
-/// [`ModelCellTemplate`].
 #[derive(Copy, Clone)]
 pub struct ModelTemplateVertex {
     pub pos: Vec3,
     pub uv: [f32; 2],
     pub shade: f32,
-    /// This vertex belongs to a cube the row listed in `tint_parts`, so the
-    /// cell's `petramond:tint` multiplies it.
     pub tinted: bool,
     pub appearance: super::FaceAppearance,
 }
 
-/// The fully baked geometry of one occupied cell at one facing: the exact vertices +
-/// indices the mesher emits, with every per-cube matrix, quaternion, face-bias, and
-/// degenerate-face decision already resolved at startup. Meshing a placed cell is then a
-/// translate-by-base + scale-shade-by-light + copy — no `Mat4`/quat/trig per remesh.
 pub struct ModelCellTemplate {
     pub verts: Vec<ModelTemplateVertex>,
-    /// Quad indices relative to the cell's first vertex (`0,1,2, 0,2,3` per face,
-    /// or the flipped `1,2,3, 1,3,0` split when the baked corner AO calls for it —
-    /// the same anisotropy fix terrain AO uses).
     pub indices: Vec<u32>,
     /// The geometry as contiguous runs, each with its emit-time gate (parts-mask
     /// bit, cullface neighbour test) and stream route (opaque-cutout vs
@@ -87,23 +55,14 @@ pub struct ModelCellTemplate {
     pub segments: Vec<TemplateSegment>,
 }
 
-/// One contiguous run of a cell template plus when and where the mesher emits it.
 #[derive(Copy, Clone, Debug)]
 pub struct TemplateSegment {
     pub run: PartRun,
-    /// Route into the chunk's alpha-BLEND index stream (the face's texture rect
-    /// holds partial-alpha texels) instead of the default opaque-cutout stream.
     pub blend: bool,
-    /// `Some(i)` = the run draws only when the placed cell's parts mask has bit
-    /// `i` set (the row's `parts[i]`).
     pub part: Option<u8>,
-    /// `Some(f)` = the run's cullface: the mesher skips it when the world
-    /// neighbour in direction `f` — already rotated into WORLD space by this
-    /// template's facing — is an opaque block.
     pub cull: Option<Face>,
 }
 
-/// One contiguous run of a cell template's geometry.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct PartRun {
     pub vert_start: u32,
@@ -136,27 +95,13 @@ pub struct ContactCellTemplate {
     pub pieces: Vec<ContactPiece>,
 }
 
-/// The runtime bake of a model kind: its footprint, the cubes in footprint space with
-/// atlas-remapped UVs, and the per-cell split. Derived from the cached `BlockModel` +
-/// its data row + the `ModelAtlas`.
 pub struct ModelInstance {
     pub footprint: [u8; 3],
-    /// Cubes in FOOTPRINT space (coords `0..footprint`, 1 unit = 1 world cell), with
-    /// faces already remapped into the model-atlas sheet.
     pub cubes: Vec<ModelCube>,
     pub cells: Vec<CellInstance>,
-    /// The whole model's tight bounding box in FOOTPRINT space (relative to the
-    /// footprint origin) — the raycast outline, drawn as ONE box hugging the model's real
-    /// extent rather than a per-cell cube. Baked from geometry (the cached `bounds`).
     pub bounds_min: [f32; 3],
     pub bounds_max: [f32; 3],
-    /// One FOOTPRINT-space posed AABB per cube (the whole model) — the surfaces the
-    /// break-crack overlay paints over, so the crack lands on the model (each leg / the
-    /// top, the whole piece) instead of floating in the cell's air. Positioned by the
-    /// caller at the footprint-origin world cell.
     pub cube_boxes: Vec<Aabb>,
-    /// Per-facing collision/selection data. Indexed by [`Facing::to_u8`], and each list
-    /// is still keyed by authored cell offset.
     pub oriented_cells: [Vec<OrientedCellInstance>; 4],
     /// Per-facing, per-cell baked render geometry — the chunk-mesher's hot path. Indexed
     /// by [`Facing::to_u8`] then by the SAME order as [`Self::cells`] (use
@@ -164,11 +109,6 @@ pub struct ModelInstance {
     /// face bias, degenerate-face culling, atlas UVs, directional shade) is resolved here
     /// once so a remesh just translates + lights the verts.
     pub oriented_render: [Vec<ModelCellTemplate>; 4],
-    /// Per-cube, per-face (`Face::ALL` order), per-corner (`face_corners` order)
-    /// self-AO shade multipliers (see `super::ao`). Baked once from the fitted
-    /// footprint-space cubes; already folded into `oriented_render` shades, and
-    /// applied by the held/dropped/icon bakes (`render::item_model`) so every
-    /// presentation shades identically.
     pub face_ao: Vec<[[f32; 4]; 6]>,
     /// Per-cube, per-face draw flag: false when the face's atlas rect is FULLY    /// transparent. Such a face discards every fragment at mip 0, so it is
     /// dropped from every bake — otherwise the cutout mip chain promotes its
@@ -176,27 +116,16 @@ pub struct ModelInstance {
     /// sliver face renders as a bright line at distance. Consulted by the
     /// held/dropped/icon bakes too, so every presentation drops the same faces.
     pub face_draw: Vec<[bool; 6]>,
-    /// Per-facing, per-cell contact-shadow stamps, indexed exactly like
-    /// [`Self::oriented_render`]. Non-bottom cells (and bottom cells whose field
-    /// baked empty) hold an empty template.
     pub oriented_contact: [Vec<ContactCellTemplate>; 4],
-    /// Maps the CENTRED-UNIT item space (the `build_block_model_item` bake: footprint
-    /// centred on the origin, largest axis spanning ±0.5) back to the model's AUTHORED
-    /// display space in blocks — origin at the authored display pivot, 1 unit = 16
-    /// authored pixels. This undoes the placement fit (floor-rest, centring, fill
-    /// scale) so a Blockbench `display` pose (`DisplayTransform::base_matrix`)
-    /// composes about the exact geometry Blockbench posed, and renders identically.
     pub display_from_unit: Mat4,
 }
 
 impl ModelInstance {
-    /// The cell data for `offset`, or `None` if that cell isn't part of the footprint.
     #[inline]
     pub fn cell(&self, offset: [u8; 3]) -> Option<&CellInstance> {
         self.cells.iter().find(|c| c.offset == offset)
     }
 
-    /// The oriented cell data for `offset` under `facing`.
     #[inline]
     pub fn oriented_cell(&self, offset: [u8; 3], facing: Facing) -> Option<&OrientedCellInstance> {
         self.oriented_cells[facing.to_u8() as usize]
@@ -204,16 +133,12 @@ impl ModelInstance {
             .find(|c| c.offset == offset)
     }
 
-    /// The baked render geometry for `offset` under `facing`, or `None` if that cell isn't
-    /// part of the footprint. The chunk mesher's only model-geometry lookup.
     #[inline]
     pub fn cell_template(&self, offset: [u8; 3], facing: Facing) -> Option<&ModelCellTemplate> {
         let idx = self.cells.iter().position(|c| c.offset == offset)?;
         Some(&self.oriented_render[facing.to_u8() as usize][idx])
     }
 
-    /// The baked contact-shadow stamp for `offset` under `facing`, or `None` if
-    /// the cell isn't part of the footprint or owns no stamp pieces.
     #[inline]
     pub fn contact_template(
         &self,
@@ -231,9 +156,6 @@ impl ModelInstance {
         let footprint = d.cells.map(|c| c.max(1));
         let at = atlas();
 
-        // --- Map the model into footprint space, per the row's fit mode. Uses
-        // the BAKED posed bounds so the fit, the outline, and the collision all
-        // agree on the model's extent. ---
         let (mn, mx) = (Vec3::from(m.bounds.min), Vec3::from(m.bounds.max));
         let fp = Vec3::new(
             footprint[0] as f32,
@@ -241,18 +163,12 @@ impl ModelInstance {
             footprint[2] as f32,
         );
         let (scale, lo, anchor) = match d.fit {
-            // Fill: uniform scale (no stretch) so the largest axis spans the
-            // cell box, X/Z centred, resting on the floor in Y.
             FitMode::Fill => {
                 let extent = mx - mn;
-                // World units per model unit: the tightest axis sets a uniform
-                // scale so the model fills its largest footprint axis and
-                // keeps its proportions.
                 let per_unit = [extent.x / fp.x, extent.y / fp.y, extent.z / fp.z]
                     .into_iter()
                     .fold(f32::MIN_POSITIVE, f32::max);
                 let scale = 1.0 / per_unit;
-                // Centre on X/Z within the footprint; floor on Y.
                 let span = extent * scale;
                 (
                     scale,
@@ -260,14 +176,7 @@ impl ModelInstance {
                     mn,
                 )
             }
-            // Native: authored pixels ARE the footprint grid (16 px = 1 cell,
-            // authored origin = footprint origin); out-of-box geometry
-            // overhangs visually and is clipped out of collision/selection by
-            // the ordinary per-cell clipping below.
             FitMode::Native => (1.0 / 16.0, Vec3::ZERO, Vec3::ZERO),
-            // Centered: native pixels, authored X/Z origin at the footprint's
-            // horizontal centre, authored top flush with the footprint top —
-            // a hanging fixture stays snug against whatever it hangs from.
             FitMode::Centered => (
                 1.0 / 16.0,
                 Vec3::new(fp.x * 0.5, fp.y - mx.y / 16.0, fp.z * 0.5),
@@ -275,14 +184,11 @@ impl ModelInstance {
             ),
         };
         let to_fp = |v: Vec3| lo + (v - anchor) * scale;
-        // A model-space AABB → footprint space (uniform scale + translate keeps it axis-
-        // aligned, so transforming the two corners suffices).
         let to_fp_box = |b: &Aabb| Aabb {
             min: to_fp(Vec3::from(b.min)).to_array(),
             max: to_fp(Vec3::from(b.max)).to_array(),
         };
 
-        // --- Cubes in footprint space, UVs remapped into the model atlas. ---
         let cubes: Vec<ModelCube> = m
             .cubes
             .iter()
@@ -304,13 +210,9 @@ impl ModelInstance {
             })
             .collect();
 
-        // --- The collision SHAPE (footprint space): the model's baked per-cube boxes,
-        // split per cell. A cube spanning two cells (the full-width table top) is split
-        // into both. ---
         let footprint_collision: Vec<Aabb> = match d.collision {
             CollisionSpec::FromModel => m.collision.iter().map(&to_fp_box).collect(),
         };
-        // Per-cube footprint AABBs (posed), for the per-cell targeting boxes.
         let cube_boxes: Vec<Aabb> = cubes
             .iter()
             .map(|c| {
@@ -322,33 +224,27 @@ impl ModelInstance {
             })
             .collect();
 
-        // --- Split per occupied cell. ---
         let mut cells = Vec::new();
         for dz in 0..footprint[2] {
             for dy in 0..footprint[1] {
                 for dx in 0..footprint[0] {
                     let offset = [dx, dy, dz];
                     let o = Vec3::new(dx as f32, dy as f32, dz as f32);
-                    // Cubes whose centre falls in this cell render from it (once each).
                     let cube_idx: Vec<u32> = cubes
                         .iter()
                         .enumerate()
                         .filter(|(_, c)| cell_of((c.from + c.to) * 0.5, footprint) == offset)
                         .map(|(i, _)| i as u32)
                         .collect();
-                    // Collision: every collision box overlapping this cell, clipped local.
                     let collision: Vec<Aabb> = footprint_collision
                         .iter()
                         .filter_map(|b| clip_to_cell(b, o))
                         .collect();
-                    // Targeting box: the union of cube geometry overlapping this cell.
                     let sel = union_clip_to_cell(&cube_boxes, o);
                     let (selection_min, selection_max) = match sel {
                         Some(s) => (s.min, s.max),
                         None => ([0.0; 3], [0.0; 3]),
                     };
-                    // Keep a cell only if it renders, collides, or can be targeted — so an
-                    // empty corner of the footprint isn't a phantom solid.
                     if cube_idx.is_empty() && collision.is_empty() && sel.is_none() {
                         continue;
                     }
@@ -472,13 +368,11 @@ impl ModelInstance {
 
         // Bake the per-facing render geometry once. `placement_transform` gives the
         // facing's rotation + footprint shift relative to the base; the mesher adds the
-        // integer world base at remesh. All the per-cube/per-face math the mesher used to redo every
-        // remesh (quaternions, matrix products, face bias, degenerate-face culling) is
+        // integer world base at remesh. Per-cube and per-face math (quaternions,
+        // matrix products, face bias, degenerate-face culling) is
         // resolved here.
         let oriented_render = std::array::from_fn(|i| {
             let facing = Facing::from_u8(i as u8);
-            // Explicit local footprint, NOT placement_transform(kind, ..): this runs inside
-            // the INSTANCES slot's build, so resolving footprint(kind) would re-enter it.
             let base_xform = placement_transform_fp(footprint, facing);
             cells
                 .iter()
@@ -506,9 +400,6 @@ impl ModelInstance {
                         .iter()
                         .filter(|a| a.owner == ci)
                         .filter_map(|a| {
-                            // The stamped cell's world offset from its owner:
-                            // the authored delta through the facing's rotation
-                            // (a vector, so the footprint shift drops out).
                             let rd = base_xform.transform_vector3(Vec3::new(
                                 a.delta[0] as f32,
                                 0.0,
@@ -525,11 +416,9 @@ impl ModelInstance {
                 .collect()
         });
 
-        // Centred-unit item space → authored display space (blocks about the display
-        // pivot): invert the item bake's centring (`p_fp = p_unit·uspan + fp/2`), then
-        // the footprint mapping (`p_px = anchor + (p_fp − lo)/scale` — the inverse of
-        // `to_fp`, any fit mode), then rebase on the pivot in blocks. Uniform scale +
-        // translation, folded into one matrix.
+        // Centred-unit item space to authored display space, blocks around the display pivot:
+        // undo the bake centring, undo the footprint mapping (`to_fp`, any fit mode), rebase on
+        // the pivot. Scale plus translate, so it all folds into one matrix.
         let display_from_unit = {
             let uspan = fp.max_element().max(1.0);
             let pivot = Vec3::from(m.display_pivot);
@@ -556,10 +445,9 @@ impl ModelInstance {
     }
 }
 
-/// Bake one floor cell's contact field (own cell or dilation ring, authored
-/// coords) into rotated, base-relative triangles. Sub-quads whose corners all
-/// round to zero are skipped (the stamp is sparse), so a piece holds only the
-/// floor area the model actually shadows.
+/// Bakes one floor cell's contact field (own cell or dilation ring, authored
+/// coords) into rotated, base-relative triangles. Stamp is sparse. Quads with
+/// all corners rounding to zero get dropped, so only shadowed floor makes it in.
 fn bake_contact_piece(
     base_xform: Mat4,
     cell: [i32; 2],
@@ -596,8 +484,6 @@ fn bake_contact_piece(
     verts
 }
 
-/// Every kind's runtime [`ModelInstance`], indexed by `kind as usize` — a
-/// derived view of the content registry, baked on first use.
 static INSTANCES: crate::content::Slot<Vec<ModelInstance>> = crate::content::Slot::new(
     "block model instances",
     &[crate::content::stage::MODELS],
@@ -608,9 +494,6 @@ fn build_instances(
     registry: &crate::content::ContentRegistry,
 ) -> Result<Vec<ModelInstance>, String> {
     use rayon::prelude::*;
-    // Each model's AO bake ray-casts its own faces and reads no other
-    // instance, so the models build independently. Workers pin the registry
-    // being built, since a pool thread's own current registry may differ.
     let content = crate::content::Content::current();
     if !std::ptr::eq(content.registry(), registry) {
         return Ok(all().iter().map(|&k| ModelInstance::build(k)).collect());
@@ -624,13 +507,11 @@ fn build_instances(
         .collect())
 }
 
-/// This kind's runtime instance (footprint + per-cell geometry/collision/selection).
 #[inline]
 pub fn instance(kind: BlockModelKind) -> &'static ModelInstance {
     &INSTANCES.current()[kind.0 as usize]
 }
 
-/// The block's footprint in cells `(sx, sy, sz)`.
 #[inline]
 pub fn footprint(kind: BlockModelKind) -> [u8; 3] {
     instance(kind).footprint

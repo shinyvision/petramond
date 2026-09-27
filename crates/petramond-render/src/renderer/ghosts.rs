@@ -1,8 +1,3 @@
-//! Schematic ghosts: the one preview that follows a placement being
-//! positioned, and the anchored pieces of designs standing in the world.
-//! Geometry is built off the frame thread; a mesh keeps drawing its previous
-//! content until its replacement lands.
-
 mod mesh;
 
 use super::Renderer;
@@ -15,9 +10,6 @@ use petramond::worker::JobPool;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-/// One piece of an anchored ghost to draw: a stable id, the revision of its
-/// content, its scene, the scene section it draws, and the world position of
-/// the scene's local origin.
 pub struct GhostPiece {
     pub id: u64,
     pub revision: u64,
@@ -34,7 +26,6 @@ struct AnchoredPiece {
 
 struct Preview {
     mesh: GhostMesh,
-    /// The scene the mesh currently holds.
     scene: Option<Arc<Scene>>,
     building: Option<(Arc<Scene>, Job<Geometry>)>,
     visible: bool,
@@ -48,8 +39,6 @@ pub(super) struct GhostPass {
 }
 
 impl GhostPass {
-    /// The pipelines sample world-scoped atlases and registered fluid media,
-    /// so they leave with the world too.
     pub(super) fn clear_world(&mut self) {
         *self = Self::default();
     }
@@ -83,8 +72,6 @@ impl GhostPass {
 }
 
 impl Renderer {
-    /// Show `scene` as the placement preview at `origin`; without an origin
-    /// the preview keeps its mesh but is not drawn.
     pub fn set_schematic_preview(
         &mut self,
         jobs: &JobPool,
@@ -131,9 +118,6 @@ impl Renderer {
         self.ghosts = pass;
     }
 
-    /// Draw exactly these anchored ghost pieces: a piece whose revision
-    /// changed re-meshes off the frame thread and keeps drawing its previous
-    /// mesh until the new one lands; a piece no longer listed is dropped.
     pub fn set_anchored_ghosts(&mut self, jobs: &JobPool, pieces: &[GhostPiece]) {
         if pieces.is_empty() {
             self.ghosts.anchored.clear();

@@ -1,16 +1,8 @@
-//! Fences at the world level: the stored-mask front.
-//!
-//! A fence's connections are REFINED per-cell state (`ConnectionMask`),
-//! resolved by the edit cascade and stored in the cell — every read here is
-//! a free decode of the same bytes the mesher renders from.
-
 use crate::mathh::IVec3;
 
 use super::data::WorldData;
 
 impl WorldData {
-    /// The refined 4-bit connection mask STORED for the fence placed at `pos`
-    /// — a cell-state decode, resolved by the edit cascade, never here.
     #[inline]
     pub fn fence_mask_at(&self, pos: IVec3) -> u8 {
         debug_assert!(

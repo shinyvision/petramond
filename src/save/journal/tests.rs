@@ -22,7 +22,6 @@ fn batch(generation: u8) -> Vec<Entry> {
     ]
 }
 
-/// What the save holds for the entries of [`batch`].
 fn state(dir: &Path) -> [Option<Vec<u8>>; 3] {
     let region = region::RegionReader::open(&region::region_path(&dir.join("region"), 0, -1))
         .ok()
@@ -81,7 +80,6 @@ fn a_failed_apply_keeps_the_batch_for_the_next_open() {
     assert_eq!(generation(&dir), Some(2));
 }
 
-/// Make the player file of [`batch`] unwritable / writable again.
 fn block_player_file(dir: &Path, blocked: bool) {
     let path = dir.join("players/ada.dat");
     if blocked {

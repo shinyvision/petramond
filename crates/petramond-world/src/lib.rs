@@ -1,17 +1,3 @@
-//! The deterministic world core: content registries and catalogs, the
-//! block/item domain, section/column storage, and the data half of the world
-//! (`world::WorldData`). No GPU, no audio, no networking, no WASM — the
-//! engine crate layers orchestration on top.
-//!
-//! Client and persistence code that only consumes this crate lives in its own
-//! crates so everything depending on the core (worldgen, mesh) does not link
-//! it: input bindings in `petramond-input`, the animator graph runtime in
-//! `petramond-anim`, the music catalog in `petramond-audio`, the region-file
-//! container in `petramond-region`, and view-volume culling math in
-//! `petramond-math`.
-
-// Foundation aliases so module-internal `crate::mathh`-style paths resolve
-// unchanged after extraction from the monolith.
 pub use petramond_math::{face, facing, math as mathh, wire_enum};
 
 pub mod ai_vocab;

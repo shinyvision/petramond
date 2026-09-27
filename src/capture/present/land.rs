@@ -1,7 +1,3 @@
-//! The frame-side half of a presentation: landing a prepared apply,
-//! releasing frames as the position comes to them, keeping the window
-//! resident, reading ahead, and following changes to the files it reads.
-
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -18,7 +14,6 @@ use crate::world::{
 };
 
 impl Presentation {
-    /// Land a prepared apply in this frame: pointer swaps for what differs.
     pub(super) fn land(
         &mut self,
         replica: &mut ReplicaWorld,
@@ -37,8 +32,6 @@ impl Presentation {
             index_only,
         } = prepared;
         let mut installed = Vec::new();
-        // The fold applied the whole-world statement to these before their
-        // events; the events' writes stand.
         let folded: std::collections::BTreeSet<ChunkPos> = columns.iter().map(|c| c.pos).collect();
         for outcome in columns {
             let pos = outcome.pos;
@@ -76,7 +69,6 @@ impl Presentation {
                 continue;
             }
             if self.window.is_some_and(|w| w.contains(pos)) {
-                // Folded whole, and in the window: resident at once.
                 self.stated.away.remove(&pos);
                 if let Some((payload, origin)) = whole.column {
                     replica.install_prepared_column((*payload).clone(), origin);
@@ -114,8 +106,6 @@ impl Presentation {
                 _ => continue,
             };
             if replica.data().columns.contains_key(&column) {
-                // It came into the window while this apply was prepared:
-                // it goes away and comes back in through its origin.
                 self.leave(replica, column);
             }
             let entry = self.stated.entry(column);
@@ -174,8 +164,6 @@ impl Presentation {
         out.views = self.views.clone();
     }
 
-    /// Release every queued frame the position needs, in order, presented
-    /// in full: its one-shots, sounds and cues play.
     pub(super) fn release(&mut self, replica: &mut ReplicaWorld, out: &mut DriveOut) {
         if !self.ops.is_empty() {
             return;
@@ -200,11 +188,6 @@ impl Presentation {
             self.release_frame(replica, &frame, out, &mut installed);
         }
         replica.finish_remote_install_batch(&installed);
-        // The view samples ahead of the position, from the frames already
-        // read: what the captured view moves toward until their frames are
-        // due. A frame that applies a batch waits for that tick, and without
-        // them the view would hold still and then jump. They are handed out
-        // again with their frames.
         let floor = self.position.max(0.0).floor();
         'ahead: for span in self.queue.spans() {
             let mut offset = span.offset;
@@ -259,8 +242,6 @@ impl Presentation {
         self.views.drain(..keep_from);
     }
 
-    /// One released terrain write: onto the replica where its column is
-    /// resident (or enters the window with it), else onto the away index.
     fn route(
         &mut self,
         replica: &mut ReplicaWorld,
@@ -320,14 +301,12 @@ impl Presentation {
         entry.pending.push(edit);
     }
 
-    /// Column `c`, away inside the window, loads as the window's own do.
     fn enter_later(&mut self, c: ChunkPos) {
         if !self.entering.contains(&c) {
             self.entering.insert(0, c);
         }
     }
 
-    /// Move column `c` out of the replica into the away index.
     pub(super) fn leave(&mut self, replica: &mut ReplicaWorld, c: ChunkPos) {
         let mut away = AwayColumn::default();
         if let Some(payload) = replica.column_content(c) {
@@ -358,7 +337,6 @@ impl Presentation {
         self.stated.away.insert(c, away);
     }
 
-    /// Keep resident exactly the stated columns inside the window.
     pub(super) fn keep_window(&mut self, replica: &mut ReplicaWorld) {
         if self.window_dirty {
             self.window_dirty = false;
@@ -394,7 +372,6 @@ impl Presentation {
         let mut needs = Vec::new();
         let mut waiting = Vec::new();
         let mut installed = Vec::new();
-        // Nearest first: the list is kept farthest first, popped from the back.
         while let Some(c) = self.entering.pop() {
             if !self.window.is_some_and(|w| w.contains(c)) {
                 continue;
@@ -434,7 +411,6 @@ impl Presentation {
         }
     }
 
-    /// Install an away column whose content is all in memory.
     fn enter(
         &mut self,
         replica: &mut ReplicaWorld,
@@ -501,9 +477,6 @@ impl Presentation {
         installed
     }
 
-    /// Keep read what the position will need before a new read could land:
-    /// its measured rate × the measured read latency, and at least the next
-    /// two releases (the view samples ahead of the position live there).
     pub(super) fn read_ahead(&mut self, dt: f32, before: f64) {
         if dt > 0.0 {
             let rate = ((self.position - before) / f64::from(dt)).max(0.0);
@@ -542,7 +515,6 @@ impl Presentation {
         }
     }
 
-    /// Follow changes to the bytes this presentation reads.
     pub(super) fn take_file_changes(&mut self, replica: &mut ReplicaWorld) {
         for change in self.changes.take() {
             let (incarnation, start, end, label) = match change {

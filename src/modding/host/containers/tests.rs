@@ -9,10 +9,6 @@ use crate::world::ServerWorld;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::ChunkPos;
 
-/// Container host calls canonicalize any footprint cell of a multi-cell
-/// model block to the group ANCHOR: a write through a non-anchor cell
-/// must land in the one anchored container (the same slots the GUI and
-/// break-scatter use), never mint a second store at that cell.
 #[test]
 fn container_calls_canonicalize_to_the_group_anchor() {
     let mut world = ServerWorld::new(1, 4);
@@ -29,9 +25,6 @@ fn container_calls_canonicalize_to_the_group_anchor() {
         .find(|c| **c != anchor)
         .expect("a non-anchor cell");
 
-    // The workbench is engine-owned and ContainerSet is guarded to the
-    // caller's own namespace, so the test store impersonates the engine
-    // namespace — this keeps the test off the heavy WASM fixture.
     let mut store = ModStoreData::new(petramond_world::registry::ENGINE_NAMESPACE, 1);
     let mut nobody = RosterRefs::empty();
     let mut feed = TickEvents::default();
@@ -59,7 +52,6 @@ fn container_calls_canonicalize_to_the_group_anchor() {
             }),
         );
         assert_eq!(set, HostRet::Bool(true));
-        // Reading through a different cell (the anchor) sees the write.
         let got = handle_host_call(
             &mut store,
             HostCall::from(calls::ContainerGet {
@@ -71,7 +63,6 @@ fn container_calls_canonicalize_to_the_group_anchor() {
         };
         assert_eq!(slots[0].as_ref().map(|s| s.count), Some(3));
     });
-    // One container, keyed at the anchor — nothing stranded at the cell.
     assert!(world.container_at(anchor).is_some());
     assert!(world.container_at(far).is_none());
 }
@@ -202,8 +193,6 @@ fn transfers_respect_target_admission_and_preserve_items_on_failure() {
     });
 }
 
-/// A transfer is one move: what the destination's admission refuses stays in
-/// the source slot, so no item is ever in both containers or neither.
 #[test]
 fn a_transfer_moves_only_what_the_destination_admits() {
     use petramond_math::math::IVec3;
@@ -236,7 +225,6 @@ fn a_transfer_moves_only_what_the_destination_admits() {
     };
     scope::enter(&mut ctx, || {
         let mut call = |c| handle_host_call(&mut store, c);
-        // The furnace's only coal cell is its fuel slot, nearly full.
         assert_eq!(
             call(HostCall::from(calls::ContainerInsert {
                 at: machine.to_array().into(),
@@ -280,8 +268,6 @@ fn a_transfer_moves_only_what_the_destination_admits() {
     });
 }
 
-/// A mob's carried slots are an ordinary container addressed by its stable
-/// id, and whatever it still carries when it leaves the world scatters.
 #[test]
 fn a_mobs_carried_slots_are_a_container_and_spill_when_it_leaves() {
     use petramond_math::math::IVec3;

@@ -2,11 +2,6 @@ use crate::world::{ReplicaWorld, World, WorldSide};
 use petramond_world::chunk::SectionPos;
 
 impl<S: WorldSide> World<S> {
-    /// Whether `pos` produces no visible geometry, so meshing/lighting/drawing it is pure
-    /// waste: it is entirely air (the empty-sky band) and emits nothing. This is the exact
-    /// counter-based case ONLY. The neighbour-plane "sealed section" skip that used to
-    /// live here was removed on 2026-07-06 after playtests traced black (unlit) faces to
-    /// section culling — do not reintroduce it here.
     pub(in crate::world) fn section_produces_no_mesh(&self, pos: SectionPos) -> bool {
         self.data
             .sections
@@ -14,11 +9,6 @@ impl<S: WorldSide> World<S> {
             .is_some_and(|s| s.is_empty_air())
     }
 
-    /// Exact future-work skip: every adjoining plane is a loaded, fully opaque
-    /// wall, so no outside sightline or emitted boundary face can reach this
-    /// section. A nearby player overrides the proof because they may already be
-    /// inside an enclosed cave. Generated summaries are deliberately not trusted
-    /// for saved terrain.
     pub(in crate::world) fn section_sealed_by_loaded_neighbors(&self, pos: SectionPos) -> bool {
         if self.data.last_load_target.is_some() && self.near_load_center(pos) {
             return false;
@@ -33,8 +23,6 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ReplicaWorld {
-    /// Clear stale render output for a section that now intentionally emits no mesh.
-    /// Returns true when the section is in that settled no-output state.
     pub(in crate::world) fn clear_mesh_if_section_produces_no_mesh(
         &mut self,
         pos: SectionPos,

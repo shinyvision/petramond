@@ -1,6 +1,3 @@
-//! Doing one task from where the golem stands: a paid placement, a dig on
-//! consecutive ticks, and what each refusal means for the plan.
-
 use crate::host::prelude::*;
 
 use super::tuning::hands::{AIM_SETTLE_TICKS, AIM_TICKS, TURN_PER_TICK};
@@ -12,8 +9,6 @@ use crate::worker::Job;
 
 pub const JAB: &str = "jab";
 
-/// Start aiming at a placement: turn to it, block in hand, and answer when
-/// it goes in. `None` for work that is no placement.
 pub fn aim(ctx: &mut Ctx, job: &mut Job, body: &Body, task: Task) -> Option<u64> {
     let (cell, item) = match task {
         Task::Unit(i) => match job.survey.as_ref().map(|s| &s.known[i]) {
@@ -31,7 +26,6 @@ pub fn aim(ctx: &mut Ctx, job: &mut Job, body: &Body, task: Task) -> Option<u64>
     };
     job.crew.presence.set_hold(body.id, true);
     job.crew.presence.unaimed = 0;
-    // With no look at it from here the placement itself says why.
     let work = sight::work(job, task);
     let _ = sight::turn(ctx, job, body, &work);
     let turn = job.crew.presence.look.map_or(0.0, |yaw| {
@@ -41,8 +35,6 @@ pub fn aim(ctx: &mut Ctx, job: &mut Job, body: &Body, task: Task) -> Option<u64>
     });
     let turned = ctx.now + AIM_SETTLE_TICKS + (turn / TURN_PER_TICK) as u64;
     job.crew.presence.hold_item(body.id, item);
-    // A hash of the moment and the cell stands in for a roll: the mod keeps
-    // no random state, and a replay aims the same way.
     let seed = ctx.now
         ^ (cell[0] as u64).wrapping_mul(0x9E37_79B9)
         ^ (cell[2] as u64).rotate_left(17)
@@ -172,8 +164,6 @@ pub fn dig(
     cell: [i32; 3],
     since: u64,
 ) -> Step {
-    // Cut overgrowth is not carried off: saplings and sticks would fill the
-    // golem's hands.
     let collect = !matches!(task, Task::Trim(_));
     match hands::dig(ctx, job, body, cell, collect) {
         hands::Dig::Turning | hands::Dig::Digging => Step::Dig { task, cell, since },
@@ -182,8 +172,6 @@ pub fn dig(
             since: ctx.now,
         },
         hands::Dig::Nothing => {
-            // Nothing there to take down: asked again it answers the same,
-            // every tick, for ever.
             if let Task::Reopen(o) = task {
                 job.crew.access.reopen.retain(|_, openers| {
                     openers.retain(|opener| *opener != o);
@@ -200,14 +188,11 @@ pub fn dig(
     }
 }
 
-/// Re-read a task's target after the world answered it.
 pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task) {
     if let Some((_, work)) = job.crew.aloft.climbed_for.as_mut() {
         *work += 1;
     }
     job.crew.pace.progress_at = ctx.now;
-    // Work landing answers whatever went wrong before it; a problem that
-    // still holds is noted again by the next plan.
     job.crew.note.clear();
     match task {
         Task::Unit(i) => {
@@ -226,13 +211,9 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                     if placing {
                         job.crew.built.insert(i);
                         job.crew.deferrals.tried.clear();
-                        // Work of another kind landing puts the glazing back
-                        // to the end of the build, where it belongs.
                         if !job.design.glazing(i) {
                             job.crew.glazing.under_way = false;
                         }
-                        // A door just laid is left standing open while there
-                        // is work on its far side.
                         if job.design.passage(i) {
                             job.crew.access.pending_use = Some(job.design.units[i].pos);
                         }
@@ -241,8 +222,6 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                     if let Some(props) = job.crew.faces.propped.remove(&i) {
                         job.crew.scaffolding.urgent.extend(props);
                     }
-                    // Neighbours waiting for something to hang on or lean
-                    // against may go now.
                     for cell in job.design.cells(job.design.units[i]) {
                         for face in FACES {
                             if let Some(n) = job.design.unit_at(crate::geometry::offset(cell, face))
@@ -265,7 +244,6 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                 if survey.known[o].open() {
                     job.crew.built.remove(&o);
                     job.crew.pace.cursor = job.crew.pace.cursor.min(o);
-                    // What it sealed in is worth every stance again.
                     let sealed: Vec<usize> = job
                         .crew
                         .access
@@ -286,11 +264,8 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
         Task::Trim(cell) => {
             job.crew.access.trims.remove(&cell);
         }
-        // A design block dug to get out goes back up: it is no loss.
         Task::Breakout(cell) => {
             job.crew.access.digs.remove(&cell);
-            // Breaking the build is the escape ladder's business, never the
-            // way in's: if one is ever broken here, say so loudly.
             if super::TRACE {
                 if let Some(i) = job.design.unit_at(cell) {
                     if job.crew.built.contains(&i) || job.crew.rescue.stuck.is_none() {
@@ -340,8 +315,6 @@ fn refused(ctx: &mut Ctx, job: &mut Job, task: Task, refusal: ActionRefusal) {
             | ActionRefusal::Misaligned
             | ActionRefusal::NotAimed
     ) {
-        // The cell it STANDS in: leaning out over an edge, its feet floor to
-        // the air beside.
         if let Some(info) = job.crew.mob.and_then(mob_info) {
             job.crew
                 .deferrals
@@ -358,8 +331,6 @@ fn refused(ctx: &mut Ctx, job: &mut Job, task: Task, refusal: ActionRefusal) {
             return;
         }
     };
-    // Usually a neighbour in the same layer lands soon and gives the cell a
-    // face; only a cell that stays faceless gets scaffolding under it.
     if refusal == ActionRefusal::NoFace && matches!(task, Task::Unit(_)) {
         let fragile = job.design.fragile(job.design.units[i]);
         if job.crew.faces.faceless_try(i, ctx.now) && !fragile {
@@ -398,7 +369,6 @@ fn refused(ctx: &mut Ctx, job: &mut Job, task: Task, refusal: ActionRefusal) {
     }
 }
 
-/// An `actor_acted` outcome for this job's golem.
 pub fn acted(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -407,8 +377,6 @@ pub fn acted(
     action: ActorAction,
     refusal: Option<ActionRefusal>,
 ) {
-    // A placed block closes routes and a dug one opens them: each forgets the
-    // answers it may have made wrong, a dig only those near it.
     if refusal.is_none() {
         ctx.regions.clear();
     }

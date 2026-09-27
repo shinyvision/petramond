@@ -5,12 +5,6 @@ use crate::chunk::{
 use crate::column::Column;
 use crate::section::Section;
 
-/// Split a whole-column [`Chunk`] (a 0..256 `generate_chunk` output, or a hand-built
-/// fixture) into cubic [`Section`]s plus its [`Column`] data, adding solid-stone
-/// sections for the range below y=0. All-air sections are skipped (absent reads as
-/// air). TEST/FIXTURE helper only: the live streamer generates per section
-/// (`ChunkGenerator::generate_section`), never via a 256-tall intermediate. Retained so
-/// the many column-era test fixtures (`insert_chunk_for_test`) keep working.
 pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
     let cx = chunk.cx;
     let cz = chunk.cz;
@@ -33,7 +27,6 @@ pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
 
     let mut out: Vec<(i32, Section)> = Vec::new();
 
-    // Surface column: the generator's 0..256 output → sections cy 0..15.
     let surface_sections = (CHUNK_SY / SECTION_SIZE) as i32;
     for cy in 0..surface_sections {
         let mut section = Section::new(cx, cy, cz);
@@ -53,14 +46,13 @@ pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
             }
         });
         if !any {
-            continue; // all-air section: absent reads as air.
+            continue;
         }
         copy_generated_fluid_meta(chunk, cy, &mut section);
         section.recompute_opaque_count();
         out.push((cy, section));
     }
 
-    // Expanded range below y=0: solid stone, so caves have somewhere to carve.
     for cy in SECTION_MIN_CY..0 {
         let mut section = Section::new(cx, cy, cz);
         section.blocks_mut().fill(Block::Stone.id());
@@ -71,8 +63,6 @@ pub fn split_generated_column(chunk: &Chunk) -> (Column, Vec<(i32, Section)>) {
     (column, out)
 }
 
-/// Carry the generated column's fluid-flow metadata for section `cy` into
-/// `section`, so generated fluid keeps its source/falloff state through the split.
 fn copy_generated_fluid_meta(chunk: &Chunk, cy: i32, section: &mut Section) {
     for ly in 0..SECTION_SIZE {
         let wy = cy as usize * SECTION_SIZE + ly;

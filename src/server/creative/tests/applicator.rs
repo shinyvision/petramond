@@ -129,7 +129,6 @@ fn a_budgeted_slice_never_splits_a_written_or_an_overwritten_compound() {
             })
             .collect()
     };
-    // An old door whose upper half lies outside the new edit.
     server
         .world
         .apply_cells(door(pos + IVec3::X), CellPolicy::default())

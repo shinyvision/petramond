@@ -15,8 +15,6 @@ fn weights_of(
         .collect()
 }
 
-/// Factors multiply; `!x` is the complement, `{"not": x, "by": k}` the partial
-/// complement; derived names are reusable products; phases pass through.
 #[test]
 fn layer_weights_are_products_of_named_factors() {
     let table = LocomotionTable::parse_layers(&[r#"{
@@ -43,8 +41,6 @@ fn layer_weights_are_products_of_named_factors() {
     assert_eq!(got[1], ("land".to_owned(), Phase::Rest, 0.4));
 }
 
-/// `requires` zeroes an input the model cannot show, so its weight folds back
-/// into the layers whose complements read it; a gated derived slot reads 0.
 #[test]
 fn requires_folds_missing_clips_back_into_the_base_layer() {
     let table = LocomotionTable::parse_layers(&[r#"{
@@ -88,8 +84,6 @@ fn requires_folds_missing_clips_back_into_the_base_layer() {
     );
 }
 
-/// A later asset layer replaces a row by id (or disables it), appends new
-/// rows, and re-defines a derived name in place.
 #[test]
 fn pack_layers_override_by_id_and_append() {
     let base = r#"{
@@ -149,16 +143,12 @@ fn unknown_and_forward_names_are_load_errors() {
     }
 }
 
-/// The shipped table parses whole and names clips only — the sanity that
-/// survives re-authoring.
 #[test]
 fn shipped_table_loads() {
     let table = LocomotionTable::load().expect("shipped table");
     assert!(!table.layers.is_empty());
 }
 
-/// The fallback a missing or broken table leaves the bodies on: every input
-/// still evaluates (the `requires` gates cover each slot) and no layer draws.
 #[test]
 fn the_empty_fallback_table_weighs_nothing() {
     let inputs = Inputs {

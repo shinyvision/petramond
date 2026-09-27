@@ -4,11 +4,6 @@ use super::Axis;
 use super::{Channel, NodeId, SampledScalarField, ScalarGraph};
 use std::sync::Arc;
 
-/// Declares `ScalarGraph` node-builder methods. Every argument tagged
-/// `=> "context"` is a `NodeId` input asserted to belong to this graph before
-/// the constructed node is pushed; untagged arguments pass through as plain
-/// parameters. Only the construction scaffold lives here — evaluation is
-/// `Node::sample`.
 macro_rules! node_builders {
     ($(
         $(#[$meta:meta])*

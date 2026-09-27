@@ -23,9 +23,6 @@ fn look() -> SkinLook {
     }
 }
 
-/// What the vertex shader computes for one instance's tint (`body_light` in
-/// `skinned.wgsl`), spelled in Rust against the same uniforms the frame
-/// publishes for `env`.
 fn shader_tint(inst: &SkinInstance, env: LightEnv) -> [f32; 3] {
     const SKY_MIN: f32 = 0.02;
     const FINAL_MIN: f32 = 0.006;
@@ -51,9 +48,6 @@ fn vertex_and_instance_strides_match_their_declared_layouts() {
     assert_eq!(std::mem::offset_of!(SkinInstance, hidden), 36);
 }
 
-/// The whole point: skinning the static mesh with the palette reproduces the
-/// per-frame CPU bake it replaced — same faces in the same order, same
-/// triangulation, same uv and shade, same world positions.
 #[test]
 fn skinned_mesh_matches_the_cpu_bake() {
     let owl = model("owl");
@@ -103,8 +97,6 @@ fn coat_parts_flag_exactly_the_coat_cubes() {
     let coat = mesh.verts.iter().filter(|v| v.parts == PART_COAT).count();
     assert!(coat > 0, "the fleece is flagged");
     assert!(coat < mesh.verts.len(), "the body under it is not");
-    // A shorn sheep's CPU bake skipped exactly the wool cubes: the unflagged
-    // vertices are exactly what it kept.
     let (mut shorn, mut indices) = (Vec::new(), Vec::new());
     bake_model_cubes(
         &sheep,
@@ -175,9 +167,6 @@ fn unbound_cubes_ride_the_extra_slot() {
     assert!(mesh.verts.iter().all(|v| v.bone as usize == bones));
 }
 
-/// The shader lights each body from its instance row; that must land on the
-/// tint the CPU bake folded into every vertex, for every light, sky and
-/// self-lighting a body can carry.
 #[test]
 fn instance_light_reproduces_the_baked_body_tint() {
     let envs = [
@@ -221,7 +210,6 @@ fn instance_light_reproduces_the_baked_body_tint() {
     }
 }
 
-/// `shader_tint` above is only a proof if the shader spells the same terms.
 #[test]
 fn the_skinned_shader_lights_bodies_with_the_shared_curve() {
     let src = include_str!("../../shaders/skinned.wgsl");

@@ -1,5 +1,3 @@
-//! Data-declared cubic splines for pure scalar graph evaluation.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 const INLINE_SPLINE_POINTS: usize = 8;
@@ -121,10 +119,6 @@ impl CubicSpline {
 pub struct SplinePoint {
     location: f64,
     value: SplineValue,
-    /// Explicit Hermite tangent at this knot. When every point of a spline
-    /// declares one, the spline uses cubic-Hermite interpolation with these exact
-    /// tangents and linear extrapolation past the ends. When none do, the spline
-    /// auto-derives monotone slopes and clamps past the ends instead.
     derivative: Option<f64>,
 }
 
@@ -134,8 +128,6 @@ impl SplinePoint {
         Self::with_optional_derivative(location, value, None)
     }
 
-    /// A knot with an explicit tangent, or `None` to let the spline derive
-    /// monotone slopes (see the `derivative` field).
     pub fn with_optional_derivative(
         location: f64,
         value: SplineValue,
@@ -229,10 +221,6 @@ fn evaluate_points(points: &[SplinePoint], values: &[f64], x: f64) -> f64 {
     }
 }
 
-/// Cubic-Hermite evaluation with the knots' explicit tangents (matching the
-/// reference terrain shaper): linear extrapolation past either end, cubic Hermite
-/// inside. `interpolate_segment` already applies Hermite given per-knot slopes, so
-/// here the declared derivatives are fed in directly.
 fn evaluate_hermite_explicit(points: &[SplinePoint], values: &[f64], x: f64) -> f64 {
     let last = points.len() - 1;
     if x <= points[0].location {
@@ -336,8 +324,6 @@ fn interpolate_segment(
         + h11 * h * slopes[segment + 1]
 }
 
-/// Cubic Hermite over one segment using the two endpoint slopes directly
-/// (`slopes[0]` at `segment`, `slopes[1]` at `segment + 1`).
 fn interpolate_segment_pair(
     points: &[SplinePoint],
     values: &[f64],
@@ -435,8 +421,6 @@ mod tests {
 
     #[test]
     fn explicit_derivatives_use_hermite_with_linear_extrapolation() {
-        // Symmetric unit tangents with equal endpoints: Hermite stays at 0 at the
-        // midpoint, and the ends extrapolate linearly along the tangent.
         let ramp = CubicSpline::new(
             "x",
             [
@@ -451,9 +435,6 @@ mod tests {
         assert_close(ramp.evaluate(&mut below), -1.0);
         assert_close(ramp.evaluate(&mut above), 2.0);
 
-        // Zero tangents reproduce the smoothstep midpoint (value 5 halfway 0→10),
-        // distinct from the monotone path which would also pass through 5 here but
-        // via auto-derived slopes.
         let step = CubicSpline::new(
             "x",
             [

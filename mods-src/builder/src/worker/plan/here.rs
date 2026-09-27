@@ -1,5 +1,3 @@
-//! Work the golem can do from where it stands.
-
 use super::gather::leans_on_scaffold;
 use super::sealing::{cutting, sealed_by};
 use super::verdict::{settle_verdict, viability, Viable};
@@ -13,11 +11,6 @@ use crate::worker::waiting::{Probe, Waiting};
 use crate::worker::Job;
 use crate::worker::{cargo, sight, Body, Ctx, Step, Task};
 
-/// A block still to be laid right behind `task`'s, as the golem looks at it,
-/// that could go in from here now: it goes first. The nearer block would
-/// stand between the golem and it — and a block that must be turned the way
-/// the golem looks (a stair under a gable) is laid through the very gap the
-/// nearer one fills, or never: walled in, it cost a wall taken back down.
 pub(super) fn behind(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -26,7 +19,6 @@ pub(super) fn behind(
     body: &Body,
     task: Task,
 ) -> Option<Task> {
-    // A job going home lays nothing more: it only takes its scaffolding down.
     if mode != Mode::Building {
         return None;
     }
@@ -56,7 +48,6 @@ pub(super) fn behind(
             job.survey.as_ref().map(|s| &s.known[j]),
             Some(Known::Place(missing)) if cargo::holds(&carried, missing)
         );
-        // Work whose turn has not come keeps waiting for it.
         let unit = job.design.units[j];
         let held_back = job.crew.pace.band_top.is_some_and(|top| unit.pos[1] > top)
             || job.design.passage(j)
@@ -92,14 +83,12 @@ pub(super) fn behind(
     None
 }
 
-/// Whether a body standing at `feet` keeps out of `cells` and off them.
 pub(in crate::worker) fn clear_of_body(feet: [i32; 3], cells: &[[i32; 3]]) -> bool {
     !cells
         .iter()
         .any(|c| *c == feet || *c == offset(feet, [0, 1, 0]) || *c == offset(feet, [0, -1, 0]))
 }
 
-/// Whether the golem sees `cells` from where it stands.
 pub(in crate::worker) fn sees_from_here(
     job: &Job,
     task: Task,
@@ -111,7 +100,6 @@ pub(in crate::worker) fn sees_from_here(
         && sight::sees_from(body, vec![body.pos], cells, &sight::work(job, task))[0].is_none()
 }
 
-/// Work seen from where the golem stands is done from there.
 pub(super) fn from_here(
     ctx: &mut Ctx,
     _projects: &mut Projects,

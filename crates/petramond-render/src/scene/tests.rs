@@ -2,7 +2,6 @@ use super::*;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::item::ItemType;
 
-/// A settled drop with `prev_pos == pos`, so it bakes to `pos` at any alpha.
 fn fresh_drop(pos: WorldPos, item: ItemType) -> DroppedItemPresentation {
     DroppedItemPresentation {
         variant: petramond_world::item::VariantId::NONE,
@@ -44,7 +43,6 @@ fn bake_item_entities_one_instance_per_drop() {
     let mut out = Vec::new();
     bake_item_entities(&drops, 1.0, &mut out);
     assert_eq!(out.len(), 2);
-    // A fresh drop has prev_pos == pos, so any alpha bakes its live position.
     assert_eq!(out[0].pos, drops[0].pos);
     assert_eq!(out[0].item, ItemType::Dirt);
     assert_eq!(out[1].item, ItemType::Stone);
@@ -52,8 +50,6 @@ fn bake_item_entities_one_instance_per_drop() {
 
 #[test]
 fn bake_item_entities_interpolates_between_ticks() {
-    // A drop that moved last tick (prev_pos != pos) bakes at the blended position,
-    // so it renders smoothly between the 20 TPS physics ticks.
     let drop = DroppedItemPresentation {
         prev_pos: WorldPos::new(0.0, 64.0, 0.0),
         pos: WorldPos::new(2.0, 64.0, 0.0),
@@ -81,8 +77,6 @@ fn bake_item_entities_reuses_the_vec_without_growth() {
     let mut out = Vec::new();
     bake_item_entities(&drops, 1.0, &mut out);
     let cap = out.capacity();
-    // Fewer drops -> identical-or-smaller count, so the cleared+refilled buffer
-    // keeps its capacity: rebuilding never reallocs.
     bake_item_entities(&drops[..2], 1.0, &mut out);
     assert_eq!(out.len(), 2);
     assert_eq!(out.capacity(), cap, "instance buffer reused");
@@ -90,9 +84,6 @@ fn bake_item_entities_reuses_the_vec_without_growth() {
 
 #[test]
 fn bake_particles_splits_rows_by_atlas() {
-    // Each row routes by its atlas tag: BLOCK rows into the block list, MODEL rows
-    // into the model list, with no cross-contamination. The block-vs-model decision
-    // lives upstream in presentation::collect_particles; the bake only routes.
     let particles = vec![
         particle_row(ParticleAtlas::Block),
         particle_row(ParticleAtlas::Model),
@@ -145,9 +136,6 @@ fn mob_row(prev_x: f64, x: f64) -> MobPresentation {
     }
 }
 
-/// A mob row bakes to one interpolated instance whose arena ranges pass
-/// through untouched (the scene carries the gather's arena verbatim), and a
-/// dead body drops what it held.
 #[test]
 fn bake_mobs_interpolates_and_keeps_each_rows_arena_ranges() {
     let mut first = mob_row(0.0, 2.0);
@@ -171,8 +159,6 @@ fn bake_mobs_interpolates_and_keeps_each_rows_arena_ranges() {
     assert_eq!(out[1].held, [None; 2], "a dead body holds nothing");
 }
 
-/// Copying the gather's arena keeps every row at its index, so the ranges the
-/// gather handed out address the same rows in the scene's copy.
 #[test]
 fn a_copied_mob_arena_answers_the_gathers_ranges() {
     let mut interner = crate::AnimInterner::default();
@@ -215,9 +201,6 @@ fn a_copied_mob_arena_answers_the_gathers_ranges() {
     );
 }
 
-/// A holder's name table follows the interner by pointer: adopting an
-/// unchanged table keeps the same one, a grown table is taken whole, and a
-/// table handed out earlier never changes under its holder.
 #[test]
 fn an_adopted_name_table_tracks_the_interner_without_copying_names() {
     let mut interner = crate::AnimInterner::default();

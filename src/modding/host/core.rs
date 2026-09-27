@@ -1,12 +1,3 @@
-//! Core calls: logging, the tick clock, RNG streams, the `mod_init`
-//! registration window, and shader parameters. Log/RNG/RuntimeSide are
-//! scope-free and legal on any instance in any dispatch. The tick clock is
-//! legal in EVERY simulation-instance dispatch — it reads the active sim
-//! scope, falling back to the detached AI-dispatch tick stash
-//! (`modding::ai::detached_tick`) — but errors on instances that have no
-//! tick at all (worldgen workers, whose replies must be pure functions of
-//! their inputs; client instances gate it off in `client_capability`).
-
 use mod_api::{CoreCall, ErrorCode, HostRet};
 
 use crate::modding::scope;
@@ -14,8 +5,6 @@ use crate::modding::scope;
 use super::guards::{key_owned_by_namespace, public_write_key_guard, sim_call, sim_query};
 use super::{ModStoreData, Registration};
 
-/// Store-side core calls: logging, the tick counter, RNG streams, the
-/// `mod_init` registration window, and shader params.
 pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostRet {
     match call {
         CoreCall::Log { msg } => {
@@ -71,8 +60,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             callback_id,
         }),
         CoreCall::RegisterBlockBehavior { key, callback_id } => {
-            // A behavior key routes hooks back to its owner, so it must carry
-            // THIS mod's namespace (same ownership rule as catalog keys).
             if !key_owned_by_namespace(&data.mod_id, &key) {
                 return HostRet::error(
                     ErrorCode::Forbidden,
@@ -101,15 +88,7 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             Some(e) => e,
             None => sim_call(|ctx| ctx.world.set_shader_param(key, value)),
         },
-        // A mod's own event: QUEUED, never dispatched inline. Re-entering the
-        // bus from inside a guest dispatch is what the architecture forbids
-        // (it would run other mods' handlers inside this mod's host call), so
-        // this rides the post queue like every other observational event and
-        // dispatches at the next drain point in the same tick.
         CoreCall::EmitEvent { key, data: bytes } => {
-            // Emitting under another mod's namespace would let a mod forge
-            // events its owner is trusted for; the key is the only filter a
-            // handler has. Same rule, same guard, as a KV write.
             if let Some(e) = event_key_guard("EmitEvent", &data.mod_id, &key, bytes.len()) {
                 return e;
             }
@@ -118,10 +97,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
                     .emit(crate::events::PostEvent::ModEvent { key, data: bytes })
             })
         }
-        // The same event, addressed at one player's CLIENT. It rides the
-        // tick→presentation feed rather than the post queue: nothing on THIS
-        // side handles it, so queueing a dispatch here would only make every
-        // server handler filter it out again.
         CoreCall::EmitEventTo {
             player,
             key,
@@ -133,9 +108,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             let mod_id = data.mod_id.clone();
             sim_query(move |ctx| {
                 let player = crate::player::PlayerId(player.0);
-                // Reachability is the roster's answer, exactly as for every
-                // other explicitly-addressed player call — silence here would
-                // look identical to a delivered cue nobody handled.
                 if ctx.session_index(player).is_none() {
                     log::warn!(
                         "[mod {mod_id}] EmitEventTo '{key}': player {} is not connected",
@@ -154,11 +126,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
     }
 }
 
-/// A mod event's key must be the emitter's OWN namespace (an engine
-/// `petramond:` event is the engine's to fire), and its payload is bounded
-/// like a KV value — a queue holds these until they are delivered. Shared by
-/// both emitters, because "whose event is this" and "how big may it be" are
-/// properties of the EVENT, not of which queue it happens to ride.
 fn event_key_guard(call: &str, mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
     if !key_owned_by_namespace(mod_id, key) {
         return Some(HostRet::error(
@@ -183,11 +150,6 @@ mod tests {
 
     use crate::events::{PostQueue, RosterRefs, SimCtx};
 
-    /// The tick clock is legal in the detached AI-dispatch scope: with no sim
-    /// scope active it reads the dispatcher's published tick instead of
-    /// erroring — the contract that lets scripted AI nodes call
-    /// `current_tick` like any other dispatch (mods must never be forced to
-    /// count time in dispatches).
     #[test]
     fn current_tick_reads_the_detached_ai_dispatch_stash() {
         use crate::modding::host::{handle_host_call, ModStoreData};
@@ -216,9 +178,6 @@ mod tests {
     use crate::modding::scope;
     use crate::world::ServerWorld;
 
-    /// Shader params are the visual environment surface mods use for sky
-    /// shaders and other pack-owned effects: own namespace or engine `petramond:*`,
-    /// tick-scoped, and stored in the world's neutral environment snapshot.
     #[test]
     fn shader_param_writes_are_namespaced_and_tick_scoped() {
         let mut alpha = ModStoreData::new("alpha", 1);

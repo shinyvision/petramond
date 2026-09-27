@@ -1,9 +1,3 @@
-//! Randomized light-test worlds shared by the bake parity tests and the
-//! incremental-relight equivalence tests: rough terrain with caves, stateful
-//! stairs, torches, coloured lamps and custom-shape light apertures over a
-//! `span`³ window of sections, with sky cover derived from the ACTUAL blocks
-//! (the invariant the engine maintains).
-
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -19,7 +13,6 @@ use crate::torch::TorchPlacement;
 
 use super::bake::{bake_section, LightBakeOutput, SectionBakeJob};
 
-/// Xorshift64: deterministic, dependency-free fixture randomness.
 pub struct Rng(pub u64);
 
 impl Rng {
@@ -38,7 +31,6 @@ impl Rng {
 pub struct Fixture {
     pub sections: FxHashMap<SectionPos, Arc<Section>>,
     pub columns: FxHashMap<ChunkPos, Arc<Column>>,
-    /// Low corner of the section window.
     pub low: SectionPos,
     pub span: usize,
 }
@@ -46,8 +38,6 @@ pub struct Fixture {
 const FACINGS: [Facing; 4] = [Facing::North, Facing::East, Facing::South, Facing::West];
 
 impl Fixture {
-    /// A random window; each section is left absent (reads as air) with
-    /// probability `1 / absent_one_in` (`0` keeps every section).
     pub fn random(rng: &mut Rng, low: SectionPos, span: usize, absent_one_in: u64) -> Self {
         let dim = span * SECTION_SIZE;
         let heights: Vec<i32> = (0..dim * dim)
@@ -69,7 +59,6 @@ impl Fixture {
                             for lx in 0..SECTION_SIZE {
                                 let h = heights
                                     [(dz * SECTION_SIZE + lz) * dim + dx * SECTION_SIZE + lx];
-                                // Solid below the surface with random cave holes.
                                 if oy + ly as i32 <= h && !rng.one_in(8) {
                                     section.set_block(lx, ly, lz, Block::Stone);
                                 } else {
@@ -93,7 +82,6 @@ impl Fixture {
         fixture
     }
 
-    /// Every section position of the window, present or not.
     pub fn window(&self) -> impl Iterator<Item = SectionPos> + '_ {
         let (low, span) = (self.low, self.span as i32);
         (0..span).flat_map(move |dy| {
@@ -141,14 +129,12 @@ impl Fixture {
         crate::column::NO_SURFACE
     }
 
-    /// The per-section full bake of `pos` against the fixture as it stands.
     pub fn full_bake(&self, pos: SectionPos) -> LightBakeOutput {
         let job = SectionBakeJob::snapshot_unchecked(pos, &self.sections, &self.columns)
             .expect("fixture section is present");
         bake_section(job)
     }
 
-    /// Full-bake every present section and install the cubes as settled light.
     pub fn bake_all(&mut self) {
         let positions: Vec<SectionPos> = self.sections.keys().copied().collect();
         let outs: Vec<LightBakeOutput> = positions.iter().map(|&p| self.full_bake(p)).collect();
@@ -159,14 +145,12 @@ impl Fixture {
         }
     }
 
-    /// Install relit cubes the way the engine does.
     pub fn install(&mut self, pos: SectionPos, skylight: Arc<[u8]>, blocklight: Arc<[LightRgb]>) {
         let section = Arc::make_mut(self.sections.get_mut(&pos).unwrap());
         section.set_skylight(skylight);
         section.set_blocklight(blocklight);
     }
 
-    /// Mutable access to the section owning world `cell` plus its local index.
     pub fn cell_mut(&mut self, cell: IVec3) -> Option<(&mut Section, usize, usize, usize)> {
         let pos = SectionPos::from_world(cell.x, cell.y, cell.z)?;
         let section = Arc::make_mut(self.sections.get_mut(&pos)?);
@@ -179,16 +163,12 @@ impl Fixture {
         ))
     }
 
-    /// Panic at the first cell where the stored light of any present section
-    /// differs from a fresh full bake.
     pub fn assert_matches_full_bakes(&self, label: &str) {
         for pos in self.window() {
             let Some(section) = self.sections.get(&pos) else {
                 continue;
             };
             if !section.has_baked_light() {
-                // Only a fully opaque section may go unbaked (it never bakes;
-                // its light is implied).
                 assert!(section.all_opaque(), "{label}: {pos:?} holds no light");
                 continue;
             }
@@ -202,8 +182,6 @@ impl Fixture {
     }
 }
 
-/// Air-band decoration: a stateful stair (sometimes with a custom-shape light
-/// aperture baked over it), a torch, a coloured lamp, or glass.
 fn random_feature(rng: &mut Rng, section: &mut Section, lx: usize, ly: usize, lz: usize) {
     if rng.one_in(401) {
         place_stair(rng, section, lx, ly, lz);
@@ -215,9 +193,6 @@ fn random_feature(rng: &mut Rng, section: &mut Section, lx: usize, ly: usize, lz
     }
 }
 
-/// A random-facing bottom stair; one in three also carries a baked custom
-/// aperture — opaque or open at random — so the WASM override path is in
-/// every fixture.
 pub fn place_stair(rng: &mut Rng, section: &mut Section, lx: usize, ly: usize, lz: usize) {
     section.set_block(lx, ly, lz, Block::OakStairs);
     let facing = FACINGS[(rng.next() % 4) as usize];

@@ -25,9 +25,6 @@ use petramond_anim::{
 };
 use petramond_render::ArenaRange;
 
-/// One claimed graph param with its value resolved to the number the
-/// animator takes — a name claim interned ONCE, where the claim arrives
-/// ([`NameCache`]), never per frame.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AnimatorParamRow {
     pub rig: RigId,
@@ -35,8 +32,6 @@ pub struct AnimatorParamRow {
     pub value: f32,
 }
 
-/// Interned name values, cached by string so a claim that repeats a name
-/// never takes the global intern lock again.
 #[derive(Default)]
 pub struct NameCache {
     names: rustc_hash::FxHashMap<Box<str>, f32>,
@@ -62,16 +57,11 @@ impl NameCache {
         }
     }
 
-    /// Resolve every param of `claims` onto the end of `out`.
     pub fn rows(&mut self, params: &[AnimatorParam], out: &mut Vec<AnimatorParamRow>) {
         out.extend(params.iter().map(|p| self.row(p)));
     }
 }
 
-/// One body's resolved animator claims and the graph events fired on it
-/// this frame, borrowed from the frame's arenas
-/// ([`BodyFrame`](super::BodyFrame) carries every body's rows back to back;
-/// a body addresses its own by [`AnimatorRanges`]).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AnimatorInputs<'a> {
     pub params: &'a [AnimatorParamRow],
@@ -79,7 +69,6 @@ pub struct AnimatorInputs<'a> {
     pub events: &'a [(RigId, u16)],
 }
 
-/// One body's slices of the frame's animator arenas.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnimatorRanges {
     pub params: ArenaRange,
@@ -88,7 +77,6 @@ pub struct AnimatorRanges {
 }
 
 impl AnimatorRanges {
-    /// This body's rows of the frame's arenas.
     pub fn of<'a>(
         self,
         params: &'a [AnimatorParamRow],
@@ -103,11 +91,8 @@ impl AnimatorRanges {
     }
 }
 
-/// Seconds a claim takes to settle in, out, or from one clip into the next.
 const CLAIM_SETTLE: f32 = 0.12;
 
-/// The part of a play's clock that identifies the play: a scrub's progress
-/// changes every frame without restarting it, a run's rate or loop does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum HeldClock {
     Scrub,
@@ -123,7 +108,6 @@ impl HeldClock {
     }
 }
 
-/// What identifies a claimed play: a changed key is a new play.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Key {
     slot: SlotId,
@@ -132,28 +116,20 @@ struct Key {
     clock: HeldClock,
 }
 
-/// One claimed play and the montage standing for it.
 #[derive(Clone, Copy, Debug)]
 struct Held {
     key: Key,
-    /// The montage this claim started, while the slot still has it.
     play: Option<PlayId>,
-    /// A run that played to its end: it stays ended while the claim stands.
     done: bool,
 }
 
 pub(crate) struct ClaimDriver {
     rig: RigId,
-    /// How many params, slots and clips the graph declares: a claim past
-    /// them (a peer's graph that differs) is dropped.
     params: usize,
     slots: usize,
     clips: usize,
-    /// Params claimed last frame, to restore when a claim releases.
     claimed: Vec<ParamId>,
-    /// The plays claimed last frame.
     plays: Vec<Held>,
-    /// Scratch for this frame's plays, swapped with `plays`.
     next: Vec<Held>,
 }
 
@@ -175,9 +151,6 @@ impl ClaimDriver {
         self.plays.clear();
     }
 
-    /// Put every param claimed last frame back to its graph default. Runs
-    /// BEFORE the engine writes its own inputs, so a released param shows
-    /// the engine's value this same frame.
     pub fn release(&mut self, animator: &mut Animator) {
         let graph = animator.graph().clone();
         for param in self.claimed.drain(..) {
@@ -185,8 +158,6 @@ impl ClaimDriver {
         }
     }
 
-    /// Write this frame's claims and events for this driver's rig, after the
-    /// engine's inputs and before the animator's update.
     pub fn claim(&mut self, animator: &mut Animator, inputs: AnimatorInputs<'_>) {
         for p in inputs.params.iter().filter(|p| p.rig == self.rig) {
             if usize::from(p.param) >= self.params {
@@ -226,8 +197,6 @@ impl ClaimDriver {
                         held.play = None;
                         held.done = true;
                     }
-                    // Refused while a higher-priority montage holds the
-                    // slot: `None`, and the claim asks again next frame.
                     Some(PlayState::Displaced) | None => {
                         held.play = animator.play(key.slot, &spec(&key, p.priority));
                     }
@@ -256,11 +225,8 @@ impl ClaimDriver {
     }
 }
 
-/// The montage a claimed play starts.
 fn spec(key: &Key, priority: i32) -> PlaySpec {
     let mut spec = PlaySpec::new(key.clip);
-    // A scrub never ends on its own: it loops so a seek past the last frame
-    // still finds a playing clip.
     (spec.rate, spec.looping) = match key.clock {
         HeldClock::Scrub => (0.0, true),
         HeldClock::Run { rate, looping } => (rate, looping),

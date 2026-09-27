@@ -1,18 +1,7 @@
-//! The terrain nodes: every draw of packed column geometry, over the plan
-//! `draw_plan` built. The quad nodes submit the planned indirect draw lists
-//! (see `draw_plan::draws`); the model nodes draw whole columns first and
-//! then the sections that could not join one.
-
 use super::*;
 use crate::resources::{ColumnBuffer, SectionStream, Span};
 
 impl TerrainPass {
-    /// OPAQUE terrain, near → far for early-Z (whole columns, then the
-    /// sections no column draw covered). Two binds serve the whole node:
-    /// every draw picks its column's origin row with `first_instance`, and
-    /// every draw's triangulation comes from the shared quad index buffer
-    /// with its first vertex as `base_vertex`; the draw list binds the arena
-    /// blocks itself.
     pub(super) fn record_opaque(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -31,11 +20,6 @@ impl TerrainPass {
         stats.opaque_indices += list.indices();
     }
 
-    /// CONTACT SHADOWS: the models' soft floor stamps, multiplied over the
-    /// opaque terrain (depth read-only, LessEqual + its own coplanar bias
-    /// against the supporting top face). One whole-buffer draw per visible
-    /// contact-bearing column — the stream is sparse and needs no per-section
-    /// ranges.
     pub(super) fn record_contact(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         pass.set_pipeline(self.pipes.contact.get(ctx.samples));
         pass.set_bind_group(0, &ctx.binds.uniform, &[]);
@@ -54,11 +38,6 @@ impl TerrainPass {
         }
     }
 
-    /// MODELS: bbmodel-block geometry (explicit-UV, sampling the model
-    /// atlas) over the opaque depth, so a placed model occludes and is
-    /// occluded by terrain like any block. Its vertices carry (sky, block)
-    /// light, so the world-model pipeline applies the day/night sky scale
-    /// (meshes don't rebake at sunset).
     pub(super) fn record_models(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         pass.set_bind_group(0, ctx.world_bind, &[]);
         pass.set_bind_group(1, &ctx.binds.model_atlas, &[]);
@@ -67,9 +46,6 @@ impl TerrainPass {
         self.draw_model_stream(pass, SectionStream::ModelIndices);
     }
 
-    /// TRANSLUCENT BLOCKS (ice): alpha-blended but depth-WRITING, so a sheet
-    /// of translucent cubes resolves its own face order through the depth
-    /// buffer. Near → far: depth-writing, so early-Z applies like opaque.
     pub(super) fn record_translucent(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -122,9 +98,6 @@ impl TerrainPass {
             let Some(col) = self.columns.get(pos) else {
                 continue;
             };
-            // The whole column's model stream, opaque range and blend range
-            // together: the mask discards every fragment outside the cracked
-            // model, so the node never needs to know which section holds it.
             let total = col.region(SectionStream::ModelIndices).count
                 + col.region(SectionStream::ModelBlendIndices).count;
             self.draw_model_range(
@@ -153,9 +126,6 @@ impl TerrainPass {
         pass.set_bind_group(1, &ctx.binds.atlas_array, &[]);
         pass.set_vertex_buffer(1, self.column_origins.buffer().slice(..));
         pass.set_index_buffer(self.quad_index.slice(), wgpu::IndexFormat::Uint32);
-        // Fluid side faces cull their backs, fluid TOPS do not (they must
-        // stay visible from underneath): the list switches pipeline whenever
-        // the layer does, which sections carrying both make rare.
         let side = self.pipes.transparent.get(ctx.samples);
         let top = self.pipes.transparent_two_sided.get(ctx.samples);
         self.draws
@@ -171,9 +141,6 @@ impl TerrainPass {
         stats.transparent_indices += list.indices();
     }
 
-    /// Draw one model index stream (the opaque faces, or the blend faces) of
-    /// every visible model column: whole-column regions for the batched
-    /// columns, then the section ranges no column draw covered.
     fn draw_model_stream(&self, pass: &mut wgpu::RenderPass<'_>, stream: SectionStream) {
         for &(_, _, slot) in &self.plan.model_columns {
             let col = self.columns.at(slot);
@@ -184,9 +151,6 @@ impl TerrainPass {
         }
     }
 
-    /// Draw `indices` of `col`'s model stream: its vertex and index buffers
-    /// bound from the arena, its origin row by `first_instance`. An empty
-    /// range draws nothing.
     fn draw_model_range(
         &self,
         pass: &mut wgpu::RenderPass<'_>,

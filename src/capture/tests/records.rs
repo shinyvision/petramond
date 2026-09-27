@@ -1,7 +1,3 @@
-//! What the engine writes into a mod's file reads back through `mod_api`'s
-//! codec — the one `mod_sdk::capture` re-exports — piece for piece, and a
-//! `ChangedSince` states exactly what changed.
-
 use std::collections::BTreeSet;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -31,8 +27,6 @@ use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
 
 const WAIT: Duration = Duration::from_secs(60);
 
-/// A replica holding `radius`² columns of a stone floor with a lamp on it,
-/// installed through its ordinary ingest, its first frame ended.
 fn replica(radius: i32, pool: &Arc<JobPool>) -> ReplicaWorld {
     let mut server = ServerWorld::with_pool(0, 1, Arc::clone(pool));
     for cz in -radius..=radius {
@@ -90,7 +84,6 @@ fn write_state(
     }
 }
 
-/// Everything queued to `file` so far has landed, then its bytes.
 fn read_all(file: &FileRef) -> Vec<u8> {
     let (tx, rx) = mpsc::channel();
     files::sync(file, move |_| {
@@ -100,7 +93,6 @@ fn read_all(file: &FileRef) -> Vec<u8> {
     std::fs::read(file.path()).expect("the file exists")
 }
 
-/// The pieces a record's envelope lists, each checked on its own, keyed.
 fn stated_keys(record: &[u8]) -> BTreeSet<ClientStateKey> {
     let ClientEnvelope::State(envelope) = record_envelope(record).expect("a whole record") else {
         panic!("a state record");
@@ -122,7 +114,6 @@ fn stated_keys(record: &[u8]) -> BTreeSet<ClientStateKey> {
 fn a_state_record_reads_back_piece_for_piece_through_the_mod_codec() {
     let pool = Arc::new(JobPool::new(2));
     let scratch = TestScratchDir::new("capture-state");
-    // Enough terrain that the record streams in several chunks.
     let world = replica(8, &pool);
     let file = FileRef::in_dir(&scratch, "rec/world.pmc");
     let envelopes = FileRef::in_dir(&scratch, "rec/world.env");
@@ -165,7 +156,6 @@ fn a_state_record_reads_back_piece_for_piece_through_the_mod_codec() {
             .expect("its column is present");
         assert!(column.has_section(presence.cy_min, pos.cy));
     }
-    // The opaque body is the engine's own replication value, exactly.
     let lamp = SectionPos::from_world(3, 65, 3).unwrap();
     let (_, body) = check_piece(piece_of(section_key(lamp))).unwrap();
     let payload: SectionPayload = decode_body(body).unwrap();
@@ -189,8 +179,6 @@ fn changed_since_states_exactly_what_changed_and_presence_only_when_the_set_move
     let file = FileRef::in_dir(&scratch, "world.pmc");
     let base = world.changes().revision();
 
-    // One block edited: its section, and its column (the edit may move the
-    // column's heights) — nothing else.
     let edited = IVec3::new(20, 64, 5);
     world.apply_remote_delta(BlockDelta {
         pos: edited,
@@ -217,8 +205,6 @@ fn changed_since_states_exactly_what_changed_and_presence_only_when_the_set_move
             .collect()
     );
 
-    // A section leaves: the terrain key set moved, so Presence — and the
-    // section is not stated, being gone.
     let gone = SectionPos::from_world(-10, 64, -10).unwrap();
     world.uninstall_remote_section(gone);
     world.changes_mut().end_frame();
@@ -236,7 +222,6 @@ fn changed_since_states_exactly_what_changed_and_presence_only_when_the_set_move
         [ClientStateKey::Presence].into_iter().collect()
     );
 
-    // A revision this world never issued is served whole, and says so.
     let range = write_state(
         &world,
         ClientStateSelect::ChangedSince(u64::MAX),
@@ -364,8 +349,6 @@ fn an_events_log_holds_every_frame_in_order_with_its_cues_and_view() {
     assert_eq!(named, written, "one entry per record, in record order");
 }
 
-/// A still frame is skipped, but not one whose hands fired an event (a
-/// place jab) or changed what they hold: the eye alone is not the view.
 #[test]
 fn a_still_frame_is_written_when_its_hands_moved() {
     let pool = Arc::new(JobPool::new(1));
@@ -416,9 +399,6 @@ fn a_still_frame_is_written_when_its_hands_moved() {
     );
 }
 
-/// The frame-side cost of writing a whole RD 32 world (~36k sections) as
-/// one State record, and how long its bytes take to land. Manual:
-/// `cargo test --profile fasttest -p petramond capture_profile -- --ignored --nocapture`.
 #[test]
 #[ignore]
 fn capture_profile() {

@@ -37,44 +37,30 @@ use crate::mathh::IVec3;
 
 use super::super::{Aabb, Block, ShapeRenderBox};
 
-/// Widest per-cell shape state, in bytes. The engine's own families need at
-/// most five (a slab's split/mask byte plus two two-byte layer BLOCK IDS);
-/// the cap keeps [`ShapeState`] `Copy` and cheap to pass through the mesher's
-/// hot neighbour reads.
 pub const SHAPE_STATE_MAX: usize = 8;
 
-/// A cell's per-cell shape state as OPAQUE BYTES — meaningful only to the
-/// family that owns the cell's block. This exact value is what the unified
-/// section store holds, the save record persists, and the replication delta
-/// ships, so `serde` here IS the wire encoding.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShapeState {
     len: u8,
-    /// Bit `i` set = `bytes[i..i + 2]` is a little-endian BLOCK-ID reference.
-    /// Opaque to every reader except the save palette and the net transport,
-    /// which rewrite masked ids through their mappings
-    /// ([`remap_ids`](Self::remap_ids)).
+    /// Bit `i` set means `bytes[i..i + 2]` is a little-endian block-id reference. Only the save
+    /// palette and the net transport read these, rewriting masked ids through their mappings
+    /// ([`remap_ids`](Self::remap_ids)). Every other reader treats them as opaque.
     id_mask: u8,
     bytes: [u8; SHAPE_STATE_MAX],
 }
 
 impl ShapeState {
-    /// No state (the cell's family is stateless, or the cell is not loaded).
     pub const NONE: ShapeState = ShapeState {
         len: 0,
         id_mask: 0,
         bytes: [0; SHAPE_STATE_MAX],
     };
 
-    /// State from `bytes`, truncated at [`SHAPE_STATE_MAX`].
     #[inline]
     pub fn new(bytes: &[u8]) -> Self {
         Self::with_ids(bytes, 0)
     }
 
-    /// State from `bytes` where the bits of `id_mask` flag which byte PAIRS
-    /// are BLOCK-ID references (rewritten at the save/net boundaries) — see
-    /// [`id_bytes`](Self::id_bytes).
     #[inline]
     pub fn with_ids(bytes: &[u8], id_mask: u8) -> Self {
         let len = bytes.len().min(SHAPE_STATE_MAX);
@@ -92,28 +78,21 @@ impl ShapeState {
         &self.bytes[..self.len as usize]
     }
 
-    /// Which byte pairs are block-id references (bit `i` = `bytes[i..i + 2]`).
     #[inline]
     pub fn id_mask(&self) -> u8 {
         self.id_mask
     }
 
-    /// The two little-endian bytes a block id occupies inside a state — the
-    /// producer half of the id-reference convention.
     #[inline]
     pub fn id_bytes(id: u16) -> [u8; 2] {
         id.to_le_bytes()
     }
 
-    /// The block id starting at byte `i` (a short state reads as air, matching
-    /// [`byte`](Self::byte)).
     #[inline]
     pub fn id_at(&self, i: usize) -> u16 {
         u16::from_le_bytes([self.byte(i), self.byte(i + 1)])
     }
 
-    /// Byte `i`, or `0` when the state is shorter — so a family decoding a
-    /// missing/foreign state gets its zero value instead of panicking.
     #[inline]
     pub fn byte(&self, i: usize) -> u8 {
         if i < self.len as usize {
@@ -123,8 +102,6 @@ impl ShapeState {
         }
     }
 
-    /// Rewrite every id-masked block id through `f` — the save palette / net
-    /// transport boundary hook. Non-masked bytes are untouched.
     #[inline]
     pub fn remap_ids(&mut self, f: impl Fn(u16) -> u16) {
         let mut mask = self.id_mask;
@@ -145,60 +122,24 @@ impl ShapeState {
     }
 }
 
-/// A typed VIEW over a cell's opaque state bytes. Implemented NEXT TO the
-/// type it decodes (the owner's module — `StairState` in the stair's home,
-/// `DoorState` in the door's), never in engine code: the byte layout is the
-/// owner's private vocabulary, and this trait is the only bridge.
-///
-/// `owns` is the read gate: a foreign cell's bytes must never decode through
-/// another owner's view, so the generic accessors answer the type's default
-/// semantics (`from_cell(NONE)`) for any block the view does not own.
 pub trait CellView: Sized {
-    /// Which blocks own state this view may decode.
     fn owns(block: Block) -> bool;
-    /// Decode the stored bytes. Absence ([`ShapeState::NONE`]) MUST decode to
-    /// the type's default semantics — never panic, never garbage.
     fn from_cell(state: ShapeState) -> Self;
 }
 
-/// The writable half of a cell-state vocabulary. A pure VIEW (a stair's
-/// refined corner, decoded from bytes another writer maintains) implements
-/// [`CellView`] only.
 pub trait CellCodec: CellView {
-    /// Encode to stored bytes. May return [`ShapeState::NONE`] for a default
-    /// value the store elides (a vertical log, an empty slab stack).
     fn to_cell(&self) -> ShapeState;
 }
 
-/// The world reads a shape family may perform — and the ONLY ones it has.
-///
-/// Implemented by the sim world and by the mesher's padded section snapshot.
-/// Reads outside the caller's knowledge (an unloaded cell, a neighbour beyond
-/// the mesh pad) answer with air / [`ShapeState::NONE`] / `None`, never a
-/// panic: a family must degrade to "nothing there", which is exactly how the
-/// per-family producers already behaved at streaming edges.
 pub trait ShapeNeighborhood {
-    /// The block at `pos` (air when unknown or unloaded).
     fn block(&self, pos: IVec3) -> Block;
 
-    /// The per-cell shape state at `pos`, opaque to everyone but the family
-    /// owning that cell's block.
     fn shape_state(&self, pos: IVec3) -> ShapeState;
 
-    /// A WASM shape bake's drawn boxes for `pos`, when one is cached and
-    /// reachable. `None` covers "never baked", "trapped bake", and "outside
-    /// the caller's window" alike — the family then falls back to its static
-    /// form, the established custom-shape failure policy.
     fn baked(&self, _pos: IVec3) -> Option<&[ShapeRenderBox]> {
         None
     }
 
-    /// A SIM shape bake's authoritative collision boxes for `pos`, when one
-    /// is cached and reachable — the sim twin of [`baked`](Self::baked)
-    /// (collision is interned, render is not, so the two caches stay
-    /// separate). Same `None` semantics: the family falls back to the row's
-    /// static collision. The mesher's pad keeps the default — it never
-    /// resolves collision.
     fn baked_collision(&self, _pos: IVec3) -> Option<&'static [Aabb]> {
         None
     }
@@ -208,9 +149,6 @@ pub trait ShapeNeighborhood {
 mod tests {
     use super::*;
 
-    /// The opaque-state contract: round-trips within the cap, truncates past
-    /// it, and reads short states as zeros rather than panicking (a family
-    /// decoding a foreign or missing state must degrade, not crash).
     #[test]
     fn shape_state_round_trips_truncates_and_reads_short_as_zero() {
         let s = ShapeState::new(&[7, 9]);
@@ -228,10 +166,6 @@ mod tests {
         );
     }
 
-    /// A block id inside state bytes is a two-byte little-endian pair the
-    /// mask points at, and `remap_ids` must move the WHOLE id — a high-id
-    /// pack block truncating to its low byte would silently rewrite a slab's
-    /// layer to a different block at the save/wire boundary.
     #[test]
     fn id_masked_pairs_carry_and_remap_the_full_block_id() {
         let [lo, hi] = ShapeState::id_bytes(300);

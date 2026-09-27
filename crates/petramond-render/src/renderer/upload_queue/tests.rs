@@ -4,13 +4,10 @@ fn col(cx: i32, cz: i32) -> ChunkPos {
     ChunkPos::new(cx, cz)
 }
 
-/// Near columns first, all in view.
 fn by_distance(column: ChunkPos) -> UploadPriority {
     (0, (column.cx.abs() + column.cz.abs()) as u32)
 }
 
-/// Drain the queue as `sync_meshes` does, uploading everything that is
-/// ready. Returns the uploaded columns in order.
 fn run_frame(queue: &mut UploadQueue) -> Vec<ChunkPos> {
     queue.begin_frame();
     let mut drain = FrameDrain::default();
@@ -33,7 +30,6 @@ fn a_dirty_column_waits_out_its_quiet_window_then_uploads_once() {
     let mut queue = UploadQueue::default();
     queue.begin_frame();
     dirty(&mut queue, col(0, 0), 1);
-    // Level-triggered dirtiness re-reports the same revision every frame.
     dirty(&mut queue, col(0, 0), 1);
     let mut drain = FrameDrain::default();
     assert_eq!(
@@ -55,7 +51,6 @@ fn new_revisions_restart_the_quiet_window_but_not_the_deadline() {
     for frame in 1..=10u64 {
         queue.begin_frame();
         if uploaded_on.is_none() {
-            // A column whose siblings keep finishing: a new revision a frame.
             dirty(&mut queue, col(3, 3), frame);
         }
         let mut drain = FrameDrain::default();
@@ -81,7 +76,6 @@ fn an_urgent_column_skips_the_wait() {
     dirty(&mut queue, col(1, 0), 1);
     dirty(&mut queue, col(2, 0), 1);
     queue.mark_urgent(col(2, 0), || by_distance(col(2, 0)));
-    // Urgency for a column that is not pending is a no-op.
     queue.mark_urgent(col(9, 9), || by_distance(col(9, 9)));
     let mut drain = FrameDrain::default();
     assert_eq!(queue.next_ready(&mut drain), Some((col(2, 0), 1)));
@@ -142,7 +136,6 @@ fn a_frame_uploads_at_most_its_budget_and_keeps_the_rest() {
     for &column in &columns {
         dirty(&mut queue, column, 1);
     }
-    // Past the quiet window: everything is ready at once.
     queue.begin_frame();
     let first = run_frame(&mut queue);
     assert_eq!(first.len(), MAX_UPLOADS_PER_FRAME);
@@ -160,7 +153,6 @@ fn a_restarted_column_waits_a_fresh_window() {
     queue.begin_frame();
     let mut drain = FrameDrain::default();
     let (column, revision) = queue.next_ready(&mut drain).expect("ready");
-    // Its released siblings need re-meshing first.
     queue.take(column);
     queue.restart(column, revision, &mut drain);
     queue.finish(drain, by_distance);

@@ -1,6 +1,3 @@
-//! The materials page: what the site still needs, against what the chests
-//! offer this project.
-
 use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
@@ -51,8 +48,6 @@ impl PanelState for MaterialsPanel {
     }
 }
 
-/// The bill of the project the table at `anchor` speaks for: what is short
-/// first, the largest gap on top.
 pub fn bill(builder: &mut Builder, anchor: [i32; 3], now: u64) -> MaterialsPanel {
     let Some(project) = project_at(builder, anchor)
         .and_then(|id| builder.projects.get(id))

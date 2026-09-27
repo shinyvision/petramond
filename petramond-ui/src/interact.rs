@@ -1,15 +1,3 @@
-//! The interaction pass: host input events against the frame's solved
-//! geometry, mutating [`FrameState`] and emitting [`UiEvent`]s.
-//!
-//! Semantics preserved from the legacy GUI:
-//! - Ordinary slot and list-row presses fire on pointer **down**. A host-armed
-//!   cursor-stack slot gesture captures distinct cells through release.
-//! - Buttons, checkboxes, and toggles fire on press-in-**release**-in.
-//! - A press that hits nothing outside the panel emits `ClickOutside`
-//!   (cursor-stack throws).
-//! - Keys no widget consumes surface as `UiEvent::Key` for per-screen
-//!   controllers (list nav, ESC-back, Delete jumps).
-
 use crate::doc::{NodeKind, ScrollAxis};
 use crate::input::{Drag, FrameState, InputEvent, NavKey, PointerButton, PointerPhase, UiEvent};
 use crate::layout::{grid_cell, SlotMetrics, Solved};
@@ -18,7 +6,6 @@ use crate::theme::Theme;
 use crate::tree::{InstKey, InstTree, ROOT};
 use crate::widget;
 
-/// One slot-bearing instance and its role's starting in-role index.
 #[derive(Clone, Debug)]
 pub(crate) struct SlotRef {
     pub inst: u32,
@@ -26,8 +13,6 @@ pub(crate) struct SlotRef {
     pub base: u32,
 }
 
-/// Collect slot instances in arena (document) order with their per-role base
-/// indices — the same accumulation as [`crate::doc::Document::role_slots`].
 pub(crate) fn collect_slots(tree: &InstTree<'_>) -> Vec<SlotRef> {
     let mut counts: Vec<(String, u32)> = Vec::new();
     let mut out = Vec::new();
@@ -59,7 +44,6 @@ pub(crate) fn collect_slots(tree: &InstTree<'_>) -> Vec<SlotRef> {
     out
 }
 
-/// The double-click window for list-row activation, seconds.
 const ROW_ACTIVATE_SECS: f64 = 0.25;
 
 pub(crate) struct Interact<'a> {
@@ -72,7 +56,6 @@ pub(crate) struct Interact<'a> {
 }
 
 impl Interact<'_> {
-    /// Process every event in order, mutating `fs` and appending to `events`.
     pub fn run<C: TextClipboard + ?Sized>(
         &self,
         fs: &mut FrameState,
@@ -124,8 +107,6 @@ impl Interact<'_> {
         self.surface_hover(fs, events);
     }
 
-    /// The interactive surface (canvas/viewport) under the cursor, if any is
-    /// the topmost pointer target there.
     fn surface_hit(&self, fs: &FrameState) -> Option<u32> {
         self.hit(fs)
             .filter(|&i| self.tree.get(i).enabled && self.tree.get(i).node.kind.is_surface())
@@ -152,8 +133,6 @@ impl Interact<'_> {
         }
     }
 
-    /// Uncaptured hover: a surface the pointer entered is tracked, one it
-    /// left hears `Leave`. Moves over it were queued by `pointer_move`.
     fn surface_hover(&self, fs: &mut FrameState, events: &mut Vec<UiEvent>) {
         if matches!(fs.drag, Some(Drag::Surface { .. })) {
             return;
@@ -180,7 +159,6 @@ impl Interact<'_> {
         }
     }
 
-    /// Cursor in logical px.
     fn cur(&self, fs: &FrameState) -> (f32, f32) {
         (
             fs.cursor.0 / self.scale as f32,
@@ -188,8 +166,6 @@ impl Interact<'_> {
         )
     }
 
-    /// The topmost pointer-target instance under the cursor (arena order is
-    /// paint order, so scan backwards), respecting clips.
     fn hit(&self, fs: &FrameState) -> Option<u32> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find(|&i| {
@@ -204,8 +180,6 @@ impl Interact<'_> {
             && self.solved.clips[i as usize].is_none_or(|c| widget::contains_f(c, x, y))
     }
 
-    /// The deepest list-template stamp (list direct child) under the cursor,
-    /// as `(list inst, row index, stamp inst)`.
     fn row_hit(&self, fs: &FrameState) -> Option<(u32, u32, u32)> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find_map(|i| {
@@ -220,14 +194,11 @@ impl Interact<'_> {
         })
     }
 
-    /// Whether instance `a` paints over instance `b`: the raised tier over
-    /// the base tier, then later over earlier.
     fn paints_over(&self, a: u32, b: u32) -> bool {
         let tier = |i: u32| self.solved.raised[i as usize];
         (tier(a), a) > (tier(b), b)
     }
 
-    /// The deepest scroll node under the cursor.
     fn scroll_hit(&self, fs: &FrameState) -> Option<u32> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find(|&i| {
@@ -241,8 +212,6 @@ impl Interact<'_> {
         self.tree.get(i).key.clone()
     }
 
-    /// The enabled slot cell under the cursor, resolved to its stable
-    /// document role + in-role index.
     fn slot_hit(&self, fs: &FrameState) -> Option<(String, u32)> {
         let i = self.hit(fs)?;
         let inst = self.tree.get(i);
@@ -272,7 +241,6 @@ impl Interact<'_> {
     ) {
         let (x, y) = self.cur(fs);
 
-        // Scrollbar thumbs sit above content: check them first.
         for i in (0..self.tree.len() as u32).rev() {
             let inst = self.tree.get(i);
             let NodeKind::Scroll { axis } = inst.node.kind else {
@@ -303,7 +271,6 @@ impl Interact<'_> {
                 return;
             }
             if widget::contains_f(track, x, y) {
-                // Track click: jump the thumb centre to the pointer.
                 let new_off = widget::scroll_offset_for_thumb_y(
                     view,
                     rect.h,
@@ -315,8 +282,6 @@ impl Interact<'_> {
             }
         }
 
-        // A list row painted over a widget (a popup's rows over a dismiss
-        // scrim) takes the press; a widget inside the row still wins.
         let row = self.row_hit(fs);
         let widget = self
             .hit(fs)
@@ -652,7 +617,6 @@ impl Interact<'_> {
             fs.active = Some((key, press_button));
             return;
         }
-        // Release-in fires; release-out cancels.
         let Some(i) = self.tree.find(&key.id, key.item) else {
             return;
         };
@@ -666,9 +630,6 @@ impl Interact<'_> {
         }
         match inst.node.kind {
             NodeKind::Button { .. } => {
-                // Keep the pressed face through the click frame: the host
-                // applies the event (e.g. a list selection) before the NEXT
-                // frame, so without this the row flashes unpressed once.
                 fs.clicked = Some(key.clone());
                 events.push(UiEvent::Click {
                     id: key.id,
@@ -725,12 +686,10 @@ impl Interact<'_> {
         clipboard: Option<&mut C>,
         events: &mut Vec<UiEvent>,
     ) {
-        // Tab cycles focus among enabled text inputs (document order).
         if key == NavKey::Tab && self.focus_next_input(fs, shift) {
             return;
         }
 
-        // A focused editor consumes editing keys.
         if let Some(focus) = fs.focus.clone() {
             if let Some(i) = self.tree.find(&focus.id, focus.item) {
                 let rect = self.solved.rects[i as usize];
@@ -818,8 +777,6 @@ impl Interact<'_> {
         events.push(UiEvent::Key { key, shift, ctrl });
     }
 
-    /// Focus the next (or previous with `back`) enabled text input in document
-    /// order. Returns true when the key was handled (at least one input exists).
     fn focus_next_input(&self, fs: &mut FrameState, back: bool) -> bool {
         let inputs: Vec<(InstKey, String, usize)> = self
             .tree

@@ -1,8 +1,3 @@
-//! One project's work in hand: its compiled design, the survey of what the
-//! world already holds, and the crew building it. The worker owns the type
-//! it works on; the job registry ([`crate::jobs`]) only keeps them, so the
-//! dependency runs one way.
-
 use crate::design::Design;
 use crate::project::ProjectId;
 use crate::survey::{Summary, Survey};
@@ -18,7 +13,6 @@ pub struct Job {
 }
 
 impl Job {
-    /// A fresh job over `design`, nothing surveyed and no golem yet.
     pub fn new(id: ProjectId, design: Design) -> Self {
         Self {
             id,
@@ -33,7 +27,6 @@ impl Job {
         self.survey.as_ref()?.summary()
     }
 
-    /// The fraction of the design's units the world holds.
     pub fn done(&self) -> f32 {
         let Some(survey) = self.survey.as_ref() else {
             return 0.0;

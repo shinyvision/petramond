@@ -8,21 +8,16 @@ use crate::{
 use petramond_math::world_pos::WorldPos;
 
 impl WorldData {
-    /// Whether the cell holds a STILL SOURCE of `fluid` (level 0, not falling) —
-    /// the only fluid a bucket can scoop. Flowing/falling cells are an effect of
-    /// their source, not a unit of fluid: they drain on their own once cut off.
     pub fn is_fluid_source_world(&self, pos: IVec3, fluid: Block) -> bool {
         self.physics_block(pos.x, pos.y, pos.z) == fluid
             && is_source(self.fluid_meta_world(pos.x, pos.y, pos.z))
     }
 
-    /// The real fluid volume at a point; air above a thin flow is never immersed.
     pub fn fluid_at_point(&self, point: WorldPos) -> Option<Immersion> {
         let sample = fluid_in_cell(&self.cursor(), point.block())?;
         (point.y < f64::from(sample.surface_y)).then_some(sample)
     }
 
-    /// Fluid response for a body, using its size and buoyancy mode.
     pub fn body_fluid(&self, feet: WorldPos, height: f32, buoyancy: Buoyancy) -> Option<Immersion> {
         let cur = self.cursor();
         if buoyancy == Buoyancy::Surface {
@@ -44,16 +39,11 @@ impl WorldData {
         None
     }
 
-    /// Top of the contiguous same-fluid column containing `cell`.
     pub fn fluid_surface_at(&self, cell: IVec3) -> Option<Immersion> {
         fluid_surface_at(&self.cursor(), cell)
     }
 
-    /// Horizontal direction a body drifts in when it overlaps this cell of
-    /// `fluid`. Matches [`surface_flow_dir`], which the mesher also uses to face
-    /// the flow texture.
     pub fn fluid_flow_dir_at(&self, wx: i32, wy: i32, wz: i32, fluid: Block) -> Vec3 {
-        // ~20 probes around one cell: all but a seam's worth hit one section.
         let cur = self.cursor();
         let block_at = |x: i32, y: i32, z: i32| {
             let block = cur.physics_block(IVec3::new(x, y, z));
@@ -75,8 +65,6 @@ impl WorldData {
         surface_flow_dir(wx, wy, wz, fluid, &block_at, &fluid_at, &still_at)
     }
 
-    /// Current at a point below the actual fluid surface, using the same
-    /// gradient as the mesher and the fluid's configured speed/acceleration.
     pub fn fluid_current_at(&self, p: WorldPos) -> FluidCurrent {
         let Some(sample) = self.fluid_at_point(p) else {
             return FluidCurrent::NONE;
@@ -92,7 +80,6 @@ impl WorldData {
         }
     }
 
-    /// Sample the swimming probe, then shallow wading contact when it has no current.
     pub fn body_current(
         &self,
         feet: WorldPos,
@@ -103,8 +90,6 @@ impl WorldData {
     }
 }
 
-/// Top of the contiguous same-fluid column containing `cell`, walked through
-/// one cursor so a deep column pays one section resolve per 16 cells.
 fn fluid_surface_at(cur: &SectionCursor<'_>, cell: IVec3) -> Option<Immersion> {
     let mut sample = fluid_in_cell(cur, cell)?;
     let mut top = cell;
@@ -131,7 +116,6 @@ fn fluid_in_cell(cur: &SectionCursor<'_>, cell: IVec3) -> Option<Immersion> {
     Some(Immersion { fluid, surface_y })
 }
 
-/// Sample a body's fluid current from any point-query source.
 pub fn sample_body_current(
     feet: WorldPos,
     height: f32,

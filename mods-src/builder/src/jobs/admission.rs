@@ -1,7 +1,3 @@
-//! Whether Start (or Resume) may go ahead: the site is known, nothing guarded
-//! is in the way, and the chests cover the bill. Asked by every panel
-//! publish, so the answer is worked out once a tick per project.
-
 use std::collections::BTreeMap;
 use std::fmt;
 
@@ -14,7 +10,6 @@ use crate::project::{Brief, Phase, ProjectId, Projects};
 use crate::supplies::{self, Shortfall, Supplies};
 use crate::survey::ItemKey;
 
-/// Why a project cannot start. Rendered here and nowhere else.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Refusal {
     NoProject,
@@ -22,7 +17,6 @@ pub enum Refusal {
     NotPositioned,
     BlueprintNotTabled,
     CheckingSite,
-    /// The design did not compile.
     Design(String),
     NothingLeft,
     NotLoaded(u32),
@@ -30,7 +24,6 @@ pub enum Refusal {
     CheckingSupplies,
     Short(Shortfall),
     GolemLostBlueprint,
-    /// The golem could not be brought up.
     Summon(String),
 }
 
@@ -53,7 +46,6 @@ impl fmt::Display for Refusal {
     }
 }
 
-/// This tick's answers, by project and the table it would run from.
 #[derive(Default)]
 pub struct Admissions {
     tick: u64,
@@ -61,7 +53,6 @@ pub struct Admissions {
 }
 
 impl Builder {
-    /// Whether `project` may start, worked out at most once a tick.
     pub fn admission(&mut self, project: &Brief, now: u64) -> Result<(), Refusal> {
         if self.admissions.tick != now {
             self.admissions.tick = now;
@@ -80,13 +71,11 @@ impl Builder {
         if project.anchored.is_none() {
             return Err(Refusal::NotPositioned);
         }
-        // The golem takes its plans from the table when it comes up.
         if !project.worker
             && !blueprint_tabled(&self.content, &self.projects, project.id, project.table)
         {
             return Err(Refusal::BlueprintNotTabled);
         }
-        // No job yet is no answer yet: Start would find nothing to start.
         let job = self
             .jobs
             .map
@@ -109,8 +98,6 @@ impl Builder {
         let short = supplies::shortfall(&summary.bill, &have);
         match supplies::worst(&short, &mut self.caches) {
             None => Ok(()),
-            // A chest in a section that has not streamed in answers nothing:
-            // what it holds is unknown, not missing.
             Some(_) if !self.supplies.stock_at(project.table, now).read => {
                 Err(Refusal::CheckingSupplies)
             }
@@ -118,12 +105,10 @@ impl Builder {
         }
     }
 
-    /// What connected supplies offer `project`: see [`available`].
     pub fn available(&self, project: &Brief, now: u64) -> BTreeMap<ItemKey, u32> {
         available(&self.supplies, &self.jobs, &self.projects, project, now)
     }
 
-    /// Start a golem on an anchored project whose supplies are complete.
     pub fn start(&mut self, id: ProjectId) -> Result<(), Refusal> {
         let project = self.projects.get(id).cloned().ok_or(Refusal::NoProject)?;
         let brief = project.brief();
@@ -131,8 +116,6 @@ impl Builder {
             return Err(Refusal::AlreadyStarted);
         }
         let now = current_tick();
-        // A press is answered for the world as it is now, not as a panel
-        // last saw it.
         self.admit(&brief, now)?;
         let mut probe_nodes = 0;
         let (mut ctx, projects, job) = self
@@ -142,8 +125,6 @@ impl Builder {
     }
 }
 
-/// What connected supplies offer `project`, less what other working jobs
-/// sharing any of those chests still need.
 fn available(
     supplies: &Supplies,
     jobs: &Jobs,
@@ -160,7 +141,6 @@ fn available(
         }
     }
     for (other, job) in &jobs.map {
-        // A job in memory was attended from its record: it is loaded.
         let Some(other) = projects.peek(*other).filter(|p| p.id != project.id) else {
             continue;
         };

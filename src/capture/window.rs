@@ -24,12 +24,9 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::net::protocol::ColumnPayload;
 use crate::world::{PieceRange, SectionContent, TerrainEdit};
 
-/// Where an away key's content is.
 #[derive(Clone, Debug)]
 pub enum Away<T> {
-    /// Exactly the piece at this range.
     Range(PieceRange),
-    /// Decoded, because nothing states it any more.
     Held(T),
 }
 
@@ -42,19 +39,14 @@ impl<T> Away<T> {
     }
 }
 
-/// A stated column outside the window.
 #[derive(Clone, Debug, Default)]
 pub struct AwayColumn {
-    /// `None`: no column state was stated, only sections in it.
     pub column: Option<Away<Arc<ColumnPayload>>>,
     pub sections: BTreeMap<i32, Away<SectionContent>>,
-    /// Terrain released while away, in order, not yet applied.
     pub pending: Vec<TerrainEdit>,
 }
 
 impl AwayColumn {
-    /// Whether the column state is presented, and which sections are, once
-    /// what waits on the column applies.
     pub fn presented_keys(&self) -> (bool, std::collections::BTreeSet<i32>) {
         let mut column = self.column.is_some();
         let mut sections: std::collections::BTreeSet<i32> = self.sections.keys().copied().collect();
@@ -77,7 +69,6 @@ impl AwayColumn {
         (column, sections)
     }
 
-    /// Every piece range this column's content lives in.
     pub fn ranges(&self) -> impl Iterator<Item = PieceRange> + '_ {
         self.column
             .iter()
@@ -86,8 +77,6 @@ impl AwayColumn {
     }
 }
 
-/// The load window: a disc of columns around the presented camera, the one
-/// a live client streams at the same view distance.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Window {
     pub center: ChunkPos,
@@ -104,7 +93,6 @@ impl Window {
         dx * dx + dz * dz <= r * r
     }
 
-    /// Nearest first, the order a live client streams in.
     pub fn distance(&self, pos: ChunkPos) -> i64 {
         let (dx, dz) = (
             i64::from(pos.cx - self.center.cx),
@@ -114,28 +102,22 @@ impl Window {
     }
 }
 
-/// Every stated column outside the window.
 #[derive(Default)]
 pub struct Stated {
     pub away: FxHashMap<ChunkPos, AwayColumn>,
 }
 
 impl Stated {
-    /// Whether section `pos` is stated away.
     pub fn has_section(&self, pos: SectionPos) -> bool {
         self.away
             .get(&pos.chunk_pos())
             .is_some_and(|c| c.presented_keys().1.contains(&pos.cy))
     }
 
-    /// Column `pos`'s entry, made on first use.
     pub fn entry(&mut self, pos: ChunkPos) -> &mut AwayColumn {
         self.away.entry(pos).or_default()
     }
 
-    /// The bytes behind `[start, end)` of `incarnation` changed or ended:
-    /// every away key whose content lived only there is no longer stated.
-    /// Answers what went, for the state's error.
     pub fn forget_bytes(&mut self, incarnation: u64, start: u64, end: u64) -> usize {
         let hit = |r: &PieceRange| {
             r.incarnation == incarnation && r.offset < end && start < r.offset + r.len

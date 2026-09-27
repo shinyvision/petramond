@@ -5,14 +5,12 @@ use petramond_util::test_dirs::TestScratchDir;
 
 use super::*;
 
-/// `rel` in a bucket at `dir`.
 fn file(dir: &Path, rel: &str) -> FileRef {
     FileRef::new(Arc::from(dir.join("files")), rel)
 }
 
 type Answer<T> = Receiver<Result<T, String>>;
 
-/// A completion hook and where its answer arrives.
 fn answer<T: Send + 'static>() -> (Hook<T>, Answer<T>) {
     let (tx, rx) = mpsc::channel();
     let hook: Hook<T> = Box::new(move |result| {
@@ -30,10 +28,6 @@ fn pending<T>(rx: &Answer<T>) -> bool {
     matches!(rx.try_recv(), Err(TryRecvError::Empty))
 }
 
-/// A read over landed bytes answers while a record queued ahead is still
-/// being encoded; a read overlapping a write queued behind that record, or
-/// reaching into the record's own bytes, sees them — and `stat` counts the
-/// backlog whose size is known.
 #[test]
 fn a_read_sees_its_own_queued_writes_and_never_waits_behind_unrelated_ones() {
     let dir = TestScratchDir::new("mod-files-read-order");
@@ -68,10 +62,6 @@ fn a_read_sees_its_own_queued_writes_and_never_waits_behind_unrelated_ones() {
     assert_eq!(arrived(&queued), Ok(b"!!abc".to_vec()));
 }
 
-/// A record that fails takes every engine record queued behind it in its
-/// file down with it, so the file never holds a record past a hole; the
-/// mod's own appends behind it still land, and a record queued afterwards
-/// is written.
 #[test]
 fn a_failed_record_fails_the_records_queued_behind_it() {
     let dir = TestScratchDir::new("mod-files-record-hole");
@@ -93,8 +83,6 @@ fn a_failed_record_fails_the_records_queued_behind_it() {
     assert_eq!(arrived(&later), Ok([3, 5]));
 }
 
-/// What an earlier run left hidden (trash its unlink never reached, an
-/// encoder's partials) is swept; this run's own and every visible name stay.
 #[test]
 fn a_bucket_is_swept_of_what_an_earlier_run_left_hidden() {
     let dir = TestScratchDir::new("mod-files-sweep");
@@ -125,9 +113,6 @@ fn a_bucket_is_swept_of_what_an_earlier_run_left_hidden() {
     assert_eq!(left, want);
 }
 
-/// A delete ends its files' incarnations at the call and fails a read still
-/// waiting there by name, yet lands after the writes queued before it; a
-/// rename carries the incarnation to the new name.
 #[test]
 fn a_delete_ends_incarnations_at_the_call_and_fails_waiting_reads_by_name() {
     let dir = TestScratchDir::new("mod-files-delete");
@@ -167,9 +152,6 @@ fn a_delete_ends_incarnations_at_the_call_and_fails_waiting_reads_by_name() {
     assert_ne!(doomed.incarnation(), incarnation);
 }
 
-/// A bucket must mean the same files on every machine: a name that differs
-/// from an existing sibling only by case is never created, directories
-/// included, on any filesystem.
 #[test]
 fn a_create_that_collides_by_case_is_refused() {
     let dir = TestScratchDir::new("mod-files-case");
@@ -190,8 +172,6 @@ fn a_create_that_collides_by_case_is_refused() {
     }
 }
 
-/// Paging a listing with the tiniest budget visits every visible name once,
-/// in order, and never an engine dot-name.
 #[test]
 fn list_paging_continues_exactly_and_never_shows_hidden_names() {
     let dir = TestScratchDir::new("mod-files-list");
@@ -224,9 +204,6 @@ fn list_paging_continues_exactly_and_never_shows_hidden_names() {
     assert_eq!(page(Some("sub".into()), u64::MAX).0.len(), 1);
 }
 
-/// Containment and portability: nothing a mod names can leave its bucket,
-/// collide with the engine's dot-names, or be a name some shipped OS
-/// cannot store.
 #[test]
 fn a_mod_path_can_never_leave_its_bucket_or_name_an_unportable_file() {
     for bad in [

@@ -22,21 +22,12 @@ pub(crate) struct Placement {
     pub(crate) rule: PlacementRule,
 }
 
-/// Which writes a recording keeps.
 enum Bounds {
-    /// Only writes inside column `(ox, oz)`'s footprint; the rest are dropped
-    /// exactly as a clipped sink drops them.
     Column { ox: i32, oz: i32 },
-    /// Every write within the feature envelope around `origin` (the replay
-    /// margin horizontally, the tree reach upward); one outside it spoils the
-    /// recording.
     Envelope { origin: IVec3, overflow: bool },
 }
 
 impl FeaturePlan {
-    /// Record whatever `features` writes through the context into the column
-    /// `(cx, cz)`. Any origin loop — trees, a future scatter, a mod feature —
-    /// is a valid source.
     pub(crate) fn record(cx: i32, cz: i32, features: impl FnOnce(&mut FeatureCtx)) -> Self {
         let side = SECTION_SIZE as i32;
         let mut recorder = Recorder {
@@ -52,9 +43,6 @@ impl FeaturePlan {
         }
     }
 
-    /// Record one feature generated at `origin`, unclipped. `None` when it
-    /// writes outside its envelope — geometry no section's replay margin
-    /// covers.
     pub(crate) fn record_feature(
         feature: &dyn Feature,
         origin: IVec3,
@@ -81,7 +69,6 @@ impl FeaturePlan {
         }
     }
 
-    /// A plan that writes nothing.
     pub(crate) fn empty() -> Self {
         Self {
             sections: BTreeMap::new(),
@@ -92,7 +79,6 @@ impl FeaturePlan {
         self.sections.is_empty()
     }
 
-    /// Every recorded operation, in section then write order.
     pub(crate) fn placements(&self) -> impl Iterator<Item = &Placement> {
         self.sections.values().flatten()
     }
@@ -127,9 +113,6 @@ struct Recorder {
 }
 
 impl VoxelSink for Recorder {
-    /// A plan has no destination yet, so every cell reads as the sink
-    /// contract's unaddressable value; predicates are kept as rules and
-    /// evaluated against the real section at replay.
     fn get(&self, _: IVec3) -> Block {
         Block::Air
     }

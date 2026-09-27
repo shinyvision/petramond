@@ -1,11 +1,3 @@
-//! Branching scaffolding: from a pillar top the golem lays a walkway of
-//! scaffolds toward work no perch reaches (the middle of a roof), works from
-//! its end, and takes it down on the way back.
-//!
-//! Each support goes one level under the next path cell, so the one before
-//! gives it a face and it stays in sight; walking back, each support is dug as
-//! soon as it is stepped off, while still in sight.
-
 use crate::host::prelude::*;
 
 use super::hands;
@@ -18,11 +10,8 @@ use crate::worker::Job;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bridge {
-    /// Where the golem stood on the pillar top.
     pub top: [i32; 3],
-    /// The feet cells walked, top excluded, in order out.
     pub path: Vec<[i32; 3]>,
-    /// The work the walkway was laid for, done first at its end.
     pub task: Task,
 }
 
@@ -32,9 +21,6 @@ impl Bridge {
     }
 }
 
-/// The cells of a walkway no longer than `length` from where the golem stands
-/// out to standing room that sees `cells`, shortest first, crossing none of
-/// the `laid` walkway it goes on from.
 pub fn plan(
     ctx: &mut Ctx,
     job: &Job,
@@ -72,8 +58,6 @@ pub fn plan(
             }) {
                 continue;
             }
-            // Built design (a roof course's stairs) is floor enough; unbuilt
-            // design must not get a scaffold in its place.
             let floors: Vec<[i32; 3]> = path.iter().map(|p| offset(*p, [0, -1, 0])).collect();
             let floor_blocks = get_blocks(floors.clone());
             if floors
@@ -87,8 +71,6 @@ pub fn plan(
             if checked > 24 {
                 return None;
             }
-            // Ground a step below the walkway is walked, not bridged: a body
-            // steps down onto it off the walkway and leaves it standing.
             let open_floors: Vec<[i32; 3]> = floors
                 .iter()
                 .zip(&floor_blocks)
@@ -98,8 +80,6 @@ pub fn plan(
             if !open_floors.is_empty() && footholds(GOLEM, open_floors).into_iter().any(|ok| ok) {
                 continue;
             }
-            // Room for the body along the way; supports either to lay or
-            // already standing (a roof course walked over).
             let body_cells: Vec<[i32; 3]> = path
                 .iter()
                 .flat_map(|p| [*p, offset(*p, [0, 1, 0])])
@@ -139,7 +119,7 @@ fn l_path(from: [i32; 3], to: [i32; 3], x_first: bool) -> Vec<[i32; 3]> {
     path
 }
 
-/// Lay the walkway out: a support under the next cell, then the step onto it.
+/// Walkway goes out a cell at a time. Drop a support, step on it, repeat.
 pub fn extend(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -157,8 +137,6 @@ pub fn extend(
     }
     let at = bridge.path.iter().position(|p| *p == body.cell);
 
-    // Each walkway cell restarts the clock, walked onto or not: leaning out to
-    // lay a support puts the body on the new cell as it lands.
     let asked = match at {
         Some(i)
             if asked != 0
@@ -184,8 +162,6 @@ pub fn extend(
     }
     let support = offset(next, [0, -1, 0]);
     if get_block(support).is_some_and(|b| !open_block(ctx, b)) {
-        // A step the body cannot take (a slab lip, an eave over the head)
-        // ends this walkway; so does one not taken within a few seconds.
         if asked == 0 {
             match super::route::probe(ctx, body.cell, next, Vec::new()) {
                 Some(Route::Open) => {}
@@ -207,8 +183,6 @@ pub fn extend(
             asked: if asked == 0 { ctx.now } else { asked },
         };
     }
-    // A placement answers within a tick or two; one that never shows was
-    // refused when its turn came.
     if asked != 0 && ctx.now > asked + WALKWAY_SUPPORT_UNLANDED {
         trace!(
             "TRACE bridge support {support:?} never landed: at {at:?} cell {:?} pos {:?} goal {:?} asked {asked} now {}",
@@ -221,8 +195,6 @@ pub fn extend(
     }
     job.crew.presence.set_goal(id, None);
     job.crew.presence.set_hold(id, true);
-    // The face a walkway goes on against points away from a body over the
-    // middle of its block: it leans out over the edge until it sees it.
     let work = super::sight::scaffold(job, support);
     let unseen = super::sight::sees_from(body, vec![body.pos], &[support], &work)[0].is_some();
     if unseen && super::sight::still_turning(job) {
@@ -250,8 +222,6 @@ pub fn extend(
     }
 }
 
-/// Take a walkway that cannot be laid back down, and do not lay it again for
-/// the same work from this pillar.
 fn give_up(ctx: &Ctx, job: &mut Job, bridge: &Bridge) -> Step {
     if let Task::Unit(i) = bridge.task {
         job.crew.deferrals.tried.insert(i);
@@ -259,7 +229,6 @@ fn give_up(ctx: &Ctx, job: &mut Job, bridge: &Bridge) -> Step {
     Step::Unbridge { since: ctx.now }
 }
 
-/// Walk the walkway back to the pillar top, digging each support just left.
 pub fn retract(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -291,8 +260,6 @@ pub fn retract(
         .into_iter()
         .filter(|s| *s != under && ours(*s))
         .collect();
-    // Walked back along it (to work from partway): out again first while the
-    // far end stands out of reach, or it is left hanging there.
     if farther.last().is_some_and(|s| !reaches(body.pos, &[*s])) {
         let next = match at {
             Some(i) => bridge.path.get(i + 1),
@@ -306,8 +273,6 @@ pub fn retract(
             return Step::Unbridge { since };
         }
     }
-    // Farthest first: dug nearest first, a hole opens between the golem and
-    // what is left out there.
     if let Some(support) = farther.last().copied() {
         if reaches(body.pos, &[support]) {
             job.crew.presence.set_goal(id, None);
@@ -324,8 +289,6 @@ pub fn retract(
         }
     }
     if at.is_none() || ctx.now > since + WALKWAY_PATIENCE {
-        // Back on the top (or given up, or stepped off): what is left is
-        // ordinary scaffolding, taken down first.
         for left in bridge.supports().filter(|s| ours(*s)) {
             if !job.crew.scaffolding.urgent.contains(&left) {
                 job.crew.scaffolding.urgent.push(left);
@@ -339,7 +302,6 @@ pub fn retract(
         Some(0) | None => bridge.top,
         Some(i) => bridge.path[i - 1],
     };
-    // A gaze left on the last block laid holds the body turned toward it.
     job.crew.presence.face(id, None);
     job.crew.presence.set_hold(id, false);
     job.crew.presence.set_goal(id, Some(back));

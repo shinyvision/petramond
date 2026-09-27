@@ -1,12 +1,3 @@
-//! Section record v20 → v21: item entities and mobs become tagged records.
-//!
-//! v20 frames every payload, so this step copies the flags, the block cube
-//! and every other payload unchanged and rewrites only the entity and mob
-//! frames. It walks their v20 layouts as they SHIPPED and writes the v21
-//! records under explicit tags, all frozen here — later changes to the live
-//! codecs cannot change what it produces. Ids stay disk ids (item slots are
-//! copied as stored), so the step needs no palette.
-
 use petramond_persist::bytecodec::Reader;
 
 use super::{
@@ -19,20 +10,15 @@ use crate::save::wire::{TaggedWriter, Wire};
 const SECTION_VOLUME: usize = 4096;
 const WIDE_ID_CAP: usize = 4096;
 
-/// The flag bits a v20 record could carry, per flags byte.
 const KNOWN: [u8; 3] = [
     FLAG_HAS_FLUID | FLAG_HAS_ENTITIES | FLAG_HAS_FURNACES | FLAG_HAS_CELL_STATES | FLAG_HAS_MOBS,
     FLAG2_HAS_CELL_KV | FLAG2_HAS_CONTAINERS,
     FLAG3_HAS_SKYLIGHT | FLAG3_HAS_BLOCKLIGHT,
 ];
 
-/// A payload rewrite: the v20 payload in, the v21 payload out.
 type Rewrite = fn(&[u8]) -> Option<Vec<u8>>;
 
-/// Rewrite a v20 record body (after the version byte) as a v21 body.
 pub(super) fn upgrade(body: &[u8]) -> Result<Vec<u8>, RecordError> {
-    // Offsets are reported against the whole decompressed record, whose
-    // version byte precedes `body`.
     let corrupt = |what, at: usize| RecordError::corrupt(SECTION.name, what, at + 1);
     let mut r = Reader::new(body);
     let flags = [0, 1, 2].map(|_| r.u8());
@@ -97,7 +83,6 @@ fn skip_block_cube(r: &mut Reader) -> Option<()> {
     r.bytes(SECTION_VOLUME * index_width).map(|_| ())
 }
 
-/// A v20 item slot, copied as stored: `[id u16][count u8][blob len u16][blob]`.
 fn slot<'a>(r: &mut Reader<'a>, whole: &'a [u8]) -> Option<&'a [u8]> {
     let start = r.offset();
     r.bytes(3)?;
@@ -106,12 +91,11 @@ fn slot<'a>(r: &mut Reader<'a>, whole: &'a [u8]) -> Option<&'a [u8]> {
     whole.get(start..r.offset())
 }
 
-/// v20: `u16` count; per entity position (3 × f64), velocity (3 × f32),
-/// slot, lifetime (u32), spin (f32), motion tag — a lodged item (tag 2) adds
-/// its heading (2 × f32) and anchor (3 × u32).
-/// v21: `u32` count of tagged records: 1 position, 2 velocity, 3 slot,
-/// 4 lifetime, 5 spin, 6 motion tag, 7 lodging (`Option` of heading yaw,
-/// pitch and anchor).
+/// v20 entity, in order: pos 3xf64, vel 3xf32, slot, lifetime u32, spin f32, motion tag. Count u16
+/// back then.
+/// Lodged is motion==2, adds heading 2xf32 + anchor 3xu32.
+/// v21 bumped count to u32 and turned fields into tags: 1 pos 2 vel 3 slot 4 lifetime 5 spin 6
+/// motion 7 lodging.
 fn entities(payload: &[u8]) -> Option<Vec<u8>> {
     let mut r = Reader::new(payload);
     let n = r.u16()?;
@@ -145,15 +129,11 @@ fn entities(payload: &[u8]) -> Option<Vec<u8>> {
     r.is_at_end().then_some(out)
 }
 
-/// v20: `u16` count; when non-empty a `u16`-counted key table of
-/// `u16`-length strings, then per mob species (u8), position (3 × f64), yaw
-/// (f32), a `u16`-counted tag list of `(u16 key index, u8 type, value)` —
-/// bool u8, int i64, float f64, string `u32`-length — and a `u8`-counted
-/// slot list.
-/// v21: the key table as a `u32`-counted list of `u32`-length strings, then
-/// a `u32` count of tagged records: 1 species, 2 position, 3 yaw, 4 tags
-/// (`u32`-counted `(u16 key index, u8 type, value)`, a bool as 0 or 1),
-/// 5 slots (`u32`-counted).
+/// v20 layout. u16 count up front, then if nonzero a key table: u16 count, u16-len strings.
+/// Per mob: species u8, pos 3xf64, yaw f32, tags (u16 count, key idx u16, type u8, value - bool u8,
+/// int i64, float f64, string u32-len), slots (u8 count).
+/// v21 made all the counts and string lengths u32. Records tagged: 1 species, 2 pos, 3 yaw,
+/// 4 tags (bool 0/1), 5 slots.
 fn mobs(payload: &[u8]) -> Option<Vec<u8>> {
     let mut r = Reader::new(payload);
     let n = r.u16()?;

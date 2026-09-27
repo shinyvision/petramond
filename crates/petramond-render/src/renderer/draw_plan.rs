@@ -1,14 +1,3 @@
-//! Frustum cull, occlusion flood and depth sort: which sections and whole
-//! columns each terrain node draws this frame, and in what order. The quad
-//! nodes get their draws as indirect-ready lists ([`draws`]); the terrain
-//! nodes consume the plan without re-deciding any of it.
-//!
-//! The decisions themselves — the region grouping of the cull index, the
-//! region test, a column's whole-column draws, which sections still draw for
-//! themselves, the deterministic sort — are free functions over plain data,
-//! so the tests pin them without a GPU; `plan_draw_order` only walks the
-//! columns and applies them.
-
 use super::*;
 use crate::resources::SectionStream;
 use petramond_mesh::QuadLayer;
@@ -19,10 +8,6 @@ pub(crate) use draws::{wanted_features as terrain_draw_features, QuadPass, Terra
 pub(crate) use occlusion::SectionOcclusion;
 
 impl Renderer {
-    /// Is this render-local bounding box inside the current view frustum?
-    /// `cam_pos` is render-local too. `enclosed` means an ancestor box was
-    /// proved wholly inside the frustum, so only the fog range can reject
-    /// this one.
     #[inline]
     fn aabb_visible(
         min: glam::Vec3,
@@ -32,7 +17,6 @@ impl Renderer {
         fog: f32,
         enclosed: bool,
     ) -> bool {
-        // Cutout leaf sprays extend beyond their owning voxel/section.
         let margin = glam::Vec3::splat(petramond_mesh::FOLIAGE_OVERHANG);
         let min = min - margin;
         let max = max + margin;
@@ -57,10 +41,6 @@ impl Renderer {
         Self::aabb_visible(min, max, frustum, cam_pos, fog, enclosed)
     }
 
-    /// Whole-column AABB covering every installed section. Rejecting here is
-    /// visibility-identical to rejecting every section: a section outside the
-    /// column stack cannot exist, and a column that fails frustum/fog has no
-    /// section that can pass.
     #[inline]
     fn column_visible(
         entry: &ColumnCull,
@@ -85,13 +65,6 @@ impl Renderer {
         Self::aabb_visible(min, max, frustum, cam_pos, fog, enclosed)
     }
 
-    /// Refresh the dense cull mirror when the column set changed.
-    ///
-    /// Walking the column map is exactly the cost this mirror exists to keep
-    /// off the per-frame path, so it happens once per change. The grouping is
-    /// what makes the per-frame scan sublinear: at render distance 32 a view
-    /// rejects most of ~3 200 columns, and one region test rejects up to 64 of
-    /// them at once.
     fn refresh_cull_index(&mut self) {
         let terrain = &mut self.terrain;
         if terrain.cull_index_revision == terrain.gpu_revision {
@@ -111,7 +84,6 @@ impl Renderer {
                 }),
         );
         group_cull_regions(&mut terrain.cull_index, &mut terrain.cull_regions);
-        // The occlusion flood's graph follows the column set too.
         terrain.occlusion.clear();
         for column in terrain.columns.values() {
             terrain.occlusion.insert_column(
@@ -126,9 +98,6 @@ impl Renderer {
         terrain.cull_index_revision = terrain.gpu_revision;
     }
 
-    /// Frustum-cull + depth-sort the visible terrain into
-    /// [`TerrainPass::plan`]. Reuses last frame's plan outright when neither
-    /// the view nor the column set changed.
     pub(super) fn plan_draw_order(&mut self) {
         if self.terrain.planned_gpu_revision == self.terrain.gpu_revision
             && self.terrain.planned_view_key.as_ref() == Some(&self.terrain.view_key)
@@ -136,13 +105,8 @@ impl Renderer {
             return;
         }
         self.refresh_cull_index();
-        // Cull + depth-sort the visible sections once. The opaque node draws
-        // nearest-first so the GPU's early-Z rejects occluded fragments before
-        // the fragment shader runs; the fluid node draws farthest-first for
-        // correct back-to-front alpha.
         let frustum = &self.view.frustum;
         let render_origin = self.view.render_origin;
-        // Cull and sort in render-local space, like the GPU draws.
         let cam = self.view.cam_pos.relative_to(render_origin);
         let fog = self.terrain_cull_dist();
         let Self {
@@ -151,9 +115,6 @@ impl Renderer {
             queue,
             ..
         } = self;
-        // Occlusion first: flood the section visibility graph from the
-        // camera's section through the view volume. A section it cannot reach
-        // is behind rock from every sight line.
         let camera_block = render_origin + cam.floor().as_ivec3();
         let camera_section = petramond_world::chunk::SectionPos::new(
             camera_block.x.div_euclid(16),
@@ -165,11 +126,6 @@ impl Renderer {
             Self::aabb_visible(min, min + glam::Vec3::splat(16.0), frustum, cam, fog, false)
         });
         let occlusion = &terrain.occlusion;
-        // A whole-column opaque draw covers every section of the column. With
-        // indirect draws a section's draw is only a record, so the column draw
-        // is taken only when no culled section would ride along; where every
-        // draw is a CPU call, the column draw is kept regardless (the culled
-        // sections it covers are off-screen or behind rock either way).
         let batch_hidden = terrain.draws.draws_directly();
         let plan = &mut terrain.plan;
         let cull_index = &terrain.cull_index;
@@ -203,16 +159,9 @@ impl Renderer {
                     let has_model = section.has_model();
                     visible.has_opaque |= !section.span(SectionStream::OpaqueFar).is_empty();
                     visible.has_model |= has_model;
-                    // Contact visibility is its OWN presence bit: a multi-cell
-                    // model's contact triangles can sit in a section whose model
-                    // index range is empty.
                     visible.has_contact |= !section.span(SectionStream::Contact).is_empty();
                     plan.any_model |= has_model;
                     plan.any_transparent |= section.has_alpha();
-                    // The hysteresis state lives on the section record, so a
-                    // section without a far mesh — nearly all of them, every frame
-                    // — costs one field test, and one with a far mesh costs a
-                    // field read and a field write rather than three hash probes.
                     let use_far_leaf_lod = section.has_far_lod && {
                         let now_active =
                             far_leaf_lod_active(dist_sq, (ox, oz), true, section.far_lod_active);
@@ -274,10 +223,6 @@ impl Renderer {
     }
 }
 
-/// Sort the cull index by region, then by position inside it, and rebuild
-/// `regions` over it: each region a contiguous run of `index` with its
-/// bounding section span. The order is a function of the column set alone,
-/// never of the column map's iteration order.
 fn group_cull_regions(index: &mut [ColumnCull], regions: &mut Vec<CullRegion>) {
     let region_of = |e: &ColumnCull| (e.pos.cx >> CULL_REGION_SHIFT, e.pos.cz >> CULL_REGION_SHIFT);
     index.sort_unstable_by_key(|e| (region_of(e), e.pos.cx, e.pos.cz));
@@ -305,10 +250,6 @@ fn group_cull_regions(index: &mut [ColumnCull], regions: &mut Vec<CullRegion>) {
     }
 }
 
-/// The region test: `None` when the whole region is outside the frustum or
-/// the fog range, else whether it is wholly INSIDE the frustum — in which
-/// case it encloses its columns and their sections, and below it only the
-/// fog range can reject.
 fn region_visible(
     region: &CullRegion,
     frustum: &Frustum,
@@ -336,19 +277,13 @@ fn region_visible(
     Some(containment == Containment::Inside)
 }
 
-/// What a column's VISIBLE sections add up to: the inputs of its
-/// whole-column draw decisions.
 #[derive(Copy, Clone, Debug)]
 struct VisibleColumn {
     has_opaque: bool,
     has_model: bool,
     has_contact: bool,
-    /// Some visible section draws its far LOD.
     any_far_lod: bool,
-    /// Every far-capable visible section draws its far LOD.
     all_far_capable_are_far: bool,
-    /// A CULLED section holds opaque geometry a whole-column draw would
-    /// cover.
     hidden_opaque: bool,
 }
 
@@ -365,7 +300,6 @@ impl Default for VisibleColumn {
     }
 }
 
-/// A packed column's whole-stream sizes.
 #[derive(Copy, Clone, Debug)]
 struct ColumnStreams {
     opaque_quads: u32,
@@ -374,15 +308,10 @@ struct ColumnStreams {
     contact_vertex_count: u32,
 }
 
-/// The whole-column draws a column makes this frame.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct ColumnBatch {
-    /// One opaque draw: `Some(far)` — its leading far region (`true`) or its
-    /// whole stream (`false`); `None` leaves every section to draw itself.
     opaque: Option<bool>,
-    /// One draw of the whole model stream.
     model: bool,
-    /// One draw of the whole contact-shadow stream.
     contact: bool,
 }
 
@@ -408,8 +337,6 @@ fn batch_column(visible: VisibleColumn, streams: ColumnStreams, batch_hidden: bo
     }
 }
 
-/// Whether a section still draws anything for itself once its column's
-/// whole-column draws are decided.
 fn draws_for_itself(section: &VisibleSection) -> bool {
     let has = |stream| !section.span(stream).is_empty();
     let opaque_left = !section.opaque_batched
@@ -424,11 +351,6 @@ fn draws_for_itself(section: &VisibleSection) -> bool {
         || has(SectionStream::Translucent)
 }
 
-/// Stamp one column's batch onto its sections (`sections[first..]`) and drop
-/// the ones whose every layer is empty or covered by a whole-column draw:
-/// the per-section loops would skip them, and they are the great majority —
-/// carrying them costs a move in the sort and a rejected branch in four
-/// terrain nodes.
 fn retain_uncovered(sections: &mut Vec<VisibleSection>, first: usize, batch: ColumnBatch) {
     let mut w = first;
     for r in first..sections.len() {
@@ -443,16 +365,6 @@ fn retain_uncovered(sections: &mut Vec<VisibleSection>, first: usize, batch: Col
     sections.truncate(w);
 }
 
-/// Sort the sections near → far. Distance alone is not a total order:
-/// equidistant columns are common (a symmetric view), so ties break on the
-/// column position and then on the section's place in the build order. The
-/// result is a function of the scene alone, which the back-to-front fluid
-/// node needs — an order that varies run to run blends differently.
-///
-/// Sorted as KEYS, not as records: a `VisibleSection` is far wider than the
-/// three fields the comparison reads, and a comparison sort moves its
-/// elements many times. Sorting `(key, index)` pairs and gathering once moves
-/// each record exactly once.
 fn sort_sections(
     sections: &mut Vec<VisibleSection>,
     keys: &mut Vec<(f32, ChunkPos, u32)>,
@@ -475,9 +387,6 @@ fn sort_sections(
     std::mem::swap(sections, sorted);
 }
 
-/// Sort the whole-column draw lists near → far. `(distance, column)` is a
-/// total order — no two columns share a position — so these need no
-/// stability guarantee.
 fn sort_columns(plan: &mut TerrainPlan) {
     let by_dist_then_pos = |a: &(f32, ChunkPos, ColumnSlot), b: &(f32, ChunkPos, ColumnSlot)| {
         a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1))
@@ -503,8 +412,6 @@ fn build_terrain_draws(
     let opaque = draws.list_mut(QuadPass::Opaque);
     for &(_, _, slot, far) in &plan.opaque_columns {
         let column = columns.at(slot);
-        // Far LOD draws the column's leading far region; detailed draws the
-        // whole stream. Both are one contiguous range from its start.
         let quads = if far {
             column.opaque_far_quads()
         } else {

@@ -1,36 +1,17 @@
-//! A project's design compiled into construction units in build order.
-//!
-//! Compilation reads the world-held schematic one stored section per call
-//! and asks the registry what each distinct record costs, so a huge design
-//! compiles over many ticks instead of in one. A unit is a position and an
-//! index into the design's records; everything a record asks of
-//! construction is kept once per record.
-
 use crate::fx::{HashMap, HashSet};
 
 use crate::host::prelude::*;
 use crate::keys::{AIR, FRAGILE_TAG, LEAVES_TAG};
 
-/// What one distinct record asks of construction.
 #[derive(Clone, Debug)]
 pub enum Plan {
-    /// The cell must end up empty.
     Air,
-    /// A cell of an object another cell anchors; that unit builds it.
     Member,
-    /// An object anchored at this record's cell.
     Build {
-        /// Cells relative to the anchor.
         footprint: Vec<[i32; 3]>,
-        /// Sorted after full blocks of its layer: panes, lanterns, doors and
-        /// other shapes that usually hang on or lean against something.
         attachment: bool,
-        /// Laid after everything around it: leaves live only near wood.
         late: bool,
-        /// Breaks once what holds it goes, so it never hangs on scaffolding.
         fragile: bool,
-        /// A single-cell panel the full height of its cell (a window pane):
-        /// glazed once the rest stands, the opening a way through till then.
         glazing: bool,
     },
     Unsupported(String),
@@ -51,13 +32,9 @@ pub struct Design {
     next_section: u32,
     pub records: Vec<BlockRecord>,
     pub plans: Vec<Plan>,
-    /// What building each record costs, whatever stands in its place now.
     costs: Vec<Vec<ItemStackData>>,
     pub units: Vec<Unit>,
-    /// Every cell a unit governs, for keeping scaffolding out of the design.
     pub governed: HashSet<[i32; 3]>,
-    /// The cells objects will fill (governed cells that must end up empty
-    /// are left out): nowhere for the golem to stand.
     pub filled: HashSet<[i32; 3]>,
     pub min: [i32; 3],
     pub max: [i32; 3],
@@ -66,8 +43,6 @@ pub struct Design {
     at: HashMap<[i32; 3], usize>,
     tagged: HashMap<&'static str, HashSet<BlockId>>,
     passages: HashSet<usize>,
-    /// The columns the design's floor covers: the fullest of its lowest few
-    /// layers. Inside the house or outside it, by column.
     floor: HashSet<[i32; 2]>,
 }
 
@@ -78,8 +53,6 @@ pub enum Progress {
 }
 
 impl Design {
-    /// Whether `cell` lies in the design's box or the ground the golem works
-    /// it from around it.
     pub fn near(&self, cell: [i32; 3]) -> bool {
         const AROUND: i32 = 8;
         (0..3).all(|i| cell[i] >= self.min[i] - AROUND && cell[i] <= self.max[i] + AROUND)
@@ -110,8 +83,6 @@ impl Design {
         }
     }
 
-    /// The rows of natural overgrowth (the leaves tag): what a builder trims
-    /// away where it crowds or hides the work.
     pub fn overgrowth(&mut self) -> Vec<BlockId> {
         self.tagged
             .entry(LEAVES_TAG)
@@ -132,12 +103,10 @@ impl Design {
         self.asset == asset && self.origin == origin && self.turns == turns
     }
 
-    /// Stored sections compiled so far.
     pub fn compiled(&self) -> u32 {
         self.next_section
     }
 
-    /// Compile up to `sections` more stored sections.
     pub fn compile(&mut self, sections: u32) -> Progress {
         if self.complete {
             return Progress::Ready;
@@ -240,11 +209,9 @@ impl Design {
         }
     }
 
-    /// The cells a house keeps empty without recording them: a sparse design
-    /// leaves its rooms out, and set into a hillside they are full of earth.
-    /// Empty is what its blocks close off from outside, plus everything over
-    /// the lowest block it builds in a column (rooms, under an eave, over a
-    /// hedge).
+    /// Rooms aren't stored, so we compute them: empty cells not reachable from outside the design,
+    /// plus everything above the lowest filled block in each column (covers rooms, eaves, hedges).
+    /// Sparse designs just leave gaps; on a hillside those gaps are dirt.
     fn rooms(&self) -> Vec<[i32; 3]> {
         let (min, max) = (self.min, self.max);
         let inside = |c: [i32; 3]| (0..3).all(|i| (min[i]..=max[i]).contains(&c[i]));
@@ -260,8 +227,6 @@ impl Design {
                 }
             }
         }
-        // The lowest thing the design builds in each column: all it leaves
-        // unfilled above that is room, porch, eave shadow or sky.
         let mut lowest: HashMap<[i32; 2], i32> = HashMap::default();
         for c in &self.filled {
             let low = lowest.entry([c[0], c[2]]).or_insert(c[1]);
@@ -291,7 +256,6 @@ impl Design {
             .unwrap_or(self.min[1])
     }
 
-    /// Rooms become units like any other: cells that must end up empty.
     fn add_rooms(&mut self) {
         let empty = BlockRecord {
             block: AIR.into(),
@@ -313,7 +277,6 @@ impl Design {
         self.records.push(empty);
         self.plans.push(Plan::Air);
         self.costs.push(Vec::new());
-        // Not `governed`: a room is where pillars and walkways stand.
         for pos in rooms {
             self.units.push(Unit { pos, record });
         }
@@ -352,9 +315,6 @@ impl Design {
         self.complete = true;
     }
 
-    /// Whether a unit fills a way through the walls: two or more cells tall
-    /// between sill and lintel, walled on two opposite sides and open on the
-    /// others. Built last, so what the walls enclose stays reachable.
     fn doorway(&self, unit: Unit) -> bool {
         let cells = self.cells(unit);
         let [x, _, z] = unit.pos;
@@ -374,12 +334,10 @@ impl Design {
             })
     }
 
-    /// Whether the unit is a way in: see [`Design::doorway`].
     pub fn passage(&self, unit: usize) -> bool {
         self.passages.contains(&unit)
     }
 
-    /// The unit anchored at `pos`, if any.
     pub fn unit_at(&self, pos: [i32; 3]) -> Option<usize> {
         self.at.get(&pos).copied()
     }
@@ -388,9 +346,6 @@ impl Design {
         &self.plans[unit.record as usize]
     }
 
-    /// What the unit costs to build from nothing: known from the design
-    /// alone, so work still buried in a bank is on the bill before it is dug
-    /// out.
     pub fn cost(&self, unit: Unit) -> &[ItemStackData] {
         self.costs
             .get(unit.record as usize)
@@ -401,7 +356,6 @@ impl Design {
         matches!(self.plan(unit), Plan::Build { late: true, .. })
     }
 
-    /// Whether the unit is a window pane: see [`Plan::Build`]'s `glazing`.
     pub fn glazing(&self, unit: usize) -> bool {
         matches!(
             self.plan(self.units[unit]),
@@ -420,7 +374,6 @@ impl Design {
         }
     }
 
-    /// Whether the column stands over the design's floor: inside the house.
     pub fn over_floor(&self, cell: [i32; 3]) -> bool {
         self.floor.contains(&[cell[0], cell[2]])
     }
@@ -442,9 +395,6 @@ fn turned_size(size: [i32; 3], turns: u8) -> [i32; 3] {
     }
 }
 
-/// Whether each record's row collides as one whole cube.
-/// Per record: whether its block fills the whole cell, and whether it is a
-/// thin panel the cell's full height (a pane, bars).
 fn record_shapes(records: &[BlockRecord]) -> Vec<(bool, bool)> {
     let ids: Vec<Option<BlockId>> = records.iter().map(|r| resolve_block(&r.block)).collect();
     let known: Vec<BlockId> = ids.iter().flatten().copied().collect();

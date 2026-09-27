@@ -1,10 +1,6 @@
 use super::*;
 use petramond_world::block_state::SlabSplit;
 
-/// A full slab stack of ONE material must mesh exactly like the full cube block:
-/// same quads, same culling (the floor face under it disappears), same AO onto
-/// the surrounding floor, same greedy merging — the tile id is the only thing
-/// allowed to differ, so it is masked out of the comparison.
 #[test]
 fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
     let build = |cube: bool| {
@@ -45,9 +41,6 @@ fn uniform_full_slab_stack_meshes_like_the_full_cube_block() {
     );
 }
 
-/// A mixed-material full stack still covers the whole cell like a full block but
-/// keeps each layer's texture: full caps textured by the fronting layer, split
-/// side faces carrying both materials' side tiles.
 #[test]
 fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
     let mut section = section_with(&[((8, 8, 8), Block::StoneSlab)]);
@@ -62,7 +55,6 @@ fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
     );
     let m = mesh(&section);
 
-    // Full-cell cover: 2 full caps + 4 sides x 2 half quads = 10 quads.
     assert_eq!(m.opaque.len(), 40, "mixed stack should emit 10 quads");
     let tiles_at = |pred: &dyn Fn(&Vertex) -> bool| -> std::collections::HashSet<u32> {
         m.opaque.iter().filter(|v| pred(v)).map(tile_idx).collect()
@@ -91,8 +83,6 @@ fn mixed_full_slab_stack_covers_the_cell_with_both_layer_tiles() {
     );
 }
 
-/// Full stacks cull like opaque cubes, in BOTH directions: the boundary between
-/// a full (mixed) stack and an adjacent opaque cube must emit no quad at all.
 #[test]
 fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
     let mut section = section_with(&[((8, 8, 8), Block::StoneSlab), ((9, 8, 8), Block::Stone)]);
@@ -116,16 +106,12 @@ fn faces_between_a_full_slab_stack_and_an_opaque_cube_are_culled() {
     }
 }
 
-/// The screenshot regression: a wall face rising from a top-slab floor must not
-/// blend the slabs' under-floor darkness into its bottom corners. A slab cell's
-/// light value describes its OPEN half; the wall corners rest on the slabs'
-/// SOLID top half, which seals that darkness away, so the wall must shade
-/// exactly like one standing on full blocks.
+/// A wall on a top-slab floor must not pick up the slab's under-floor darkness.
+/// Slab light value is for the OPEN half, but the wall corners sit on the SOLID top half.
+/// That half blocks the darkness, so the wall should shade like it's on full blocks.
 #[test]
 fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
     let mut section = Section::new(0, 0, 0);
-    // A stone wall along z=7 rising one block above a top-slab floor that
-    // fills z=8..=10, with a solid base under the wall.
     for x in 6..=10 {
         for y in 7..=9 {
             section.set_block(x, y, 7, Block::Stone);
@@ -141,8 +127,6 @@ fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
         }
     }
 
-    // Baked-light shape: the slab cells and the space below them carry the
-    // dark under-floor light; everything above and beside is fully sky-lit.
     let m = mesh_with_sky(&section, |wx, wy, wz| {
         if wy <= 8 && (6..=10).contains(&wx) && (8..=10).contains(&wz) {
             0
@@ -151,8 +135,6 @@ fn wall_face_above_a_top_slab_floor_ignores_under_slab_darkness() {
         }
     });
 
-    // The wall's face over the floor: quads on the z=8 plane wholly above the
-    // slab tops (the buried faces below the floor surface keep their darkness).
     let mut checked = 0;
     for quad in m.opaque.chunks(4) {
         if !quad

@@ -2,7 +2,6 @@ use super::Selection;
 use std::collections::BTreeMap;
 
 impl Selection {
-    /// Creases of the union, computed from box faces without visiting its interior.
     pub fn outline(&self) -> Vec<[[i32; 3]; 2]> {
         let mut lines = BTreeMap::<(usize, i32, i32), BTreeMap<i32, u8>>::new();
         for face in self.surface().faces() {

@@ -1,13 +1,3 @@
-//! Renderer construction + surface lifecycle.
-//!
-//! Owns wgpu instance/adapter/device/surface bring-up — every failure a
-//! typed [`RenderInitError`], never a panic — the shared frame resources
-//! (uniforms, atlases, the icon-atlas bake), and the assembly of the
-//! `Renderer` from its passes, each of which builds itself from the pipeline
-//! resources it owns (`construct/passes.rs`, with the per-species actor
-//! resources in `construct/actors.rs` and the HUD layers in
-//! `construct/hud.rs`).
-
 use super::*;
 
 mod actors;
@@ -15,9 +5,6 @@ mod hud;
 mod passes;
 use passes::{HandParts, SkyParts};
 
-/// A renderer presenting to `target` at `width` × `height`, or why the
-/// platform cannot give it one: no surface, no adapter, no device, or an
-/// adapter that cannot present to the surface.
 pub async fn new_renderer_from_target(
     target: impl Into<wgpu::SurfaceTarget<'static>>,
     width: u32,
@@ -37,14 +24,6 @@ pub async fn new_renderer_from_target(
     new_renderer_inner(Some(surface), device, queue, config, samples)
 }
 
-/// Instance descriptor selecting native backends (Vulkan/Metal/DX12/GL).
-///
-/// Honors `WGPU_BACKEND` (`vulkan` | `gl`) to pin a single backend; unset = all.
-/// This matters on a hybrid-GPU Wayland session: the discrete NVIDIA GPU's Vulkan
-/// WSI can't present to a Wayland surface it isn't driving (it reports
-/// `VK_KHR_wayland_surface` present = false), so wgpu's surface-compatible pick
-/// falls back to the Intel iGPU. Its EGL/GLES path *can* present there, so
-/// `WGPU_BACKEND=gl` (with the EGL vendor pointed at NVIDIA) renders on the dGPU.
 pub(crate) fn instance_descriptor() -> wgpu::InstanceDescriptor {
     let mut desc = wgpu::InstanceDescriptor::default();
     if let Ok(name) = std::env::var("WGPU_BACKEND") {
@@ -57,10 +36,6 @@ pub(crate) fn instance_descriptor() -> wgpu::InstanceDescriptor {
     desc
 }
 
-/// Adapter pick shared by every renderer bring-up: a high-performance adapter
-/// first, then the forced fallback (software) one, and an error only when
-/// neither exists. `surface` is `None` for a surfaceless renderer, which
-/// constrains nothing.
 pub(super) async fn request_adapter(
     instance: &wgpu::Instance,
     surface: Option<&wgpu::Surface<'static>>,
@@ -88,26 +63,16 @@ pub(super) async fn request_adapter(
     }
 }
 
-/// The device every renderer needs. The terrain tile array holds every tile
-/// PLUS its dye-base twin (2 × tile count layers), which exceeds the default
-/// 256-layer limit — request what the tile array actually needs, capped to what
-/// the adapter offers; content that overflows the resulting limits is reported
-/// by `content_limits::check` with the offending counts before the device
-/// exists.
 pub(super) async fn request_device(
     adapter: &wgpu::Adapter,
 ) -> Result<(wgpu::Device, wgpu::Queue), RenderInitError> {
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
-    // A captured frame may be as large as the adapter allows.
     required_limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d;
     required_limits.max_buffer_size = adapter.limits().max_buffer_size;
     required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
         .max(required_limits.max_texture_array_layers)
         .min(adapter.limits().max_texture_array_layers);
-    // The limits the device will have: content past them is named here.
     crate::content_limits::check(&required_limits).map_err(RenderInitError::ContentLimits)?;
-    // Adapter-specific format features expose supported 8x MSAA; timestamps
-    // remain opt-in for the GPU-timing instrument.
     let mut required_features =
         adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if gpu_timer::GpuTimer::wanted() {
@@ -127,9 +92,6 @@ pub(super) async fn request_device(
         .map_err(RenderInitError::RequestDevice)
 }
 
-/// Build every pipeline, atlas and pass and assemble the `Renderer`.
-/// `config` carries the frame geometry + colour format; `surface` is `None`
-/// for a surfaceless renderer, which changes nothing else.
 pub(super) fn new_renderer_inner(
     surface: Option<wgpu::Surface<'static>>,
     device: wgpu::Device,
@@ -137,7 +99,6 @@ pub(super) fn new_renderer_inner(
     config: wgpu::SurfaceConfiguration,
     max_samples: u32,
 ) -> Result<Renderer, RenderInitError> {
-    // First, so the rest of the bring-up already reports through it.
     let health = DeviceHealth::watch(&device);
     let graph =
         super::passes::frame_graph().map_err(|e| RenderInitError::PassGraph(e.to_string()))?;
@@ -157,8 +118,6 @@ pub(super) fn new_renderer_inner(
     let (_atlas_texture, atlas_view, atlas_sampler) = create_atlas(&device, &queue);
     let (_atlas_array_texture, atlas_array_view, atlas_array_sampler) =
         create_atlas_array(&device, &queue);
-    // Overridden by `set_render_distance` at host wiring; the default keeps the
-    // icon-atlas bake (which reads this buffer) fog-free at any distance.
     let default_fog = crate::uniforms::fog_range(petramond::world::RENDER_DIST);
     let uniform_buf = create_uniform_buffer(&device, default_fog);
     let shader_params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -181,9 +140,6 @@ pub(super) fn new_renderer_inner(
         &atlas_array_sampler,
     );
     let model_atlas_bind = create_model_atlas_bind(&device, &queue, &pipelines.atlas_bgl);
-    // The bbmodel break crack draws the same model stream a second time; its own
-    // group(2) holds the frame's crack masks and the BLOCK atlas (the destroy
-    // tiles live there, not in the model atlas).
     let model_break = crate::model_break::ModelBreak::new(
         &device,
         pipelines.model_break_pipe,
@@ -191,16 +147,11 @@ pub(super) fn new_renderer_inner(
         &atlas_view,
         &atlas_sampler,
     );
-    // A custom-shape block's inventory icon is its baked ITEM geometry (a chair,
-    // not a plank cube), which comes from the pack's WASM — bake all installed
-    // custom item shapes into the item cache NOW, before the icon atlas reads it.
     petramond::modding::client::bake_installed_custom_item_geometry();
-    // Bake every item's inventory icon into the icon atlas ONCE, here at init: the
-    // cube/sprite icons through the depthless `model3d_pipe` and the bbmodel-block
-    // icons through the depth-tested `model_icon_pipe` (these two pipelines are used
-    // only by this bake — see `icon_atlas`). The atlas color format MUST match the
-    // surface (sRGB) so sampling/store cancel like the gui atlas (no double gamma).
-    // The per-slot UI node then draws a textured quad sampling this.
+    // Bake all item icons into the atlas once here at init. Cube/sprite icons use the depthless
+    // `model3d_pipe`, bbmodel-block icons the depth-tested `model_icon_pipe`, and only this bake
+    // uses them (see `icon_atlas`). The atlas format has to match the surface (sRGB) or we get
+    // double gamma, same as the gui atlas. The UI just draws a textured quad from this.
     let icon_atlas = icon_atlas::bake(
         &device,
         &queue,
@@ -344,9 +295,6 @@ pub(super) fn new_renderer_inner(
     })
 }
 
-/// The frame uniforms before the first `update_uniforms`: identity view, the
-/// default fog band, white sky, late-morning sun. The icon-atlas bake reads
-/// this buffer, so these are also what the baked icons see.
 fn create_uniform_buffer(device: &wgpu::Device, (fog_start, fog_end): (f32, f32)) -> wgpu::Buffer {
     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("uniforms"),
@@ -358,10 +306,7 @@ fn create_uniform_buffer(device: &wgpu::Device, (fog_start, fog_end): (f32, f32)
             inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
             render_origin: [0; 4],
             atlas_layout: crate::atlas::atlas_layout_uniform(),
-            // White sky colour at init = identity, so baked UI icons stay
-            // untinted.
             sky_color: [1.0, 1.0, 1.0, 0.0],
-            // Late-morning sun at full daylight until the sim writes petramond:time.
             sun_dir: super::frame_state::sun_uniform(None),
             volume_tint: [1.0, 1.0, 1.0, 0.0],
         }]),
@@ -369,10 +314,6 @@ fn create_uniform_buffer(device: &wgpu::Device, (fog_start, fog_end): (f32, f32)
     })
 }
 
-/// The combined bbmodel-block atlas (every kind's textures packed into one
-/// sheet — see `block_model::atlas`) as its own GPU texture, bound over the
-/// same atlas layout the mob pipeline uses. The mesher bakes model geometry
-/// into each chunk's model stream; the model nodes just draw it over this.
 fn create_model_atlas_bind(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -398,14 +339,11 @@ fn create_model_atlas_bind(
 }
 
 impl Renderer {
-    /// The current surface size in physical pixels `(width, height)` — the same
-    /// coordinate space the UI layout (`render::ui`) and cursor hit-testing use.
     #[inline]
     pub fn screen_size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
     }
 
-    /// The viewport of the SCENE's UI: the frame's size.
     pub fn scene_ui_viewport(&self) -> UiViewport {
         if self.sized_frames.is_some() {
             UiViewport::for_frame(self.screen_size(), self.ui.scene_generation)
@@ -414,8 +352,6 @@ impl Renderer {
         }
     }
 
-    /// The viewport of the WINDOW's UI: the window's size, which is the
-    /// frame's except while frames are rendered at another size.
     pub fn window_ui_viewport(&self) -> UiViewport {
         let config = self.surface_config();
         UiViewport::new((config.width, config.height), self.ui.window_generation)
@@ -423,7 +359,6 @@ impl Renderer {
 }
 
 pub(super) fn max_scene_samples(adapter: &wgpu::Adapter, format: wgpu::TextureFormat) -> u32 {
-    // Cloud occlusion reads scene depth per coverage sample.
     if !adapter
         .get_downlevel_capabilities()
         .flags

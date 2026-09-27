@@ -1,13 +1,3 @@
-//! `ClientWorldStateWrite`: the presented world's state into a mod file.
-//!
-//! On the frame, inside the call, the selection is taken as reference-counted
-//! handles only ([`take`]): the sections' own `Arc`s, the columns' `Arc`s and
-//! the few bytes of column facts beside them, the draw sets of the sections
-//! that have any, and the moment's parts. No byte of a piece is made there.
-//! [`submit`] reserves the record's turn in its file and hands the snapshot
-//! to the job pool, where the pieces are converted, encoded, compressed and
-//! checked one chunk per job, and streamed into the file as they finish.
-
 use std::sync::Arc;
 
 use mod_api::capture::{
@@ -29,14 +19,8 @@ use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 use petramond_world::column::Column;
 use petramond_world::section::{Section, SectionSummary};
 
-/// Pieces per streamed chunk: one encoding job, and one queued write of the
-/// record — its grain, not a bound on it.
 const CHUNK_PIECES: usize = 256;
 
-/// Where a state record's encoding runs in the job pool, whose keys are
-/// terrain's squared section distances: behind the terrain within four
-/// sections of the camera, ahead of the rest, so a capture never starves
-/// while the world streams and never delays what the player sees next.
 pub(super) const STATE_JOB_KEY: i64 = 4 * 4;
 
 pub struct SectionSnap {
@@ -53,7 +37,6 @@ pub struct ColumnSnap {
     pub deep_band_lo: Option<i32>,
 }
 
-/// Which piece kinds a write may state.
 #[derive(Clone, Copy)]
 struct Kinds(u32);
 
@@ -75,7 +58,6 @@ enum Presence {
     OfSnapshot,
 }
 
-/// Entities a write states: all of them, or these ids.
 enum Ids {
     All,
     Some(Vec<u64>),
@@ -91,20 +73,13 @@ impl Ids {
     }
 }
 
-/// A selection as the call took it: handles, no bytes.
 pub struct StateSnapshot {
     pub revision: u64,
     pub since: Option<u64>,
     moment: Moment,
-    /// `None` where the loaded-section index named a section the table did
-    /// not hold: dropped off the frame.
     sections: Vec<Option<SectionSnap>>,
-    /// The draw sets of the sections `sections` holds without them: taken
-    /// apart so the walk over every section touches only its handle.
     draws: Vec<(SectionPos, Vec<BlockDrawEntry>)>,
     columns: Vec<ColumnSnap>,
-    /// Every present column's loaded-section bits, when `Presence` is
-    /// stated: taken, or (for `All`) read off the snapshot's own terrain.
     presence: Option<Presence>,
     population: bool,
     session: bool,
@@ -145,7 +120,6 @@ impl StateSnapshot {
         }
     }
 
-    /// Whether the write states nothing at all: it then writes nothing.
     pub fn is_empty(&self) -> bool {
         self.sections.is_empty()
             && self.columns.is_empty()
@@ -164,7 +138,6 @@ impl StateSnapshot {
             && self.absent.is_empty()
     }
 
-    /// Pieces the record will hold at most: what sizes its chunks.
     fn units(&self) -> usize {
         let ids = |ids: &Ids, all: usize| match ids {
             Ids::All => all,
@@ -191,7 +164,6 @@ impl StateSnapshot {
 }
 
 impl SectionSnap {
-    /// Section `pos` as `world` holds it now.
     pub fn of(world: &ReplicaWorld, pos: SectionPos) -> Option<Self> {
         let section = Arc::clone(world.data().sections.get(&pos)?);
         Some(Self {
@@ -203,7 +175,6 @@ impl SectionSnap {
 }
 
 impl ColumnSnap {
-    /// Column `pos` as `world` holds it now.
     pub fn of(world: &ReplicaWorld, pos: ChunkPos) -> Option<Self> {
         Some(Self::with(world, pos, world.data().columns.get(&pos)?))
     }
@@ -213,8 +184,6 @@ impl ColumnSnap {
     }
 }
 
-/// The column facts beside the columns, borrowed apart from the world so a
-/// parallel walk can read them.
 struct ColumnFacts<'a> {
     summaries: &'a rustc_hash::FxHashMap<ChunkPos, Box<[SectionSummary]>>,
     halos: &'a rustc_hash::FxHashMap<ChunkPos, Arc<[u8]>>,
@@ -241,7 +210,6 @@ impl<'a> ColumnFacts<'a> {
     }
 }
 
-/// The `cy` of every set bit of a column's loaded-section mask.
 fn cys(mut bits: u32) -> impl Iterator<Item = i32> {
     std::iter::from_fn(move || {
         (bits != 0).then(|| {
@@ -271,8 +239,6 @@ fn presence_of(world: &ReplicaWorld) -> Vec<(ChunkPos, u32)> {
         .collect()
 }
 
-/// Take the selection from `world` and `moment` as they stand: the world as
-/// the last presented frame left it.
 pub fn take(
     world: &ReplicaWorld,
     moment: &Moment,
@@ -307,10 +273,6 @@ pub fn take(
     }
 }
 
-/// Every present key. The walk over the terrain is the whole cost of the
-/// call, one handle per section and column, so it runs across cores: a
-/// handle is an atomic increment on memory the frame has not touched, and
-/// one core stalls on each in turn.
 fn take_all(world: &ReplicaWorld, moment: &Moment, kinds: Kinds, revision: u64) -> StateSnapshot {
     use rayon::prelude::*;
 
@@ -334,7 +296,6 @@ fn take_all(world: &ReplicaWorld, moment: &Moment, kinds: Kinds, revision: u64) 
     };
     let all_sections = &world.data().sections;
     let facts = ColumnFacts::of(world);
-    // Both walks are indexed, so each lands straight in its one allocation.
     (snap.sections, snap.columns) = rayon::join(
         || {
             positions
@@ -390,8 +351,6 @@ fn take_all(world: &ReplicaWorld, moment: &Moment, kinds: Kinds, revision: u64) 
     snap
 }
 
-/// Add one key to a selection. `listed`: the mod named it, so a key that is
-/// not present is reported absent.
 fn add_key(
     snap: &mut StateSnapshot,
     world: &ReplicaWorld,
@@ -446,8 +405,6 @@ fn add_key(
             snap.viewer = moment.viewer.is_some();
             snap.viewer
         }
-        // Entities resolve off the frame against the moment's rows; one not
-        // there goes to `absent` then.
         ClientStateKey::Mob(id) => push_id(&mut snap.mobs, id),
         ClientStateKey::Item(id) => push_id(&mut snap.items, id),
         ClientStateKey::Player(id) => push_id(&mut snap.players, u64::from(id.0)),
@@ -464,7 +421,6 @@ fn push_id(ids: &mut Ids, id: u64) -> bool {
     true
 }
 
-/// One piece the record will hold, in record order.
 enum Unit {
     Presence,
     Population,
@@ -482,7 +438,6 @@ enum Unit {
     Viewer,
 }
 
-/// Everything the encoding jobs share.
 struct Plan {
     snap: StateSnapshot,
     sections: Vec<SectionSnap>,
@@ -703,9 +658,6 @@ fn presence_body(columns: &[(ChunkPos, u32)]) -> ClientPresence {
     }
 }
 
-/// Queue a State record of `snap` into `file`, behind everything already
-/// queued there, and encode it off the frame. `done` answers once it is
-/// complete on disk. `Err` = refused at once (the file is in use).
 pub fn submit(
     snap: StateSnapshot,
     file: FileRef,

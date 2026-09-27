@@ -1,11 +1,6 @@
-//! Cell and body arithmetic shared by the golem's planning.
-
-/// The golem row's eye height and a working reach a little short of its row
-/// reach, so a stance planned here is one the engine's reach check accepts.
 pub const EYE: f64 = 1.3;
 pub const PLAN_REACH: f64 = 4.2;
 
-/// The six face neighbours of a cell, and the four beside it.
 pub const FACES: [[i32; 3]; 6] = [
     [1, 0, 0],
     [-1, 0, 0],
@@ -16,9 +11,6 @@ pub const FACES: [[i32; 3]; 6] = [
 ];
 pub const SIDES: [[i32; 3]; 4] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
 
-/// Every face neighbour of every one of `cells`, cell by cell in [`FACES`]
-/// order: the cells themselves and repeats included, for the caller to
-/// filter as it needs.
 pub fn beside(cells: &[[i32; 3]]) -> impl Iterator<Item = [i32; 3]> + '_ {
     cells.iter().flat_map(|c| FACES.map(|f| offset(*c, f)))
 }
@@ -43,8 +35,6 @@ pub fn feet_of(cell: [i32; 3]) -> [f64; 3] {
     ]
 }
 
-/// Distance from the eye of a body standing at `feet` to the nearest point
-/// of `cell`.
 pub fn reach_to(feet: [f64; 3], cell: [i32; 3]) -> f64 {
     let eye = [feet[0], feet[1] + EYE, feet[2]];
     let mut sum = 0.0;
@@ -66,7 +56,6 @@ pub fn reaches(feet: [f64; 3], cells: &[[i32; 3]]) -> bool {
     cells.iter().any(|c| reach_to(feet, *c) <= PLAN_REACH)
 }
 
-/// The mob yaw facing from `from` toward the centre of `cell` (yaw 0 faces -Z).
 pub fn yaw_toward(from: [f64; 3], cell: [i32; 3]) -> f32 {
     let dx = f64::from(cell[0]) + 0.5 - from[0];
     let dz = f64::from(cell[2]) + 0.5 - from[2];

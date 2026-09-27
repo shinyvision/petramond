@@ -1,14 +1,3 @@
-//! The engine shape families: one unit struct per [`ShapeFamily`], each a
-//! `&'static` singleton implementing [`ShapeSim`] and [`ShapeRender`] by
-//! delegating to the proven shape-math free functions
-//! (`crate::{stair,slab,pane,fence,ladder,door}`, `crate::block_model`),
-//! reading the world ONLY through the primitive [`ShapeNeighborhood`] seam.
-//! A [`ShapeKindDef`](super::ShapeKindDef) row binds the singleton for its
-//! family; adding a family is one struct here plus a [`singletons`] arm — not
-//! an edit to every consumer. Everything else a consumer might ask about a
-//! family (its mesher emitter, whether it refines, whether its collision is
-//! state-free, its row rules) is a facet method the family's own file answers.
-
 use crate::mathh::IVec3;
 use crate::world::data::WorldData;
 
@@ -24,17 +13,8 @@ use crate::facing::Facing;
 use crate::torch::TorchPlacement;
 use crate::world::placement::{PlaceInputs, PlacementOutcome, PlacementPlan, ShapePlacement};
 
-// --- Reading per-cell state through the primitive seam --------------------
-//
-// A family decodes the OPAQUE `ShapeState` bytes its own blocks carry
-// through the type's own [`CellView`]/[`CellCodec`] impls (living beside the
-// type in its owner's module — the engine exports no byte vocabulary). The
-// helpers here are thin seam reads: gate on ownership, decode.
-
 use super::neighborhood::{CellCodec, CellView};
 
-/// The typed state at `q`, gated on ownership: a foreign or absent cell
-/// decodes as the type's default semantics.
 fn state_of_at<T: CellView>(nb: &dyn ShapeNeighborhood, q: IVec3) -> T {
     if T::owns(nb.block(q)) {
         T::from_cell(nb.shape_state(q))
@@ -43,39 +23,29 @@ fn state_of_at<T: CellView>(nb: &dyn ShapeNeighborhood, q: IVec3) -> T {
     }
 }
 
-/// The stair state a cell carries, or `None` when it is not a stair.
 fn stair_state_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> Option<StairState> {
     StairState::owns(nb.block(q)).then(|| StairState::from_cell(nb.shape_state(q)))
 }
 
-/// A cell's refined stair corner shape — a stored-state DECODE (resolved at
-/// edit time by the refine cascade, never re-derived on a read).
 fn stair_shape_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> crate::stair::StairShape {
     if !crate::stair::is_stair(nb.block(q)) {
-        // Never observed (consumers gate on the stair family first); answer
-        // the default facing's straight shape rather than an empty mask.
         return crate::stair::shape(StairState::default());
     }
     crate::stair::StairShape::from_cell(nb.shape_state(q))
 }
 
-/// A cell's RAW slab state (readers normalize with the cell's block); a
-/// non-slab cell decodes to the empty stack.
 fn slab_state_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> SlabState {
     state_of_at::<SlabState>(nb, q)
 }
 
-/// A model cell's footprint offset + facing through the seam.
 fn model_state_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> crate::block_model::ModelCellState {
     state_of_at::<crate::block_model::ModelCellState>(nb, q)
 }
 
-/// The door state a cell carries, or `None` (no state stored / not a door).
 fn door_state_at(nb: &dyn ShapeNeighborhood, q: IVec3) -> Option<crate::door::DoorState> {
     state_of_at::<Option<crate::door::DoorState>>(nb, q)
 }
 
-/// The trapdoor state a cell carries, or `None` (no state stored / not one).
 fn trapdoor_state_at(
     nb: &dyn ShapeNeighborhood,
     q: IVec3,
@@ -83,9 +53,6 @@ fn trapdoor_state_at(
     state_of_at::<Option<crate::trapdoor::TrapdoorState>>(nb, q)
 }
 
-/// Whether the pocket `(lo, hi)` overlaps any half-cell octant the predicate
-/// reports occupied — the quantized occupancy test the stair and slab
-/// families share.
 fn any_octant(lo: [f32; 3], hi: [f32; 3], occ: &dyn Fn(usize, usize, usize) -> bool) -> bool {
     let touches = |a: usize, half: usize| {
         if half == 0 {
@@ -100,14 +67,10 @@ fn any_octant(lo: [f32; 3], hi: [f32; 3], occ: &dyn Fn(usize, usize, usize) -> b
     })
 }
 
-/// Box-overlap against a cell-local AABB.
 fn overlaps(lo: [f32; 3], hi: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> bool {
     (0..3).all(|a| lo[a] < mx[a] && hi[a] > mn[a])
 }
 
-/// RESOLVE a connection mask from the neighbourhood — the refine-time (and
-/// pre-placement hypothetical) computation. Reads decode the stored
-/// [`crate::connect::ConnectionMask`] instead; nothing hot ends here.
 pub fn resolve_connection_mask(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
@@ -122,8 +85,6 @@ pub fn resolve_connection_mask(
     )
 }
 
-/// A connection family's STORED resolved boxes at `pos`: the params'
-/// precomputed box table indexed by the refined mask — one state read.
 fn connection_boxes(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
@@ -135,8 +96,6 @@ fn connection_boxes(
     )
 }
 
-/// A connection family's boxes for a NOT-YET-WRITTEN cell (the placement
-/// overlap gate): the mask must be computed, there is nothing stored yet.
 fn hypothetical_connection_boxes(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
@@ -146,31 +105,21 @@ fn hypothetical_connection_boxes(
     crate::connect::boxes_for_mask(c.boxes, resolve_connection_mask(nb, pos, c.rule, kind))
 }
 
-/// The connection params of a fence/pane shape kind — a family invariant, so an
-/// absence is a loader bug.
 #[inline]
 fn conn(p: &ShapeParams) -> &'static ConnectionParams {
     p.connection()
         .expect("a connection family carries connection params")
 }
 
-/// The item form a connection shape declares maps to its [`ItemRender`].
 #[inline]
 fn item_from_form(form: ItemForm, block: Block) -> ItemRender {
     match form {
-        // A fixed no-neighbour segment: the family's `item_boxes` builds it.
         ItemForm::Segment => ItemRender::BlockForm(block),
-        // The item's own flat/extruded sprite.
         ItemForm::Sprite => ItemRender::ItemSprite,
         ItemForm::Cube => ItemRender::BlockForm(block),
     }
 }
 
-// --- The families themselves, one file each ------------------------------------
-//
-// Each family is INDEPENDENT — a stair knows nothing about a fence — so each
-// owns a file holding its struct plus all three facet impls. Adding a family
-// is a new file plus one `singletons` arm.
 mod boxset;
 mod cube;
 mod custom;
@@ -199,24 +148,16 @@ use stair::StairFamily;
 use torch::TorchFamily;
 use trapdoor::TrapdoorFamily;
 
-// Family identity, for the state codecs each family's cells carry: a codec
-// owns exactly the rows of its family, and only this module names one.
 pub use door::is_door;
 pub use stair::is_stair;
 pub use torch::is_torch;
 pub use trapdoor::is_trapdoor;
 
-/// The box list of a box-set kind — a family invariant, so an absence is a
-/// loader bug.
 #[inline]
 fn box_set(p: &ShapeParams) -> &'static super::BoxSetParams {
     p.box_set().expect("a box-set family carries its boxes")
 }
 
-/// How far a box-set cell is turned about Y: the placement facing a
-/// `directional_view` row stores, as quarter turns from the authored form
-/// (whose front is `-Z`, matching [`Facing::North`]). A row with no facing
-/// never stores one and always reads `0`.
 fn box_set_turns(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> u8 {
     if !block.directional_view() {
         return 0;
@@ -233,16 +174,6 @@ fn turns_for(facing: Facing) -> u8 {
     }
 }
 
-/// A box-set cell's stored corner form (byte 1), or straight when the shape
-/// does not corner-join. Byte 0 is the placed facing and is never refined —
-/// the stair's identity/refined split.
-///
-/// Reads the form off the params the facet was ALREADY handed rather than
-/// re-deriving them from the block: `occupies_pocket` calls this once per AO
-/// probe corner and once per light-aperture quadrant, and neither may pay a
-/// `def()` load. An out-of-vocabulary byte (an old world's stale state, until
-/// the load sweep rewrites it) is clamped by the accessors — see
-/// [`BoxSetParams::boxes`](super::BoxSetParams::boxes).
 fn box_set_form(p: &ShapeParams, nb: &dyn ShapeNeighborhood, pos: IVec3) -> super::CornerForm {
     if box_set(p).refine == super::BoxSetRefine::None {
         return 0;
@@ -250,15 +181,10 @@ fn box_set_form(p: &ShapeParams, nb: &dyn ShapeNeighborhood, pos: IVec3) -> supe
     nb.shape_state(pos).byte(1)
 }
 
-/// Whether `q` holds a segment of the run kind `kind` — the run's own join
-/// test, identity only (the key spells the root, so two mirrored rows are
-/// two kinds and never join).
 fn run_segment(nb: &dyn ShapeNeighborhood, q: IVec3, kind: super::BlockShapeKind) -> bool {
     nb.block(q).shape_kind() == kind
 }
 
-/// Whether `q` holds a run rooted the OPPOSITE way to `root` — what a free
-/// end merges with.
 fn opposing_run(nb: &dyn ShapeNeighborhood, q: IVec3, root: super::RunRoot) -> bool {
     nb.block(q)
         .shape_kind()
@@ -268,8 +194,6 @@ fn opposing_run(nb: &dyn ShapeNeighborhood, q: IVec3, root: super::RunRoot) -> b
         .is_some_and(|r| r.root == root.opposite())
 }
 
-/// RESOLVE a run cell's form from the neighbourhood — the refine-time (and
-/// pre-placement hypothetical) computation; reads decode the stored byte.
 pub fn resolve_run_form(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,
@@ -286,12 +210,11 @@ pub fn resolve_run_form(
 
 /// One authored box as drawn geometry.
 ///
-/// A box textures exactly like a cube of the same row — `[top, bottom, side]`
-/// plus the row's `front` on the face its placement facing points to — carved
-/// to the box's own extent. Only what no row-level tile can express is
-/// authored per box: a face the shape draws through a DIFFERENT surface than
-/// the cell's outside (a shelf under a counter top), which overrides. Plus the
-/// UV turn [`face_uv_turns`](super::face_uv_turns) prescribes.
+/// A box textures like a cube of the same row, `[top, bottom, side]` plus the row's `front` on the
+/// face its placement facing points to, carved to the box's own extent. Per box you only author
+/// what row tiles can't say: a face drawn through a different surface than the cell's outside (a
+/// shelf under a counter top), which overrides. The UV turn comes from
+/// [`face_uv_turns`](super::face_uv_turns).
 pub fn box_set_box(
     d: &super::BoxDef,
     turns: u8,
@@ -314,14 +237,11 @@ pub fn box_set_box(
             continue;
         }
         let Some(style) = face else { continue };
-        // This face's art lives in a frame some quarter turns ahead of the
-        // CELL's (the shape's turn plus the face's own `art_turns`; none at
-        // all for a posed box, whose pose carries the turn), so both
-        // frame-dependent decisions read that TOTAL turn: which face carries
-        // the row's `front` (a corner form's wrapped face is a different
-        // number of turns from the authored one than its siblings, which is
-        // why a single turn-index lookup could not express it) and how far a
-        // `±Y` tile must be counter-rotated.
+        // This face's art sits some quarter turns ahead of the cell's: the shape's turn plus the
+        // face's own `art_turns`, or none for a posed box, whose pose carries the turn. That total
+        // picks which face carries the row's `front` and how far a `±Y` tile is counter-rotated.
+        // Corner forms wrap one face by a different turn count than its siblings, so a plain
+        // turn-index lookup can't work.
         let art_turns = d.face_frame_turns(turns, i);
         let front = front.filter(|_| i == super::FRONT_AFTER_TURN[art_turns as usize]);
         if let Some(tile) = d.tiles[i].or(front) {
@@ -333,8 +253,6 @@ pub fn box_set_box(
     }
     b
 }
-
-// --- Singletons + binding -------------------------------------------------------
 
 static CUBE: CubeFamily = CubeFamily;
 static BOX_SET: BoxSetFamily = BoxSetFamily;
@@ -351,10 +269,6 @@ static DOOR: DoorFamily = DoorFamily;
 static TRAPDOOR: TrapdoorFamily = TrapdoorFamily;
 static CUSTOM: CustomFamily = CustomFamily;
 
-/// A connection shape (fence / pane / wall) occupies only its resolved post +
-/// arms, tested from the BLOCK's own params since the target cell is still
-/// empty. No stored state — connections re-resolve from neighbours wherever
-/// the shape is read.
 fn connection_placement(
     w: &WorldData,
     block: Block,
@@ -371,12 +285,9 @@ fn connection_placement(
     ) {
         return PlacementOutcome::Refused;
     }
-    // A plain block write: the refine cascade stores the resolved mask.
     PlacementOutcome::Plan(PlacementPlan::single(p, block, ShapeState::NONE))
 }
 
-/// The facet singletons of `family` — the ONE per-family table; a new family
-/// is a file under `families/` plus an arm here.
 pub fn singletons(
     family: ShapeFamily,
 ) -> (

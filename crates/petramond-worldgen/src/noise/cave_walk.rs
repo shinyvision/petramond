@@ -1,5 +1,3 @@
-//! Positional branching walks shared by tunnel and canyon profiles.
-
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
@@ -85,18 +83,12 @@ impl Cut {
     }
 }
 
-/// A gathered field is reused for every lattice inside one column cell padded
-/// by this many blocks: a cut past a lattice's bounds contributes exactly 1.0
-/// (the identity of the min), so a superset gather is value-neutral.
 const FIELD_PAD: i32 = 32;
 
 memo_group! {
-    /// The branching walks' memos, keyed by `(context, column cell)`.
     pub(super) struct WalkMemos {
-        /// One cell's planned cuts.
         plans: (GenContext, [i32; 2]) => Arc<WalkField> =
             ("cave.walk_plans", 1024, Frontier, pointee),
-        /// Every cut reaching one padded cell.
         fields: (GenContext, [i32; 2]) => Arc<WalkField> =
             ("cave.walk_fields", 512, Frontier, pointee),
     }
@@ -131,8 +123,6 @@ impl WalkField {
                     ],
                 ))
             });
-            // A lattice walks its own box voxel by voxel, so it keeps a tight
-            // index over the cuts that can reach it rather than the cell's.
             return field.restrict(bounds);
         }
         Self::gather_direct(memos, context, bounds)

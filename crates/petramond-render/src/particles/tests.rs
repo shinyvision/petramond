@@ -49,11 +49,9 @@ fn emitter_inst() -> ParticleEmitterInstance {
 
 fn one_live_emitter_time(inst: &ParticleEmitterInstance, age: f32) -> f32 {
     let schedule = emitter_schedule(inst.seed, inst.emitter.rate);
-    // Sequence 10 keeps the test time positive for every phase in [0, 1).
     emitter_birth_time(inst.seed, schedule, 10) + age
 }
 
-/// One vertex as the particle vertex stage emits it.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ParticleVertex {
     pos: [f32; 3],
@@ -63,9 +61,8 @@ struct ParticleVertex {
     alpha: f32,
 }
 
-/// `vs_particle`'s expansion spelled in Rust: every row's cube (24 vertices,
-/// face = index / 4, corner = index % 4 in bl, br, tr, tl order) or oriented
-/// quad (its first face alone; the collapsed rest are dropped here).
+/// Same expansion as `vs_particle`, just in Rust. Cubes: 24 verts, face = index / 4, corner =
+/// index % 4 (bl, br, tr, tl). Oriented quads: first face only, the collapsed rest dropped.
 fn expand(rows: &[ParticleRow]) -> Vec<ParticleVertex> {
     let mut out = Vec::new();
     for row in rows {
@@ -114,7 +111,6 @@ fn expand(rows: &[ParticleRow]) -> Vec<ParticleVertex> {
     out
 }
 
-/// Build `instances`' rows and expand them.
 fn bake(instances: &[ParticleInstance]) -> Vec<ParticleVertex> {
     let mut rows = Vec::new();
     build_particles(instances, &mut rows);
@@ -143,7 +139,6 @@ fn each_visible_particle_is_one_cube() {
     assert_eq!(n, 2, "two particles = two instance rows");
     let v = expand(&rows);
     assert_eq!(v.len(), 2 * VERTS_PER_CUBE, "two cubes = 48 verts");
-    // Alpha is carried per vertex.
     assert_eq!(v[0].alpha, 1.0);
     assert_eq!(v[VERTS_PER_CUBE].alpha, 0.5);
 }
@@ -215,7 +210,6 @@ fn tint_is_carried_to_every_vertex() {
 #[test]
 fn faces_carry_distinct_directional_shades() {
     let v = bake(std::slice::from_ref(&inst(1.0)));
-    // Top face (index 2) is brightest, bottom (index 3) darkest.
     let top = v[2 * 4].shade;
     let bottom = v[3 * 4].shade;
     let side = v[0].shade;
@@ -228,8 +222,6 @@ fn faces_carry_distinct_directional_shades() {
 
 #[test]
 fn sampled_light_folds_into_the_particle_tint() {
-    // The two-channel RGB light rides the vertex TINT (shade keeps only the
-    // directional term), so a dark sample dims the tint, not the shade.
     let dark = ParticleInstance {
         skylight: 0,
         ..inst(1.0)
@@ -296,9 +288,6 @@ fn block_emitter_particles_rise_shrink_and_fade() {
     );
 }
 
-/// Bake one emitter particle and return the red channel of its tint. Both of
-/// [`emitter_inst`]'s colour endpoints have red 1.0, so that channel IS the
-/// light factor the row resolved to.
 fn emitter_light_factor(self_lit: f32, skylight: u8) -> f32 {
     let mut inst = emitter_inst();
     inst.emitter.self_lit = self_lit;
@@ -318,11 +307,6 @@ fn emitter_light_factor(self_lit: f32, skylight: u8) -> f32 {
     rows[0].tint[0]
 }
 
-/// The MIDDLE of `self_lit`'s range is the part worth pinning: a partly
-/// self-lit mote must still dim with the room (or it is just the old
-/// `fullbright` flag) while never falling to the unlit-cave floor (or it is
-/// just an ordinary particle). A `max(sample, self_lit)` spelling satisfies
-/// both endpoints and loses the response over the whole lower half.
 #[test]
 fn self_lit_particles_dim_with_the_room_without_reaching_the_cave_floor() {
     let (dark, lit) = (0, lighting::FULL_SKYLIGHT);
@@ -340,7 +324,6 @@ fn self_lit_particles_dim_with_the_room_without_reaching_the_cave_floor() {
         "half self-lit still responds to the room: {half_dark} vs {half_lit}"
     );
 
-    // 1.0 is exactly the flag it replaced: world light cannot reach it.
     assert_eq!(emitter_light_factor(1.0, dark), 1.0);
     assert_eq!(emitter_light_factor(1.0, lit), 1.0);
 }
@@ -348,13 +331,11 @@ fn self_lit_particles_dim_with_the_room_without_reaching_the_cave_floor() {
 #[test]
 fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
     let mut inst = emitter_inst();
-    inst.emitter.spiral = [0.5, 1.0]; // one revolution per second at 0.5 blocks
+    inst.emitter.spiral = [0.5, 1.0];
     let mut early = Vec::new();
     let mut late = Vec::new();
     let mut scratch = Vec::new();
 
-    // A quarter revolution apart: the particle's horizontal offset from the
-    // emitter axis must keep its radius but rotate to a different angle.
     build_transparent_emitter_particles(
         std::slice::from_ref(&inst),
         &[],
@@ -384,8 +365,6 @@ fn spiral_emitter_particles_orbit_the_vertical_axis_as_they_age() {
         Vec3::new(c.x - axis.x as f32, 0.0, c.z - axis.z as f32)
     };
     let (a, b) = (horiz(&early), horiz(&late));
-    // Orbit radius is per-particle (60-100% of the row's 0.5) but stable
-    // over one particle's life: both samples see the same particle.
     assert!(
         (a.length() - b.length()).abs() < 1e-4,
         "one particle keeps its orbit radius: {} vs {}",
@@ -583,7 +562,6 @@ fn cube_extent_matches_size() {
     let v = bake(std::slice::from_ref(&inst(1.0)));
     let min_x = v.iter().map(|p| p.pos[0]).fold(f32::INFINITY, f32::min);
     let max_x = v.iter().map(|p| p.pos[0]).fold(f32::NEG_INFINITY, f32::max);
-    // Side length == size (0.1), so extent on each axis is the full size.
     assert!(
         (max_x - min_x - 0.1).abs() < 1e-5,
         "cube spans `size` on each axis"
@@ -592,15 +570,9 @@ fn cube_extent_matches_size() {
 
 #[test]
 fn faces_are_offset_to_the_cube_surface_not_the_centre() {
-    // Regression for the "star/+" bug: every face used to pass through the
-    // cube centre (corners = c +/- r +/- up). A real cube has each face
-    // offset outward by `normal*h`, giving 8 distinct corner positions.
     let v = bake(std::slice::from_ref(&inst(1.0)));
     let c = Vec3::new(1.0, 2.0, 3.0);
-    let h = 0.1 * 0.5; // size 0.1
-                       // +X face is FACES[0]; its 4 verts must all sit on the +X plane
-                       // (x=c.x+h), NOT through the centre (x=c.x). -X face (FACES[1]) sits at
-                       // x=c.x-h.
+    let h = 0.1 * 0.5;
     for i in 0..4 {
         assert!(
             (v[i].pos[0] - (c.x + h)).abs() < 1e-6,
@@ -611,7 +583,6 @@ fn faces_are_offset_to_the_cube_surface_not_the_centre() {
             "-X face on the -X surface"
         );
     }
-    // +Y / -Y faces (FACES[2], [3]) on the top/bottom planes.
     for i in 0..4 {
         assert!(
             (v[8 + i].pos[1] - (c.y + h)).abs() < 1e-6,
@@ -622,7 +593,6 @@ fn faces_are_offset_to_the_cube_surface_not_the_centre() {
             "-Y face on the bottom surface"
         );
     }
-    // +Z / -Z faces (FACES[4], [5]) on the front/back planes.
     for i in 0..4 {
         assert!(
             (v[16 + i].pos[2] - (c.z + h)).abs() < 1e-6,
@@ -633,9 +603,6 @@ fn faces_are_offset_to_the_cube_surface_not_the_centre() {
             "-Z face on the -Z surface"
         );
     }
-    // A real cube has exactly 8 distinct corner positions (the 24 verts are
-    // the 8 corners shared 3 ways). The buggy star had only 6 (centre-crossed
-    // squares share the 4 mid-edge points differently); assert 8 here.
     let mut corners: Vec<[i32; 3]> = v
         .iter()
         .map(|p| {
@@ -662,8 +629,6 @@ fn every_particle_writes_a_row_and_the_buffer_is_reused() {
     let n = build_particles(&many, &mut rows);
     assert_eq!(n as usize, many.len(), "nothing is dropped");
     let cap = rows.capacity();
-    // Same input -> identical row count, so the cleared+refilled buffer keeps
-    // its capacity: rebuilding to the same size never reallocs.
     let n = build_particles(&many, &mut rows);
     assert_eq!(n as usize, many.len());
     assert_eq!(rows.capacity(), cap, "row buffer reused");
@@ -672,10 +637,8 @@ fn every_particle_writes_a_row_and_the_buffer_is_reused() {
 #[test]
 fn the_cube_pattern_is_thirtysix_over_twentyfour_vertices() {
     assert_eq!(CUBE_INDEX_PATTERN.len(), INDICES_PER_CUBE);
-    // First face: 0,1,2, 0,2,3; the second starts at vertex 4.
     assert_eq!(&CUBE_INDEX_PATTERN[..6], &[0, 1, 2, 0, 2, 3]);
     assert_eq!(&CUBE_INDEX_PATTERN[6..12], &[4, 5, 6, 4, 6, 7]);
-    // Every index addresses one of the vertices an instance expands to.
     assert!(CUBE_INDEX_PATTERN
         .iter()
         .all(|&i| (i as usize) < VERTS_PER_CUBE));
@@ -689,8 +652,6 @@ fn the_row_stride_matches_its_declared_layout() {
     assert_eq!(std::mem::offset_of!(ParticleRow, quad), 76);
 }
 
-/// The vertex stage reads the face table `wgsl_faces` generates: every face's
-/// basis and shade, in `FACES` order.
 #[test]
 fn the_generated_face_table_is_faces() {
     let wgsl = wgsl_faces();
@@ -713,8 +674,6 @@ fn the_generated_face_table_is_faces() {
     assert!(wgsl.contains(&format!("array<f32, 6>({shades})")));
 }
 
-/// The textured cube a row expands to is exactly the one the per-frame CPU
-/// bake emitted: the same six faces as `push_stretched_cube_faces` spelled.
 #[test]
 fn a_row_expands_to_the_cube_the_cpu_bake_emitted() {
     let particle = inst(1.0);
@@ -733,7 +692,6 @@ fn a_row_expands_to_the_cube_the_cpu_bake_emitted() {
             .into_iter()
             .enumerate()
         {
-            // The bake ran every cube through the (unit) vertical stretch.
             pos.y = c.y + (pos.y - c.y) * unit_stretch;
             want.push((pos.to_array(), corner_uv[i], face.shade));
         }
@@ -742,8 +700,6 @@ fn a_row_expands_to_the_cube_the_cpu_bake_emitted() {
     assert_eq!(got, want);
 }
 
-/// A landing row's particles fall under gravity and are gone once they reach
-/// the floor the gather resolved — never drawn inside the ground below it.
 #[test]
 fn landing_particles_fall_and_vanish_at_their_floor() {
     let mut inst = emitter_inst();
@@ -752,7 +708,6 @@ fn landing_particles_fall_and_vanish_at_their_floor() {
     inst.emitter.lifetime = [2.0, 2.0];
     inst.emitter.rate = [1.0, 1.0];
     inst.emitter.lands = true;
-    // Two blocks of free fall under the anchor, then a floor.
     inst.floor_y = (inst.origin.y - 2.0) as f32;
     let mut scratch = Vec::new();
     let mut rows = Vec::new();

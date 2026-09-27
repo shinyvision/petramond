@@ -31,54 +31,26 @@ use petramond_math::math::{voxel_at, IVec3, Vec3};
 
 use super::model_meta::Skeleton;
 
-/// Downward acceleration in WORLD units (m/s²); divided by the model scale per body.
 const GRAVITY: f32 = -22.0;
-/// Per-step velocity retention (Verlet damping) — mild air drag so motion bleeds off.
 const VEL_DAMP: f32 = 0.99;
-/// Horizontal velocity kept per floor contact — friction that skids a corpse to rest.
 const GROUND_FRICTION: f32 = 0.5;
-/// How far below a corner (WORLD m) to probe for a block when deciding it's "resting on
-/// the ground" for friction.
 const GROUND_PROBE: f32 = 0.1;
-/// Constraint relaxation passes per tick (shape match + collision + joints).
 const ITERS: usize = 8;
-/// Polar-decomposition iterations to extract a rotation from the corner cloud.
 const POLAR_ITERS: usize = 4;
-/// Maximum recovered angular speed for one ragdoll body. Shape matching can otherwise
-/// turn a noisy corner contact into an implausible full-body spin, especially for compact
-/// models with many constrained child bodies.
 const MAX_ANGULAR_SPEED: f32 = 24.0;
-/// Maximum rotation (radians) a child bone may deviate from its rest orientation
-/// *relative to its parent* — a joint swing limit. Gravity still drags a limb down (its
-/// corners fall like everything else), but it sags onto this limit instead of folding
-/// through the body.
 const MAX_JOINT_SWING: f32 = 0.8;
-/// Seconds the corpse ragdolls before it despawns.
 const LIFETIME: f32 = 1.8;
-/// Upward pop (model-units/s) given on death — a small base lurch before the collapse.
 const POP_UP: f32 = 1.0;
-/// Horizontal speed (WORLD m/s) the killing blow launches the corpse in the punched
-/// direction. Converted to model units per body (÷ scale).
 const LAUNCH_SPEED: f32 = 2.5;
-/// Upward speed (WORLD m/s) added to the launch so the corpse flies in an arc.
 const LAUNCH_UP: f32 = 1.5;
-/// How much the launch tumbles the corpse, as a fraction of the launch speed: the spin's
-/// edge velocity is this × the launch speed. Kept below 1 so the launch (translation)
-/// always dominates the spin — every corner's net motion is *away*, never toward the
-/// attacker — while still giving a clear somersault. Scaling the spin to the launch this
-/// way keeps that guarantee no matter how `LAUNCH_SPEED` is tuned.
+/// How much the launch tumbles the corpse: the spin's edge velocity is this times the launch speed.
+/// Kept below 1 so the launch always beats the spin and every corner moves away from the attacker,
+/// never toward, while still giving a clear somersault. Scaling off the launch keeps that true
+/// however `LAUNCH_SPEED` is tuned.
 const SPIN_FRACTION: f32 = 0.25;
-/// Per-corner velocity spread (model-units/s) seeded on death, so bones don't move
-/// perfectly rigidly — a little natural variation on top of the coherent tumble.
 const CORNER_SPIN: f32 = 1.5;
-/// The tick length assumed when seeding initial Verlet velocities (20 TPS).
 const SEED_DT: f32 = 0.05;
-/// How far outside a block face a clamped corner is parked, so it doesn't re-classify as
-/// inside the solid cell next test.
 const FACE_EPS: f32 = 1e-3;
-/// Longest per-axis move (WORLD m) a corner sweep will walk in one resolve. Real corpse
-/// motion tops out around 2 m/tick; the cap keeps a corrupted position from turning the
-/// boundary walk into a spin.
 const MAX_SWEEP: f32 = 16.0;
 const EPS: f32 = 1e-5;
 
@@ -105,25 +77,15 @@ struct RagBone {
     prev_rot: Quat,
 }
 
-/// A live ragdoll: one rigid-body bone per skeleton bone plus an age timer. Constructed
-/// [`pending`](Ragdoll::pending) the instant a mob dies, [`init`](Ragdoll::init)ialised
-/// on the next tick, then [`step`](Ragdoll::step)ped each tick (collided against the
-/// world's blocks).
 pub struct Ragdoll {
     bones: Vec<RagBone>,
     age: f32,
     seed: u64,
-    /// World-space horizontal unit direction the killing blow flung the corpse (away
-    /// from the attacker), or `ZERO` if there was no clear direction. Drives the launch
-    /// + somersault applied at [`init`](Self::init).
     launch: Vec3,
     init: bool,
 }
 
 impl Ragdoll {
-    /// A ragdoll awaiting initialisation (deferred to the first dead tick). `seed` drives
-    /// the per-bone fling; `launch` is the (world-space, horizontal) direction the killing
-    /// blow flung the corpse.
     pub fn pending(seed: u64, launch: Vec3) -> Self {
         Ragdoll {
             bones: Vec::new(),
@@ -139,32 +101,18 @@ impl Ragdoll {
         self.init
     }
 
-    /// The corpse has flopped long enough and should be removed from the world.
     #[inline]
     pub fn is_done(&self) -> bool {
         self.age >= LIFETIME
     }
 
-    /// Seed each bone's corners from the rest skeleton plus the killing blow's launch: a
-    /// directional fling in the punched direction with an arc and a coherent somersault,
-    /// so the whole corpse is sent flying and tumbling. `mob_vel` is the mob's velocity
-    /// at death (world units), `scale` the model→metre scale, `yaw` the mob's facing at
-    /// death.
     pub fn init(&mut self, skel: &Skeleton, scale: f32, mob_vel: Vec3, yaw: f32) {
-        // The sim runs in the model's LOCAL space, but the renderer re-applies the mob's
-        // yaw (`global = T(pos)·Ry(yaw)·Scale`). So world-space directions — the launch
-        // and the carried velocity — must be un-rotated by the yaw into model space here,
-        // or the corpse would fly off in a yaw-dependent (effectively random) direction.
         let to_model = Quat::from_rotation_y(-yaw);
         let launch = to_model * self.launch;
-        // A little carried momentum (model units), softened.
         let inherited = (to_model * mob_vel / scale) * 0.4;
-        // The killing blow's launch (punched direction) + an upward arc, in model units.
         let launch_speed = LAUNCH_SPEED / scale;
         let launch_vel = launch * launch_speed;
         let up = POP_UP + LAUNCH_UP / scale;
-        // The mob's overall rest centre — the pivot the whole-body somersault turns about,
-        // so every bone's corners share one coherent rotation (not per-bone spins).
         let centre = if skel.bones.is_empty() {
             Vec3::ZERO
         } else {
@@ -174,11 +122,6 @@ impl Ragdoll {
                 .sum::<Vec3>()
                 / skel.bones.len() as f32
         };
-        // Angular velocity about a horizontal axis across the (model-space) launch → a
-        // forward somersault in the flight direction. Its magnitude is scaled so the
-        // spin's edge velocity is `SPIN_FRACTION` of the launch speed — so the launch
-        // always out-runs the spin and the corpse never swings toward the attacker. Zero
-        // if there's no launch direction.
         let radius = skel
             .bones
             .iter()
@@ -191,10 +134,6 @@ impl Ragdoll {
         } else {
             Vec3::ZERO
         };
-        // A welded bone rides its nearest non-welded ancestor (its anchor) instead of
-        // simulating a rigid body of its own — teeth move with the jaw, never on their
-        // own joints. Welded chains resolve transitively; a broken chain (no reachable
-        // physical ancestor) falls back to simulating the bone normally.
         let anchor_of = |bone: usize| -> Option<usize> {
             if !skel.bones[bone].welded {
                 return None;
@@ -224,8 +163,6 @@ impl Ragdoll {
                 };
                 let cs = corners(b.bbox_min, b.bbox_max);
                 let c0 = (b.bbox_min + b.bbox_max) * 0.5;
-                // Shared per-bone velocity: carried momentum + directional launch + a
-                // small splay + the upward arc.
                 let base = inherited
                     + launch_vel
                     + Vec3::new((h(1) - 0.5) * 1.5, up + h(2) * 0.5, (h(3) - 0.5) * 1.5);
@@ -238,8 +175,6 @@ impl Ragdoll {
                         h(20 + k as u64) - 0.5,
                         h(30 + k as u64) - 0.5,
                     ) * CORNER_SPIN;
-                    // `omega × (corner − centre)` is the rigid somersault velocity of this
-                    // corner; shared across all bones it tumbles the whole corpse as one.
                     let v = base + omega.cross(corner - centre) + jitter;
                     nodes[k] = corner;
                     nodes_old[k] = corner - v * SEED_DT;
@@ -263,12 +198,11 @@ impl Ragdoll {
         self.init = true;
     }
 
-    /// Advance one tick. `mob_pos`/`yaw`/`scale` are the (frozen-at-death) transform that
-    /// places the model-space sim into the frame `solid(cell)` answers in — any frame the
-    /// caller chooses, which keeps a far-away corpse's sweeps small; `solid(cell)` reports
-    /// whether a block stops movement. Each corner is collided against the real voxels — so the
-    /// corpse can't sink through a floor or pass through a wall, and corners hanging over
-    /// an edge keep falling.
+    /// Advances one tick. `mob_pos`, `yaw` and `scale` are the transform (frozen at death) that
+    /// puts the model-space sim into the frame `solid(cell)` answers in. The caller picks that
+    /// frame, which keeps a far-away corpse's sweeps small. `solid(cell)` says whether a block
+    /// stops movement. Every corner collides against the real voxels, so the corpse can't sink
+    /// through a floor or pass through a wall, and corners hanging over an edge keep falling.
     pub fn step(
         &mut self,
         dt: f32,
@@ -282,7 +216,7 @@ impl Ragdoll {
             b.prev_rot = b.rot;
         }
 
-        // Model↔world transforms for this corpse (its `global = T(pos)·Ry(yaw)·Scale`).
+        // The corpse's model-to-world transform, `global = T(pos)·Ry(yaw)·Scale`, and its inverse.
         let ry = Quat::from_rotation_y(yaw);
         let ry_inv = Quat::from_rotation_y(-yaw);
         let world_of = |mp: Vec3| mob_pos + ry * (mp * scale);
@@ -300,7 +234,7 @@ impl Ragdoll {
         let resolve = |old: Vec3, cur: Vec3| -> Vec3 {
             let wo = world_of(old);
             let w = if solid(voxel_at(wo)) {
-                escape_solid(wo, solid).unwrap_or(wo) // sealed on all sides: hold still
+                escape_solid(wo, solid).unwrap_or(wo)
             } else {
                 let mut w = wo;
                 let wc = world_of(cur);
@@ -312,8 +246,6 @@ impl Ragdoll {
             ry_inv * (w - mob_pos) / scale
         };
 
-        // Integrate every corner, then bleed horizontal speed on any corner resting on a
-        // block (ground friction, applied once per tick via the Verlet previous position).
         let accel = Vec3::new(0.0, GRAVITY / scale, 0.0);
         let dt2 = dt * dt;
         let probe = Vec3::new(0.0, GROUND_PROBE / scale, 0.0);
@@ -332,18 +264,15 @@ impl Ragdoll {
         }
 
         for _ in 0..ITERS {
-            // Shape-match each bone: recover its rigid centroid + rotation from the corner
-            // cloud, then snap the corners back onto that rigid shape. The corners' motion
-            // (gravity + collisions) becomes the bone's rotation.
+            // Shape-match each bone: fit a centroid and rotation to the corner cloud and snap the
+            // corners back. So whatever moved the corners (gravity, collisions) ends up rotating
+            // the bone.
             let max_rot = MAX_ANGULAR_SPEED * dt;
             for b in &mut self.bones {
                 if b.weld.is_none() {
                     b.shape_match(max_rot);
                 }
             }
-            // Collision: resolve every corner against the voxels (from its start-of-tick
-            // position, which is collision-free), so the rigid shape doesn't sink into a
-            // block.
             for b in &mut self.bones {
                 if b.weld.is_some() {
                     continue;
@@ -352,13 +281,9 @@ impl Ragdoll {
                     b.nodes[k] = resolve(b.nodes_old[k], b.nodes[k]);
                 }
             }
-            // Joints (last, so the connection stays exact at render): clamp each child's
-            // rotation to a bounded swing about its rest orientation relative to its
-            // parent (legs sag under gravity but can't fold into the body), then slide it
-            // so its pivot meets the spot on its parent it attaches to (root-first order).
             for i in 0..self.bones.len() {
                 if self.bones[i].weld.is_some() {
-                    continue; // the anchor drives it; a joint would fight the weld
+                    continue;
                 }
                 let Some(p) = self.bones[i].parent else {
                     continue;
@@ -383,9 +308,6 @@ impl Ragdoll {
                 }
                 b.c += shift;
             }
-            // Welded bones ride their anchor rigidly. Synced after the joint pass so
-            // they match the anchor's post-constraint pose exactly (and a physical bone
-            // jointed to a welded parent reads coherent parent state next iteration).
             for i in 0..self.bones.len() {
                 let Some(a) = self.bones[i].weld else {
                     continue;
@@ -399,10 +321,6 @@ impl Ragdoll {
         self.age += dt;
     }
 
-    /// Interpolated per-bone `(pivot position, orientation)` at `alpha` into the tick, for
-    /// the render bake to turn into `T(pos)·R(rot)·T(-pivot)` poses (the pivot position is
-    /// the rigid transform applied to the bone's rest pivot). Empty until
-    /// [`init`](Self::init) runs (the renderer then falls back to the rest pose).
     pub fn pose(&self, alpha: f32) -> Vec<(Vec3, Quat)> {
         let interp: Vec<(Vec3, Quat)> = self
             .bones
@@ -425,7 +343,6 @@ impl Ragdoll {
             .collect()
     }
 
-    /// Current bone pivot (joint) positions — for tests asserting connectivity.
     #[cfg(test)]
     pub fn positions(&self) -> Vec<Vec3> {
         self.bones
@@ -434,9 +351,6 @@ impl Ragdoll {
             .collect()
     }
 
-    /// The lowest corner (model-space y) across all simulated bones — for collision
-    /// tests. Welded bones are skipped: their nodes are unused after init and frozen at
-    /// the rest pose.
     #[cfg(test)]
     pub fn lowest_node_y(&self) -> f32 {
         self.bones
@@ -449,10 +363,6 @@ impl Ragdoll {
 }
 
 impl RagBone {
-    /// Recover this bone's rigid centroid + rotation from its corner cloud (shape
-    /// matching), then snap the corners back onto the rigid shape. The recovered rotation
-    /// is the bone's physical orientation; snapping keeps it rigid while the corners'
-    /// gravity/ground motion drives that rotation.
     fn shape_match(&mut self, max_rot: f32) {
         let c = self.nodes.iter().copied().sum::<Vec3>() / 8.0;
         let mut a = Mat3::ZERO;
@@ -468,11 +378,10 @@ impl RagBone {
     }
 }
 
-/// Walk coordinate `axis` of corner `w` (WORLD space) toward `target`, one cell boundary
-/// at a time, parking just outside the face of the first solid cell entered. Unlike
-/// testing only the endpoint, the walk can neither skip over a thin obstacle nor clamp
-/// to a face that lies inside a deeper solid cell when the move crosses several cells in
-/// one tick. Returns the resolved coordinate.
+/// Moves corner `w`'s `axis` coordinate (world space) toward `target` one cell boundary at a time
+/// and parks it just outside the first solid cell it hits. We walk instead of checking the end
+/// point, because a fast move could otherwise skip a thin wall or clamp to a face buried in a
+/// deeper solid cell. Returns the resolved coordinate.
 fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool) -> f32 {
     let start = w[axis];
     if !(start.is_finite() && target.is_finite()) {
@@ -481,7 +390,6 @@ fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool)
     let target = target.clamp(start - MAX_SWEEP, start + MAX_SWEEP);
     let mut probe = w;
     if target > start {
-        // Entering the cell ABOVE each face crossed (`face` is also that cell's index).
         let mut face = start.floor() + 1.0;
         while face <= target {
             probe[axis] = face + FACE_EPS;
@@ -491,8 +399,6 @@ fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool)
             face += 1.0;
         }
     } else {
-        // Entering the cell BELOW each face crossed. A coordinate exactly on a boundary
-        // classifies into the cell above (`voxel_at` floors), so crossing is strict.
         let mut face = start.floor();
         while target < face {
             probe[axis] = face - FACE_EPS;
@@ -505,10 +411,6 @@ fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool)
     target
 }
 
-/// The corner sits inside a solid cell: push it just outside the nearest cell face whose
-/// neighbouring cell is open. The pop is minimal — an embedded corner is barely past a
-/// face — so healing is invisible. `None` when all six neighbours are solid (sealed in;
-/// the caller holds the corner in place rather than dropping it through the world).
 fn escape_solid(w: Vec3, solid: &impl Fn(IVec3) -> bool) -> Option<Vec3> {
     let cell = voxel_at(w);
     let lo = cell.as_vec3();
@@ -532,8 +434,6 @@ fn escape_solid(w: Vec3, solid: &impl Fn(IVec3) -> bool) -> Option<Vec3> {
     best.map(|(_, out)| out)
 }
 
-/// One Verlet integration step for a particle: `x += (x - x_old)·damp + accel·dt²`,
-/// rolling `x_old` to the pre-step position.
 #[inline]
 fn verlet(x: &mut Vec3, x_old: &mut Vec3, accel: Vec3, dt2: f32) {
     let vel = (*x - *x_old) * VEL_DAMP;
@@ -542,7 +442,6 @@ fn verlet(x: &mut Vec3, x_old: &mut Vec3, accel: Vec3, dt2: f32) {
     *x = next;
 }
 
-/// The eight corners of the box `[min, max]`.
 fn corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
     [
         Vec3::new(min.x, min.y, min.z),
@@ -556,18 +455,15 @@ fn corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
     ]
 }
 
-/// Outer product `u ⊗ v` as a 3×3 matrix (column `k` is `u · v[k]`).
 #[inline]
 fn outer(u: Vec3, v: Vec3) -> Mat3 {
     Mat3::from_cols(u * v.x, u * v.y, u * v.z)
 }
 
-/// Extract the rotation (polar factor) from a cross-covariance matrix by warm-started
-/// incremental extraction (Müller et al., "A Robust Method to Extract the Rotational Part
-/// of Deformations"): rotate `prev` by the torque-like residual until it aligns with the
-/// matrix. Unlike a fixed-count Higham iteration this is scale-invariant — the matrix's
-/// magnitude (which grows with the model's box sizes) cancels in the `omega` quotient —
-/// and it always yields a proper rotation, never a reflection.
+/// Rotation (polar factor) of a cross-covariance matrix, via Müller et al.'s "A Robust Method to
+/// Extract the Rotational Part of Deformations". Starting from `prev`, we rotate by the torque-like
+/// residual until it lines up with the matrix. Bigger model boxes make a bigger matrix, but that
+/// cancels in `omega`, unlike with a fixed-count Higham iteration. It never gives a reflection.
 fn extract_rotation(a: Mat3, prev: Quat) -> Quat {
     if !(a.x_axis.is_finite() && a.y_axis.is_finite() && a.z_axis.is_finite()) {
         return prev;

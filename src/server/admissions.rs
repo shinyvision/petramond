@@ -31,15 +31,11 @@ use crate::server::game::ServerGame;
 use crate::server::player::ConnectedPlayer;
 use crate::worker::JobPool;
 
-/// Where restore jobs sit among the pool's jobs (lower runs sooner): ahead
-/// of generation, light and mesh work — a joining player is waiting on it.
 const RESTORE_PRIORITY: i64 = i64::MIN + 2;
 
-/// Names one admission from [`ServerGame::begin_admission`] to its result.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AdmissionTicket(u64);
 
-/// One join between its reservation and its session.
 struct InFlight {
     ticket: AdmissionTicket,
     key: PlayerKey,
@@ -49,8 +45,6 @@ struct InFlight {
     cached_sections: Vec<SectionCacheClaim>,
 }
 
-/// What a restore job reports: the player it restored (or spawned), or
-/// `None` when the job failed.
 pub struct Admitted {
     ticket: AdmissionTicket,
     restored: Option<(Player, bool)>,
@@ -62,7 +56,6 @@ impl Admitted {
     }
 }
 
-/// The in-flight joins and the lane their restore jobs report on.
 pub struct Admissions {
     jobs: Arc<JobPool>,
     in_flight: Vec<InFlight>,
@@ -83,12 +76,10 @@ impl Admissions {
         }
     }
 
-    /// How many joins hold a reservation right now.
     pub fn len(&self) -> usize {
         self.in_flight.len()
     }
 
-    /// Whether no join is in flight.
     pub fn is_empty(&self) -> bool {
         self.in_flight.is_empty()
     }
@@ -112,13 +103,11 @@ impl Admissions {
         Some(self.in_flight.swap_remove(at))
     }
 
-    /// Every restore that reported since the last call.
     fn drain(&mut self) -> Vec<Admitted> {
         self.done_rx.try_iter().collect()
     }
 }
 
-/// Sends a failed result if the restore job unwinds before reporting.
 struct ReportGuard {
     ticket: AdmissionTicket,
     tx: Option<Sender<Admitted>>,
@@ -148,11 +137,6 @@ impl Drop for ReportGuard {
 }
 
 impl ServerGame {
-    /// Whether an authenticated `key` may join right now: refused while that
-    /// identity is connected or already joining, or when the player cap is
-    /// reached (connected plus joining sessions against `max_players`, or
-    /// every `PlayerId` taken). Checked BEFORE the connection's I/O threads
-    /// are spawned, so a refusal costs nothing.
     pub fn check_admission(&self, key: &PlayerKey) -> Result<(), JoinRejectReason> {
         if self.sessions.iter().any(|s| s.key == *key) || self.admissions.holds_key(key) {
             return Err(JoinRejectReason::AlreadyConnected);
@@ -160,7 +144,6 @@ impl ServerGame {
         self.free_player_id().map(drop)
     }
 
-    /// The smallest `PlayerId` neither a session nor a join in flight holds.
     fn free_player_id(&self) -> Result<PlayerId, JoinRejectReason> {
         if self.sessions.len() + self.admissions.len() >= self.sessions.capacity() {
             return Err(JoinRejectReason::ServerFull);
@@ -171,14 +154,6 @@ impl ServerGame {
             .ok_or(JoinRejectReason::ServerFull)
     }
 
-    /// Start admitting the authenticated identity `key` as a remote session.
-    /// `requested` is a display name already validated at the edge
-    /// (`net::identity::validate_player_name`). A join is never refused for
-    /// its name: when another identity owns it (or a connected or joining
-    /// session uses it) the lowest free numeric suffix is appended ("Rachel"
-    /// → "Rachel2") — see `server::accounts`. The player restores from
-    /// `key`'s own save file (never from the name's), else a fresh surface
-    /// spawn — exactly the local session's restore path, run on the job pool.
     pub fn begin_admission(
         &mut self,
         key: PlayerKey,
@@ -225,23 +200,16 @@ impl ServerGame {
         Ok(ticket)
     }
 
-    /// Every admission whose restore finished since the last call, for the
-    /// transport to promote (or abandon) at this pump boundary.
     pub fn take_admitted(&mut self) -> Vec<Admitted> {
         self.admissions.drain()
     }
 
-    /// Turn a finished restore into a connected session and return the
-    /// `JoinAccept` payload plus the session's FINAL name. A failed restore
-    /// is released and reported as `None`.
     pub fn finish_admission(&mut self, admitted: Admitted) -> Option<(Box<JoinData>, String)> {
         let flight = self.admissions.take(admitted.ticket)?;
         let (mut player, first_seen) = admitted.restored?;
         if first_seen && self.operators.claim_legacy(&flight.name, flight.key) {
             crate::server::permissions::store(&mut self.world, &self.operators);
         }
-        // Reconcile the restored record against this world's catalog before
-        // the handshake ships it (see `server::progression::catch_up`).
         crate::server::progression::catch_up(&mut player, self.catalog.unlocks());
         let data = Box::new(JoinData {
             player_id: flight.id,
@@ -265,27 +233,20 @@ impl ServerGame {
             player,
             flight.view_distance,
         );
-        // The handshake already carried the full unlocked list.
         session.replication.sent_unlock_count = session.player.progression.unlocked().len();
         session
             .transport
             .terrain
             .seed_client_cache(&flight.cached_sections);
-        // Reseed the env params for the newcomer: a static param map would
-        // otherwise never reach them.
         self.broadcast.reseed_env();
         self.sessions.join(session);
         Some((data, flight.name))
     }
 
-    /// Release a finished admission whose connection went away before it
-    /// could be promoted. The name stays recorded, like any join that left.
     pub fn abandon_admission(&mut self, admitted: Admitted) {
         self.admissions.take(admitted.ticket);
     }
 
-    /// Both halves of an admission back to back, waiting for the restore
-    /// job — fixtures exercising the join rules without a transport.
     #[cfg(test)]
     pub fn admit_remote_player(
         &mut self,
@@ -312,8 +273,6 @@ impl ServerGame {
     }
 }
 
-/// The joining player's `SelfRestore`, mirrored off the restored session
-/// player (wire ids are raw server ids; effects travel by name).
 pub(in crate::server) fn self_restore_from(player: &Player) -> SelfRestore {
     SelfRestore {
         transform: crate::net::protocol::Transform {
@@ -353,9 +312,6 @@ mod tests {
         PlayerKey([byte; 32])
     }
 
-    /// A reservation counts against the cap, the identity and the name
-    /// while its restore is still running, and a finished admission hands
-    /// the reserved id and name to the session.
     #[test]
     fn in_flight_joins_reserve_their_identity_id_and_name() {
         let mut server = crate::server::session_build::build_server_inline("", 5, 2);
@@ -409,8 +365,6 @@ mod tests {
         );
     }
 
-    /// A restore job that dies still reports, as a failed admission that
-    /// releases its reservation instead of leaking it.
     #[test]
     fn a_failed_restore_releases_its_reservation() {
         let mut server = crate::server::session_build::build_server_inline("", 5, 2);

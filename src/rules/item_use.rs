@@ -1,13 +1,3 @@
-//! The held item's use rules — the shear, eat and bucket gates — written
-//! once, over an [`ActorView`] and a `World`.
-//!
-//! The server runs them against its authoritative world and the acting
-//! session's player, then executes the verdict (the swap, the scoop, the
-//! pour write); the client runs them against its replica (a `World` too)
-//! and the predicted local body, and keeps only the verdict. A new
-//! [`ItemUse`] kind is one arm in [`resolve_engine_item_use`] that both
-//! mirrors pick up — never a server consumer plus a client copy.
-
 use crate::mob::Mob;
 use crate::player::Player;
 use petramond_math::math::{IVec3, Vec3};
@@ -16,19 +6,10 @@ use petramond_world::block::Block;
 use petramond_world::item::{ItemStack, ItemType, ItemUse};
 use petramond_world::world::{raycast, WorldData};
 
-/// The acting body as the item-use rules read it. The server answers from
-/// the session's [`Player`]; the client from its predicted local body plus
-/// the replicated self view (whose inventory is the one the server
-/// confirms).
 pub trait ActorView {
-    /// The ACTING hand's stack — the main hand, or the off hand during the
-    /// ladder's second pass.
     fn held(&self) -> Option<&ItemStack>;
-    /// Whether the body is a spectator (it can use nothing).
     fn is_spectator(&self) -> bool;
-    /// Where the item-use rays start.
     fn eye(&self) -> WorldPos;
-    /// Which way the item-use rays go.
     fn look_dir(&self) -> Vec3;
 }
 
@@ -50,46 +31,32 @@ impl ActorView for Player {
     }
 }
 
-/// The acting hand's item.
 pub fn held_item(actor: &impl ActorView) -> Option<ItemType> {
     actor.held().map(|st| st.item)
 }
 
-/// Whether the acting hand holds shears — the first half of the shear
-/// consumer's gate.
 pub fn holds_shears(actor: &impl ActorView) -> bool {
     held_item(actor).and_then(ItemType::item_use) == Some(ItemUse::Shear)
 }
 
-/// Whether a mob of `kind` still has a coat the shears can take: a species
-/// with a shear row, alive, and not already shorn (the regrow countdown is
-/// what `shorn` replicates).
 pub fn can_shear_coat(kind: Mob, dead: bool, shorn: bool) -> bool {
     crate::mob::def(kind).shear.is_some() && !dead && !shorn
 }
 
-/// Whether an item is BOTH food and placeable (a plantable carrot) — the
-/// dual nature the contextual-place / ordinary-place consumer pair splits on.
 pub fn is_contextual_placeable(item: ItemType) -> bool {
     item.food().is_some() && item.as_block().is_some_and(|b| b != Block::Air)
 }
 
-/// Whether the acting hand's click belongs to the eat consumer: food in hand
-/// and a body that can use. Whether the eat then starts, is already running,
-/// or is cancelled by a mod, the click is consumed.
 pub fn eat_claims(actor: &impl ActorView) -> bool {
     held_item(actor).is_some_and(|item| item.food().is_some()) && !actor.is_spectator()
 }
 
-/// The engine's own use of the held item, resolved against the world: what
-/// the click would act on. `None` = the engine use has nothing to act on.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum EngineItemUse {
-    /// Scoop the fluid source at `source`; the held item becomes `becomes`.
-    Fill { source: IVec3, becomes: ItemType },
-    /// Pour `fluid` into `cell`; the held item becomes `becomes`. Whether it
-    /// lands is [`EngineItemUse::lands`] — asked after the pour's
-    /// `block_place_pre`, exactly where the server asks it.
+    Fill {
+        source: IVec3,
+        becomes: ItemType,
+    },
     Pour {
         cell: IVec3,
         fluid: Block,
@@ -98,9 +65,6 @@ pub enum EngineItemUse {
 }
 
 impl EngineItemUse {
-    /// Whether the resolved use goes through in `world`: a fill always does
-    /// (its target rule already found the source); a pour only into a
-    /// replaceable cell.
     pub fn lands(&self, world: &WorldData) -> bool {
         match *self {
             EngineItemUse::Fill { .. } => true,
@@ -109,10 +73,6 @@ impl EngineItemUse {
     }
 }
 
-/// Resolve the acting hand's data-declared engine use (`"use"` in
-/// items.json) against `world`. Shears act only through a mob target (the
-/// shear consumer) and resolve nothing here; mod items react through the
-/// `item_use_pre` event instead.
 pub fn resolve_engine_item_use(actor: &impl ActorView, world: &WorldData) -> Option<EngineItemUse> {
     match held_item(actor)?.item_use()? {
         ItemUse::BucketFill { fills } => {
@@ -130,19 +90,10 @@ pub fn resolve_engine_item_use(actor: &impl ActorView, world: &WorldData) -> Opt
     }
 }
 
-/// Whether the engine use claims the click — resolved AND landing. The
-/// client's whole prediction of the rung; the server's execution reaches the
-/// same answer one step at a time.
 pub fn engine_item_use_claims(actor: &impl ActorView, world: &WorldData) -> bool {
     resolve_engine_item_use(actor, world).is_some_and(|u| u.lands(world))
 }
 
-/// The bucket FILL target rule: the source-stopping ray hits, within reach, a
-/// still SOURCE of a fluid the bucket has a result for. Answers the scooped
-/// cell and the item the bucket becomes. Flowing fluid (and fluid the bucket
-/// does not take) is transparent to the ray, so a spread sheet or thin film —
-/// which can render exactly like still water — never shadows the source the
-/// player is aiming at, and aiming at pure flow does nothing.
 pub fn bucket_fill_target(
     world: &WorldData,
     eye: WorldPos,
@@ -152,17 +103,12 @@ pub fn bucket_fill_target(
     let takes = |fluid: Block| fills.iter().any(|&(b, _)| b == fluid);
     let (hit, _) = raycast::fluid_sources(eye, dir, world, takes)?;
     let scooped = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
-    // A solid hit is simply nothing to scoop.
     let &(_, becomes) = fills.iter().find(|&&(b, _)| b == scooped)?;
     world
         .is_fluid_source_world(hit.block, scooped)
         .then_some((hit.block, becomes))
 }
 
-/// The bucket POUR cell rule: the any-fluid-stopping ray hits something
-/// within reach; a replaceable hit (every fluid, grass, a fern) is poured in
-/// place, anything else against the clicked face. `None` = nothing in reach,
-/// or the eye inside the hit cell (no face to pour against).
 pub fn bucket_pour_cell(world: &WorldData, eye: WorldPos, dir: Vec3) -> Option<IVec3> {
     let (hit, _) = raycast::including_any_fluid(eye, dir, world)?;
     let looked_at = Block::from_id(world.chunk_block(hit.block.x, hit.block.y, hit.block.z));
@@ -175,9 +121,6 @@ pub fn bucket_pour_cell(world: &WorldData, eye: WorldPos, dir: Vec3) -> Option<I
     }
 }
 
-/// Whether a pour into `cell` lands: the cell must be replaceable. Pouring
-/// onto a source of the same fluid still lands (a no-op write that empties
-/// the bucket), so on fluid the pour is always predictable.
 pub fn pour_lands(world: &WorldData, cell: IVec3) -> bool {
     Block::from_id(world.chunk_block(cell.x, cell.y, cell.z)).is_replaceable()
 }
@@ -190,7 +133,6 @@ mod tests {
         Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ, SECTION_MAX_CY, SECTION_MIN_CY,
     };
 
-    /// A fake acting body: exactly the four facts the rules read.
     struct FakeActor {
         held: Option<ItemStack>,
         spectator: bool,
@@ -213,8 +155,6 @@ mod tests {
         }
     }
 
-    /// Holding `item`, eye two cells above the top face of `cell`, looking
-    /// straight down.
     fn looking_down_at(item: ItemType, cell: IVec3) -> FakeActor {
         FakeActor {
             held: Some(ItemStack::new(item, 1)),
@@ -228,9 +168,8 @@ mod tests {
         }
     }
 
-    /// An authoritative world (3×3 loaded chunks, stone floor at y=64) built
-    /// by `build`, plus a CLIENT REPLICA of it installed through the real wire
-    /// payloads — the two worlds the two mirrors evaluate the rules against.
+    /// An authoritative world from `build` (3x3 chunks, stone floor at y=64), plus a client
+    /// replica installed through the real wire payloads. Each mirror runs the rules on one.
     fn server_and_replica(build: impl FnOnce(&mut ServerWorld)) -> (ServerWorld, ReplicaWorld) {
         let pool = std::sync::Arc::new(crate::worker::JobPool::new(1));
         let mut server = ServerWorld::with_pool(0, 1, pool.clone());

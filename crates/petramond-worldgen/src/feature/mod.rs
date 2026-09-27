@@ -1,16 +1,3 @@
-//! Composable feature system — replaces the bespoke `trees::oak_*` functions.
-//!
-//! A feature is split into reusable, data-driven pieces:
-//!   - `Feature`        — the imperative voxel-writing shape (e.g. `TreeFeature`)
-//!   - `TrunkPlacer` / `FoliagePlacer` — reusable sub-shapes a tree composes
-//!   - `ConfiguredFeature` — a feature + baked params (the oaks are rows)
-//!
-//! Strata P3: the abstraction is established and the oaks become data, but the
-//! per-column placement loop reproduces the god file's exact two-roll
-//! (`tree_probability` chance → `pick_oak_variant` `next_i32(0,99)`) and every
-//! placer mirrors its original RNG draw order and block-write order, so output
-//! is byte-parity under the unchanged per-chunk xorshift64 stream.
-
 pub mod placers;
 pub mod scatter;
 pub mod tree;
@@ -22,7 +9,6 @@ mod plan;
 mod sink;
 mod tree_select;
 pub(crate) use plan::FeaturePlan;
-/// The tree origin loop over one column's footprint, for planning.
 pub(crate) use tree_select::place_feature_origins as place_trees;
 
 #[cfg(test)]
@@ -58,15 +44,8 @@ use super::rng::FeatureRng;
 /// generation when it changes.
 pub const MARGIN: i32 = 16;
 
-/// Highest surface a tree will root on — above this (bare snow/stone peaks) the
-/// canopy is left off regardless of biome.
 pub const TREELINE: i32 = 118;
 
-/// Worst-case vertical reach of a tree ABOVE its root anchor, used to bound which
-/// cubic sections a column's features can touch. The tallest tree (redwood) has a
-/// height-clearance of 56; the crown / leaf blobs add a few more, so 64 is a safe
-/// over-estimate. Trees never write BELOW their anchor (every trunk placer starts at
-/// the anchor and builds up), so there is no matching downward reach.
 pub const MAX_TREE_REACH_ABOVE: i32 = 64;
 
 pub fn feature_region_bounds(ox: i32, oz: i32) -> (i32, i32, usize, usize) {
@@ -84,7 +63,6 @@ fn feature_bounds_with_pad(ox: i32, oz: i32, pad: i32) -> (i32, i32, usize, usiz
     (ox - pad, oz - pad, w, w)
 }
 
-/// A worldgen feature: imperatively writes voxels around a world origin.
 pub trait Feature: Send + Sync {
     /// `open` answers whether a world cell may hold a canopy leaf, or route
     /// leaf-support through one (the `TreeFeature` canopies gate and
@@ -104,15 +82,12 @@ pub trait Feature: Send + Sync {
         rng: &mut FeatureRng,
     );
 
-    /// Ground-anchoring gate, consulted for an ACCEPTED origin just before
-    /// `generate`: return false to skip the feature at this site entirely
-    /// (e.g. oak roots that would hang over a drop). `surf` is the
-    /// cave-adjusted generation surface per column; `rng` is a COPY of the
-    /// stream `generate` will receive (positioned right after the variant
-    /// pick), so an implementation may dry-run its draw prefix. Must read
-    /// only `surf` and the rng — never chunk content — and must stay within
-    /// `MAX_TREE_SPACING_RADIUS` of the origin so the candidate window covers
-    /// every read on both placement paths. Default: anchored everywhere.
+    /// Checked for an ACCEPTED origin right before `generate`, false skips the feature (oak roots
+    /// hanging over a drop, say). `surf` is the cave-adjusted surface per column, `rng` is a copy
+    /// of generate's rng already past the variant pick, so you can dry-run draws against it.
+    /// Touch only `surf` and `rng`, no chunk reads. Stay inside `MAX_TREE_SPACING_RADIUS` or the
+    /// candidate window misses reads from one of the placement paths.
+    /// Default: anchored everywhere.
     fn is_anchored(
         &self,
         surf: &mut dyn FnMut(i32, i32) -> i32,
@@ -124,13 +99,10 @@ pub trait Feature: Send + Sync {
     }
 }
 
-/// A feature plus its baked parameters.
 pub struct ConfiguredFeature {
     pub feature: &'static dyn Feature,
 }
 
-/// A distinct, inert species for tests that only care WHICH feature a
-/// selection returned, never what it writes.
 #[cfg(test)]
 pub(crate) fn stub_species() -> &'static ConfiguredFeature {
     struct Inert;
@@ -149,13 +121,6 @@ pub(crate) fn stub_species() -> &'static ConfiguredFeature {
     }))
 }
 
-/// Bounded voxel writer — the ONLY place imperative feature writes happen. Holds a
-/// `&mut dyn VoxelSink` so one set of placer code targets either a chunk (worldgen)
-/// or the world (growth). The overwrite predicates (`set_leaf` over air/water,
-/// `set_branch` over air/leaves/water, `replace_block` over an expected block) read
-/// the sink's CURRENT occupant, so a feature's own earlier writes are honoured.
-/// Reproduces the god file's three overwrite predicates
-/// (`log_at`/`leaf_at`/`oak_big`-branch).
 pub struct FeatureCtx<'a> {
     sink: &'a mut dyn VoxelSink,
 }
@@ -165,26 +130,14 @@ impl<'a> FeatureCtx<'a> {
         Self { sink }
     }
 
-    /// Unconditional write (== `trees::log_at`).
     pub fn set_log(&mut self, p: IVec3, b: Block) {
         self.sink.set(p, b);
     }
 
-    /// Write over Air/Water, a fragile plant, or a snow blanket.
-    ///
-    /// Worldgen dresses the ground (vegetation, snow) BEFORE trees run, so a
-    /// canopy cell can already hold a tuft, flower or snow layer; refusing
-    /// those punched permanent holes in generated canopies and stranded the
-    /// leaves behind the hole for the decay flood. Ground cover yields to a
-    /// growing tree, exactly as it always yielded to trunk and root wood
-    /// (`set_log` is unconditional). Still reads only the cell it writes, so
-    /// it stays seam-safe.
     pub fn set_leaf(&mut self, p: IVec3, b: Block) {
         self.sink.place(p, b, PlacementRule::Leaf);
     }
 
-    /// Write over Air/leaves/Water (== branch predicate). A branch may pass
-    /// through leaves placed earlier by its own crown or a neighbouring canopy.
     pub fn set_branch(&mut self, p: IVec3, b: Block) {
         self.sink.place(p, b, PlacementRule::Branch);
     }
@@ -195,17 +148,12 @@ impl<'a> FeatureCtx<'a> {
     /// the column, so it must decide what it is allowed to displace. A tuft or
     /// a flower it must not — burying those is what [`Self::set_leaf`] exists to
     /// prevent. A snow layer it must, because in a `SnowCover::Always` biome
-    /// EVERY column carries one, so refusing it means no branch ever lands in a
-    /// snowy forest at all — measured as literally zero over 400 chunks before
-    /// this existed, in a biome a fresh player can spawn in.
+    /// every column carries one, so refusing it would prevent branches from
+    /// landing in a snowy forest where a fresh player can spawn.
     pub fn set_ground_litter(&mut self, p: IVec3, b: Block) {
         self.sink.place(p, b, PlacementRule::Litter);
     }
 
-    /// Replace a voxel only when it currently holds one of `hosts`. Used by
-    /// the underground ore / stone-blob veins, which overwrite their host rock
-    /// (and never air, dirt, or an already-placed ore unless listed). World
-    /// coords; clipped to this chunk.
     pub fn replace_block(&mut self, p: IVec3, hosts: &'static [Block], b: Block) {
         self.sink.place(p, b, PlacementRule::Replace(hosts));
     }

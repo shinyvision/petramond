@@ -1,14 +1,8 @@
-//! The size the world frame renders at when it is not the window's: a mod's
-//! frame-size claim, or a document `viewport` node the world presents in.
-//! Both go through the renderer's one set-size-frame route, shown scaled to
-//! fit where they present.
-
 use petramond_render::Renderer;
 
 use super::{App, AppScreen};
 
 impl App {
-    /// The open client document's viewport node, in window px.
     fn viewport_rect(&self) -> Option<[u32; 4]> {
         if !matches!(self.screen, AppScreen::ClientModGui(_)) {
             return None;
@@ -17,7 +11,6 @@ impl App {
         (r.w > 0 && r.h > 0).then(|| [r.x.max(0) as u32, r.y.max(0) as u32, r.w as u32, r.h as u32])
     }
 
-    /// What this frame renders the world at, when not the window's size.
     fn wanted_frame_size(&self, window: (u32, u32)) -> Option<(u32, u32)> {
         let claim = self
             .session
@@ -30,7 +23,6 @@ impl App {
         }
     }
 
-    /// Start, resize or stop set-size frames to match this frame's want.
     pub(super) fn drive_frame_size(&mut self, renderer: &mut Renderer) {
         let window = {
             let viewport = renderer.window_ui_viewport();
@@ -62,8 +54,6 @@ impl App {
         }
     }
 
-    /// Whether the open client document presents the world in a viewport
-    /// node — then the world is its content, and is never dimmed.
     pub(super) fn doc_presents_world(kind: petramond_world::gui_state::GuiKind) -> bool {
         petramond::gui::documents::doc_for(kind).is_some_and(|doc| {
             let mut found = false;

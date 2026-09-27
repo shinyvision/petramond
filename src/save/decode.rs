@@ -12,27 +12,15 @@ use super::{
     SectionStore, Unreadable,
 };
 
-/// Cores kept out of decoding: the save readers that feed the pool and the
-/// game thread that consumes what it publishes.
 const RESERVED_CORES: usize = 2;
-/// Decoder ceiling. The sharded readers (see `read`) can keep more decoders
-/// fed than one serial reader could, but past this the extra threads only
-/// contend with the generation and mesh pools for cores.
 const MAX_DECODERS: usize = 8;
-/// Jobs the reader may queue ahead of the decoders, per decoder: two keeps a
-/// worker busy across a job boundary without letting the reader's read-ahead
-/// memory grow with the file.
 const QUEUE_DEPTH_PER_DECODER: usize = 2;
-/// Records in flight per decoder — queued, decoding, or decoded and waiting
-/// in the publisher's reorder window behind a slower predecessor. Bounds how
-/// far fast records can pile up behind one slow record N.
 const IN_FLIGHT_PER_DECODER: usize = 3;
 
 pub(super) enum DecodeJob {
     Section {
         pos: SectionPos,
         store: SectionStore,
-        /// The record as read: `Ok(None)` when there is none.
         bytes: std::io::Result<Option<Vec<u8>>>,
     },
     Column {
@@ -47,10 +35,6 @@ enum Decoded {
     Column(LoadedColumnGen),
 }
 
-/// The reader captures records after their write barrier; only those immutable
-/// bytes cross to decoders. Permits cap read-ahead and out-of-order results.
-/// Publication preserves acquisition order, including successive loads of the
-/// same section across an intervening save or unload.
 pub(super) struct Decoders {
     sender: Option<mpsc::SyncSender<(u64, DecodeJob)>>,
     permits: mpsc::Receiver<()>,
@@ -59,7 +43,6 @@ pub(super) struct Decoders {
 }
 
 impl Decoders {
-    /// `dir` is the world directory unreadable records are quarantined in.
     pub(super) fn new(
         dir: PathBuf,
         palette: Arc<Palette>,
@@ -146,10 +129,6 @@ impl Decoders {
         }
     }
 
-    /// Hand one record to the pool, waiting for a permit if every in-flight
-    /// slot is taken. The pool threads outlive this value (joined on drop), so
-    /// a closed channel here means one of them panicked; propagating that
-    /// beats silently dropping the record.
     pub(super) fn submit(&mut self, job: DecodeJob) {
         self.permits.recv().expect("save publisher alive");
         self.sender
@@ -170,10 +149,6 @@ impl Drop for Decoders {
     }
 }
 
-/// Decode one section read, with the content its record keeps (see
-/// [`KeptContent`]). A record that exists but cannot be read is logged with
-/// its position and, when authoritative, its bytes are kept under
-/// `quarantine/region/` before anything can replace them.
 fn decode_record(
     dir: &Path,
     pos: SectionPos,
@@ -203,7 +178,6 @@ fn decode_record(
         ),
     };
     if store == SectionStore::ExploredCache {
-        // A rebuildable cache: regenerating over it loses nothing.
         log::warn!("explored-cache section {pos:?} is unreadable ({error}); regenerating");
         let record = SectionRecord::Unreadable(Unreadable {
             error,

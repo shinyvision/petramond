@@ -6,8 +6,6 @@ use petramond_world::chunk::SectionPos;
 
 mod fluid;
 
-/// The stable handle of the mob in storage position `i` — fixtures address
-/// mobs by handle, like every caller of the manager.
 fn id_at(mobs: &Mobs, i: usize) -> MobId {
     mobs.instances()[i].id()
 }
@@ -71,9 +69,8 @@ use super::*;
 #[test]
 fn take_in_section_harvests_only_that_sections_mobs() {
     let mut mobs = Mobs::new(0);
-    // y=64 → cy 4. x 2.5 → cx 0; x 20.5 → cx 1.
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5)); // section (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 1.0)); // section (1,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 1.0));
 
     let taken = mobs.take_in_section(SectionPos::new(0, 4, 0));
     assert_eq!(taken.len(), 1, "only the (0,4,0) owl is harvested");
@@ -86,9 +83,9 @@ fn take_in_section_harvests_only_that_sections_mobs() {
 #[test]
 fn saved_by_section_groups_live_mobs_without_removing_them() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.0)); // (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(5.5, 64.0, 9.5), 0.0)); // (0,4,0)
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 0.0)); // (1,4,0)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(5.5, 64.0, 9.5), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.5, 64.0, 2.5), 0.0));
 
     let map = mobs.saved_by_section();
     assert_eq!(map[&SectionPos::new(0, 4, 0)].len(), 2);
@@ -137,9 +134,6 @@ fn restore_respawns_saved_mobs_with_their_pose() {
 
 #[test]
 fn mob_tags_survive_section_unload_and_reload() {
-    // The unload → save-record → reload cycle at the manager level: a tag
-    // set on a live mob rides its SavedMob projection and is back on the
-    // restored instance (the on-disk byte layer is covered by `save::mobs`).
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.5));
     assert!(mobs.set_mob_tag(
@@ -162,7 +156,6 @@ fn mob_tags_survive_section_unload_and_reload() {
         Some(&MobTagValue::Int(31)),
         "the tag is back on the restored mob"
     );
-    // Removal reports presence honestly; an unknown handle is inert.
     assert!(mobs.remove_mob_tag(id_at(&mobs, 0), "zombies:anger"));
     assert!(!mobs.remove_mob_tag(id_at(&mobs, 0), "zombies:anger"));
     assert!(!mobs.set_mob_tag(999, "zombies:anger".into(), MobTagValue::Int(1)));
@@ -170,8 +163,6 @@ fn mob_tags_survive_section_unload_and_reload() {
 
 #[test]
 fn a_wounded_mob_saves_and_restores_wounded() {
-    // Health is a tag now, so it persists: a mob hurt to 1.0 must not come
-    // back from a section unload at full spawn health (the pre-tag behavior).
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Sheep, WorldPos::new(2.5, 64.0, 2.5), 0.0));
     let spawn_health = crate::mob::def(Mob::Sheep).spawn_health();
@@ -221,7 +212,6 @@ fn shearing_a_sheep_yields_wool_once_until_the_coat_regrows() {
         "no double-shear while shorn"
     );
 
-    // The coat regrows on the tick, within the spec's rolled range.
     let mut ticks: u32 = 0;
     while mobs.instances()[0].is_shorn() {
         mobs.tick(
@@ -277,26 +267,18 @@ fn a_corpse_cannot_be_shorn() {
     );
 }
 
-/// The horizontal distance between the first two live mobs.
 fn horizontal_gap(mobs: &Mobs) -> f32 {
     let p = mobs.instances();
     let (a, b) = (p[0].pos, p[1].pos);
     (((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt()) as f32
 }
 
-/// A point far from the origin — used as a parked player anchor / body so a tick
-/// exercises only mob↔mob pushing.
 fn far() -> WorldPos {
     WorldPos::new(1000.0, 64.0, 1000.0)
 }
 
 #[test]
 fn overlapping_mobs_drift_apart_smoothly() {
-    // Two owls spawned almost on top of each other must ease apart *gradually* and
-    // monotonically — never snapping back (the jitter we're avoiding) — and settle
-    // just clear of each other (≈ their combined half-widths), not blow past. The
-    // empty world has no floor, so they also fall; the gap checked is horizontal. No
-    // player body this tick.
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
@@ -317,8 +299,6 @@ fn overlapping_mobs_drift_apart_smoothly() {
             false,
         );
         let next = horizontal_gap(&mobs);
-        // No snap-back: the gap only ever grows — the jitter we were getting was the
-        // gap oscillating as positions were snapped each tick.
         assert!(
             next >= gap - 1e-4,
             "the gap never shrinks (no snap-back): {gap} -> {next}"
@@ -338,9 +318,6 @@ fn overlapping_mobs_drift_apart_smoothly() {
         gap < 1.3 * reach,
         "they settled at contact, not flung apart: gap {gap}, reach {reach}"
     );
-    // Eased to rest: the push fades out as they separate (proportional to the
-    // shrinking overlap), so by the end they've coasted to a stop — a gradual drift
-    // that converges, not a constant ram.
     assert!(
         last_step < 0.005,
         "the push eases off as they part: final tick step {last_step}"
@@ -349,21 +326,18 @@ fn overlapping_mobs_drift_apart_smoothly() {
 
 #[test]
 fn the_push_pass_records_touch_contacts_both_ways() {
-    // The touch perception channel: overlapping bodies land in each
-    // other's contact lists (and the player in the mob's), while a
-    // distant mob records nothing.
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.1, 64.0, 8.0), 0.0)); // overlapping
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.0, 64.0, 8.0), 0.0)); // far away
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.1, 64.0, 8.0), 0.0));
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(20.0, 64.0, 8.0), 0.0));
     let ids: Vec<u64> = mobs.instances().iter().map(Instance::id).collect();
 
     let player = crate::mob::PlayerAnchor {
         id: crate::player::PlayerId(3),
         pos: WorldPos::new(8.0, 64.9, 8.1),
         body: Some(Body::new(WorldPos::new(8.0, 64.0, 8.1), 0.3, 1.8)),
-        sneaking: true, // touch is felt, not heard — sneak is irrelevant
+        sneaking: true,
         ..Default::default()
     };
     mobs.tick(0.05, &world, &[player], false);
@@ -387,10 +361,7 @@ fn the_push_pass_records_touch_contacts_both_ways() {
 
 #[test]
 fn a_mob_overlapping_the_player_pushes_it_away() {
-    // The mobs push the player too — but that's a per-frame query (`push_on_player`),
-    // not the tick, so the player drifts out smoothly. It points away from the owl.
     let mut mobs = Mobs::new(0);
-    // Owl just east (+X) of the player's column, footprints overlapping.
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.2, 64.0, 8.0), 0.0));
     let player_body = Body::new(WorldPos::new(8.0, 64.0, 8.0), 0.3, 1.8);
     let push = mobs.push_on_player(player_body);
@@ -403,7 +374,6 @@ fn a_mob_overlapping_the_player_pushes_it_away() {
 
 #[test]
 fn a_distant_mob_does_not_push_the_player() {
-    // No overlap, no push — a mob across the world leaves the player be.
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.0, 64.0, 8.0), 0.0));
     let player_body = Body::new(far(), 0.3, 1.8);
@@ -416,9 +386,6 @@ fn a_distant_mob_does_not_push_the_player() {
 
 #[test]
 fn a_bodiless_player_does_not_shove_mobs() {
-    // A noclip spectator (no push body) overlapping a mob leaves it be — the tick's
-    // player→mob shove is skipped when there's no body (the caller likewise skips the
-    // per-frame mob→player push for a spectator).
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     let spot = WorldPos::new(8.0, 64.0, 8.0);
@@ -445,8 +412,6 @@ fn a_bodiless_player_does_not_shove_mobs() {
 fn a_harvested_corpse_is_dropped_not_saved() {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(2.5, 64.0, 2.5), 0.0));
-    // Kill it: now a ragdolling corpse. Harvesting its section removes it but does not
-    // persist it (its loot already fell when it died).
     assert!(mobs
         .damage_mob(
             id_at(&mobs, 0),
@@ -465,27 +430,23 @@ fn a_harvested_corpse_is_dropped_not_saved() {
 #[test]
 fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
     let mut mobs = Mobs::new(0);
-    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0)); // body in cell (8,64,8)
+    assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
     let here = IVec3::new(8, 64, 8);
     let away = IVec3::new(20, 64, 8);
 
-    // A solid full cube dropped into the owl's cell clips its body.
     assert!(
         mobs.any_overlapping_placement(here, Block::Dirt),
         "a solid block in the owl's cell is blocked"
     );
-    // The same cube well clear of the owl is fine.
     assert!(
         !mobs.any_overlapping_placement(away, Block::Dirt),
         "a cell away from the owl is clear"
     );
-    // A no-collision block (a torch) never clips anything, even right on the owl.
     assert!(
         !mobs.any_overlapping_placement(here, Block::Torch),
         "a no-collision block is always placeable"
     );
 
-    // A ragdolling corpse doesn't block placement (it's about to vanish).
     assert!(mobs
         .damage_mob(
             id_at(&mobs, 0),
@@ -506,8 +467,6 @@ fn placement_is_blocked_only_where_a_solid_block_clips_a_live_mob() {
 fn the_tag_cap_refuses_new_keys_but_never_replacements() {
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, WorldPos::new(8.5, 64.0, 8.5), 0.0));
-    // The mob is born with its row's spawn tags (health at least), so only
-    // the remaining slots take new keys.
     let spawn_tags = mobs.instances()[0].tags().len();
     assert!(spawn_tags >= 1, "spawn tags include petramond:health");
     for i in 0..crate::mob::MAX_MOB_TAGS - spawn_tags {
@@ -608,8 +567,6 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-    // 3×3 chunk grass field (48×48): big enough that open ground outgrows the
-    // 24×24 confinement span, with a 5×5 fence pen at its centre.
     let mut world = ServerWorld::new(0, 1);
     for cx in 0..3 {
         for cz in 0..3 {
@@ -641,18 +598,12 @@ fn a_penned_mob_becomes_confined_and_a_broken_fence_frees_it_within_ticks() {
     }
     assert!(confined(&world), "an enclosed fence pen must read confined");
 
-    // Break one fence: the announced change invalidates the cached region,
-    // which forces the re-check off-cadence — freedom lands within a couple
-    // of ticks, not after the next 60-tick interval.
     assert!(world.set_block_world(27, 64, 24, Block::Air));
     world.tick_mobs(0.05, &anchors);
     world.tick_mobs(0.05, &anchors);
     assert!(!confined(&world), "a gap in the fence frees the pen-mate");
 }
 
-/// The push pass's sweep broadphase may narrow the candidate set but must
-/// never LOSE a pair the narrow phase would have separated — a dropped pair is
-/// two mobs standing inside each other, and it would only show up in a crowd.
 #[test]
 fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
     use crate::mob::{def, Mob};
@@ -665,7 +616,6 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
         rng ^= rng << 17;
         (rng >> 11) as f32 / (1u64 << 53) as f32
     };
-    // A dense cluster (overlaps guaranteed) plus a scattered field.
     let bodies: Vec<Option<super::push::PushBody>> = (0..160)
         .map(|i| {
             let kind = kinds[i % kinds.len()];
@@ -712,9 +662,6 @@ fn the_push_broadphase_keeps_every_genuinely_overlapping_pair() {
     );
 }
 
-/// The handle → slot map must track every way the live set changes: spawns,
-/// `swap_remove` despawns, section harvests and the end-of-tick cull — and a
-/// handle must keep naming the SAME mob across every removal of another.
 #[test]
 fn handles_stay_stable_across_every_live_set_mutation() {
     let assert_consistent = |mobs: &Mobs| {
@@ -731,16 +678,12 @@ fn handles_stay_stable_across_every_live_set_mutation() {
         spawned.push((mobs.spawn_lit(Mob::Owl, pos, 0.0, 63, light).unwrap(), pos));
     }
     assert_consistent(&mobs);
-    // Tag every mob with its spawn position so identity is checkable by
-    // content after storage is shuffled.
     for &(id, pos) in &spawned {
         assert!(mobs.set_mob_tag(id, "test:x".into(), MobTagValue::Float(pos.x)));
     }
     let names_itself =
         |mobs: &Mobs, id: MobId, x: f64| mobs.mob_tag(id, "test:x") == Some(&MobTagValue::Float(x));
 
-    // Removing a middle mob swap-removes the LAST one into its slot; the
-    // moved mob's handle still names it, and the removed handle is dead.
     let removed = spawned[1].0;
     assert!(mobs.remove(removed));
     assert!(!mobs.remove(removed), "a second removal finds nothing");
@@ -764,8 +707,6 @@ fn handles_stay_stable_across_every_live_set_mutation() {
     assert!(!mobs.contains(spawned[0].0));
     assert_consistent(&mobs);
 
-    // A death with no ragdoll presentation leaves the live set at the end of
-    // the next tick.
     let victim = spawned[2].0;
     let lethal = MobDamageFeedback {
         components: vec![crate::mob::MobDamageFeedbackComponent::DecreaseHealth],

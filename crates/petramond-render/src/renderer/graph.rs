@@ -1,126 +1,54 @@
-//! The frame graph: every pass the frame can record, declared as a node with
-//! its phase, its attachments and the targets its shaders sample — and the
-//! frame's render passes derived from those declarations.
-//!
-//! Order is the phase order ([`Phase`]); within a phase, nodes keep the
-//! order they were declared in. The ordering contracts between passes (a
-//! stamp before the sky, ice before its crack, the crack before the water)
-//! are the phase list's own order, pinned by tests, rather than prose next to
-//! a hand-ordered encode function.
-//!
-//! Each frame [`FrameGraph::plan`] takes the nodes that have something to
-//! draw and:
-//! - merges consecutive nodes with identical attachments into ONE render
-//!   pass — a node that clears an attachment always starts a new one, since
-//!   a clear can only happen at a pass boundary;
-//! - clears an attachment only where a node asks for it, and loads it
-//!   otherwise;
-//! - stores an attachment only when a later pass loads or samples it before
-//!   anything clears it, or when it is the frame's output — everything else
-//!   is discarded, which is what lets a tiled GPU keep the target on chip;
-//! - resolves a multisampled world at the end of the last pass drawing it.
-//!
-//! The planning is pure data: the tests exercise it without a GPU.
-
 use std::fmt;
 use std::ops::Range;
 
 use super::post_process::SceneRoute;
 
-/// When a node draws, as a total order over the frame. Each variant's doc
-/// states why it sits where it does; `passes/tests.rs` pins every contract.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Phase {
-    /// Opaque terrain, near to far for early-Z. The frame's first world
-    /// draw: it clears colour (to the fog colour) and depth.
     Opaque,
-    /// Multiply-blended ground stamps (model contact shadows, entity blob
-    /// shadows) that test depth but write none. BEFORE the sky: if a stamp's
-    /// supporting terrain was culled while the stamp stayed visible, the
-    /// sky's far-plane draw replaces the orphaned darkening instead of
-    /// leaving a smudge on the background.
     GroundDecal,
-    /// The full-screen sky at the far plane. AFTER opaque geometry, so its
-    /// LessEqual test shades only the pixels nothing covered (the sky
-    /// fragment shader is the priciest full-screen one).
     Sky,
-    /// Depth-writing solids that are not terrain: placed models, dropped
-    /// items, animated blocks, mobs and players.
     Solid,
-    /// Alpha-blended but depth-writing surfaces (ice, a model's glass), each
-    /// resolving its own face order through depth. BEFORE the break decals,
-    /// so a crack on mined ice draws on top of the ice instead of being
-    /// washed out under it.
     Translucent,
-    /// The destroy cracks, model and block. After translucent surfaces and
-    /// BEFORE the fluid: a crack is a decal on its block, so water must blend
-    /// in front of a submerged one.
     BreakDecal,
-    /// Alpha-cutout particles, depth-writing. After the cracks (they sit in
-    /// front of them) and BEFORE the fluid, so water blends over the ones
-    /// behind it while the ones in front still occlude it.
     Cutout,
-    /// See-through fluid, far to near, depth test only.
     Fluid,
     /// Pack volumetrics. They SAMPLE the frame depth, so they follow all
     /// depth-writing world geometry — and the fluid, whose surface writes no
     /// depth, so only paint order keeps a cloud in front of a lake.
     Environment,
-    /// Alpha-blended emitter particles (no depth write), after the
-    /// volumetrics so flames and rain streak over a cloud deck.
     Emitter,
-    /// World-space highlights: the block outline, build ghosts, the region
-    /// selection — over everything the world drew.
     Highlight,
-    /// The first-person hand, in its own cleared depth.
     Hand,
-    /// The finished world image to the swapchain: supersample reduction,
-    /// render-scale upscale, colour grade.
     PostProcess,
-    /// Screen chrome, drawn ungraded over the final image.
     Screen,
 }
 
-/// A colour target a node can draw into.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ColorTarget {
-    /// The world image. Physically the swapchain, the multisampled colour or
-    /// the scene texture, by the frame's [`SceneRoute`].
     World,
-    /// The half-resolution volumetric colour.
     EnvColor,
-    /// The presented image.
     Swapchain,
-    /// The world's eye depth the window's world marks test against, kept
-    /// before the hand clears the frame depth. Read after the frame.
     MarksEye,
 }
 
-/// A depth target a node can attach.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DepthTarget {
-    /// The frame depth (multisampled with the world).
     Depth,
-    /// The half-resolution depth the volumetrics march against.
     EnvDepth,
 }
 
-/// A target a node's shaders read as a texture.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Sampled {
-    /// The finished world image (the resolve's output under MSAA).
     World,
     EnvColor,
     Depth,
     EnvDepth,
 }
 
-/// What a node needs an attachment to hold when it starts drawing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LoadOp {
-    /// Whatever the frame drew into it so far.
     Load,
-    /// A fresh clear (the target's clear value).
     Clear,
 }
 
@@ -130,10 +58,8 @@ pub(crate) struct Attachment<T> {
     pub(crate) load: LoadOp,
 }
 
-/// One declared node: identity, place in the frame, and resource use.
 pub(crate) struct PassNode<N> {
     pub(crate) id: N,
-    /// Debug-group label (and the render-pass label when the node opens one).
     pub(crate) label: &'static str,
     pub(crate) phase: Phase,
     pub(crate) color: Option<Attachment<ColorTarget>>,
@@ -171,8 +97,6 @@ impl<N> PassNode<N> {
         Self { samples, ..self }
     }
 
-    /// Whether this node attaches the target `sampled` names — sampling it in
-    /// the same pass would be a feedback loop under every route.
     fn attaches(&self, sampled: Sampled) -> bool {
         let color = self.color.map(|c| c.target);
         let depth = self.depth.map(|d| d.target);
@@ -185,9 +109,6 @@ impl<N> PassNode<N> {
     }
 }
 
-/// A physical GPU resource behind the logical targets. The load/store
-/// analysis runs on these, because a route can alias two logical targets
-/// (the world IS the swapchain when nothing post-processes it).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Resource {
     Swapchain,
@@ -215,15 +136,10 @@ impl Resource {
     }
 }
 
-/// How this frame's world reaches the screen, which decides what the
-/// logical targets are physically.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FrameShape {
     pub(crate) route: SceneRoute,
-    /// The world colour and depth are multisampled.
     pub(crate) msaa: bool,
-    /// The scene texture is read after the frame: a world capture grades it
-    /// again into a target of its own.
     pub(crate) keep_scene: bool,
 }
 
@@ -241,8 +157,6 @@ impl FrameShape {
         }
     }
 
-    /// Whether `resource` is read after the frame's last pass, and so must
-    /// survive it whatever the passes do.
     fn read_after(self, resource: Resource) -> bool {
         match resource {
             Resource::Swapchain | Resource::MarksEye => true,
@@ -268,7 +182,6 @@ impl FrameShape {
         }
     }
 
-    /// Where the multisampled world resolves to.
     fn resolve_destination(self) -> Resource {
         match self.route {
             SceneRoute::ResolveToSwapchain => Resource::Swapchain,
@@ -277,33 +190,24 @@ impl FrameShape {
     }
 }
 
-/// An attachment as one render pass uses it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AttachmentOps<T> {
     pub(crate) target: T,
-    /// Clear on load (else load the previous contents).
     pub(crate) clear: bool,
-    /// Keep the contents when the pass ends (else discard them).
     pub(crate) store: bool,
 }
 
-/// One wgpu render pass: consecutive nodes sharing its attachments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PassGroup {
-    /// The first node's label, which names the pass (and its GPU timing).
     pub(crate) label: &'static str,
     pub(crate) color: Option<AttachmentOps<ColorTarget>>,
     pub(crate) depth: Option<AttachmentOps<DepthTarget>>,
-    /// Resolve the multisampled world at the end of this pass.
     pub(crate) resolve: bool,
-    /// The pass's nodes, as a range of [`FramePlan::nodes`].
     pub(crate) nodes: Range<usize>,
-    /// [`Resource`] bits the pass's shaders sample.
     sampled: u8,
 }
 
 impl PassGroup {
-    /// `(resource, cleared)` for each attachment.
     fn attachments(&self, shape: FrameShape) -> impl Iterator<Item = (Resource, bool)> {
         let color = self.color.map(|c| (shape.color(c.target), c.clear));
         let depth = self.depth.map(|d| (shape.depth(d.target), d.clear));
@@ -316,10 +220,8 @@ impl PassGroup {
     }
 }
 
-/// One frame's render passes, in order. Reused frame to frame.
 pub(crate) struct FramePlan<N> {
     pub(crate) groups: Vec<PassGroup>,
-    /// `(node, label)` in recording order; each group owns a range.
     pub(crate) nodes: Vec<(N, &'static str)>,
 }
 
@@ -333,8 +235,6 @@ impl<N> Default for FramePlan<N> {
 }
 
 impl<N> FramePlan<N> {
-    /// Check the plan reads nothing the frame has not written yet and never
-    /// samples a resource the same pass draws into.
     pub(crate) fn validate(&self, shape: FrameShape) -> Result<(), GraphError> {
         let mut written = 0u8;
         for group in &self.groups {
@@ -363,16 +263,11 @@ impl<N> FramePlan<N> {
     }
 }
 
-/// A pass table or plan the frame cannot run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum GraphError {
     DuplicateNode(&'static str),
-    /// A node with neither a colour nor a depth attachment has nothing to
-    /// open a render pass over.
     NoAttachment(&'static str),
-    /// A pass samples a resource it also draws into.
     Feedback(&'static str),
-    /// A pass loads or samples a resource nothing earlier in the frame wrote.
     ReadBeforeWrite {
         pass: &'static str,
         resource: Resource,
@@ -392,14 +287,11 @@ impl fmt::Display for GraphError {
     }
 }
 
-/// The declared nodes, sorted into frame order once.
 pub(crate) struct FrameGraph<N> {
     nodes: Vec<PassNode<N>>,
 }
 
 impl<N: Copy + PartialEq> FrameGraph<N> {
-    /// Validate the declarations and fix the frame order: by phase, and by
-    /// declaration order within one.
     pub(crate) fn new(mut nodes: Vec<PassNode<N>>) -> Result<Self, GraphError> {
         for (i, node) in nodes.iter().enumerate() {
             if nodes[..i].iter().any(|earlier| earlier.id == node.id) {
@@ -412,18 +304,15 @@ impl<N: Copy + PartialEq> FrameGraph<N> {
                 return Err(GraphError::Feedback(node.label));
             }
         }
-        // Stable: equal phases keep declaration order.
         nodes.sort_by_key(|node| node.phase);
         Ok(Self { nodes })
     }
 
-    /// Every node in frame order.
     #[cfg(test)]
     pub(crate) fn order(&self) -> impl Iterator<Item = N> + '_ {
         self.nodes.iter().map(|node| node.id)
     }
 
-    /// This frame's render passes over the nodes `active` accepts.
     pub(crate) fn plan(
         &self,
         shape: FrameShape,
@@ -501,9 +390,6 @@ impl<N: Copy + PartialEq> FrameGraph<N> {
     }
 }
 
-/// Whether a pass must keep `resource` when it ends: it is read after the
-/// frame, or a later pass reads it (loads or samples) before any pass clears
-/// it.
 fn stored(resource: Resource, later: &[PassGroup], shape: FrameShape) -> bool {
     if shape.read_after(resource) {
         return true;

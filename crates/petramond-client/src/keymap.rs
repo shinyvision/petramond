@@ -1,11 +1,5 @@
-//! The winit↔core key-identity boundary: exhaustive conversions between the
-//! toolkit's input enums and the engine's mirrored `keycode` types. The
-//! matches are exhaustive on the WINIT side, so a winit upgrade that adds or
-//! renames variants fails to compile right here.
-
 use petramond_input::keycode::{KeyCode, MouseButton};
 
-/// A winit physical key code as the engine's key identity.
 pub fn key_code(code: winit::keyboard::KeyCode) -> Option<KeyCode> {
     use winit::keyboard::KeyCode as W;
     Some(match code {
@@ -207,7 +201,6 @@ pub fn key_code(code: winit::keyboard::KeyCode) -> Option<KeyCode> {
     })
 }
 
-/// The engine key identity as a winit code (settings UI key-capture echo).
 pub fn to_winit(code: KeyCode) -> winit::keyboard::KeyCode {
     use winit::keyboard::KeyCode as W;
     match code {
@@ -408,7 +401,6 @@ pub fn to_winit(code: KeyCode) -> winit::keyboard::KeyCode {
     }
 }
 
-/// A winit mouse button as the engine's identity.
 pub fn mouse_button(b: winit::event::MouseButton) -> MouseButton {
     use winit::event::MouseButton as W;
     match b {

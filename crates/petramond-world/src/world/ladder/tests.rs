@@ -10,7 +10,6 @@ fn world() -> TestWorld {
 fn a_ladder_is_supported_only_by_a_complete_wall_face() {
     let mut w = world();
     let ladder = IVec3::new(8, 64, 8);
-    // An east-facing ladder hangs on the wall to its west.
     let wall = crate::ladder::support_cell(ladder, Facing::East);
     assert!(
         !w.data.ladder_supported_at(ladder, Facing::East),
@@ -18,7 +17,6 @@ fn a_ladder_is_supported_only_by_a_complete_wall_face() {
     );
     w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
     assert!(w.data.ladder_supported_at(ladder, Facing::East));
-    // A wall on a different side does not support this facing.
     assert!(!w.data.ladder_supported_at(ladder, Facing::North));
 }
 
@@ -29,8 +27,6 @@ fn a_placed_ladder_collides_as_its_facing_resolved_panel() {
     w.set_block_world(p.x, p.y, p.z, Block::LadderEast);
     let boxes = w.data.collision_boxes_at(p.x, p.y, p.z);
     assert_eq!(boxes, crate::ladder::collision_boxes(Facing::East));
-    // The panel is thin, standable geometry hugging the wall side — not a
-    // full cube and not empty (a body bumps it and can stand on top).
     assert_eq!(boxes.len(), 1);
     let b = &boxes[0];
     assert!(b.max[0] - b.min[0] < 0.5 || b.max[2] - b.min[2] < 0.5);
@@ -47,7 +43,6 @@ fn climbable_query_reads_the_facing_row() {
         w.data.climb_at(p.x, p.y, p.z),
         Some(Climb::Panel(Facing::South))
     );
-    // A non-climbable block never answers.
     w.set_block_world(p.x, p.y, p.z, Block::Stone);
     assert_eq!(w.data.climb_at(p.x, p.y, p.z), None);
 }

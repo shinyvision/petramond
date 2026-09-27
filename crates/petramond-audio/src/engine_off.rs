@@ -1,13 +1,5 @@
-//! The featureless [`Audio`]: a silent stub with the playback engine's exact
-//! surface, compiled when the `audio` cargo feature is OFF (headless server
-//! builds — no rodio/cpal/ALSA at build or runtime). Every method is a no-op;
-//! keep the signatures in lockstep with `audio/engine.rs` — drift shows up as
-//! a compile error in `--no-default-features` builds (the Makefile's
-//! `run-server` target is one).
-
 use super::{MusicTrack, Sound, SpatialListener, SpatialSoundSource};
 
-/// The silent stand-in for the playback engine. See the module doc.
 pub struct Audio;
 
 impl Audio {

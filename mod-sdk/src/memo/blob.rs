@@ -1,11 +1,7 @@
-//! Paged derived values, published after all of their pages are available.
-
 use crate::{ByteReader, ByteWriter, MemoClaim, MEMO_MAX_VALUE_BYTES};
 
 const PAGE_BYTES: usize = MEMO_MAX_VALUE_BYTES;
 const MAX_PAGES: usize = 64;
-/// The largest value [`memo_blob_put`] publishes; anything larger is refused
-/// (`false`) and stays uncached.
 pub const MEMO_BLOB_MAX_BYTES: usize = MAX_PAGES * PAGE_BYTES;
 
 trait Access {
@@ -26,14 +22,10 @@ impl Access for Host {
     }
 }
 
-/// Claim a derived value larger than a single memo entry. Reserve six bytes
-/// of key headroom. Missing or evicted pages are re-derived under a page lease.
 pub fn memo_blob_claim(key: &[u8]) -> MemoClaim {
     claim(&mut Host, key)
 }
 
-/// Publish a value of up to [`MEMO_BLOB_MAX_BYTES`] as memo pages. The value
-/// remains discardable, like [`super::memo_put`].
 pub fn memo_blob_put(key: &[u8], value: Vec<u8>) -> bool {
     put(&mut Host, key, value)
 }

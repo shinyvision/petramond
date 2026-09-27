@@ -1,11 +1,5 @@
-//! The climbable wall panel; its facing is block identity, not cell state.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A climbable wall panel (the ladder); facing is block identity.
 pub struct LadderFamily;
 
 impl ShapeSim for LadderFamily {
@@ -25,7 +19,6 @@ impl ShapeSim for LadderFamily {
         pos: IVec3,
         b: Block,
     ) -> Option<ShapeMount> {
-        // A panel grips the wall its declared facing points away from.
         let facing = b.declared_panel_facing()?;
         Some(ShapeMount {
             cell: crate::ladder::support_cell(pos, facing),
@@ -62,7 +55,6 @@ impl ShapeRender for LadderFamily {
         MeshEmitter::Boxes
     }
 
-    /// A thin panel against a wall: aiming must meet the panel, not the cell.
     fn precise_pick(&self, _p: &ShapeParams) -> bool {
         true
     }
@@ -112,9 +104,6 @@ impl ShapePlacement for LadderFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A ladder-shaped block mounts on a vertical wall face with a complete
-        // face behind its panel; the clicked normal names the panel front. The
-        // panel is real collision, so the shared tail's body gate applies.
         let p = inputs.place_pos;
         let Some(facing) = Facing::from_horizontal_normal(inputs.normal) else {
             return PlacementOutcome::Refused;
@@ -124,9 +113,6 @@ impl ShapePlacement for LadderFamily {
         }
         let (t, h) = block.ladder_dims();
         let boxes = crate::ladder::collision_boxes_dim(facing, t, h);
-        // The facing IS the block row (the sapling-stage pattern): the plan
-        // writes the sibling row whose panel fronts the clicked normal — no
-        // per-cell state, and no engine write vocabulary.
         let row = block.wall_panel_row(facing);
         match w.finish_single_cell_placement(row, p, ShapeState::NONE, boxes, occupied) {
             Some(plan) => PlacementOutcome::Plan(plan),

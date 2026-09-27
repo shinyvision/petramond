@@ -1,38 +1,13 @@
-//! The trapdoor: a thin panel lying flat across a cell that swings up onto one
-//! of its vertical edges, shared by collision, selection, and rendering so they
-//! can never disagree.
-//!
-//! A trapdoor is the door's horizontal sibling and carries the same three bits:
-//! - `facing` — the edge the panel is HINGED on, i.e. the edge nearest the
-//!   placer and the edge it stands on once open.
-//! - `open` — swings the panel 90° off the floor (or ceiling) onto that edge.
-//! - `top` — the closed panel lies against the cell's CEILING rather than its
-//!   floor (clicking the underside of a block, or the rotation key).
-//!
-//! The cell-local collision/selection boxes are returned as `'static` slices so
-//! `World::collision_boxes_at` can hand them straight to the swept-AABB
-//! collider. The drawn panel is the `petramond:trapdoor` animated model
-//! (`assets/animated_models.json`): the same closed slab swung about a hinge
-//! half a thickness in from the cell edge on BOTH axes, which is what lands the
-//! swung panel exactly on the open collision slab — `crate::animated_model`'s
-//! tests hold the two to each other.
-
 use crate::block::Aabb;
 use crate::door::THICKNESS;
 use crate::facing::Facing;
 
-/// The near edge of the panel's thin axis (`1 - THICKNESS`).
 const FAR: f32 = 1.0 - THICKNESS;
 
-/// A placed trapdoor cell's state, packed into one byte in the cell-state store.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub struct TrapdoorState {
-    /// The hinged edge — nearest the placer when placed, and the edge the open
-    /// panel stands on.
     pub facing: Facing,
-    /// Swung 90° up (or down, from the ceiling) onto the hinged edge.
     pub open: bool,
-    /// The closed panel lies against the cell's ceiling rather than its floor.
     pub top: bool,
 }
 
@@ -40,9 +15,6 @@ impl crate::block::CellView for Option<TrapdoorState> {
     fn owns(block: crate::block::Block) -> bool {
         crate::block::shape_kind_families::is_trapdoor(block)
     }
-    /// `None` when no state is stored (the length distinguishes it from the
-    /// valid all-zero pose byte) — readers then fall back to the row's static
-    /// form, the same failure policy as the door.
     fn from_cell(s: crate::block::ShapeState) -> Self {
         if s.is_empty() {
             return None;
@@ -66,14 +38,11 @@ impl crate::block::CellCodec for TrapdoorState {
 }
 
 impl TrapdoorState {
-    /// Pack into a byte for the cell-state store + save codec: bits 0..2 =
-    /// facing, bit 2 = open, bit 3 = top.
     #[inline]
     pub fn encode(self) -> u8 {
         self.facing.to_u8() | ((self.open as u8) << 2) | ((self.top as u8) << 3)
     }
 
-    /// Inverse of [`encode`](Self::encode). Unknown facing bits fall back to North.
     #[inline]
     pub fn decode(b: u8) -> TrapdoorState {
         TrapdoorState {
@@ -84,7 +53,6 @@ impl TrapdoorState {
     }
 }
 
-/// One thin slab box in cell-local coords (`0..1`), flat or on a vertical edge.
 macro_rules! slab {
     (y, $lo:expr, $hi:expr) => {
         &[Aabb {
@@ -106,17 +74,13 @@ macro_rules! slab {
     };
 }
 
-/// Closed: a flat panel on the cell's floor or ceiling.
 const CLOSED_FLOOR: &[Aabb] = slab!(y, 0.0, THICKNESS);
 const CLOSED_CEILING: &[Aabb] = slab!(y, FAR, 1.0);
-/// Open: the panel stands full-height on the edge it is hinged to.
-const OPEN_NORTH: &[Aabb] = slab!(z, 0.0, THICKNESS); // -Z edge
-const OPEN_SOUTH: &[Aabb] = slab!(z, FAR, 1.0); // +Z edge
-const OPEN_WEST: &[Aabb] = slab!(x, 0.0, THICKNESS); // -X edge
-const OPEN_EAST: &[Aabb] = slab!(x, FAR, 1.0); // +X edge
+const OPEN_NORTH: &[Aabb] = slab!(z, 0.0, THICKNESS);
+const OPEN_SOUTH: &[Aabb] = slab!(z, FAR, 1.0);
+const OPEN_WEST: &[Aabb] = slab!(x, 0.0, THICKNESS);
+const OPEN_EAST: &[Aabb] = slab!(x, FAR, 1.0);
 
-/// The cell-local collision boxes for a trapdoor cell in `state` — a flat panel
-/// on the floor/ceiling, or a full-height slab on the hinged edge when `open`.
 #[inline]
 pub fn collision_boxes(state: TrapdoorState) -> &'static [Aabb] {
     if !state.open {
@@ -134,8 +98,6 @@ pub fn collision_boxes(state: TrapdoorState) -> &'static [Aabb] {
     }
 }
 
-/// The selection / raycast-target box for a trapdoor cell — the single slab of
-/// its [`collision_boxes`], so the outline + break overlay hug the panel.
 #[inline]
 pub fn selection_aabb(state: TrapdoorState) -> ([f32; 3], [f32; 3]) {
     let b = collision_boxes(state)[0];
@@ -162,8 +124,6 @@ mod tests {
 
     #[test]
     fn an_open_panel_stands_on_the_edge_it_is_hinged_to() {
-        // The open slab must be the thin one on `facing`'s side, whichever half
-        // the panel rests in — a closed panel is thin on Y, an open one is not.
         for &facing in &FACINGS {
             for &top in &[false, true] {
                 let open = collision_boxes(TrapdoorState {

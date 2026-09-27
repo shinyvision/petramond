@@ -1,16 +1,9 @@
-//! A texture's pixels on their way back to the CPU: one buffer sized for the
-//! texture, copied into in a frame's encoder, mapped once that frame is
-//! submitted, and handed back as tightly packed RGBA8. Every frame read —
-//! a one-off capture, a stream of set-size frames, a world still — goes
-//! through it.
-
 use std::sync::{Arc, Mutex};
 
 use super::offscreen::{pack_rows, RenderedFrame};
 
 const TEXEL_BYTES: u32 = 4;
 
-/// Where a mapping's outcome lands, set from wgpu's callback.
 type MapOutcome = Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>;
 
 pub(super) struct Readback {
@@ -23,8 +16,6 @@ pub(super) struct Readback {
 }
 
 impl Readback {
-    /// A readback for a `size` texture of `format` (one of the capture
-    /// formats).
     pub(super) fn new(
         device: &wgpu::Device,
         size: (u32, u32),
@@ -55,7 +46,6 @@ impl Readback {
         self.size
     }
 
-    /// Copy `texture` (this readback's size) in, in `enc`'s order.
     pub(super) fn record(&self, enc: &mut wgpu::CommandEncoder, texture: &wgpu::Texture) {
         enc.copy_texture_to_buffer(
             texture.as_image_copy(),
@@ -75,7 +65,6 @@ impl Readback {
         );
     }
 
-    /// Start mapping once the copy's frame is submitted as `submitted`.
     pub(super) fn map(&mut self, submitted: wgpu::SubmissionIndex) {
         let outcome = Arc::clone(&self.mapped);
         *outcome.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -87,8 +76,6 @@ impl Readback {
         self.submitted = Some(submitted);
     }
 
-    /// The pixels, once the mapping has landed (`wait`: once it has). The
-    /// caller polls the device when it does not wait.
     pub(super) fn collect(
         &self,
         device: &wgpu::Device,

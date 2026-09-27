@@ -8,7 +8,6 @@ fn shipped_font_bytes() -> Vec<u8> {
     .expect("shipped font is vendored")
 }
 
-/// The line-relative rows `(first, one past last)` holding `ch`'s ink.
 fn ink_rows(font: &Font, ch: char) -> (i32, i32) {
     let [_, dy, _, h] = font.glyph(ch).bounds();
     (dy, dy + h)
@@ -20,7 +19,6 @@ fn builtin_font_is_fixed_pitch_ascii_with_a_visible_fallback() {
     assert_eq!(f.width("AB"), f.advance('A') * 2);
     assert!(f.has_glyph('A') && f.has_glyph('~'));
     assert!(!f.has_glyph('\u{d7}'), "the built-in table is ASCII only");
-    // Unknown codepoints share one glyph and still draw something.
     assert_eq!(f.atlas_rect('\u{d7}'), f.atlas_rect('🙂'));
     assert!(f.glyph('🙂').ink().next().is_some());
 }
@@ -34,13 +32,11 @@ fn wrap_breaks_on_measured_width_not_character_count() {
     let texts: Vec<&str> = lines.iter().map(|r| &s[r.clone()]).collect();
     assert_eq!(texts, vec!["hello world", "again"]);
 
-    // A word longer than the line breaks mid-word rather than looping.
     let long = "abcdefghijklmno";
     let lines = f.wrap(long, f.width("abcde"));
     let texts: Vec<&str> = lines.iter().map(|r| &long[r.clone()]).collect();
     assert_eq!(texts, vec!["abcde", "fghij", "klmno"]);
 
-    // Even a max width narrower than one glyph terminates.
     assert_eq!(f.wrap("ab", 1).len(), 2);
     assert_eq!(f.wrap("", 40), vec![0..0]);
 }
@@ -58,9 +54,6 @@ fn caret_positions_round_trip_through_the_same_metrics() {
     assert_eq!(f.fit_chars(s, f.width("hel")), 3);
 }
 
-/// A caret sized to the whole line box fills the input box, because the box
-/// reserves headroom for accented capitals that ordinary text leaves empty.
-/// The body span is what a caret or selection should cover.
 #[test]
 fn the_body_span_is_the_text_band_not_the_whole_line() {
     let font = Font::from_ttf(&shipped_font_bytes(), 11.0).expect("shipped font rasterizes");
@@ -73,7 +66,6 @@ fn the_body_span_is_the_text_band_not_the_whole_line() {
     );
     assert!(top + h <= font.line_h(), "the body stays inside the line");
 
-    // It spans exactly cap-top to descender-bottom.
     assert_eq!(top, ink_rows(&font, 'M').0, "body starts at the cap line");
     assert_eq!(
         top + h,
@@ -85,7 +77,6 @@ fn the_body_span_is_the_text_band_not_the_whole_line() {
         "the accent is above the body"
     );
 
-    // The built-in table has no accents or descenders: body IS the line.
     let builtin = Font::builtin();
     assert_eq!(builtin.body_span(), (0, builtin.line_h()));
 }
@@ -124,17 +115,13 @@ fn atlas_pixels_match_every_glyph_bitmap() {
     }
 }
 
-/// Coverage is whatever the face maps, not a hard-coded Latin list: every
-/// codepoint the shipped face carries beyond Latin resolves to a real glyph.
 #[test]
 fn coverage_comes_from_the_face_not_a_latin_list() {
     let bytes = shipped_font_bytes();
     let font = Font::from_ttf(&bytes, 11.0).unwrap();
-    // Everything the old hard-coded Latin table held is still there...
     for ch in "AZaz09 ×·—…'\"Ööäëéèñçßæø".chars() {
         assert!(font.has_glyph(ch), "missing glyph {ch:?}");
     }
-    // ...and codepoints outside it resolve whenever the face maps them.
     let face = ab_glyph::FontRef::try_from_slice(&bytes).unwrap();
     let mapped_beyond_latin: Vec<char> = {
         use ab_glyph::Font as _;
@@ -152,8 +139,6 @@ fn coverage_comes_from_the_face_not_a_latin_list() {
     }
 }
 
-/// Declared ranges limit a face to exactly those codepoints (a pack can keep
-/// a huge face's atlas small).
 #[test]
 fn declared_ranges_limit_what_a_face_contributes() {
     let bytes = shipped_font_bytes();
@@ -164,15 +149,11 @@ fn declared_ranges_limit_what_a_face_contributes() {
     }])
     .unwrap();
     assert!(font.has_glyph('Q'));
-    // Outside the range the chain falls through to the built-in table...
     let builtin = Font::builtin();
     assert_eq!(font.advance('q'), builtin.advance('q'));
-    // ...and past it to the fallback box.
     assert!(!font.has_glyph('\u{c4}'));
 }
 
-/// A later face fills only what earlier faces lack, positioned on the
-/// primary's baseline; the primary alone sets the line box.
 #[test]
 fn a_fallback_face_fills_gaps_without_changing_the_line_box() {
     let bytes = shipped_font_bytes();
@@ -184,7 +165,6 @@ fn a_fallback_face_fills_gaps_without_changing_the_line_box() {
         ranges: &latin_only,
     };
     let alone = Font::from_faces(&[primary]).unwrap();
-    // The same face at twice the size stands in for a taller fallback script.
     let chain = Font::from_faces(&[
         primary,
         FaceSource {
@@ -205,14 +185,10 @@ fn a_fallback_face_fills_gaps_without_changing_the_line_box() {
         alone.advance('A'),
         "the primary wins its codepoints"
     );
-    // The big fallback glyph keeps its own size instead of every glyph
-    // growing to it.
     assert!(chain.glyph('\u{c4}').bounds()[3] > chain.glyph('A').bounds()[3] * 3 / 2);
     assert_eq!(chain.glyph('A').bounds(), alone.glyph('A').bounds());
 }
 
-/// Glyph bitmaps are not limited to 32 px (the old bitmask rows): a large
-/// size rasterizes instead of erroring.
 #[test]
 fn large_sizes_rasterize() {
     let bytes = shipped_font_bytes();
@@ -225,8 +201,6 @@ fn large_sizes_rasterize() {
     assert!(font.glyph('W').bounds()[2] > 32);
 }
 
-/// Wraps are memoised per (width, text), and a hit is indistinguishable
-/// from shaping afresh — measure and paint read the same lines.
 #[test]
 fn memoised_wraps_match_fresh_shaping() {
     let f = Font::builtin();
@@ -243,13 +217,11 @@ fn memoised_wraps_match_fresh_shaping() {
     assert_eq!(f.wraps.lock().unwrap().entries, 4);
 }
 
-/// With no U+FFFD anywhere in the chain, unknown codepoints draw a box over
-/// the text body — never a blank, never a 5×7 speck.
 #[test]
 fn a_missing_glyph_draws_a_body_sized_box() {
     let font = Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap();
     if font.has_glyph('\u{FFFD}') || font.has_glyph('\u{E000}') {
-        return; // the face brings its own replacement (or maps the probe)
+        return;
     }
     let unknown = font.glyph('\u{E000}');
     let (top, h) = font.body_span();
@@ -258,8 +230,6 @@ fn a_missing_glyph_draws_a_body_sized_box() {
     assert!(unknown.ink().next().is_some());
 }
 
-/// Measurement reads eager advances and leaves glyph bitmaps untouched;
-/// painting one new glyph adds it to the fixed atlas exactly once.
 #[test]
 fn glyph_bitmaps_are_lazy_but_advances_are_available() {
     let font = Font::from_ttf(&shipped_font_bytes(), 11.0).unwrap();

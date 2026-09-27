@@ -1,20 +1,7 @@
-//! The host-supplied dynamic state a document's bindings read.
-//!
-//! `UiState` is a flat string-keyed map plus change tracking: a per-state
-//! `origin`, a revision counter, and the revision each key last changed at.
-//! The runtime's frame cache keys on `(origin, revision)` — equal means
-//! identical contents — and re-expands only the subtrees that read a key
-//! [`changed_since`](UiState::changed_since) its cached revision. List-bound
-//! widgets read a `UiValue::List` of per-item maps; inside a list template,
-//! bindings resolve against the item map first and fall back to the global
-//! map.
-
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// One bound value. `List` items are maps so row templates can bind several
-/// fields (name, version, enabled…) from one item.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiValue {
     F32(f32),
@@ -25,9 +12,6 @@ pub enum UiValue {
 }
 
 impl UiValue {
-    /// Whether replacing `self` with `other` changes nothing. A list is
-    /// first compared by pointer, so a host republishing the same `Arc`
-    /// every frame never pays for a deep row-by-row comparison.
     fn same_as(&self, other: &UiValue) -> bool {
         match (self, other) {
             (UiValue::List(a), UiValue::List(b)) => Arc::ptr_eq(a, b) || a == b,
@@ -36,19 +20,13 @@ impl UiValue {
     }
 }
 
-/// A string-keyed value map. `BTreeMap` for deterministic iteration.
 pub type UiMap = BTreeMap<String, UiValue>;
 
-/// Distinct origins: a state's revisions only compare against itself.
 static NEXT_ORIGIN: AtomicU64 = AtomicU64::new(1);
 
-/// The per-frame read model of everything a document binds. Mutate through the
-/// setters so the revision advances.
 #[derive(Debug)]
 pub struct UiState {
-    /// Each value with the revision it last changed at.
     values: BTreeMap<String, (UiValue, u64)>,
-    /// Keys removed, with the revision they were removed at.
     removed: BTreeMap<String, u64>,
     revision: u64,
     origin: u64,
@@ -65,8 +43,6 @@ impl Default for UiState {
     }
 }
 
-/// A clone is a NEW origin: it can diverge from its source at matching
-/// revision numbers, so a cache must never mistake one for the other.
 impl Clone for UiState {
     fn clone(&self) -> UiState {
         UiState {
@@ -83,19 +59,14 @@ impl UiState {
         UiState::default()
     }
 
-    /// Monotonic change counter: within one [`origin`](Self::origin), equal
-    /// revisions mean identical contents.
     pub fn revision(&self) -> u64 {
         self.revision
     }
 
-    /// This state's identity for revision comparisons (unique per state and
-    /// per clone).
     pub fn origin(&self) -> u64 {
         self.origin
     }
 
-    /// Every key set, changed or removed after `revision`.
     pub fn changed_since(&self, revision: u64) -> impl Iterator<Item = &str> {
         let set = self
             .values
@@ -145,13 +116,10 @@ impl UiState {
         self.values.get(key).map(|(value, _)| value)
     }
 
-    /// Every key set, in order.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.values.keys().map(String::as_str)
     }
 
-    /// Resolve `key` against an optional list-item map first, then the global
-    /// map — the template-binding rule.
     pub fn resolve<'a>(&'a self, item: Option<&'a UiMap>, key: &str) -> Option<&'a UiValue> {
         item.and_then(|m| m.get(key)).or_else(|| self.get(key))
     }
@@ -193,7 +161,6 @@ impl UiState {
     }
 }
 
-/// Coercions bindings apply at read time (widgets want one shape per binding).
 impl UiValue {
     pub fn as_display_text(&self) -> Option<String> {
         match self {
@@ -212,12 +179,6 @@ impl UiValue {
         }
     }
 
-    /// A number counts as a bool, and that is what lets a value published from
-    /// outside the UI drive `visible`, `enabled` and a checkbox/toggle's face.
-    /// Without it those bindings silently resolve to their default (`true`)
-    /// and the node just never changes. A STRING counts too — non-empty is
-    /// true — so one published value (a tooltip's text) can be both the
-    /// content and the condition, with no parallel `has_*` key.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             UiValue::Bool(v) => Some(*v),
@@ -240,7 +201,7 @@ mod tests {
         s.set("a", UiValue::I32(1));
         let r1 = s.revision();
         assert!(r1 > r0);
-        s.set("a", UiValue::I32(1)); // same value: no change
+        s.set("a", UiValue::I32(1));
         assert_eq!(s.revision(), r1);
         s.set("a", UiValue::I32(2));
         assert!(s.revision() > r1);
@@ -257,14 +218,12 @@ mod tests {
         s.set("b", UiValue::I32(1));
         let mark = s.revision();
         assert_eq!(s.changed_since(mark).count(), 0);
-        s.set("b", UiValue::I32(1)); // unchanged value: not a change
+        s.set("b", UiValue::I32(1));
         s.set("c", UiValue::Bool(true));
         s.remove("a");
         let mut changed: Vec<&str> = s.changed_since(mark).collect();
         changed.sort_unstable();
         assert_eq!(changed, ["a", "c"]);
-        // Re-setting a removed key is a change again, and it stops being
-        // reported as removed.
         let mark = s.revision();
         s.set("a", UiValue::I32(5));
         assert_eq!(s.changed_since(mark).collect::<Vec<_>>(), ["a"]);

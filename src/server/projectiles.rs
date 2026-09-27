@@ -1,11 +1,3 @@
-//! Resolving a flying item's impact: the world store found what it struck
-//! (`ItemImpact`); this is where the strike becomes a consequence — a
-//! `projectile_hit` dispatch carrying the engine's default FATE (lodge in
-//! the block when the row `sticks`, else drop loose at the impact) for the
-//! handlers to rewrite, then that fate applied. The engine deals no damage
-//! here; what a launched item does to what it hits is the launching mod's
-//! law, landed through the ordinary damage calls from a handler.
-
 use super::game::ServerGame;
 use crate::entity::{Fate, Motion};
 use crate::events::tick::TickEvents;
@@ -14,13 +6,9 @@ use crate::mob::EntityRef;
 use crate::world::{ImpactTarget, ItemImpact};
 use petramond_math::math::Vec3;
 
-/// How much of its arrival speed a flying item that struck a BODY keeps as
-/// it drops loose: enough to fall clear of the body, not enough to read as
-/// a bounce.
 const BODY_DROP_SPEED: f32 = 0.1;
 
 impl ServerGame {
-    /// Resolve every impact this tick's item physics reported, in order.
     pub fn resolve_item_impacts(&mut self, impacts: Vec<ItemImpact>, events: &mut TickEvents) {
         for impact in impacts {
             self.resolve_item_impact(impact, events);
@@ -51,12 +39,6 @@ impl ServerGame {
         self.apply_fate(impact, ev.fate);
     }
 
-    /// Run the `projectile_hit` handlers over `ev`. The dispatch acts for
-    /// the LAUNCHER when it is a connected player — so a handler's
-    /// `PlayerState`, and the damage it lands naming the presser, resolve the
-    /// launcher. Any other launcher (a mob's, or a player gone) dispatches
-    /// actor-less: a handler addresses by the payload's ids (`owner`,
-    /// `target`, `entity`).
     fn dispatch_projectile_hit(&mut self, ev: &mut ProjectileHit, events: &mut TickEvents) {
         let actor = ev
             .owner
@@ -72,11 +54,6 @@ impl ServerGame {
             .projectile_hit(world, sessions, actor, events, ev);
     }
 
-    /// The settled fate, on the entity: a lodge needs the block it struck,
-    /// a drop off a body keeps a whisper of its speed so it falls clear, a
-    /// drop off a block stops dead. The engine has no body-attached motion,
-    /// so a handler asking to lodge in a BODY is a mod bug: logged, and
-    /// applied as the drop the default already was.
     fn apply_fate(&mut self, impact: ItemImpact, fate: Fate) {
         let drops = self.world.dropped_items_mut();
         if fate == Fate::Consume {
@@ -124,7 +101,6 @@ mod tests {
         crate::server::session_build::build_server_inline("", 1, 2)
     }
 
-    /// An impact against a stone cell just ahead of the item.
     fn block_impact(id: u64, cell: IVec3) -> ItemImpact {
         ItemImpact {
             id,
@@ -147,7 +123,6 @@ mod tests {
         server.world.spawn_item(it)
     }
 
-    /// A cell the test world is sure to hold: beside the listen player.
     fn stone_cell(server: &mut ServerGame) -> IVec3 {
         let p = server.sessions[0].player.pos;
         let cell = IVec3::new(
@@ -161,10 +136,6 @@ mod tests {
         cell
     }
 
-    /// The default fate is the engine's own — a row that does not stick
-    /// drops loose, dead, at a block — and a handler's rewrite is what is
-    /// applied: `Lodge` seats the item in the cell, `Consume` removes it.
-    /// The verdict never decides the fate.
     #[test]
     fn the_handlers_fate_is_applied_and_the_verdict_only_ends_the_dispatch() {
         let mut server = fresh_server();
@@ -212,8 +183,6 @@ mod tests {
             .expect("lodged, not gone");
         assert!(matches!(it.motion, Motion::Stuck(s) if s.anchor == cell));
 
-        // A fresh bus: a Consume from a handler that Continues is applied
-        // exactly like a Cancelling one's.
         let mut server = fresh_server();
         let cell = stone_cell(&mut server);
         server.mods.bus_mut().on_projectile_hit(0, |_, ev| {
@@ -228,8 +197,6 @@ mod tests {
         );
     }
 
-    /// An impact with nobody connected dispatches actor-less over an empty
-    /// roster; with no handler to dispute it, the engine's default stands.
     #[test]
     fn an_impact_with_no_sessions_takes_the_default_fate() {
         let mut server = fresh_server();
@@ -251,8 +218,6 @@ mod tests {
         assert_eq!(it.motion, Motion::Loose);
     }
 
-    /// A lodge is a block's to hold: asked for on a body, it is a drop that
-    /// keeps a whisper of speed to fall clear (and a logged mod bug).
     #[test]
     fn a_lodge_on_a_body_drops_clear_instead() {
         let mut server = fresh_server();

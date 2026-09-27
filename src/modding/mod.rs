@@ -1,22 +1,3 @@
-//! WASM mod host.
-//!
-//! Loads each pack's `mod.wasm` (core module, built by `make mods` from
-//! `mods-src/`), runs its `mod_init` registration window, and wires the
-//! registered tick systems / event handlers into the engine seams
-//! ([`crate::events`]) as closures that postcard-dispatch into the guest.
-//!
-//! Ownership: `Game` owns the [`ModHost`]; each registered closure holds an
-//! `Rc` of its own mod's instance (main-thread only, like the bus itself), so
-//! disabling a mod is one flag — its closures turn into no-ops. Dispatch order
-//! is the bus contract, `(priority, registration order)`: engine handlers
-//! register first (none yet), then mods in load order, then each mod's own
-//! registrations in the order its `mod_init` issued them.
-//!
-//! Determinism: guests get NaN-canonicalized floats, no clock/entropy imports,
-//! seeded RNG streams, and the tick counter — see the contract section of the
-//! A trapping / deadline-blowing / protocol-breaking mod is
-//! disabled for the session with a visible error and the tick continues.
-
 pub mod ai;
 pub mod client;
 mod convert;
@@ -32,28 +13,18 @@ pub mod modset;
 mod scope;
 mod shape_bake;
 
-/// The session's loaded recipe catalog, shared with the host so `RecipeResult`
-/// answers from the exact table the engine cooks from (same process-wide
-/// install pattern as [`gen`]; replaced by each `Game::new`).
 static ACTIVE_RECIPES: std::sync::RwLock<
     Option<std::sync::Arc<petramond_world::crafting::Recipes>>,
 > = std::sync::RwLock::new(None);
 
-/// Install the session's recipe snapshot (called by `Game::new`).
 pub fn install_recipes(recipes: std::sync::Arc<petramond_world::crafting::Recipes>) {
     *ACTIVE_RECIPES.write().unwrap() = Some(recipes);
 }
 
-/// The installed recipe snapshot, if a session has published one.
 pub fn active_recipes() -> Option<std::sync::Arc<petramond_world::crafting::Recipes>> {
     ACTIVE_RECIPES.read().unwrap().clone()
 }
 
-/// Warm the compiled-module cache for every installed pack module (server and
-/// client wasm alike) on background threads. Call once at app startup: pack
-/// discovery and any cold compiles happen behind the shell menu, so opening a
-/// world finds every module ready (or blocks only on the tail of an in-flight
-/// compile) instead of paying cranelift on the click.
 pub fn prewarm_modules() {
     let spawned = std::thread::Builder::new()
         .name("mod-prewarm".into())
@@ -70,8 +41,6 @@ pub fn prewarm_modules() {
     }
 }
 
-/// Drop compiled instances for paths that an in-process content apply may
-/// have replaced. The disk cache still verifies the source hash.
 pub fn clear_module_cache() {
     host::module_cache::clear();
 }
@@ -99,17 +68,10 @@ pub use host::budget::FuelBudget;
 use host::Registration;
 use instance::ModInstance;
 
-// `Arc<Mutex<…>>` (not `Rc<RefCell<…>>`) because the whole `ServerGame` —
-// including every registration's shared instance handle — moves to the server
-// thread; the mutex is uncontended (one sim thread).
 type SharedInstance = Arc<Mutex<ModInstance>>;
 
-/// A loaded mod's identity + compiled module (kept for the worldgen hook
-/// config, whose per-thread instances re-instantiate from it).
 struct ModMeta {
     id: String,
-    /// `None` only for test-injected instances (no module handle available);
-    /// such mods cannot register worldgen hooks.
     module: Option<wasmtime::Module>,
 }
 
@@ -125,56 +87,29 @@ struct BlockBehaviorRegistration {
     callback_id: u32,
 }
 
-/// Every loaded mod instance, in pack load order.
 pub struct ModHost {
     instances: Vec<SharedInstance>,
-    /// Parallel to `instances`.
     metas: Vec<ModMeta>,
     hostile_spawners: Vec<HostileSpawnerRegistration>,
-    /// `blocks.json` `behavior` key (`mod_id:name`) → the owning mod's
-    /// handler, for routing [`BlockHook`](petramond_world::block::behavior::BlockHook)s.
     block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
-    /// The session's scripted AI-node registrations, retained so the server
-    /// thread can install them into ITS thread-local dispatch registry
-    /// ([`install_thread_ai_nodes`](Self::install_thread_ai_nodes)) — the
-    /// registry is per-thread (see `ai.rs`), and `initialize` runs on the
-    /// constructing thread.
     ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration>,
-    /// Every mod's session-wide health (shared with its worldgen instances)
-    /// and the order mods were disabled in — what clients are told.
     health: ModHealthBoard,
-    /// The session's fuel budgets (see [`FuelBudget`]).
     budget: FuelBudget,
 }
 
 impl ModHost {
-    /// Load the wasm module of every discovered pack that ships one
-    /// (`assets::packs()` order = load order), except packs the world's
-    /// settings disable: a disabled pack's wasm never instantiates, so it
-    /// contributes no tick systems, event handlers, worldgen hooks, or GUI
-    /// click ownership for this session. (Its catalog CONTENT stays in the
-    /// process-wide registries — only reachability is gated; the save palette
-    /// makes its world content decode to air.)
     pub fn load(world_seed: u32, disabled: &std::collections::BTreeSet<String>) -> Self {
         let mods = session_wasm_mods(petramond_world::assets::packs(), disabled);
         Self::from_wasm_list(world_seed, &mods)
     }
 
-    /// Load explicit `(mod id, wasm path)` pairs — the pack-independent entry
-    /// tests use. A module that fails to compile/instantiate is skipped with a
-    /// logged error (= disabled at load).
     pub fn from_wasm_list(world_seed: u32, mods: &[(String, PathBuf)]) -> Self {
-        // Fan the cold compiles out before the sequential load loop: each
-        // `module_for` below then blocks only on its own module's slot, so an
-        // unwarmed session pays the slowest compile, not the sum.
         host::module_cache::prewarm(mods.iter().map(|(_, wasm)| wasm.clone()));
         let health = ModHealthBoard::default();
         let budget = FuelBudget::DEFAULT;
         let mut instances = Vec::new();
         let mut metas = Vec::new();
         for (id, wasm) in mods {
-            // A mod that fails to load is disabled like one that fails later,
-            // so clients drop their instances of it too.
             let module = match host::module_for(wasm) {
                 Ok(module) => module,
                 Err(e) => {
@@ -215,9 +150,6 @@ impl ModHost {
         }
     }
 
-    /// Replace the session's fuel budgets: applies to every loaded instance
-    /// now, and to the worldgen instances [`initialize`](Self::initialize)
-    /// configures (call it before `initialize` for those).
     pub fn set_fuel_budget(&mut self, budget: FuelBudget) {
         self.budget = budget;
         for inst in &self.instances {
@@ -225,22 +157,17 @@ impl ModHost {
         }
     }
 
-    /// Mods disabled this session after the first `seen`, in disable order —
-    /// the suffix a client that has been told `seen` of them is missing
-    /// (`ServerToClient::ModsDisabled`).
     pub fn disabled_since(&self, seen: usize) -> Vec<String> {
         self.health.disabled_since(seen)
     }
 
-    /// How many mods this session has disabled so far.
     pub fn disabled_count(&self) -> usize {
         self.health.disabled_count()
     }
 
-    /// Test helper: a host with one WAT guest registered under `mod_id` whose
-    /// `mod_dispatch` answers `GuestRet::Unit` (postcard `[0]` staged at 512)
-    /// to everything — for driving engine-side dispatch plumbing (the GUI
-    /// click drain) without a compiled mod.
+    /// Test helper: one WAT guest under `mod_id`, and its `mod_dispatch` answers `GuestRet::Unit`
+    /// to everything. Lets us drive dispatch plumbing like the GUI click drain without a compiled
+    /// mod.
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_unit_guest_host(mod_id: &str) -> Self {
         let wat = format!(
@@ -272,7 +199,6 @@ impl ModHost {
         }
     }
 
-    /// Test entry: adopt pre-built instances (e.g. WAT-built hostile guests).
     #[cfg(test)]
     fn from_instances(instances: Vec<ModInstance>) -> Self {
         let metas = instances
@@ -296,16 +222,6 @@ impl ModHost {
         }
     }
 
-    /// Run every mod's `mod_init` (its one registration window), wire the
-    /// collected registrations into the bus/scheduler, and install the
-    /// session's worldgen hook config (empty or not — installing always, with
-    /// a fresh epoch, is what evicts a previous session's config). Call once,
-    /// after the engine's own handlers (if any) have registered, so mods sort
-    /// behind them at equal priority.
-    ///
-    /// Init belongs to no player: it runs ACTOR-LESS over an empty roster,
-    /// so an init-time player call answers "no such player" on a listen
-    /// server and a headless one alike.
     pub fn initialize(
         &mut self,
         world: &mut ServerWorld,
@@ -319,8 +235,6 @@ impl ModHost {
             std::collections::HashMap::new();
         let mut hostile_order = self.hostile_spawners.len();
         for (shared, meta) in self.instances.iter().zip(&self.metas) {
-            // Init runs outside any tick; give host calls a real context
-            // anyway (CurrentTick is legal during init) via a scratch feed.
             let mut feed = TickEvents::with_next_spatial_sound_handle(*next_spatial_sound_handle);
             let t_init = std::time::Instant::now();
             let registrations = {
@@ -358,8 +272,6 @@ impl ModHost {
                         hostile_order += 1;
                     }
                     Registration::BlockBehavior { key, callback_id } => {
-                        // Keys are namespace-validated at the host call; a
-                        // duplicate within one pack is a mod bug — last wins.
                         if self
                             .block_behaviors
                             .insert(
@@ -416,19 +328,10 @@ impl ModHost {
         self.ai_nodes = ai_nodes;
     }
 
-    /// Install the session's scripted AI-node map into THIS thread's dispatch
-    /// registry. The server thread calls it once at startup:
-    /// `initialize` installed on the constructing thread, and the
-    /// registry is deliberately thread-local (test isolation — see `ai.rs`).
     pub fn install_thread_ai_nodes(&self) {
         ai::install(self.ai_nodes.clone());
     }
 
-    /// Dispatch a GUI button click to the OWNING mod — the pack whose
-    /// namespace `kind_key` carries. Runs on the tick, from the
-    /// menu stage's click drain. Engine kinds carry the reserved `petramond`
-    /// namespace but are not mod kinds, and a content-only pack may ship a GUI
-    /// with no wasm: both simply dispatch nothing.
     pub fn dispatch_gui_click(
         &mut self,
         ctx: &mut SimCtx,
@@ -458,11 +361,6 @@ impl ModHost {
         !self.block_behaviors.is_empty()
     }
 
-    /// Forward the world's queued mod-behavior hooks (drained after its
-    /// scheduled/random ticks, in fire order) to the mods that registered
-    /// their keys. A hook whose key no mod registered is dropped silently —
-    /// the block stays inert, exactly like a row pointing at a disabled
-    /// pack's behavior.
     pub fn dispatch_block_hooks(
         &self,
         ctx: &mut SimCtx,
@@ -489,22 +387,11 @@ impl ModHost {
         }
     }
 
-    /// Bake the SIM geometry of every dirty custom-shape cell: batch each
-    /// shape kind's cells to the owning pack's WASM ([`GuestCall::BakeShapeSim`])
-    /// and cache the collision boxes for the physics to read. A missing owner, a
-    /// disabled mod, or a wrong-shaped/short reply leaves the cells uncached, so
-    /// their collision falls back to the row's static boxes (the failure policy)
-    /// while placed world data stays intact.
     pub fn bake_custom_shapes(&self, ctx: &mut SimCtx) {
         let cells = ctx.world.drain_custom_bake_dirty();
         if cells.is_empty() {
             return;
         }
-        // Group by (owning mod id, shape kind) — one batch dispatch per group.
-        // A BTreeMap (not HashMap) plus the position-sorted drain give a defined
-        // dispatch order server↔client: any state a bake touched would otherwise
-        // diverge and desync (the per-cell purity contract makes that a bug, but
-        // the ordered dispatch is the belt-and-braces).
         let mut groups: std::collections::BTreeMap<
             (String, u16),
             Vec<super::world::CustomBakeCell>,
@@ -540,8 +427,6 @@ impl ModHost {
                         ctx.world.set_custom_light_aperture(*pos, aperture);
                     }
                 }
-                // An empty reply / disabled mod: cells stay uncached and fall
-                // back to their static collision boxes (the failure policy).
                 shape_bake::BakeIngest::Fallback => {}
                 shape_bake::BakeIngest::Disable(reason) => inst.lock().unwrap().disable(&reason),
             }
@@ -598,12 +483,6 @@ impl ModHost {
         }
     }
 
-    /// Ask a custom shape's owning pack how to place it for one click
-    /// ([`GuestCall::ShapePlacementPlan`]) — the per-interaction placement
-    /// callback (not a hot path). `None` means no reachable owner (unknown
-    /// namespace or a disabled/trapped mod), so the caller falls back to the
-    /// ordinary engine placement ladder; a reachable owner always answers (the
-    /// SDK default accepts at the click cell).
     pub fn shape_placement_plan(
         &self,
         ctx: &mut SimCtx,
@@ -619,15 +498,12 @@ impl ModHost {
             block_id: mod_api::BlockId(block_id),
             inputs,
         };
-        // Read-only scope: the placement plan validates against the world but
-        // must not mutate it (a mutating host call errors during this dispatch).
         match inst.lock().unwrap().call_guest_read_only(ctx, &call) {
             Some(GuestRet::ShapePlacement(result)) => Some(result),
             _ => None,
         }
     }
 
-    /// The loaded instance of mod `id`, if any (custom-shape bake routing).
     fn instance_by_id(&self, id: &str) -> Option<&SharedInstance> {
         self.metas
             .iter()
@@ -700,9 +576,6 @@ fn hostile_kind_for_key(
     crate::mob::spawn_body_fits_at(world, kind, feet).then_some(kind)
 }
 
-/// The `(mod id, wasm path)` pairs a session instantiates: every id-bearing
-/// pack that ships wasm, minus the world's disabled set. Pure — the enabled-
-/// set filtering contract, unit-tested against synthetic pack lists.
 fn session_wasm_mods(
     packs: &[petramond_world::assets::Pack],
     disabled: &std::collections::BTreeSet<String>,
@@ -721,8 +594,6 @@ fn session_wasm_mods(
         .collect()
 }
 
-/// Wire one collected registration into the engine seam it targets, as a
-/// closure dispatching into `shared`'s guest.
 fn apply_registration(
     shared: &SharedInstance,
     registration: Registration,
@@ -748,8 +619,6 @@ fn apply_registration(
             handler_id,
             filter,
         } => wire_event_handler(shared, event, priority, handler_id, filter, bus),
-        // Gen/spawner/behavior registrations go to their own registries in
-        // `initialize`, never to the bus/scheduler.
         Registration::WorldgenFeature { .. }
         | Registration::StageReplacement { .. }
         | Registration::Generator { .. }
@@ -761,12 +630,6 @@ fn apply_registration(
     }
 }
 
-/// Dispatch one event to the guest handler and return its verdict + echoed
-/// payload (echoed only for the kinds whose payload has mutable fields).
-/// `None` = the handler's filter did not admit the event (it never crosses),
-/// or the mod is disabled (now or earlier): either way the event proceeds as
-/// if unhandled. A reply of the wrong shape is a protocol break and disables
-/// the mod like any trap.
 fn call_event(
     inst: &SharedInstance,
     filter: &EventFilter,
@@ -800,7 +663,6 @@ fn wire_event_handler(
     filter: EventFilter,
     bus: &mut EventBus,
 ) {
-    // Post kinds: observe-only, one generic wrapper.
     if let Some(kind) = convert::post_kind(event) {
         let inst = Arc::clone(shared);
         bus.on_post(kind, priority, move |ctx, ev| {
@@ -808,8 +670,6 @@ fn wire_event_handler(
         });
         return;
     }
-    // Pre kinds: each needs its typed bus slot, and only the fields the
-    // taxonomy marks mutable are read back from the echoed payload.
     let inst = Arc::clone(shared);
     match event {
         EventKind::BlockPlacePre => {
@@ -936,7 +796,6 @@ fn wire_event_handler(
                 None => Outcome::Continue,
             }
         }),
-        // Handled by the post branch above.
         _ => unreachable!("post kind fell through"),
     }
 }
@@ -979,8 +838,6 @@ fn mob_damage_feedback_component(
         }
         mod_api::MobDamageFeedbackComponent::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
         mod_api::MobDamageFeedbackComponent::Immunity { ticks } => {
-            // A minute-long window is already absurd; cap so a bad mod can't
-            // make a mob effectively invulnerable with one hit.
             MobDamageFeedbackComponent::Immunity {
                 ticks: ticks.min(1200),
             }
@@ -996,9 +853,6 @@ fn finite_nonnegative(value: f32, fallback: f32) -> f32 {
     }
 }
 
-/// The ABI handshake exports a hand-written WAT test guest declares (this
-/// build's version, no required capabilities), for test suites outside this
-/// crate. `mod_init` then takes the host's `(param i32 i64)`.
 #[cfg(any(test, feature = "test-support"))]
 pub fn wat_abi_exports() -> String {
     instance::wat_abi_exports(mod_api::ABI_VERSION)
@@ -1007,16 +861,6 @@ pub fn wat_abi_exports() -> String {
 #[cfg(test)]
 pub mod tests;
 
-/// Resolve a `SetPlayerBonePose` payload into the runtime form the claim, the
-/// wire and the renderer all carry: rig ids, no names.
-///
-/// `None` is a REFUSAL (a non-finite component — see [`BONE_POSE_REFUSAL`]).
-/// A name the rig does not carry resolves to nothing and is DROPPED, like a
-/// disabled pack: an offset aimed at a bone this build's player model lacks
-/// must not cost the caller its other bones, or a frame.
-///
-/// Shared by the host and the client mirror, so the two cannot disagree about
-/// what a payload means.
 pub(crate) fn resolve_bone_poses(bones: Vec<mod_api::BonePoseData>) -> Option<Vec<BonePose>> {
     if !bones.iter().all(mod_api::BonePoseData::is_finite) {
         return None;
@@ -1036,8 +880,5 @@ pub(crate) fn resolve_bone_poses(bones: Vec<mod_api::BonePoseData>) -> Option<Ve
     )
 }
 
-/// Why a `SetPlayerBonePose` was refused. One message, because the host and
-/// the client mirror validate through the same path and must say the same
-/// thing about it.
 pub(crate) const BONE_POSE_REFUSAL: &str =
     "SetPlayerBonePose: non-finite rotation/translation component";

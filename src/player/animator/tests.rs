@@ -2,9 +2,6 @@ use std::path::{Path, PathBuf};
 
 use super::{animator_layers, compile_animator, compile_layers, AnimatorSource};
 
-/// Every shipped rig's animator document compiles against its model with
-/// EVERY layer — the loader leaves a broken layer out at runtime, so this is
-/// where a broken shipped layer fails loudly instead.
 #[test]
 fn shipped_player_animators_compile_against_their_rigs() {
     let rigs = crate::player::rigs::all();
@@ -22,8 +19,6 @@ fn shipped_player_animators_compile_against_their_rigs() {
     }
 }
 
-/// A layer whose libraries resolve under `<namespace>/`; the engine's own is
-/// the `petramond` one.
 fn source(text: &str, namespace: &str) -> AnimatorSource {
     AnimatorSource {
         text: text.to_string(),
@@ -38,7 +33,6 @@ const JAB_LIBRARY: &str = r#"{ "format_version": "1.8.0", "animations": { "jab":
     "animation_length": 0.5, "bones": { "leftArm": { "rotation": { "0.0": [0, 0, 0], "0.5": [90, 0, 0] } } }
 } } }"#;
 
-/// root → leftArm, with one authored clip `wave` on the arm.
 fn rig() -> petramond_world::bbmodel::Model {
     petramond_world::bbmodel::Model::load(
         r#"{
@@ -131,9 +125,6 @@ fn a_pack_layer_merges_into_the_engine_document_by_key() {
     assert_eq!(animator.graph().clips().name(playing.clip), "spears:jab");
 }
 
-/// `before` must name a row that exists, and a row must carry its key;
-/// either mistake is a load error with the layer named, never a rule that
-/// silently lands somewhere else.
 #[test]
 fn a_misplaced_or_unkeyed_row_is_refused_naming_the_layer() {
     let rig = rig();
@@ -170,10 +161,6 @@ fn a_misplaced_or_unkeyed_row_is_refused_naming_the_layer() {
     assert!(err.contains("`id`"), "{err}");
 }
 
-/// A pack layer that does not compile is left out ALONE: the engine's
-/// document and every other pack's layer still load, and the refusal names
-/// the layer. Before, one pack's typo took the whole rig's animator away —
-/// the first-person hand with it.
 #[test]
 fn a_refused_pack_layer_is_left_out_and_the_rest_still_load() {
     let rig = rig();
@@ -209,10 +196,10 @@ fn a_refused_pack_layer_is_left_out_and_the_rest_still_load() {
     );
 }
 
-/// A library path is relative to the layer that states it: two layers naming
-/// the same relative path each read their OWN file, and a pack's library may
-/// not restate a clip the rig already has (that is how one pack would
-/// silently rewrite another's motion), while the rig's own document may.
+/// Library path is relative to the layer that names it: same relative path in two layers means two
+/// different files.
+/// A pack can't restate a clip the rig already has; that'd let one pack silently rewrite another
+/// pack's motion. The rig's own doc can.
 #[test]
 fn a_library_resolves_under_its_own_layer_and_a_pack_may_not_replace_a_clip() {
     let rig = rig();

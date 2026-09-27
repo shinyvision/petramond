@@ -1,13 +1,6 @@
-//! Chains: three single-cell rows — `furniture:chain` (vertical, the
-//! item-linked base), `furniture:chain_ns`, `furniture:chain_ew` — sharing
-//! ONE custom shape (`shapes.json` + the bakes in `lib.rs`); the axis
-//! is block IDENTITY (the ladder-row pattern), so the bake orients each cell
-//! from its block id alone and placement needs no per-cell state. The
-//! placement plan picks the sibling row from the clicked face's normal and
-//! returns it as the plan's block override. Placement is fully
-//! deterministic, so the ENGINE predicts it whole: the client runs the same
-//! plan + gates against its replica and ghosts the exact write — the mod
-//! ships no placement predictor of its own.
+//! Chains: three rows (`chain`, `chain_ns`, `chain_ew`) share one shape. The axis is block
+//! identity, so the bake needs no per-cell state. Placement picks the row from the clicked face's
+//! normal, and the engine predicts it.
 
 use mod_sdk::*;
 
@@ -24,45 +17,31 @@ pub(super) struct Chains {
 /// every ring turned 90 degrees from the one before, authored for the VERTICAL
 /// row and mapped onto the other two axes by [`to_axis`].
 ///
-/// Rings, not crossed planes (2026-07-29, per Rachel: *"make the chain properly
-/// 3D such that no weird culling occurs"*). The old shape was two flat plates
-/// with the links alpha-CUT out of the tile, and it failed the way cutout
-/// planes always fail off-axis: you saw one plate's silhouette through the
-/// other's holes, the two cutouts never lined up, and the whole thing read as
-/// flat black cardboard. Nothing about the art could fix that — the geometry
-/// was two quads. The tile carries only SHADING now (`gen_chain.py`).
+/// Each link has a real hole, so adjacent links remain distinct when viewed
+/// off-axis. The tile provides shading for the geometry (`gen_chain.py`).
 ///
 /// One link is exactly [`LINK_PITCH`] tall — [`LINK_W`] wide x [`LINK_T`] thick
 /// with a real 1x2 hole — so consecutive links BUTT rather than overlap, and
 /// the cell holds a whole number of them with nothing to clip.
 ///
-/// Butting is not cosmetic. Links that shared a bar row INTERPENETRATED, and
-/// `mesh::boxset` deliberately never culls an interpenetrating face ("merely
-/// straddling ... does NOT hide"): every shared row kept a pair of buried,
-/// mutually-straddling faces. Butted contact is the case the emitter culls
-/// exactly — flush faces vanish on both sides — so the run carries no retained
-/// interior geometry at all. At 16px the two read identically.
+/// `mesh::boxset` does not cull interpenetrating faces. Butted contact lets the
+/// emitter cull flush faces on both sides, leaving no interior geometry.
 ///
-/// `LINK_PITCH` must divide 16 with an EVEN link count, or the 90-degree
-/// alternation breaks at the cell boundary: 8 was the first cut (two chunky
-/// links), 4 is Rachel's "smaller, vertically".
+/// `LINK_PITCH` must divide 16 with an EVEN link count so the 90-degree
+/// alternation continues across cell boundaries.
 const LINK_PITCH: f32 = 4.0;
 const LINK_W: [f32; 2] = [6.5, 9.5];
 const LINK_T: [f32; 2] = [7.0, 9.0];
 
-/// One link, its bottom bar's floor at texel `ya`, ring plane in x/y
-/// (`turned = false`) or z/y. Spans exactly `ya .. ya + LINK_PITCH`.
 fn ring(ya: f32, turned: bool) -> [ShapeAabb; 4] {
     let top = ya + LINK_PITCH - 1.0;
     let (w, t) = (LINK_W, LINK_T);
     let raw = [
-        bx([w[0], ya, t[0]], [w[1], ya + 1.0, t[1]]), // bottom bar
-        bx([w[0], top, t[0]], [w[1], top + 1.0, t[1]]), // top bar
-        bx([w[0], ya + 1.0, t[0]], [w[0] + 1.0, top, t[1]]), // legs
+        bx([w[0], ya, t[0]], [w[1], ya + 1.0, t[1]]),
+        bx([w[0], top, t[0]], [w[1], top + 1.0, t[1]]),
+        bx([w[0], ya + 1.0, t[0]], [w[0] + 1.0, top, t[1]]),
         bx([w[1] - 1.0, ya + 1.0, t[0]], [w[1], top, t[1]]),
     ];
-    // The turned ring swaps its wide and thin horizontal axes; both extents
-    // are centred on the cell axis, so a plain coordinate swap is exact.
     raw.map(|b| {
         if turned {
             ShapeAabb {
@@ -82,9 +61,6 @@ const fn bx(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
     }
 }
 
-/// Map a VERTICAL-row box onto axis `i` of [`Chains::rows`] (0 vertical, 1
-/// north/south, 2 east/west) — the run axis swaps with one of the cross axes,
-/// so one authored table serves all three rows.
 fn to_axis(b: ShapeAabb, i: usize) -> ShapeAabb {
     let pick = |v: [f32; 3]| match i {
         1 => [v[0], v[2], v[1]],
@@ -98,21 +74,13 @@ fn to_axis(b: ShapeAabb, i: usize) -> ShapeAabb {
     }
 }
 
-/// This cell's whole chain, as the VERTICAL row authors it. The lantern's bail
-/// clips this same list rather than restating it (`lanterns::bail`), so a lamp
-/// strung under a chain continues the run exactly.
 pub(super) fn cell_links() -> Vec<ShapeAabb> {
-    // A whole number of links, every one entirely inside the cell: nothing is
-    // clipped and no link straddles the boundary, so a stack of cells is a run
-    // of butted links with no special case at the seam.
     (0..(16.0 / LINK_PITCH) as i32)
         .flat_map(|k| ring(k as f32 * LINK_PITCH, k.rem_euclid(2) == 1))
         .collect()
 }
 
 impl Chains {
-    /// The row for a clicked face's normal: top/bottom hangs a vertical
-    /// chain, a side face lays it along that face's axis (vanilla rule).
     pub(super) fn row_for_normal(&self, n: [i32; 3]) -> BlockId {
         if n[1] != 0 {
             self.rows[0]
@@ -123,19 +91,12 @@ impl Chains {
         }
     }
 
-    /// The link boxes for a placed chain cell, oriented by its block id (the
-    /// bake's whole orientation input — a pure function of the cell).
     pub(super) fn links_for(&self, block: BlockId) -> Vec<ShapeAabb> {
         let axis = self.rows.iter().position(|&r| r == block).unwrap_or(0);
         cell_links().into_iter().map(|b| to_axis(b, axis)).collect()
     }
 }
 
-/// Resolve the chain family at init: the shared shape kind and its three
-/// axis rows (registry-only calls, legal on any instance — the bakes and the
-/// placement plan run on both). `None` when the pack content didn't load (a
-/// row renamed or removed) — the chair half of the mod keeps working and
-/// chains fall back to the row's static (cube) shape.
 pub(super) fn resolve_chains() -> Option<Chains> {
     Some(Chains {
         shape: resolve_shape(keys::CHAIN_SHAPE)?,
@@ -151,10 +112,6 @@ pub(super) fn resolve_chains() -> Option<Chains> {
 mod tests {
     use super::*;
 
-    /// A chain cell's pattern must CONTINUE across the cell boundary: every
-    /// box the cell top reaches must be met, in the identical pattern one cell
-    /// up, by a box starting at the floor that overlaps its footprint. A miss
-    /// is a one-texel gap at EVERY cell boundary of every run.
     #[test]
     fn a_stack_of_chain_cells_has_no_seam_at_the_boundary() {
         let links = cell_links();
@@ -172,11 +129,6 @@ mod tests {
         }
     }
 
-    /// NO TWO LINK BOXES MAY INTERPENETRATE. `mesh::boxset` never culls a face
-    /// that merely straddles another box's plane, so any overlap leaves buried
-    /// geometry in the run forever — the thing the butted construction exists
-    /// to avoid. Touching faces are fine (that is the cull the emitter does
-    /// handle); shared VOLUME is not.
     #[test]
     fn no_two_link_boxes_share_volume() {
         let links = cell_links();
@@ -188,8 +140,6 @@ mod tests {
         }
     }
 
-    /// Every height of the cell holds chain matter — a bare band would read
-    /// as a cut run repeated once per cell.
     #[test]
     fn the_chain_occupies_every_height() {
         let links = cell_links();
@@ -202,13 +152,9 @@ mod tests {
         }
     }
 
-    /// Consecutive links alternate orientation — that is what reads as a
-    /// chain rather than a ladder of parallel plates, and nothing else in the
-    /// bake enforces it.
     #[test]
     fn consecutive_links_alternate_orientation() {
         let wide_x = |b: &ShapeAabb| b.max[0] - b.min[0] > b.max[2] - b.min[2];
-        // Classify each bar row's owner by which axis its bar is wide in.
         let links = cell_links();
         let mut orientations = Vec::new();
         let mut ya = 0.0f32;

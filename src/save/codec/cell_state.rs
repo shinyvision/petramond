@@ -1,19 +1,11 @@
-//! The unified cell-state list's records: `[len: u8][id_mask: u8][len bytes]`
-//! per cell, where each id-masked byte pair is a BLOCK id stored as the
-//! world's disk id — the only interpretation this codec ever applies to
-//! state bytes.
-
 use petramond_world::block::{ShapeState, SHAPE_STATE_MAX};
 use petramond_world::section::CellMap;
 
 use super::{get_indexed, put_u16, put_u8, Reader};
 use crate::save::palette::Palette;
 
-/// One cell's record to write.
 pub(super) enum Stored<'a> {
-    /// A live cell's state; its ids map to disk ids on the way out.
     Live(&'a ShapeState),
-    /// A kept cell's record, written back byte for byte.
     Kept(&'a [u8]),
 }
 
@@ -40,7 +32,6 @@ impl Stored<'_> {
     }
 }
 
-/// Read the list as stored: each cell's whole record, untranslated.
 pub(super) fn get_stored(r: &mut Reader) -> Option<CellMap<Vec<u8>>> {
     get_indexed(r, |r| {
         let len = r.u8()?;
@@ -56,8 +47,6 @@ pub(super) fn get_stored(r: &mut Reader) -> Option<CellMap<Vec<u8>>> {
     })
 }
 
-/// A stored record (from [`get_stored`], so well-formed) as live state, its
-/// id-masked pairs mapped back through `pal`.
 pub(super) fn translate(record: &[u8], pal: &Palette) -> ShapeState {
     let (len, id_mask, stored) = (usize::from(record[0]), record[1], &record[2..]);
     let mut bytes = [0u8; SHAPE_STATE_MAX];

@@ -1,5 +1,3 @@
-//! Material operations around a field's exposed boundary.
-
 use crate::formula::{Expression, Formula};
 use petramond_world::block::Block;
 use serde::{Deserialize, Serialize};
@@ -115,7 +113,6 @@ impl RawBoundary {
     }
 }
 
-/// An exposed face anchors a short axial course. The palette's last material repeats.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawCourse {
@@ -138,8 +135,6 @@ pub struct RawCourse {
     pub patches: Vec<RawPatch>,
 }
 
-/// A variant a course block turns into where a noise field is high enough:
-/// moss on grass, packed mud in dirt, in organic patches.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawPatch {
@@ -171,7 +166,6 @@ pub struct Course {
 }
 
 impl Course {
-    /// The block a course lays at `pos` once its patches have had their say.
     pub fn patched(&self, block: u16, seed: u32, pos: [i32; 3]) -> u16 {
         for patch in &self.patches {
             if patch.from != block {

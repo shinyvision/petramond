@@ -40,7 +40,6 @@ impl SavedStack {
     }
 }
 
-/// Persistent cell data. Registry references are names, including references inside shape bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CellData {
     pub block: String,
@@ -52,8 +51,6 @@ pub struct CellData {
     pub furnace: Option<[u16; 3]>,
 }
 
-/// A live cell's complete contents — the world's own snapshot type
-/// (`world::cells`), which schematics capture from and paste back.
 pub use crate::world::cells::ResolvedCell;
 
 impl CellData {
@@ -158,9 +155,6 @@ impl CellData {
 }
 
 impl CellData {
-    /// The survival construction record of this cell: its row and state, and
-    /// only the data an item carries — never stored inventories, machine
-    /// state or other private cell data.
     pub fn construction_record(&self) -> Result<petramond_world::construction::Record, String> {
         let bare = CellData {
             block: self.block.clone(),
@@ -179,7 +173,6 @@ impl CellData {
         ))
     }
 
-    /// A construction record in names, as it crosses a boundary.
     pub fn of_record(record: &petramond_world::construction::Record) -> Self {
         Self::capture(&ResolvedCell {
             block: record.block,

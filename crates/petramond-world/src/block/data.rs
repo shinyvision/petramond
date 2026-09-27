@@ -1,24 +1,9 @@
-//! Block table plumbing: the engine name list + the JSON-loaded registry.
-//!
-//! The rows themselves live in `assets/blocks.json` (see `super::load`), so
-//! block properties are editable — and moddable — without a rebuild. This
-//! module keeps only what must stay compiled in: the engine block NAMES in
-//! frozen id order (index == id — the completeness oracle the loader validates
-//! the file against, and the low half of the runtime name table packs extend;
-//! see `crate::registry`) and the accessors over the current content
-//! registry's block table and derived views (see `crate::content`).
-
 use std::sync::OnceLock;
 
 use super::definition::{BlockDef, BlockFlags};
 use super::shape_kind::{BlockShapeKind, ShapeKindDef};
 use super::{load, Block};
 
-/// Engine block names in frozen id order (`ENGINE_BLOCK_NAMES[id]` names
-/// `Block(id)`). Append-only: worldgen output and save palettes identify
-/// blocks by these ids/names. Must stay in lockstep with the consts on
-/// [`Block`]; the shipped `blocks.json` covering every name (a startup gate
-/// and a test) keeps a typo here from going unnoticed.
 pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:air",
     "petramond:grass",
@@ -176,40 +161,21 @@ pub const ENGINE_BLOCK_NAMES: &[&str] = &[
     "petramond:redwood_trapdoor",
 ];
 
-/// The current content registry's block table (see `crate::content`; the
-/// loader is `super::load`).
 #[inline]
 fn registry() -> &'static load::Registry {
     crate::content::current().blocks()
 }
 
-/// Every registered block in id order (engine + pack-registered).
 #[inline]
 pub(super) fn all() -> &'static [Block] {
     &registry().all
 }
 
-/// `Block(id)` for a registered id, `Air` past the table.
-///
-/// The mesher's AO ring gathers and the light flood's cube reads turn raw ids
-/// into blocks tens of millions of times per world load, so this must not
-/// index `defs` — that is a dependent load into a several-hundred-byte-per-row
-/// table, i.e. a cache miss per cell. `defs[i].block == Block(i)` holds by
-/// construction (`parse_layers` converts each row with its own id), so the
-/// bounds test alone is the whole function.
 #[inline]
 pub(super) fn from_id(id: u16) -> Block {
     BlockTable::current().block(id)
 }
 
-/// Read a dense per-id table at a RAW id.
-///
-/// Every table below is sized to the loaded registry, so an id past it is
-/// possible in exactly the cases `Block::from_id` already covers — a record or
-/// a frame written by a build with more content than this one. Those degrade
-/// to AIR, and air owns row 0, so answering with row 0 keeps a stray id from
-/// panicking a worker thread while giving it the same meaning `from_id`
-/// gives it.
 #[inline]
 pub(super) fn row<T: Copy>(table: &[T], id: u16) -> T {
     match table.get(id as usize) {
@@ -224,15 +190,11 @@ pub(super) fn def(block: Block) -> &'static BlockDef {
     defs.get(block.id() as usize).unwrap_or(&defs[0])
 }
 
-/// The shape-kind registry row for `kind` (see [`super::shape_kind`]).
 #[inline]
 pub(super) fn shape_kind_def(kind: BlockShapeKind) -> &'static ShapeKindDef {
     &registry().shape_kinds[kind.0 as usize]
 }
 
-/// The session-local shape-kind id for a registry `key`, or `None` — the
-/// `ResolveShape` host call's lookup. A linear scan over the small shape-kind
-/// table (dozens of rows), like the other name→id resolvers.
 pub fn shape_kind_id_by_key(key: &str) -> Option<u16> {
     registry()
         .shape_kinds
@@ -241,11 +203,6 @@ pub fn shape_kind_id_by_key(key: &str) -> Option<u16> {
         .map(|i| i as u16)
 }
 
-/// Whether ANY registered shape kind declares `key` as its per-cell state key
-/// — the cheap gate the cell-KV write path checks before probing a
-/// neighbourhood for stateful custom shapes to re-bake. Almost every KV write
-/// carries an unrelated key, so the common case must cost one small-table
-/// scan, not seven world reads.
 pub fn state_key_declared(key: &str) -> bool {
     registry()
         .shape_kinds
@@ -253,9 +210,6 @@ pub fn state_key_declared(key: &str) -> bool {
         .any(|d| d.params.state_key() == Some(key))
 }
 
-/// Dense per-id [`ShapeKindDef::refines`] — the refine cascade's per-cell gate
-/// (see the `shape_refines` field on [`load::Registry`]). An id past the
-/// registry reads `false`, matching the `Air` its `Block::from_id` resolves to.
 #[inline]
 pub(super) fn shape_refines(id: u16) -> bool {
     BlockTable::current().refines_shape(id)
@@ -266,13 +220,11 @@ pub(super) fn shape_custom(id: u16) -> bool {
     BlockTable::current().custom_shape(id)
 }
 
-/// The dense per-id tables DERIVED from a registry's block rows through the
-/// ordinary `Block` accessors — each shape family answers for its own kind,
-/// so these cannot bake inside the block table's own build (the family would
-/// read the table being built). Each view is its own cell of the registry:
-/// the content loader's block-views stage warms all of them right after the
-/// block table ([`warm_views`]), and one view may read another while it
-/// derives (the light cells read the apertures) whatever the order.
+/// Dense per-id tables derived from registry rows via the normal `Block` accessors.
+/// Each shape family answers for its own kind, so we can't build these inside the block
+/// table's own build. That would read the table while it's still being built.
+/// Each view is warmed in [`warm_views`] right after the block table, and views may read
+/// each other in any order (light cells read apertures).
 #[derive(Default)]
 pub(crate) struct BlockViews {
     apertures: OnceLock<Box<[u32]>>,
@@ -286,8 +238,6 @@ fn views() -> &'static BlockViews {
     &crate::content::current().block_views
 }
 
-/// Derive every [`BlockViews`] table of the current registry now — the
-/// content loader's block-views stage.
 pub(crate) fn warm_views() {
     let _ = default_light_apertures(0);
     let _ = light_cells();
@@ -295,11 +245,6 @@ pub(crate) fn warm_views() {
     let _ = nav_reads_solid(0);
 }
 
-/// Dense per-id STATE-FREE light apertures: what each block's shape blocks
-/// with no world context. The light flood reads it for every `Shaped` cell the
-/// sparse state gather did not cover — which is every cell of a stateless
-/// shape (a cover, a cactus, a mod's plate) — so it is baked once instead of
-/// re-derived per flood step.
 #[inline]
 pub(super) fn default_light_apertures(id: u16) -> u32 {
     let table = views().apertures.get_or_init(|| {
@@ -318,20 +263,6 @@ pub(super) fn default_light_apertures(id: u16) -> u32 {
     row(table, id)
 }
 
-/// Dense per-id LIGHT CELL word — everything the light flood needs to know
-/// about a block id, in ONE small table read (four bytes per registered
-/// block).
-///
-/// Low 24 bits: the state-free aperture word ([`crate::block::LIGHT_APERTURES_OPEN`]
-/// layout) — all zero for an opaque cube, fully open for an open cell, the
-/// shape's own answer for a `Shaped` one. `LIGHT_CELL_SHAPED` marks the ids
-/// whose per-cell state may override those bits (the only ids for which the
-/// flood consults its sparse aperture gather); `LIGHT_CELL_DIRECT_SKY` is
-/// [`Block::transmits_direct_skylight`].
-///
-/// The flood relaxes ~100 M edges per render-distance-12 load and each edge
-/// asked two blocks for their apertures; going through `Block::light_shape`
-/// meant a registry `BlockDef` load plus a virtual `ShapeSim` call per ask.
 #[inline]
 pub fn light_cells() -> &'static [u32] {
     views().light_cells.get_or_init(|| {
@@ -356,13 +287,6 @@ pub fn light_cells() -> &'static [u32] {
     })
 }
 
-/// Dense per-id CELL COLLISION for every shape whose boxes are fully
-/// determined by the block id ([`ShapeKindDef::collision_state_free`]);
-/// `None` where the shape resolves per cell (a stair corner, a fence's arms, a
-/// door's swing, a box set's stored form), which must go through the world.
-///
-/// Every body/particle/navigation cell probe used to pay a `shape_kind_def`
-/// indirection plus a virtual `collision_boxes` call for plain stone and air.
 #[inline]
 pub(super) fn static_collision_boxes(id: u16) -> Option<&'static [super::Aabb]> {
     let table = views().collision.get_or_init(|| {
@@ -384,8 +308,6 @@ pub(super) fn static_collision_boxes(id: u16) -> Option<&'static [super::Aabb]> 
     row(table, id)
 }
 
-/// Dense per-id [`ShapeSim::nav_reads_solid`] — a per-KIND answer, so it bakes
-/// per id like the apertures. Read once per navigation cell probe.
 #[inline]
 pub(super) fn nav_reads_solid(id: u16) -> bool {
     let table = views().nav_solid.get_or_init(|| {
@@ -399,15 +321,6 @@ pub(super) fn nav_reads_solid(id: u16) -> bool {
     row(table, id)
 }
 
-/// Dense per-id copy of every block's [`BlockFlags`], indexed by raw block id.
-///
-/// The mesher/light hot loops test `is_opaque`/`occludes_ao` on neighbour ids tens of
-/// times per emitted face. Going through [`def`] loads a pointer into the large
-/// `BlockDef` array (≈100 rows × dozens of bytes, scattered across many cache lines) just
-/// to read one flag byte. This table is one byte per registered block — a handful of cache lines that stay hot
-/// — so a flag query is one small-array read, not a big-struct indirection. It is derived
-/// from the loaded defs by the loader, so it can never disagree with the source of truth.
-/// Dense per-id tag membership; see [`load::Registry::tag_bits`].
 #[inline]
 pub(super) fn has_tag(id: u16, tag: super::BlockTag) -> bool {
     BlockTable::current().has_tag(id, tag)
@@ -418,11 +331,6 @@ pub(super) fn flags(id: u16) -> BlockFlags {
     BlockTable::current().flags(id)
 }
 
-/// The current registry's dense per-id block tables, resolved ONCE. Every
-/// `Block` accessor resolves the thread's registry per call; a loop over
-/// thousands of cells (a mesh pad, a light flood) takes one of these first
-/// and indexes the tables directly. Ids past the registry read as air, like
-/// [`Block::from_id`].
 #[derive(Clone, Copy)]
 pub struct BlockTable(&'static load::Registry);
 
@@ -452,19 +360,16 @@ impl BlockTable {
         defs.get(id as usize).unwrap_or(&defs[0])
     }
 
-    /// See [`Block::id_refines_shape`].
     #[inline]
     pub fn refines_shape(self, id: u16) -> bool {
         row(&self.0.shape_refines, id)
     }
 
-    /// See [`Block::is_custom_shape`].
     #[inline]
     pub fn custom_shape(self, id: u16) -> bool {
         row(&self.0.shape_custom, id)
     }
 
-    /// See [`Block::fluid`].
     #[inline]
     pub fn fluid(self, id: u16) -> Option<Block> {
         let flags = self.flags(id);
@@ -487,16 +392,11 @@ impl BlockTable {
     }
 }
 
-/// Dense per-id copy of every block's light `emission`, same rationale as
-/// [`flags`]: the light emitter scan reads it per cell over whole sections.
 #[inline]
 pub(super) fn emission(id: u16) -> u8 {
     row(&registry().emission, id)
 }
 
-/// Dense per-id PER-CHANNEL light emission — `emission` split by the row's
-/// `light_color`. Same rationale and same dense shape as [`emission`]: one
-/// row per registered block, so a lookup is one small-array read.
 #[inline]
 pub(super) fn emission_rgb(id: u16) -> [u8; 3] {
     row(&registry().emission_rgb, id)

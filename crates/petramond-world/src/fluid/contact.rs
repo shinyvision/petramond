@@ -1,8 +1,5 @@
-//! What touching a fluid does to a body or a loose item: row data, resolved at load.
-
 use crate::condition::{ConditionId, Pulse};
 
-/// A condition a fluid grants on contact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ConditionGrant {
     pub condition: ConditionId,
@@ -10,16 +7,11 @@ pub struct ConditionGrant {
     pub ticks: u32,
 }
 
-/// A fluid row's contact rule. The default touches nothing.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FluidContact {
-    /// Damage on this fluid's own contact clock, first contact immediate.
     pub damage: Option<Pulse>,
     pub applies: Option<ConditionGrant>,
-    /// Conditions this fluid removes; a condition cleared by any touched fluid
-    /// is not granted by another in the same tick.
     pub clears: &'static [ConditionId],
-    /// Loose items ending a tick inside this fluid are destroyed.
     pub destroys_items: bool,
 }
 

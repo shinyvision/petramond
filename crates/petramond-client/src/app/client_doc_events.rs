@@ -1,18 +1,9 @@
-//! What a client mod's open document tells its owner: the document runtime's
-//! widget events in the ABI's words, plus the two things the runtime reports
-//! as STATE each frame — what is hovered, which rows of each list are in
-//! view — turned into events sent only when they change.
-
 use std::collections::BTreeMap;
 
 use mod_api::{ClientPointerButton, ClientPointerPhase, ClientUiEvent};
 use petramond_ui::{FrameOutput, PointerButton, PointerPhase, UiEvent};
 use petramond_world::gui_state::GuiKind;
 
-/// A document widget event as its owning mod hears it; `None` for what a mod
-/// document does not report (slots, off-panel presses, raw keys) and for a
-/// SECONDARY press on a control, which the shell's one activation rule drops
-/// for every document.
 pub(super) fn client_ui_event(event: UiEvent) -> Option<ClientUiEvent> {
     if super::shell_docs::is_secondary_activation(&event) {
         return None;
@@ -68,8 +59,6 @@ pub(super) fn client_ui_event(event: UiEvent) -> Option<ClientUiEvent> {
             item,
             x,
             y,
-            // The document scrolls in logical px, natural direction; the ABI
-            // speaks wheel notches, positive = up, like the modal canvas.
             delta: -(delta as f32) / super::pointer::WHEEL_NOTCH_PX,
             mods: key_mods(mods),
         },
@@ -120,8 +109,6 @@ pub(super) fn pointer_button(button: PointerButton) -> ClientPointerButton {
     }
 }
 
-/// What the open document last TOLD its owner about hover and list ranges,
-/// so each is sent once per change. A different document starts afresh.
 #[derive(Default)]
 pub(crate) struct DocWatch {
     kind: Option<GuiKind>,
@@ -150,8 +137,6 @@ impl DocWatch {
             self.hover = Some(hover);
         }
         for (key, first, count) in &out.list_ranges {
-            // A list inside a list template has one range per stamp; only a
-            // top-level list's range is a fact about the document.
             if key.item.is_some() {
                 continue;
             }

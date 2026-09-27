@@ -1,21 +1,12 @@
-//! Showing a mod's file in the OS file manager, from one helper thread.
-//!
-//! One OS helper process starts at a time, so a mod cannot fork-bomb
-//! through reveals: while one is starting, a newer reveal replaces the one
-//! waiting, because a file manager shows one place and the newer request
-//! says where.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, LazyLock, Mutex, MutexGuard, PoisonError};
 
-/// Held while an OS helper process starts (a reveal, the encoder probe).
 pub fn os_helper_turn() -> MutexGuard<'static, ()> {
     static TURN: Mutex<()> = Mutex::new(());
     TURN.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Set once starting a file manager failed: there is none to start.
 static NO_FILE_MANAGER: AtomicBool = AtomicBool::new(false);
 
 struct Waiting {
@@ -63,7 +54,6 @@ pub(super) fn reveal(path: PathBuf) -> bool {
     if !path.exists() {
         return false;
     }
-    // A test never opens windows on the machine running it.
     if cfg!(test) {
         return true;
     }

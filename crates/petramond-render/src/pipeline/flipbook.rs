@@ -1,5 +1,3 @@
-//! Registry-driven flipbooks; static tiles pay no second texture sample.
-
 use petramond_world::tile;
 use std::fmt::Write;
 

@@ -1,22 +1,3 @@
-//! Farmland: the shared hydration probe and the dry/wet visual
-//! reconciliation.
-//!
-//! HYDRATION RULE: farmland is hydrated when at least one water block exists
-//! at the SAME world Y within a square horizontal radius of 4 (|dx| ≤ 4,
-//! |dz| ≤ 4). Source, flowing, and falling water all count — the block query
-//! deliberately cannot distinguish them, which makes routed channels and
-//! diverted streams work as irrigation. RAIN is water too: an open-sky
-//! farmland cell under an active rain band (the weather field heard on its
-//! `weather:field` channel, like the monsters burn douse) counts as hydrated
-//! while the rain lasts — no weather mod or covered soil simply means no
-//! rain.
-//!
-//! The wet/dry BLOCK is only an appearance and reconciles on this block's own
-//! RANDOM TICKS — bounded, local, and deliberately unhurried (per Rachel:
-//! farmland getting wet is random-tick based, like grass spread). A crop
-//! growth attempt always probes the REAL hydration, so a stale texture can
-//! never grow or pause a crop; only the look catches up lazily.
-
 use mod_sdk::*;
 use weather_core::FieldParams;
 
@@ -25,9 +6,6 @@ use crate::kv_counter::kv_counter_bump;
 
 pub const HYDRATION_RADIUS: i32 = 4;
 
-/// A hydration probe's verdict. `Unknown` = no water found among readable
-/// cells but some in-reach cell is unloaded/streaming — callers must retry
-/// later, never treat it as dry-forever or hydrated.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Hydration {
     Hydrated,
@@ -35,9 +13,6 @@ pub enum Hydration {
     Unknown,
 }
 
-/// Probe the hydration rule around a farmland cell: one batched read of the
-/// same-Y square, bounded and local (never a whole-world scan). `sky` is the
-/// weather field heard this tick (`None` = clear sky).
 pub fn probe(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) -> Hydration {
     let mut cells = Vec::with_capacity((HYDRATION_RADIUS as usize * 2 + 1).pow(2) - 1);
     for dz in -HYDRATION_RADIUS..=HYDRATION_RADIUS {
@@ -66,14 +41,6 @@ pub fn probe(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) -> Hyd
     }
 }
 
-/// Whether rain is currently landing on the cell above this soil: an active
-/// rain band over the column AND direct sky above the crop cell
-/// (`weather_core::DIRECT_SKY_MIN` — the shared cross-mod threshold;
-/// day/night-independent, night rain wets too). Every failure mode (no
-/// weather mod, unloaded cell, cover) is just "no rain" — the water scan's
-/// verdict stands. Field first, sky second: with no weather mod installed
-/// the check costs nothing, and under a clear sky it never touches the light
-/// query.
 fn rained_on(sky: Option<&FieldParams>, pos: [i32; 3]) -> bool {
     let Some(params) = sky else {
         return false;
@@ -85,9 +52,6 @@ fn rained_on(sky: Option<&FieldParams>, pos: [i32; 3]) -> bool {
     light_at(above).is_some_and(|l| l.sky >= weather_core::DIRECT_SKY_MIN)
 }
 
-/// A player built something in the cell directly above farmland. Anything
-/// other than one of this pack's crops presses the soil back to ordinary
-/// dirt — farmland only exists under open sky or a planted crop.
 pub fn on_block_placed_above(content: &Content, pos: [i32; 3], block: BlockId) {
     if content.crop_stage(block).is_some() {
         return;
@@ -101,15 +65,9 @@ pub fn on_block_placed_above(content: &Content, pos: [i32; 3], block: BlockId) {
     }
 }
 
-/// Cell-KV key for the consecutive-cropless-random-ticks counter.
 const IDLE_KEY: &str = "farming:idle";
-/// Random ticks in a row without a crop above before farmland (wet OR dry)
-/// presses back to dirt — untended soil doesn't stay tilled.
 const IDLE_REVERT_TICKS: u8 = 3;
 
-/// Farmland block hooks: only random ticks do work — the idle-decay count
-/// and the wet/dry visual reconcile. Neighbor updates and scheduled ticks
-/// are deliberately unused.
 pub fn on_hook(content: &Content, sky: Option<&FieldParams>, kind: BlockHookKind, pos: [i32; 3]) {
     match kind {
         BlockHookKind::RandomTick => random_tick(content, sky, pos),
@@ -124,9 +82,6 @@ fn random_tick(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) {
     if !content.is_farmland(current) {
         return;
     }
-    // Idle decay: a crop above resets the count; an empty (readable) cell
-    // above counts one, and the third consecutive count reverts to dirt.
-    // A streaming read neither counts nor resets.
     let mut carry_idle = None;
     match get_block([pos[0], pos[1] + 1, pos[2]]) {
         None => {}
@@ -142,10 +97,6 @@ fn random_tick(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) {
             carry_idle = Some(idle);
         }
     }
-    // Visual reconcile: swap to match REAL hydration, fertility preserved
-    // (each soil grade is its own wet/dry skin pair). `Unknown` changes
-    // nothing (the next random tick retries); a swap goes through the
-    // ordinary block write so neighbors see the update.
     let (dry_skin, wet_skin) = content
         .farmland_skins(current)
         .unwrap_or((content.farmland_dry, content.farmland_wet));
@@ -157,8 +108,6 @@ fn random_tick(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) {
     if current != want {
         set_block(pos, want);
     }
-    // Written AFTER the possible swap — a block write clears the cell's KV,
-    // and the count must survive the wet/dry flip.
     if let Some(idle) = carry_idle {
         section_kv_set(pos, IDLE_KEY, vec![idle]);
     }

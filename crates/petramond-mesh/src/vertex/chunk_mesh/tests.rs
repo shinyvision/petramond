@@ -19,9 +19,6 @@ fn mesh() -> ChunkMesh {
     mesh
 }
 
-/// Sealing is exactly the quantisation the renderer used to run at upload:
-/// each quad stream becomes its `TerrainVertex` image, in order, and the
-/// builder streams are freed.
 #[test]
 fn sealing_converts_every_quad_stream_and_frees_the_builder_copy() {
     let before = mesh();
@@ -45,7 +42,6 @@ fn sealing_converts_every_quad_stream_and_frees_the_builder_copy() {
         );
         assert_eq!(sealed.quad_len(layer), before.quad_len(layer));
     }
-    // The far LOD prefix indexes the sealed stream identically.
     assert_eq!(sealed.far_opaque_len, 4);
     assert!(!sealed.is_empty());
 }
@@ -64,7 +60,6 @@ fn sealing_twice_changes_nothing() {
     }
 }
 
-/// The census and the release path see sealed bytes too.
 #[test]
 fn sealed_streams_are_counted_and_released() {
     let mut sealed = mesh().into_sealed();

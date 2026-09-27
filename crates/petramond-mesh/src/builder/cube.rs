@@ -1,8 +1,3 @@
-//! The cube path: face culling for a cube-drawn cell, then ONE face emitter
-//! shared by both culls — the exposure-mask fast path and the per-face
-//! neighbourhood cull — that turns each visible face into either a deferred
-//! greedy [`FlatFace`] or a pushed quad.
-
 use std::cell::OnceCell;
 
 use glam::{IVec3, Vec3};
@@ -27,30 +22,18 @@ use super::lighting::{boundary_plane, face_lighting};
 use super::mesher::{Cell, SectionMesher};
 use super::transition;
 
-/// A cube cell's per-cell face setup, resolved once before its faces.
 struct CubeCell {
     cell: Cell,
     tiles: [Tile; 3],
-    /// Row-declared side treatment: `(base, overlay, overlay tint)`, or `None`
-    /// for the plain side tile.
     side_style: Option<(Tile, Option<Tile>, [f32; 3])>,
     log_axis: LogAxis,
-    /// A directional-front row's front face and tile.
     front: Option<(Face, Tile)>,
-    /// The cell's minimum corner in mesh space.
     base: Vec3,
-    /// Whether a flat face may defer to the greedy merge: an opaque cube, or a
-    /// box family meshing as its full cube.
     mergeable: bool,
-    /// The crown's corner shape of a canopy cell, resolved by the first face
-    /// that survives culling.
     crown: OnceCell<CrownCorners>,
 }
 
 impl CubeCell {
-    /// The row's per-slot UV turn for one face (mirrors `cube_face_tile`'s
-    /// slot mapping); zero on the faces a horizontal log's explicit cell UVs
-    /// already remap.
     fn uv_turn(&self, face: Face) -> u32 {
         if log_side_uvs_apply(self.log_axis, face) {
             0
@@ -70,9 +53,6 @@ fn is_side(face: Face) -> bool {
     matches!(face, Face::PosX | Face::NegX | Face::PosZ | Face::NegZ)
 }
 
-/// All four corners share AO and every light channel — the greedy merge
-/// condition: a run of such faces collapses into one tiled quad,
-/// pixel-identical.
 #[inline]
 fn is_flat(ao: [u32; 4], light6: [u32; 4], block6: [BlockLight6; 4]) -> bool {
     ao[0] == ao[1]
@@ -148,10 +128,6 @@ impl SectionMesher<'_> {
         } else {
             LogAxis::Y
         };
-        // A directional-front row (furnace, lit furnace) draws its `front`
-        // tile on the face its stored entity facing points to; the other sides
-        // keep the plain side tile. The lit furnace is its own block row, so
-        // "lit" is just this row read.
         let front = block.front_tile().map(|front| {
             (
                 facing_face(self.section.entity_facing(cell.lx, cell.ly, cell.lz)),
@@ -170,7 +146,6 @@ impl SectionMesher<'_> {
         }
     }
 
-    /// The transition plan for one cube face, reading the neighbourhood.
     fn plan_transition(&self, pos: IVec3, face: Face, block: u16) -> Option<Transition> {
         let nb = &self.nb;
         transition::Context {
@@ -183,9 +158,6 @@ impl SectionMesher<'_> {
         .plan(pos, face, block)
     }
 
-    /// One visible cube face: tile, tints, lighting and transition, then
-    /// either a deferred greedy [`FlatFace`] (a plain opaque face whose four
-    /// corners are flat) or a quad pushed into the stream the block rides.
     fn emit_cube_face(&mut self, cube: &CubeCell, face: Face, front: IVec3, front_block: Block) {
         let cell = &cube.cell;
         let block = cell.block;
@@ -203,8 +175,6 @@ impl SectionMesher<'_> {
         let dyed = self.tints.tinted(cell.idx);
         let uv_turn = cube.uv_turn(face);
 
-        // Asked corner-free: a face bound for the greedy merge never builds
-        // its quad at all (the merged quad rebuilds one for the whole run).
         if transition.is_none()
             && overlay_tile.is_none()
             && cube.mergeable
@@ -214,13 +184,10 @@ impl SectionMesher<'_> {
             let fi = face_index(face);
             self.greedy.faces[fi * SECTION_VOLUME + cell.idx] = FlatFace {
                 gen: self.greedy_gen,
-                // UV turn in bits 12..13, dyed flag in bit 31 (both part of
-                // the merge key).
                 tile: base_tile.index() as u32 | (uv_turn << 12) | ((dyed as u32) << 31),
                 shade: FlatFace::shade(ao[0], light6[0], block6[0]),
                 tint: block6[0].tint_word(tint),
             };
-            // Slice index = the cell's coord along this face's normal axis.
             let s = [cell.lx, cell.ly, cell.lz][face_axes(face).0];
             self.greedy.slice_counts[fi * SECTION_SIZE + s] += 1;
             return;
@@ -233,10 +200,6 @@ impl SectionMesher<'_> {
             Some(o) => (o.index() as u32, true),
             None => (0, false),
         };
-        // Translucent blocks (ice) blend in their own depth-writing pass;
-        // their texels sit below the opaque pass's cutout and would discard to
-        // nothing there, and the fluid pass draws after them. A leaf face
-        // against the SAME leaves is what the far LOD drops.
         let vbuf = if block.is_translucent() {
             &mut self.out.translucent
         } else if block.is_leaves() && front_block == block {
@@ -259,7 +222,6 @@ impl SectionMesher<'_> {
                 dyed,
             },
         );
-        // A transition recolours the face; a set may add a biome tint.
         if let Some(plan) = transition {
             let set = &self.rules.sets[plan.set as usize];
             plan.apply(
@@ -267,8 +229,6 @@ impl SectionMesher<'_> {
                 self.tints.tile(set.tint, cell.column),
             );
         }
-        // Canopy dressing is decided per cell; the crown's corner shape is
-        // resolved lazily by the first face that survives culling.
         if block.is_canopy() {
             let nb = &self.nb;
             let crown = cube.crown.get_or_init(|| {

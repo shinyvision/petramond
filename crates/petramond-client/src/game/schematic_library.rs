@@ -1,14 +1,9 @@
-//! The personal schematic library on disk: its index, thumbnails for the
-//! cards on screen, and the save / delete / load jobs — one at a time, on the
-//! background pool, never on the frame thread.
-
 use crate::game::Game;
 use petramond::schematic::{archive::Thumbnail, library, Schematic};
 use petramond::worker::JobPool;
 use petramond_render::job::Job;
 use std::{collections::VecDeque, path::PathBuf, sync::Arc};
 
-/// Thumbnails kept beyond the cards on screen, so scrolling back is instant.
 const THUMBNAILS_OFF_SCREEN: usize = 16;
 
 enum Edit {
@@ -24,11 +19,8 @@ enum Completed {
     Thumbnail(library::Entry, Result<Thumbnail, String>),
 }
 
-/// What a finished job means to the rest of the game.
 pub(super) enum LibraryEvent {
-    /// The load the player last asked for finished.
     Loaded(Result<Arc<Schematic>, String>),
-    /// A save or delete went through.
     Changed,
     Failed(String),
 }
@@ -36,7 +28,6 @@ pub(super) enum LibraryEvent {
 struct Cached {
     path: PathBuf,
     revision: u32,
-    /// `None` for an archive whose image failed to decode: not retried.
     image: Option<Thumbnail>,
 }
 
@@ -53,14 +44,10 @@ pub struct SchematicLibrary {
     job: Option<Job<Result<Completed, String>>>,
     saves: VecDeque<Arc<Schematic>>,
     edits: VecDeque<Edit>,
-    /// The load whose result becomes the placement preview.
     requested_load: Option<PathBuf>,
-    /// The archive the current paste preview came from.
     previewed: Option<PathBuf>,
-    /// A save finished since [`take_saved`](Self::take_saved) last asked.
     saved: bool,
     wanted: VecDeque<library::Entry>,
-    /// Least recently shown first.
     thumbnails: VecDeque<Cached>,
     on_screen: usize,
 }
@@ -75,13 +62,10 @@ impl SchematicLibrary {
         &mut self.entries
     }
 
-    /// Queue a captured schematic; the app renders its thumbnail and starts
-    /// the save once the worker is free.
     pub(super) fn queue_save(&mut self, schematic: Arc<Schematic>) {
         self.saves.push_back(schematic);
     }
 
-    /// The next capture waiting for its thumbnail, once no job is running.
     pub fn pending_save(&self) -> Option<Arc<Schematic>> {
         self.job
             .is_none()
@@ -89,7 +73,6 @@ impl SchematicLibrary {
             .flatten()
     }
 
-    /// Render the thumbnail and publish the complete archive in one job.
     pub fn start_save(
         &mut self,
         jobs: &JobPool,
@@ -107,7 +90,6 @@ impl SchematicLibrary {
         self.saves.pop_front();
     }
 
-    /// Whether a save was published since this last asked (an edge).
     pub fn take_saved(&mut self) -> bool {
         std::mem::take(&mut self.saved)
     }
@@ -122,7 +104,6 @@ impl SchematicLibrary {
         self.edits.push_back(Edit::Load(path));
     }
 
-    /// Forget a load that has not become a preview yet.
     pub fn cancel_load(&mut self) {
         self.requested_load = None;
         self.edits.retain(|e| !matches!(e, Edit::Load(_)));
@@ -136,7 +117,6 @@ impl SchematicLibrary {
         self.previewed = path;
     }
 
-    /// Ask for the images of the cards on screen, every one of them.
     pub fn request_thumbnails(&mut self, visible: &[usize]) {
         self.wanted.clear();
         self.on_screen = visible.len();
@@ -157,8 +137,6 @@ impl SchematicLibrary {
         self.thumbnails.iter().find(|c| c.is(entry))?.image.as_ref()
     }
 
-    /// Settle the finished job, then start the next. `browsing` lists the
-    /// directory the first time someone can see the library.
     pub(super) fn poll(&mut self, jobs: &JobPool, browsing: bool) -> Option<LibraryEvent> {
         let event = Job::finish(&mut self.job).and_then(|outcome| {
             let result = outcome.unwrap_or_else(|_| Err("Schematic worker failed".into()));
@@ -250,7 +228,6 @@ impl SchematicLibrary {
 }
 
 impl Game {
-    /// Advance the library one step and apply what finished.
     pub fn poll_schematic_library(&mut self) {
         let browsing = self.creative_mode() || self.schematic_choice_open();
         match self.tools.library.poll(&self.jobs, browsing) {
@@ -262,7 +239,6 @@ impl Game {
                 }
                 Err(error) => self.notice = error,
             },
-            // A paste preview never goes up outside creative mode.
             Some(LibraryEvent::Loaded(_)) => self.tools.library.set_previewed(None),
             Some(LibraryEvent::Changed) => self.notice.clear(),
             Some(LibraryEvent::Failed(error)) => self.notice = error,
@@ -270,8 +246,6 @@ impl Game {
         }
     }
 
-    /// Load library entry `index` to paste it; the preview goes up when the
-    /// archive has been read.
     pub fn begin_schematic_paste(&mut self, index: usize) {
         let Some(entry) = self.tools.library.entries().get(index) else {
             return;
@@ -283,18 +257,15 @@ impl Game {
         self.notice.clear();
     }
 
-    /// Whether a requested paste preview went up since this last asked.
     pub fn take_paste_preview_ready(&mut self) -> bool {
         std::mem::take(&mut self.tools.paste_preview_ready)
     }
 
-    /// Forget a paste that was asked for but is not up yet.
     pub fn cancel_pending_paste(&mut self) {
         self.tools.paste_preview_ready = false;
         self.tools.library.cancel_load();
     }
 
-    /// Delete `entry`, taking down a paste preview that came from it.
     pub fn delete_schematic(&mut self, entry: library::Entry) {
         if self.tools.library.previewed() == Some(&entry.path) {
             self.cancel_world_tools();

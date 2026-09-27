@@ -6,8 +6,6 @@ use crate::testing::Session;
 
 const TABLE_AT: [i32; 3] = [0, 0, 0];
 
-/// A table with a chest beside it, a second chest touching the first, and
-/// a third standing apart.
 fn chained() -> Session {
     let session = Session::flat(8);
     session.world.set(TABLE_AT, TABLE);
@@ -122,7 +120,6 @@ fn full_chests_have_no_room_and_an_unread_one_is_no_answer() {
     let stock = supplies.stock(TABLE_AT);
     assert!(stock.read && !stock.has_room());
 
-    // A chest block whose contents do not answer (out of the loaded world).
     session.world.set([3, 0, 0], CHEST);
     supplies.changed(&[[3, 0, 0]], false);
     let stock = supplies.stock(TABLE_AT);

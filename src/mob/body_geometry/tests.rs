@@ -465,9 +465,6 @@ fn a_long_body_bow_stops_at_shore_before_its_centre_box_arrives() {
             &[]
         }
     };
-    // yaw -PI/2 faces +X. The bow already reaches x=1.5, leaving only
-    // half a block before the shore at x=2; the old centre square would
-    // have travelled 1.5 blocks before noticing it.
     let (moved, _, hit, _) = resolve_body_motion(
         WorldPos::ZERO,
         -std::f32::consts::FRAC_PI_2,

@@ -1,13 +1,3 @@
-//! bbmodel blocks at the world level: position-aware collision/selection, multi-cell
-//! placement gating, and the footprint group for breaking.
-//!
-//! A bbmodel block's collision and selection are PER CELL — a multi-block (the workbench
-//! is 2×2×1) splits its shape across its footprint, and a cell's shape depends on its
-//! authored offset plus placed facing, which only the world knows (the chunk model maps).
-//! So the per-cell queries live here, over the chunk-owned placement metadata, while
-//! [`Block`]'s own (position-less) accessors answer the authored-origin cell. See
-//! [`petramond_world::block_model`].
-
 #[cfg(test)]
 use crate::world::ServerWorld;
 use crate::world::WorldData;
@@ -20,31 +10,20 @@ use petramond_world::block_model::{self, BlockModelKind};
 use super::cell_change::{CellChange, ChangeKind};
 
 impl<S: WorldSide> World<S> {
-    /// Place model `block` with its rotated-footprint base at `base`: write the block id to
-    /// every footprint cell and record each non-zero authored offset, THEN relight +
-    /// remesh the affected region once (so cells never flash the wrong sub-geometry).
-    /// Assumes the footprint was gated clear. Returns false if `block` isn't a model
-    /// block or any cell is unloaded.
     pub fn place_model_block(&mut self, base: IVec3, block: Block) -> bool {
         self.place_model_block_facing(base, block, block_model::DEFAULT_MODEL_FACING)
     }
 
-    /// Oriented form of [`place_model_block`](Self::place_model_block).
     pub fn place_model_block_facing(&mut self, base: IVec3, block: Block, facing: Facing) -> bool {
         let Some(kind) = block.model_kind() else {
             return false;
         };
         let cells = block_model::oriented_footprint_cells(base, kind, facing);
-        // Materialize every footprint cell's section (a multi-block can reach into an
-        // all-air, hence absent, section), bailing if any is outside the vertical range,
-        // so the whole region is writable before the consistent write below.
         for &(c, _) in &cells {
             if !self.materialize_section_at(c) {
                 return false;
             }
         }
-        // Write block + offset for every cell first (no remesh yet), so the region is
-        // fully consistent before any mesh is rebuilt.
         let mut changes = Vec::with_capacity(cells.len());
         for &(c, off) in &cells {
             let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) else {
@@ -63,8 +42,6 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// If `pos` is a bbmodel-block cell, the whole multi-block group: its kind, the
-    /// rotated-footprint base, and every footprint cell. `None` for a non-model cell.
     pub fn model_group(&self, pos: IVec3) -> Option<(BlockModelKind, IVec3, Vec<IVec3>)> {
         let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let kind = block.model_kind()?;
@@ -78,14 +55,6 @@ impl<S: WorldSide> World<S> {
         ))
     }
 
-    /// Swap the placed block at `pos` to the row `new_block` in place — the
-    /// ONE seam for "the same placed thing changing costume", whatever its
-    /// shape: a model group swaps as a group (below), any other row through
-    /// the cube skin swap ([`swap_block_skin`](Self::swap_block_skin)), which
-    /// carries the cell's state and KV across the same way. Neither fires a
-    /// placement event, so a mod's placement handler can swap rows without
-    /// recursing. A model row cannot be swapped INTO a non-model cell — that
-    /// is a placement, not a costume change.
     pub fn swap_block(&mut self, pos: IVec3, new_block: Block) -> bool {
         let current = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if current.model_kind().is_some() {
@@ -97,16 +66,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Swap the whole multi-block group at `pos` to `new_block` — another model
-    /// block whose ORIENTED FOOTPRINT matches the current group's exactly (the
-    /// lit/unlit machine pair sharing one authored model). Block ids are
-    /// rewritten in place and the model offsets + facing re-recorded; the
-    /// anchor-keyed container, entity facings, and mod cell KV are untouched,
-    /// so a cooking machine keeps its slots and state across the flip. The
-    /// region relights + remeshes once — an emission difference between the two
-    /// rows re-floods exactly like the furnace's lit flip. Returns `false`
-    /// when `pos` is not a model-group cell, `new_block` is not a model block,
-    /// or the footprints differ (nothing is written).
     pub fn swap_model_block(&mut self, pos: IVec3, new_block: Block) -> bool {
         let Some((_, base, cells)) = self.model_group(pos) else {
             return false;
@@ -115,18 +74,13 @@ impl<S: WorldSide> World<S> {
             return false;
         };
         if Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z)) == new_block {
-            return true; // already there — an idempotent no-op
+            return true;
         }
         let facing = self.data.model_facing_at(pos.x, pos.y, pos.z);
         let new_cells = block_model::oriented_footprint_cells(base, new_kind, facing);
-        // Compare the actual occupied cell sets, not just the declared boxes: a
-        // non-rectangular footprint's occupancy comes from the geometry split.
         if new_cells.len() != cells.len() || new_cells.iter().any(|(c, _)| !cells.contains(c)) {
             return false;
         }
-        // All-or-nothing: a group may straddle sections, so verify every cell
-        // resolves BEFORE the first write — bailing mid-loop would leave a
-        // half-swapped group with a stale mesh.
         if new_cells
             .iter()
             .any(|&(c, _)| self.data.chunk_at_world(c.x, c.y, c.z).is_none())
@@ -140,9 +94,6 @@ impl<S: WorldSide> World<S> {
                 .chunk_at_world_mut(c.x, c.y, c.z)
                 .expect("cell resolution verified above");
             let old = chunk.block(lx, ly, lz);
-            // `set_block` clears the cell's model state AND its mod cell KV
-            // (per-cell state dies with the block) — a swap is the same placed
-            // machine changing costume, so both are carried across explicitly.
             let kv = chunk.cell_kv_take(lx, ly, lz);
             chunk.set_block(lx, ly, lz, new_block);
             if off != [0, 0, 0] {
@@ -181,18 +132,6 @@ impl<S: WorldSide> World<S> {
         {
             return false;
         }
-        // Resubmitting the same picture is the obvious idiom — a machine
-        // compares against what the world CURRENTLY shows so a visual that
-        // drifts heals itself — and every cell of this write queues a re-mesh
-        // and a relight, so an idempotent call must not cost one.
-        //
-        // EVERY cell is checked, not just the addressed one. `cell_kv_set`
-        // below refuses a write racing an in-flight saved overlay, so a
-        // footprint straddling sections can come out half written; a check on
-        // the anchor alone then answers "already correct" forever after, and
-        // the other cells show the wrong parts until the mask happens to
-        // change value. Self-healing that only heals the cell you asked about
-        // is the bug it was built to prevent.
         let has = |c: IVec3, key: &str, want: &[u8]| {
             self.data
                 .cell_kv_get(c.x, c.y, c.z, key)
@@ -206,9 +145,6 @@ impl<S: WorldSide> World<S> {
             return true;
         }
         for &c in &cells {
-            // Through the WORLD accessor, not the section's: it refuses a write
-            // racing an in-flight saved overlay, and a footprint spans sections
-            // the addressed cell's finality says nothing about.
             self.cell_kv_set(
                 c.x,
                 c.y,
@@ -216,9 +152,6 @@ impl<S: WorldSide> World<S> {
                 block_model::PARTS_KV_KEY.to_owned(),
                 parts.to_le_bytes().to_vec(),
             );
-            // Only WRITE the dye key, never clear it: it is shared with the dye
-            // system, so `tint: None` must mean "I am not tinting" rather than
-            // "erase whatever colour this cell had".
             if let Some(rgb) = tint {
                 self.cell_kv_set(
                     c.x,
@@ -229,13 +162,6 @@ impl<S: WorldSide> World<S> {
                 );
             }
         }
-        // No cell change is announced here, deliberately. Each `cell_kv_set`
-        // above already queued the meshes that sample its cell (the mask is a
-        // mesh-feeding key) and re-marked any custom bake reading it. What
-        // `apply_cell_changes` adds on top — a relight ball and a shape
-        // re-resolve per cell — is block-CHANGE work, and this call changes no block: its
-        // whole contract is that collision, selection and lighting stay the
-        // row's.
         true
     }
 }
@@ -247,7 +173,6 @@ mod tests {
 
     const WB: Block = Block::FurnitureWorkbench;
 
-    /// A world with a single empty chunk at (0,0) installed, for placement tests.
     fn world_with_empty_chunk() -> ServerWorld {
         let mut w = ServerWorld::new(1, 4);
         w.clear_world();
@@ -264,7 +189,6 @@ mod tests {
             .model_footprint_clear(origin, BlockModelKind::FurnitureWorkbench));
         assert!(w.place_model_block(origin, WB));
 
-        // Every occupied cell holds the block id, and the group resolves back to it.
         let (kind, found_origin, cells) = w.model_group(origin).expect("a model group");
         assert_eq!(kind, BlockModelKind::FurnitureWorkbench);
         assert_eq!(found_origin, origin);
@@ -275,15 +199,12 @@ mod tests {
                 WB,
                 "{c:?}"
             );
-            // A non-zero authored cell knows its offset; querying from it finds the same base.
             assert_eq!(w.model_group(c).unwrap().1, origin);
         }
-        // The far corner (origin + 1x + 1y) carries a non-zero offset.
         assert_eq!(
             w.data.model_offset_at(origin.x + 1, origin.y + 1, origin.z),
             [1, 1, 0]
         );
-        // Each cell has its own cell-local collision (per-cell split, not the whole box).
         assert!(!w
             .data
             .collision_boxes_at(origin.x, origin.y, origin.z)
@@ -330,7 +251,6 @@ mod tests {
     fn placement_is_gated_on_the_whole_footprint_being_clear() {
         let mut w = world_with_empty_chunk();
         let origin = IVec3::new(5, 64, 5);
-        // Block one of the footprint cells (the +x neighbour) with stone.
         w.set_block_world(origin.x + 1, origin.y, origin.z, Block::Stone);
         assert!(
             !w.data
@@ -343,8 +263,6 @@ mod tests {
     fn block_writes_clear_the_cells_mod_kv() {
         let mut w = world_with_empty_chunk();
 
-        // Plain block replacement: the cell's mod KV dies with the block —
-        // air holds no block data. The neighbour's KV is untouched.
         let pos = IVec3::new(5, 64, 5);
         let neighbour = IVec3::new(6, 64, 5);
         w.set_block_world(pos.x, pos.y, pos.z, Block::Stone);
@@ -371,8 +289,6 @@ mod tests {
             "the neighbour's KV is untouched"
         );
 
-        // Breaking a model group clears the anchor's KV too (a broken
-        // machine's burn state must not haunt the next one placed there).
         let origin = IVec3::new(9, 64, 5);
         assert!(w.place_model_block(origin, WB));
         assert!(w.cell_kv_set(
@@ -422,7 +338,6 @@ mod tests {
         let mut w = world_with_empty_chunk();
         let origin = IVec3::new(5, 64, 5);
         assert!(w.place_model_block(origin, WB));
-        // Break from a non-zero authored cell — the whole group must clear.
         let removed = w
             .remove_compound(origin + IVec3::new(1, 1, 0))
             .expect("removes a model group");
@@ -441,15 +356,6 @@ mod tests {
         }
     }
 
-    /// A parts mask covers the WHOLE footprint, and resubmitting the same mask
-    /// REPAIRS a cell that lost it.
-    ///
-    /// The mesher reads the mask from the cell it is meshing, and `cell_kv_set`
-    /// refuses a write racing an in-flight saved overlay — so a footprint
-    /// straddling sections can end up half written. A machine resubmits its
-    /// current mask every tick precisely so that heals; an idempotence check
-    /// that only consults the addressed cell answers "already correct" forever
-    /// and the rest of the machine stays wrong.
     #[test]
     fn a_parts_mask_covers_every_footprint_cell_and_repairs_a_lost_one() {
         let mut w = world_with_empty_chunk();
@@ -470,12 +376,10 @@ mod tests {
             assert_eq!(mask_at(&w, c), Some(0b101), "{c:?}");
         }
 
-        // A cell loses its mask (a refused write, a stale saved overlay).
         let lost = *cells.last().expect("a cell");
         assert!(w.cell_kv_remove(lost.x, lost.y, lost.z, block_model::PARTS_KV_KEY));
         assert_eq!(mask_at(&w, lost), None, "fixture: the cell is now bare");
 
-        // The SAME mask again — the machine's every-tick resubmission.
         assert!(w.set_model_parts(origin, 0b101, None));
         assert_eq!(
             mask_at(&w, lost),

@@ -13,50 +13,26 @@ use super::interest::view_blocks;
 use super::{ServerGame, SharedTickRows};
 use crate::net::spatial_loops::LiveSpatialLoops;
 
-/// The server-wide replication bookkeeping every recipient's batch draws on
-/// (per-recipient bookkeeping lives on each session). Replication state, not
-/// sim state.
 #[derive(Default)]
 pub struct Broadcast {
-    /// World-anchored wire events produced OUTSIDE a tick window (a leaving
-    /// session's menu close, e.g. its chest 1→0 transition), shipped with the
-    /// next executed tick's batch so no observer misses them.
     pending_wire_events: Vec<WorldEventMsg>,
-    /// Every spatial LOOP still playing (a `loop` row started and not yet
-    /// stopped), by handle — delivered per recipient by earshot, ended with
-    /// its mob. See [`super::spatial_loops`] and [`super::event_scope`].
     live_spatial_loops: LiveSpatialLoops,
-    /// The `WorldEnvironment` shader-param map the last batch's env section
-    /// was cut against (value-compared per tick window; the map is tiny).
-    /// `None` = nothing shipped yet, so the next window carries the full set.
     last_shipped_env: Option<Arc<ShaderParamMap>>,
 }
 
 impl Broadcast {
-    /// Bank world events produced between tick windows for the next batch.
     pub fn bank_wire_events(&mut self, events: impl IntoIterator<Item = WorldEventMsg>) {
         self.pending_wire_events.extend(events);
     }
 
-    /// The banked out-of-window events, oldest first, for the batch about to
-    /// ship.
     pub fn take_wire_events(&mut self) -> Vec<WorldEventMsg> {
         std::mem::take(&mut self.pending_wire_events)
     }
 
-    /// Forget what the last batch shipped of the environment, so the next
-    /// window carries the full set — a joining session must receive the
-    /// CURRENT params even when the map is static (a frozen clock freezes
-    /// day/night AND weather params).
     pub fn reseed_env(&mut self) {
         self.last_shipped_env = None;
     }
 
-    /// The params of `params` whose values differ from what the last batch
-    /// shipped (every param after a reseed), then remembered as shipped;
-    /// `None` when nothing changed. Params are only ever added or retuned on
-    /// the client, never withdrawn, so the changed entries are the whole
-    /// difference — day/night retunes a couple of keys a window, not the map.
     pub fn env_update(&mut self, params: Arc<ShaderParamMap>) -> Option<Vec<(String, [f32; 4])>> {
         let changed: Vec<(String, [f32; 4])> = match &self.last_shipped_env {
             Some(last) if Arc::ptr_eq(last, &params) || **last == *params => return None,
@@ -80,13 +56,9 @@ impl Broadcast {
     }
 }
 
-/// One tick window's drained world feeds, scoped per recipient when its batch
-/// is cut: the world-anchored events (each with its [`Reach`]), the coalesced
-/// cell/KV/draw deltas, and the live loops placed for this window.
 #[derive(Default)]
 pub struct WindowFeeds {
     events: Vec<WorldEventMsg>,
-    /// `events[i]`'s reach.
     reaches: Vec<Reach>,
     deltas: Vec<BlockDelta>,
     kv_deltas: Vec<CellKvDelta>,
@@ -95,7 +67,6 @@ pub struct WindowFeeds {
 }
 
 impl SharedTickRows {
-    /// These rows with the window's drained feeds attached.
     pub(super) fn with_feeds(mut self, feeds: WindowFeeds) -> Self {
         self.feeds = feeds;
         self
@@ -103,9 +74,6 @@ impl SharedTickRows {
 }
 
 impl ServerGame {
-    /// Drain one executed tick window's world feeds: the world-event queues
-    /// (after any leave-path events banked between ticks), the spatial-loop
-    /// bookkeeping over them, and the coalesced delta logs.
     pub(super) fn take_window_feeds(&mut self, events: &mut TickEvents) -> WindowFeeds {
         let mut world_events = self.broadcast.take_wire_events();
         world_events.extend(wire_world_events(&mut events.world));
@@ -128,13 +96,6 @@ impl ServerGame {
         }
     }
 
-    /// The per-tick batch parts, built once per window: the parts every
-    /// recipient shares, and each recipient's entity lanes — which advance
-    /// every session's interest set, so every session must be sent this
-    /// window's batch. Entity rows are built once and shared across the
-    /// lanes that select them. The window's world feeds attach through
-    /// [`SharedTickRows::with_feeds`]; without them the batch carries no
-    /// world events or deltas.
     pub fn shared_tick_rows(&mut self, events: &TickEvents) -> SharedTickRows {
         let recipients = self.entity_lanes(events);
         let sleep_tally = SleepTally {
@@ -145,8 +106,6 @@ impl ServerGame {
                 .count() as u16,
             connected: self.sessions.len() as u16,
         };
-        // Full open-chest state per batch (tiny), sorted so the wire batch is
-        // deterministic.
         let open_chests = self.containers.open_chests();
         let env = self
             .broadcast
@@ -162,12 +121,6 @@ impl ServerGame {
         }
     }
 
-    /// Build one recipient's replication batch as its sections, in the
-    /// canonical apply order (see `net::protocol::tick`): its read-model
-    /// replies, the window's cell deltas restricted to the sections it holds,
-    /// its entity lanes, the outcomes and authoritative state they answer
-    /// for, the shared environment/lid state, the world events it can
-    /// perceive, and its own one-shots. Empty sections are left out.
     pub fn build_tick_update(
         &mut self,
         s: usize,
@@ -177,8 +130,6 @@ impl ServerGame {
         let entities = &shared.recipients[s];
         let feeds = &shared.feeds;
         let terrain = &self.sessions[s].transport.terrain;
-        // Per-recipient delta filter: only sections this client holds. Cell
-        // KV and draw sets ride the same filter.
         let mut block_deltas: Vec<BlockDelta> = feeds
             .deltas
             .iter()
@@ -197,10 +148,6 @@ impl ServerGame {
             .filter(|d| terrain.covers(d.pos))
             .cloned()
             .collect();
-        // Corrective cell sync: the CURRENT state of cells a use click
-        // disagreed about (no-op click, denied place) — how a client whose
-        // replica lied (ghost block, stale cell) reconciles. A shared delta
-        // for the same cell already carries the truth.
         for pos in std::mem::take(&mut self.sessions[s].replication.pending_corrective_cells) {
             if !self.sessions[s].transport.terrain.covers(pos)
                 || block_deltas.iter().any(|d| d.pos == pos)
@@ -219,8 +166,6 @@ impl ServerGame {
         update.push_list(block_deltas);
         update.push_list(block_draws);
         update.push_list(cell_kv_deltas);
-        // Refcount bumps plus index lists, not deep copies: see
-        // `TickSection::Mobs`.
         if !entities.mobs.is_empty() {
             update.push(entities.mobs.clone());
         }
@@ -253,11 +198,6 @@ impl ServerGame {
         update
     }
 
-    /// The window's world events session `s` can perceive (see
-    /// [`event_scope`]), led by the loops that just came within its earshot
-    /// and trailed by stops for the ones that left it. Echo rule: the
-    /// initiator already presented its own place/break locally, so matching
-    /// events are stripped from ITS list only.
     fn scoped_world_events(&mut self, s: usize, feeds: &WindowFeeds) -> Vec<WorldEventMsg> {
         let view_cap = self.world.data().render_dist;
         let sess = &mut self.sessions[s];
@@ -303,20 +243,13 @@ impl ServerGame {
         out
     }
 
-    /// Session `s`'s per-tick one-shots: the lossy `PlayerTickEvents` slice
-    /// plus the session's screen-request outbox (taken here — the request
-    /// fields are internal; the client only sees `OpenScreen`).
     fn build_self_events(&mut self, s: usize, events: &TickEvents) -> SelfEvents {
         let p = events.player_at(s);
         let sess = &mut self.sessions[s];
         let id = sess.id;
-        // Take every request so nothing lingers; the tick can only set one of
-        // them (one consumed click per tick), so first-Some is the open.
         let gui = sess.replication.request_open_gui.take();
         let sleep = std::mem::take(&mut sess.replication.request_open_sleep);
         let open_screen = if let Some((kind, anchor)) = gui {
-            // The wire speaks kind KEYS (GuiKind ids are process-local) — one
-            // lane for engine containers and mod GUIs alike.
             petramond_world::gui_state::kind_key(kind).map(|kind_key| OpenScreen::Gui {
                 kind_key: kind_key.to_string(),
                 anchor,
@@ -326,10 +259,6 @@ impl ServerGame {
         } else {
             None
         };
-        // The hand one-shots (broke/placed/swung/threw/used/interacted) are
-        // deliberately absent: the recipient initiated them and animated at
-        // click time echo rule. Observers
-        // get them via the shared `player_actions` rows.
         SelfEvents {
             animator_events: p.animator_events.clone(),
             picked_up_item: p.picked_up_item,
@@ -343,8 +272,6 @@ impl ServerGame {
             toggled_panel: p.toggled_panel,
             used_unpredicted: p.used_unpredicted,
             used_unpredicted_off: p.used_unpredicted && p.click_off_hand,
-            // Addressed by player id rather than by session index: a mod names
-            // the recipient it means, and the queue is shared across sessions.
             client_events: events
                 .client_events
                 .iter()
@@ -357,9 +284,6 @@ impl ServerGame {
         }
     }
 
-    /// Session `s`'s own replicated state. The full inventory rides only when
-    /// its revision moved since the last state this session was sent (always
-    /// on the first update after join).
     pub fn build_self_state(&mut self, s: usize) -> SelfState {
         let sleeping = self.sleep_progress01(s).map(|p| (p * 255.0).round() as u8);
         let sleep_bed = self.sleep_bed_base(s);
@@ -390,8 +314,6 @@ impl ServerGame {
                 !crate::server::movement::claim_within_drift(spectator, gap, player.pos - r.pos)
                     || (player.vel - r.vel).length()
                         > crate::server::movement::vel_correction_eps(gap)
-                    // Yaw/pitch never extrapolate (ticks don't turn the
-                    // head), so any difference is a genuine server-side set.
                     || player.yaw != r.yaw
                     || player.pitch != r.pitch
             }
@@ -444,9 +366,6 @@ impl ServerGame {
                 .is_some_and(|eat| eat.hand == petramond_world::inventory::Hand::Off),
             sleeping,
             sleep_bed,
-            // Only the half the recipient cannot work out for itself: it folds
-            // the engine's own claim from its own effect list, mode and menu,
-            // so sending that half too would double it.
             move_scale: player
                 .claims
                 .replicated_attribute(mod_api::PlayerAttribute::MoveSpeed),
@@ -458,12 +377,6 @@ impl ServerGame {
         }
     }
 
-    /// Session `s`'s menu-session view when it changed since the last sync
-    /// this session was sent (`None` = unchanged). The base message compares
-    /// by value (its `gui_state` field is held `None` for the compare); the
-    /// state map compares by `Arc` identity — holding the shipped `Arc` in
-    /// `last_sent_gui_state` forces the next tick-side write to copy-on-write
-    /// onto a fresh allocation, which is what makes identity sound here.
     pub fn build_menu_sync(&mut self, s: usize) -> Option<crate::net::protocol::MenuSyncMsg> {
         use crate::net::protocol::{GuiValueWire, MenuTargetWire};
 
@@ -474,11 +387,6 @@ impl ServerGame {
             .is_some_and(|kind| kind.is_registered())
             .then(|| self.gui_state_for_menu_sync(s, target));
         let sess = &mut self.sessions[s];
-        // Pointer identity first (the no-publish fast path), then VALUE
-        // equality: a machine that re-publishes identical readings every tick
-        // (the anvil's ~20 keys, every gauge) forces `Arc::make_mut` onto a
-        // fresh allocation each time — ptr inequality alone re-shipped the
-        // whole map 20×/s per viewer for zero information.
         let gui_changed = match (&gui_arc, &sess.replication.last_sent_gui_state) {
             (None, None) => false,
             (Some(a), Some(b)) => !std::sync::Arc::ptr_eq(a, b) && **a != **b,
@@ -540,10 +448,6 @@ impl ServerGame {
     }
 }
 
-/// Drain one tick window's world-anchored event queues into the wire batch
-/// every recipient shares. Order: block/door/chest/pickup events first (they
-/// key presentation state seeds), then the sound queues, each in emission
-/// order.
 pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
     let mut out = Vec::new();
     for ev in world.block_broken.drain(..) {
@@ -654,7 +558,6 @@ pub fn wire_world_events(world: &mut WorldEvents) -> Vec<WorldEventMsg> {
     out
 }
 
-/// A body's replicated condition stages: `(condition id, stage)` in id order.
 pub(super) fn condition_stages(
     conditions: &petramond_world::condition::BodyConditions,
 ) -> Vec<(u8, u8)> {
@@ -669,9 +572,6 @@ pub(super) fn condition_stages(
 mod tests {
     use super::Broadcast;
 
-    /// The environment ships in full on the first window, then only when it
-    /// changed — and a joining session's reseed forces the next window to
-    /// carry it again even though nothing changed.
     #[test]
     fn env_ships_on_change_and_after_a_reseed() {
         let mut broadcast = Broadcast::default();
@@ -692,7 +592,6 @@ mod tests {
         );
     }
 
-    /// Once shipped, a window carries only the params whose values moved.
     #[test]
     fn env_ships_only_the_changed_params() {
         let mut broadcast = Broadcast::default();

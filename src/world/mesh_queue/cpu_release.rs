@@ -5,13 +5,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use super::{MESH_RELEASE_DELAY_FRAMES, MESH_RELEASE_SWEEP_INTERVAL};
 
 impl ReplicaWorld {
-    /// Release the CPU mesh buffers of columns that have been upload-quiet for
-    /// [`MESH_RELEASE_DELAY_FRAMES`] (stamped by `mark_column_uploaded`). The CPU
-    /// copy only exists so a column repack can re-pack sibling sections; once a
-    /// column settles, the copy is dead weight (~30–60 KB per meshed section) and
-    /// a later repack forces a remesh of the released sections instead
-    /// (`repack_forced`). Releasing never touches the GPU buffers, so a wrong
-    /// "settled" verdict costs remesh work, never visible terrain.
     pub(super) fn release_settled_column_meshes(&mut self) {
         if !self
             .side
@@ -46,8 +39,6 @@ impl ReplicaWorld {
                 continue;
             }
             self.side.terrain.mesh_release_after.remove(&pos);
-            // Still has upload or remesh work pending: skip. The eventual upload
-            // re-stamps the column via `mark_column_uploaded`.
             if self.side.terrain.mesh_upload_dirty_columns.contains(&pos) {
                 continue;
             }

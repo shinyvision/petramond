@@ -1,7 +1,3 @@
-//! A client mod's document talks to its owner: focus moved on request, the
-//! engine's pause menu opened over it and resumed back to it, and hover /
-//! list-range state reported once per change.
-
 use super::app;
 use mod_api::{ClientUiEvent, HostCall, HostRet};
 use petramond_input::keycode::KeyCode;

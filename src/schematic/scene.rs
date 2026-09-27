@@ -7,7 +7,6 @@ use petramond_world::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-/// An isolated section snapshot, including the active pack's baked shapes.
 pub struct Scene {
     pub size: [i32; 3],
     pub origin: IVec3,
@@ -16,10 +15,6 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// A scene of explicit cells at scene-local positions (`origin` + the
-    /// cell's local position), baked like a whole-design preview. Used for one
-    /// piece of a larger ghost: the cells a piece shows plus its bordering
-    /// cells, so shared faces cull.
     pub fn from_cells(
         size: [i32; 3],
         cells: Vec<(IVec3, ResolvedCell)>,

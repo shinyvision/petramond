@@ -2,7 +2,6 @@ use super::*;
 use crate::doc::Document;
 use crate::layout::LayoutEnv;
 
-/// The palette every manifest must define, as JSON.
 const PALETTE: &str = r##""palette": { "text": "#E8EDF2", "text_muted": "#9AA7B4",
     "text_disabled": "#5E6B78", "selection": "#3E6FD9" }"##;
 
@@ -79,7 +78,6 @@ fn shipped_font_bytes() -> Vec<u8> {
     .expect("shipped font is vendored")
 }
 
-/// A theme whose font is the shipped face, loaded like the game does.
 fn shipped_font_theme() -> Theme {
     let json = format!(
         r#"{{ "format": 1, "atlas": "kit.png", {PALETTE},
@@ -95,9 +93,6 @@ fn shipped_font_theme() -> Theme {
     .expect("theme with the shipped font loads")
 }
 
-/// Measurement belongs to the theme, not the process: two themes with
-/// different fonts coexist, and each one's tab widths (the hit-test
-/// geometry) follow the font that same theme paints with.
 #[test]
 fn two_themes_measure_with_their_own_fonts() {
     let real = shipped_font_theme();
@@ -122,8 +117,6 @@ fn two_themes_measure_with_their_own_fonts() {
     );
 }
 
-/// Coverage is manifest data: a primary limited to ASCII plus a fallback
-/// face for the accents yields one font covering both.
 #[test]
 fn theme_font_ranges_and_fallback_faces_come_from_the_manifest() {
     let json = format!(
@@ -165,7 +158,6 @@ fn theme_json_parses_shorthand_and_state_parts() {
         },
         "metrics": { "slot": 20 }
     }"##;
-    // 1x1 transparent png.
     let png = {
         let img = image::RgbaImage::new(4, 4);
         let mut bytes = std::io::Cursor::new(Vec::new());
@@ -190,8 +182,6 @@ fn theme_json_parses_shorthand_and_state_parts() {
         [1.0, 0.0, 1.0, 1.0],
         "missing key is loud magenta"
     );
-    // Font defaults to the builtin table, and the uploaded atlas is the
-    // one built from the font that measures.
     assert_eq!(t.font_atlas().size, t.ui_font().atlas_size());
 }
 
@@ -272,9 +262,6 @@ fn png_of(w: u32, h: u32) -> Vec<u8> {
     bytes.into_inner()
 }
 
-/// A pack overlay adds and replaces parts by key on its own atlas page,
-/// extends the palette and overrides single metrics, while the base keeps
-/// everything the overlay leaves alone.
 #[test]
 fn an_overlay_layer_composes_over_the_base_kit() {
     let base = format!(
@@ -340,9 +327,6 @@ fn an_overlay_layer_composes_over_the_base_kit() {
     );
 }
 
-/// Typos in a manifest are errors that name the offending key, not silent
-/// no-ops: an unknown field, an unknown face state, a missing required
-/// palette entry and a label colour that resolves to nothing.
 #[test]
 fn manifest_mistakes_are_load_errors() {
     let png = tiny_png();

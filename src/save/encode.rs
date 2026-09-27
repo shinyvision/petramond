@@ -1,12 +1,3 @@
-//! Section snapshots on their way to becoming region records.
-//!
-//! Deflating a section is the expensive half of a save, so it starts on the
-//! shared job pool the moment a save is queued, one job per region group,
-//! and the writer only collects the finished bytes. A group whose job has
-//! not started by the time the writer reaches it is encoded by the writer
-//! itself: a busy pool delays nothing, and a pool that dropped the job
-//! (shut down, or none attached) loses nothing.
-
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use petramond_world::chunk::SectionPos;
@@ -14,7 +5,6 @@ use petramond_world::chunk::SectionPos;
 use super::codec::{self, SectionSnapshot};
 use super::palette::Palette;
 
-/// Where a group's encoding stands.
 enum State {
     Pending(Vec<SectionSnapshot>),
     Encoding,
@@ -27,8 +17,6 @@ struct Shared {
     done: Condvar,
 }
 
-/// One group of snapshots, shared by the pool job that encodes it and the
-/// writer that takes the records.
 #[derive(Clone)]
 pub(super) struct EncodeSlot(Arc<Shared>);
 
@@ -44,7 +32,6 @@ impl EncodeSlot {
         self.0.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Encode the group unless someone already started it.
     pub(super) fn encode(&self, pal: &Palette) {
         let snaps = {
             let mut state = self.lock();
@@ -56,8 +43,6 @@ impl EncodeSlot {
                 }
             }
         };
-        // An unwinding encoder hands the snapshots back, so the writer
-        // encodes them itself instead of waiting forever.
         let mut restore = Restore {
             slot: self,
             snaps: Some(snaps),
@@ -74,8 +59,6 @@ impl EncodeSlot {
         self.0.done.notify_all();
     }
 
-    /// The encoded records: encoded here if nobody started, else waited
-    /// for. Taken once, by the writer.
     pub(super) fn take(&self, pal: &Palette) -> Vec<(SectionPos, Vec<u8>)> {
         self.encode(pal);
         let mut state = self.lock();
@@ -91,7 +74,6 @@ impl EncodeSlot {
                         .unwrap_or_else(PoisonError::into_inner);
                 }
                 pending @ State::Pending(_) => {
-                    // The job unwound and handed its snapshots back.
                     *state = pending;
                     drop(state);
                     self.encode(pal);

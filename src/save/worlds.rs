@@ -7,10 +7,7 @@ use petramond_util::paths::base_data_dir;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldInfo {
-    /// User-facing world name. New worlds persist this in `world.json`; old worlds
-    /// fall back to their save-directory name.
     pub name: String,
-    /// Directory name under `<data>/saves/`, after path sanitization.
     pub dir_name: String,
     pub has_level: bool,
 }
@@ -19,21 +16,14 @@ fn saves_dir() -> PathBuf {
     base_data_dir().join("saves")
 }
 
-/// Directory for a named world: `<data>/saves/<name>/`.
 pub fn world_dir(name: &str) -> PathBuf {
     saves_dir().join(sanitize(name))
 }
 
-/// The save-directory name a world NAME creates. Idempotent — a directory
-/// name maps to itself, so open paths can take either at creation time. A
-/// world's directory NEVER changes after creation (renames touch only the
-/// `world.json` display name), so worlds must always be OPENED by
-/// `WorldInfo::dir_name`, never by display name.
 pub fn dir_name_for(name: &str) -> String {
     sanitize(name)
 }
 
-/// Reduce a world name to a single safe path component.
 fn sanitize(name: &str) -> String {
     let s: String = name
         .chars()
@@ -52,16 +42,10 @@ fn sanitize(name: &str) -> String {
     }
 }
 
-/// The on-disk file for a player identity: `players/<hex key>.dat`. Players
-/// are keyed by their authenticated identity (`net::identity`), never by the
-/// display name they chose.
 pub(super) fn player_path(players_dir: &Path, key: &PlayerKey) -> PathBuf {
     players_dir.join(format!("{key}.dat"))
 }
 
-/// A pre-identity player file: `players/<sanitized name>.dat`. Only read once,
-/// to hand it to the first identity that claims the name
-/// (`WorldSave::adopt_legacy_player`).
 pub(super) fn legacy_player_path(players_dir: &Path, name: &str) -> PathBuf {
     players_dir.join(format!("{}.dat", sanitize(name)))
 }
@@ -124,10 +108,6 @@ pub fn list_worlds() -> std::io::Result<Vec<WorldInfo>> {
     Ok(worlds)
 }
 
-/// Rename a world's DISPLAY name (`world.json`); the save directory keeps its
-/// original name so nothing references a moved path. Client-mod data (minimap
-/// exploration, waypoints) keys on the DIRECTORY name too, so it follows a
-/// renamed world by construction — moving the directory would strand it.
 pub fn rename_world(dir_name: &str, new_name: &str) -> std::io::Result<()> {
     if !is_single_path_component(dir_name) {
         return Err(std::io::Error::other("invalid world directory name"));
@@ -151,9 +131,6 @@ pub fn delete_world(dir_name: &str) -> std::io::Result<()> {
     delete_world_at(&saves_dir(), dir_name)
 }
 
-/// Read a world's per-world settings by its save-directory name (the
-/// world-select / World Settings screens address worlds this way). An invalid
-/// or absent directory yields defaults (all mods enabled).
 pub fn read_world_settings(dir_name: &str) -> settings::WorldSettings {
     if !is_single_path_component(dir_name) {
         return settings::WorldSettings::default();
@@ -161,10 +138,6 @@ pub fn read_world_settings(dir_name: &str) -> settings::WorldSettings {
     settings::load(&saves_dir().join(dir_name))
 }
 
-/// The world's seed from `level.dat`, by save-directory name — `None` for a
-/// world that has never been opened, or one whose header this build cannot
-/// read (logged). Decodes only the header, so the World Settings screen shows
-/// it without opening the save.
 pub fn read_world_seed(dir_name: &str) -> Option<u32> {
     if !is_single_path_component(dir_name) {
         return None;
@@ -175,9 +148,6 @@ pub fn read_world_seed(dir_name: &str) -> Option<u32> {
         .ok()
 }
 
-/// Total bytes of the world's save directory (recursive walk; unreadable
-/// entries count 0). The World Settings screen runs this off-thread — region
-/// stores can hold many files.
 pub fn world_size_bytes(dir_name: &str) -> u64 {
     fn walk(dir: &Path) -> u64 {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -198,7 +168,6 @@ pub fn world_size_bytes(dir_name: &str) -> u64 {
     walk(&saves_dir().join(dir_name))
 }
 
-/// Write a world's per-world settings by its save-directory name.
 pub fn write_world_settings(
     dir_name: &str,
     settings: &settings::WorldSettings,
@@ -212,8 +181,6 @@ pub fn write_world_settings(
     settings::store(&saves_dir().join(dir_name), settings)
 }
 
-/// Write a new world's `mods.json` — the enabled set it is created with —
-/// so the first-sight rule has a baseline before its first save.
 pub fn write_world_mod_baseline(
     dir_name: &str,
     disabled: &std::collections::BTreeSet<String>,

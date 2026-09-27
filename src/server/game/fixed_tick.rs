@@ -4,9 +4,6 @@ use crate::events::{Attach, PostEvent, Stage};
 use super::ServerGame;
 
 impl ServerGame {
-    /// Run the fixed ticks `dt` banked (the frame clock caps catch-up so the
-    /// sim never spirals). Returns the events plus how many ticks actually
-    /// executed (the pump emits a replication batch only when > 0).
     pub fn run_fixed_ticks(&mut self, dt: f32) -> (TickEvents, u32) {
         let due = self.clock.due_ticks(dt);
         let mut events = self.mods.open_feed();
@@ -17,32 +14,17 @@ impl ServerGame {
         (events, due)
     }
 
-    /// One fixed game tick: world and entity mutation only. The hardwired engine
-    /// steps run in [`Stage`] order; between them the scheduler runs attached
-    /// systems and the post-event queue drains (see `end_stage`).
-    /// `pub` so tests can drive exactly one tick.
     pub fn game_tick_step(&mut self, events: &mut TickEvents) {
-        // Victim-owned i-frames advance before ANY source can deal damage,
-        // including mod actions queued at the previous drain point.
         self.tick_damage_immunity();
         self.settle_before_stages(events);
         self.player_stages(events);
         self.world_stages(events);
         self.pickup_stage(events);
-        // Player anchors for the entity stages, sampled here (after
-        // PlayerDamage teleports settle — same point the old single-player
-        // snapshot was taken).
         let anchors = self.player_anchors();
         self.entity_stages(&anchors, events);
     }
 
-    /// What queued between ticks settles before the first stage.
     fn settle_before_stages(&mut self, events: &mut TickEvents) {
-        // Post events queued from per-frame code since the last tick (section
-        // stream installs, container screens) dispatch first, before any stage:
-        // per-frame code only ever queues; handlers run on the tick. Mod
-        // actions still queued from the previous tick's final drain (or from
-        // mod_init) apply here first.
         super::stream_events::pump_stream_events(&mut self.world, &mut self.mods);
         self.publish_dismounted();
         self.apply_deferred_actions(events);
@@ -51,26 +33,14 @@ impl ServerGame {
         self.drain_post_events(events);
     }
 
-    /// The per-player stages, mining through player damage.
     fn player_stages(&mut self, events: &mut TickEvents) {
-        // Keep action intent before world/entity simulation so inputs resolve
-        // on the tick. Per-player stages loop the sessions in id order INSIDE
-        // the stage, so the mod seams (`begin_stage`/`end_stage`) still run
-        // once per stage per tick. The published input snapshots (the
-        // `PlayerInput` HostCall's read model) capture the same intents the
-        // movement integration consumes.
         self.publish_player_inputs();
-        // The engine re-states its own body claims before anything reads them:
-        // movement takes the speed on the very next line, and the action stages
-        // below ask the barred set. Idempotent, so there is no edge to miss.
         for s in 0..self.sessions.len() {
             let gameplay = self.sessions[s].input.intent_gameplay;
             self.sessions[s].player.refresh_engine_claims(gameplay);
         }
         crate::server::movement::tick_movements(&self.world, &mut self.sessions);
 
-        // Each session's share of a stage runs isolated: a panic in it kicks
-        // that session instead of ending the world (see `isolation`).
         self.begin_stage(Stage::Mining, events);
         self.for_each_session("mining", events, |server, s, events| {
             server.tick_mining(s, events);
@@ -109,29 +79,17 @@ impl ServerGame {
             server.tick_fall_damage(s, events);
             server.tick_player_exposure(s, events);
             server.tick_fluid_splash(s, events);
-            // Status effects ride the same stage: they are pure player-state
-            // steps (regen heals, durations count down) on the tick, after damage
-            // so a same-tick hit lands before the heal.
             server.sessions[s].tick_effects();
-            // Sleeping and respawn ride the same stage: both are pure player-state
-            // transitions (teleport, health restore, time skip) on the tick.
             server.tick_bed_and_respawn(s, events);
         });
-        // Sleep completion is a cross-player decision (everyone must sleep),
-        // resolved once after every session advanced its own timer.
         self.resolve_sleep_completion(events);
         self.end_stage(Stage::PlayerDamage, events);
     }
 
-    /// The world's own tick and the breaks it causes.
     fn world_stages(&mut self, events: &mut TickEvents) {
-        // World::game_tick's internal order (scheduled → block updates → furnaces
-        // → random ticks) is its own sealed contract; the stage wraps it whole.
         self.begin_stage(Stage::WorldScheduled, events);
         self.world.game_tick(self.catalog.recipes());
         self.dispatch_block_hooks(events);
-        // Re-bake any custom-shape cells placed/edited this tick so their
-        // collision is ready for the next tick's physics (see `ModHost::bake_custom_shapes`).
         self.bake_dirty_custom_shapes(events);
         self.end_stage(Stage::WorldScheduled, events);
 
@@ -140,12 +98,8 @@ impl ServerGame {
         self.end_stage(Stage::NaturalBreaks, events);
     }
 
-    /// Dropped items merge and age, then each player vacuums eligible drops.
     fn pickup_stage(&mut self, events: &mut TickEvents) {
         self.begin_stage(Stage::Pickup, events);
-        // Nearby compatible stacks merge on a slow cadence (piles collapse;
-        // see `DroppedItems::merge_nearby`) before the lifetime pass ages
-        // them; each player then vacuums eligible drops in session-id order.
         if self
             .world
             .current_tick()
@@ -154,9 +108,6 @@ impl ServerGame {
             self.world.dropped_items_mut().merge_nearby();
         }
         self.world.tick_item_lifetime();
-        // Reservations are per-requester: release any whose owner is gone or
-        // dead (their pickup pass no longer runs to re-evaluate it), so the
-        // drop returns to the pool this tick instead of staying claimed.
         {
             let sessions = &self.sessions;
             self.world
@@ -170,7 +121,6 @@ impl ServerGame {
         self.for_each_session("pickup", events, |server, s, events| {
             if server.item_pickup_tick(s) {
                 events.player(s).picked_up_item = true;
-                // Every observer hears the pickup at the collector's body.
                 events.world.item_picked_up.push((
                     server.sessions[s].player.body_center(),
                     server.sessions[s].id,
@@ -180,16 +130,12 @@ impl ServerGame {
         self.end_stage(Stage::Pickup, events);
     }
 
-    /// Every session as the entity stages see it.
     fn player_anchors(&self) -> Vec<crate::mob::PlayerAnchor> {
         self.sessions
             .iter()
             .map(|sess| crate::mob::PlayerAnchor {
                 id: sess.id,
                 pos: sess.player.body_center(),
-                // A mounted rider contributes no push body — its body sits
-                // inside the mount, and the soft push would shove the mount
-                // out from under its own rider every tick.
                 body: (!sess.player.is_spectator() && sess.sim.mount.is_none())
                     .then(|| sess.player.body()),
                 sneaking: sess.sneaking(),
@@ -200,18 +146,11 @@ impl ServerGame {
             .collect()
     }
 
-    /// The mob, item-physics and spawning stages, around the settled anchors.
     fn entity_stages(&mut self, anchors: &[crate::mob::PlayerAnchor], events: &mut TickEvents) {
-        // Passive natural spawning still centres on one anchor per tick, round-robin,
-        // so its per-tick attempt budget stays constant. Hostile spawning builds its
-        // own chunk/cap plan from every connected anchor below.
         let spawn_anchor = anchors
             .get((self.world.current_tick() as usize) % anchors.len().max(1))
             .map(|anchor| anchor.pos);
 
-        // Footstep noises for hearing-based mob AI, sampled from the same
-        // settled player state as the anchors (block-action noises were pushed
-        // by their own funnels during the earlier stages).
         crate::server::entities::push_player_step_noises(&mut self.world, &self.sessions);
 
         self.begin_stage(Stage::Mobs, events);
@@ -221,24 +160,12 @@ impl ServerGame {
         for splash in mob_events.splashes {
             self.push_fluid_splash(splash.pos, splash.fall, events);
         }
-        // Mob→player combat resolves right after the mobs moved: each strike runs
-        // through the engine-owned global i-frame + `player_damage_pre`
-        // pipeline, and an applied strike knocks the player back.
         self.apply_mob_attacks(mob_events.attacks, events);
-        // Riding shares the stage: dismount valves, detach publication,
-        // session-mirror consequences, and slaving every rider to its seat on
-        // the mounts' post-tick poses (see `server::riding`).
         self.tick_riding();
         self.end_stage(Stage::Mobs, events);
 
         self.begin_stage(Stage::ItemPhysics, events);
-        // The same anchors: the magnet pulls each requested drop toward ITS
-        // requester, and a flight sweeps the anchors' bodies for a strike.
         let step = self.world.tick_item_physics(TICK_DT, anchors);
-        // Row-declared dropped-item reactions (flour landing in water) return
-        // their presentation batch: one burst + sound per transformed ENTITY,
-        // routed onto the replicated world-event channels like any other
-        // positional one-shot.
         for fx in step.fx {
             if let Some(bundle) = fx.burst {
                 events
@@ -253,23 +180,15 @@ impl ServerGame {
                 });
             }
         }
-        // A flight's strike is dispatched the tick it lands, before anything
-        // downstream (spawning, the mobs' next move) can read a lodged or
-        // consumed projectile as still flying.
         self.resolve_item_impacts(step.impacts, events);
         self.end_stage(Stage::ItemPhysics, events);
 
         self.begin_stage(Stage::Spawning, events);
-        // One-time worldgen herds land as chunks near the round-robin player
-        // settle; the persisted populated set keeps that stock one-time.
         if let Some(anchor) = spawn_anchor {
             for (id, kind, pos) in self.world.populate_mobs_tick(anchor) {
                 self.mods.emit(PostEvent::MobSpawned { id, kind, pos });
             }
         }
-        // The passive trickle backfills on the slow creature cadence — one
-        // attempt per player per interval, not per tick, or killing animals
-        // becomes a respawn faucet.
         if self
             .world
             .current_tick()
@@ -282,19 +201,10 @@ impl ServerGame {
             }
         }
         self.tick_hostile_mob_spawns(anchors, events);
-        // Discovery is measured once per tick, after every stage that can put
-        // an item in a hand (pickup, craft, furnace/chest take, a mod's
-        // `GiveItem`), and inside the last stage so `item_obtained` drains at
-        // its boundary — a recipe a pickup unlocks is craftable this tick.
         crate::server::progression::detect_obtained_items(&mut self.sessions, &mut self.mods);
         self.end_stage(Stage::Spawning, events);
     }
 
-    /// Forward the behavior hooks the world tick queued on mod-behavior blocks
-    /// (see `block::behavior::wasm`) to their owning mods, inside the same
-    /// stage window as the world tick that fired them. The queue is drained
-    /// unconditionally so it never carries over between ticks. A block's own
-    /// tick belongs to no player: the hooks dispatch actor-less.
     fn dispatch_block_hooks(&mut self, events: &mut TickEvents) {
         let hooks = self.world.take_block_hooks();
         if hooks.is_empty() || !self.mods.host().has_block_behaviors() {
@@ -311,10 +221,6 @@ impl ServerGame {
         });
     }
 
-    /// Bake the SIM geometry of any custom-shape cells dirtied this tick
-    /// (placement, edits) so the physics reads real collision boxes next tick,
-    /// not the static fallback. Cheap-gated on there being pending bakes. The
-    /// bake is world work, dispatched actor-less.
     fn bake_dirty_custom_shapes(&mut self, events: &mut TickEvents) {
         if !self.world.data().has_pending_custom_bakes() {
             return;
@@ -351,7 +257,6 @@ impl ServerGame {
         'attempts: for attempt in 0..crate::mob::HOSTILE_SPAWN_ATTEMPTS {
             let sites = crate::mob::hostile_attempt_sites(&self.world, &plan, attempt);
             for site in sites {
-                // A spawn pick belongs to no player: actor-less.
                 let kind = {
                     let Self {
                         world,
@@ -381,9 +286,6 @@ impl ServerGame {
         }
     }
 
-    /// Run the systems attached at `at` — the mod seam. A stage seam belongs
-    /// to no player: systems run actor-less and reach every connected
-    /// session by id.
     fn run_systems(&mut self, at: Attach, events: &mut TickEvents) {
         let Self {
             world,
@@ -394,21 +296,11 @@ impl ServerGame {
         mods.run_systems(at, world, sessions, events);
     }
 
-    /// Open a stage: run its `Before` systems, then apply any mod actions they
-    /// queued (`DamagePlayer`/`DamageMob`/... — see `apply_deferred_actions`) BEFORE
-    /// the engine step runs, so mob indices captured by those systems cannot be
-    /// shifted by the step in between.
     fn begin_stage(&mut self, stage: Stage, events: &mut TickEvents) {
         self.run_systems(Attach::Before(stage), events);
         self.apply_deferred_actions(events);
     }
 
-    /// Close a stage: run its `After` systems, apply the mod actions they (or
-    /// the stage's inline pre-event handlers) queued, then drain the post
-    /// queue — so post events emitted by those actions (`player_damaged`,
-    /// `mob_died`) dispatch within the same tick, at the earliest defined
-    /// point. Actions queued by post handlers during the drain roll to the
-    /// next action point (next stage or next tick's start) — no recursion.
     fn end_stage(&mut self, stage: Stage, events: &mut TickEvents) {
         self.run_systems(Attach::After(stage), events);
         self.apply_deferred_actions(events);
@@ -416,7 +308,6 @@ impl ServerGame {
         self.drain_post_events(events);
     }
 
-    /// Drain the queued post events now, each dispatched for its own player.
     pub fn drain_post_events(&mut self, events: &mut TickEvents) {
         let Self {
             world,

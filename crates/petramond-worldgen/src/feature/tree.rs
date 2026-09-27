@@ -1,14 +1,3 @@
-//! Tree features.
-//!
-//! `TreeFeature` is the generic composition — one `TrunkPlacer` + one
-//! `FoliagePlacer` + materials + params — that expresses simple trees as pure
-//! data. `BlockyOakFeature` is the stylized oak: a thick trunk on a stepped
-//! buttress base, right-angle limbs, and a canopy of overlapping cuboid leaf
-//! pads. Its base, limbs and pads are spatially entangled, so it is its own
-//! `Feature` rather than a clean trunk/foliage split — mirroring how real
-//! engines model complex trees. It still reuses the shared `shapes`
-//! primitives and the same `FeatureCtx` predicates.
-
 use petramond_math::detmath;
 use petramond_world::block::Block;
 use petramond_world::mathh::IVec3;
@@ -25,8 +14,6 @@ mod posture;
 pub use oak::{BlockyOakFeature, TIP_FENCE};
 use posture::{connected_branch, connected_trunk, TrunkPosture};
 
-/// Generic single-trunk tree: trunk places + returns attach points, then
-/// foliage decorates them.
 pub struct TreeFeature {
     pub trunk: &'static dyn TrunkPlacer,
     pub foliage: &'static dyn FoliagePlacer,
@@ -57,8 +44,6 @@ impl Feature for TreeFeature {
     }
 }
 
-/// Draw a straight 3-D line of branch logs from `a` to `b` (== fancy-oak limbs).
-/// Uses `set_branch` so a limb may pass through already-placed leaves.
 fn log_line(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Block) {
     let n = (b.x - a.x)
         .abs()
@@ -74,10 +59,8 @@ fn log_line(ctx: &mut FeatureCtx, a: IVec3, b: IVec3, log: Block) {
     }
 }
 
-/// The four grid directions branches and roots walk in, in fixed order.
 const CARDINALS: [(i32, i32); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
 
-/// Rotate a cardinal direction a quarter turn.
 fn rotate(d: (i32, i32), clockwise: bool) -> (i32, i32) {
     if clockwise {
         (d.1, -d.0)
@@ -86,7 +69,6 @@ fn rotate(d: (i32, i32), clockwise: bool) -> (i32, i32) {
     }
 }
 
-/// Fisher-Yates shuffle on the tree's own RNG stream.
 fn shuffle<T>(items: &mut [T], rng: &mut FeatureRng) {
     for i in (1..items.len()).rev() {
         let j = rng.next_i32(0, i as i32) as usize;
@@ -94,51 +76,30 @@ fn shuffle<T>(items: &mut [T], rng: &mut FeatureRng) {
     }
 }
 
-/// Broadleaf skeleton with a bent trunk, rising forks and rounded crowns.
-/// The row controls posture and proportions; all decisions use the tree's
-/// positional stream. Crown displacement plus limb/clump reach must fit the
-/// replay margin. Radius-three clumps stay within the leaf support distance.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CanopyTreeFeature {
     pub log: Block,
     pub leaf: Block,
-    /// {min,max} trunk height (logs).
     pub height: (i32, i32),
-    /// Fraction of the trunk below the first limb (0.5 = limbs on the top half).
     pub split: f32,
-    /// Horizontal displacement of the crown from the rooted foot.
     pub lean: (i32, i32),
-    /// Limb-tip height relative to the top of the trunk.
     pub tip_height: (i32, i32),
-    /// {min,max} limb count.
     pub limbs: (i32, i32),
-    /// {min,max} horizontal limb reach in blocks.
     pub reach: (i32, i32),
-    /// {min,max} radius of each limb-tip leaf clump.
     pub tip_radius: (i32, i32),
-    /// Radius of the central crown clump over the trunk top.
     pub crown_radius: i32,
-    /// Corner-rounding chance for every clump (see `leaf_blob_rounded`).
     pub round: f32,
 }
 
-/// Golden angle (radians): successive limbs fan out evenly without aligning.
 const GOLDEN_ANGLE: f32 = 2.399_963_1;
 
-/// Shortest canopy trunk with a crown above its lowest fork.
 const CANOPY_MIN_HEIGHT: i32 = 5;
-/// Most limbs one crown can carry before forks overwrite each other.
 const CANOPY_MAX_LIMBS: i32 = 16;
-/// Leaf clump radii the decay flood can support from a clump's own wood.
 const CLUMP_RADIUS: (i32, i32) = (2, 3);
-/// Logs of clear trunk the lowest limb-tip clump must leave above the anchor.
 const CANOPY_MIN_STEM_CLEARANCE: i64 = 3;
 
 impl CanopyTreeFeature {
-    /// Every bound a row must respect: the replay margin (crown lean plus limb
-    /// and clump reach), the section reach above the anchor, leaf support and
-    /// a stem the crown cannot swallow.
     pub fn validate(&self) -> Result<(), String> {
         use crate::data::bounds::{ascending, unit, within};
         ascending("height", self.height, CANOPY_MIN_HEIGHT..=i32::MAX)?;
@@ -221,8 +182,6 @@ impl Feature for CanopyTreeFeature {
         }
         let crown = trunk_at(height - 1);
 
-        // Limbs fork off the upper trunk, evenly spaced with jitter, fanning by
-        // golden-angle steps from one random base angle.
         let limbs = sample_height(self.limbs, rng);
         let base_angle = rng.next_f32() * TAU;
         let span = (top - 1 - split_y).max(0);
@@ -232,8 +191,6 @@ impl Feature for CanopyTreeFeature {
             } else {
                 0.5
             };
-            // Vary crown height independently of the attachment node, keeping
-            // the foliage clustered while exposing the rising forks below.
             let node_y = (split_y + (span as f32 * t).round() as i32 + rng.next_i32(-1, 1))
                 .clamp(split_y, top - 1);
             let angle = base_angle + i as f32 * GOLDEN_ANGLE;
@@ -255,34 +212,24 @@ impl Feature for CanopyTreeFeature {
             shapes::leaf_blob_rounded(ctx, tip, tip_r, self.leaf, self.round, rng);
         }
 
-        // Rounded central crown over the trunk top ties the clumps together.
         shapes::leaf_blob_rounded(ctx, crown, self.crown_radius, self.leaf, self.round, rng);
     }
 }
 
-/// Huge redwood: a flared multi-block trunk that tapers upward, long upper limbs
-/// with leaf masses, and a narrow high crown. Materials are placeholders (oak
-/// log/leaf) until dedicated redwood assets exist.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RedwoodFeature {
     pub log: Block,
     pub leaf: Block,
-    /// {min,max} of the nominal total height H.
     pub height: (i32, i32),
 }
 
 pub const REDWOOD_BASE_SUPPORT_REACH: i32 = 5;
 
-/// How far a redwood's crown can rise above its nominal height: a top whorl
-/// tip (one above the spine, plus its jitter) under a radius-3 leaf blob.
 const REDWOOD_CROWN_OVERHANG: i32 = 4;
-/// Shortest nominal height the whorl layout is laid out for.
 const REDWOOD_MIN_HEIGHT: i32 = 12;
 
 impl RedwoodFeature {
-    /// A redwood's whole crown must stay within the tree reach the section
-    /// gates assume (`MAX_TREE_REACH_ABOVE`), or its top is silently clipped.
     pub fn validate(&self) -> Result<(), String> {
         crate::data::bounds::ascending(
             "height",
@@ -292,9 +239,6 @@ impl RedwoodFeature {
     }
 }
 
-/// Per-corner trim chance for the redwood whorl leaf masses — high enough that the
-/// small (r=2) clumps read as rounded blobs rather than the solid cubes a plain
-/// `leaf_blob` produces at that radius.
 const REDWOOD_CANOPY_ROUND: f32 = 0.7;
 
 fn disc_contains(dx: i32, dz: i32, radius: f32) -> bool {

@@ -1,8 +1,5 @@
 use petramond_world::biome::Biome;
 
-/// A generated block-region's final biome and top-solid surface data.
-///
-/// `surf` and `biomes` are row-major `(wx-x0) + (wz-z0)*w`.
 pub struct RegionCells {
     pub x0: i32,
     pub z0: i32,

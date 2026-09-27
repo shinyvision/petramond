@@ -20,8 +20,6 @@ const ALL_CHANNELS: [&str; 9] = [
     channels::SURFACE_DETECTION,
 ];
 
-/// Sampled points: a coarse lattice spanning continents, plus a fine patch
-/// (height detail) and the vertical span the density crosses zero in.
 fn sample_points() -> Vec<SamplePoint> {
     let mut points = Vec::new();
     for gx in -12..=12 {
@@ -40,9 +38,6 @@ fn sample_points() -> Vec<SamplePoint> {
     points
 }
 
-/// The shipped recipe is the imperative builder it replaced: every channel
-/// evaluates to the same bits at sampled points for several seeds, so moving
-/// the terrain recipe to data changed no generated block.
 #[test]
 fn shipped_recipe_evaluates_bit_identically_to_the_compiled_builder() {
     let recipe = parse_layers(&[&base()]).expect("shipped recipe loads");
@@ -72,8 +67,6 @@ fn shipped_recipe_evaluates_bit_identically_to_the_compiled_builder() {
     }
 }
 
-/// A pack layer replaces what it restates: one retuned node reshapes the
-/// terrain, a replaced channel reroutes it, and the fingerprint follows.
 #[test]
 fn a_pack_layer_retunes_the_recipe_by_name() {
     let base = base();
@@ -109,8 +102,6 @@ fn a_pack_layer_retunes_the_recipe_by_name() {
     );
 }
 
-/// The vocabulary refuses recipes it cannot build exactly instead of
-/// panicking later inside the graph.
 #[test]
 fn malformed_recipes_are_refused() {
     let base = base();
@@ -166,7 +157,6 @@ fn malformed_recipes_are_refused() {
     );
 }
 
-/// The test-only nodes of the graph are part of the data vocabulary too.
 #[test]
 fn the_whole_node_vocabulary_loads() {
     let extra = r#"{"nodes": {"surface_detection": {"range_select": {

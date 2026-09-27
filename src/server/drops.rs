@@ -9,23 +9,16 @@ use crate::events::tick::TickEvents;
 
 type RequestId = crate::net::protocol::ClientRequestId;
 
-/// The server's one seed sequence for everything it scatters or rolls —
-/// dropped-item pops, loot and drop-count rolls, melee damage rolls — so the
-/// sim stays deterministic without a clock: each draw is the next value.
 #[derive(Default)]
 pub struct DropSeeds(u32);
 
 impl DropSeeds {
-    /// The next seed in the sequence.
     pub fn draw(&mut self) -> u32 {
         self.0 = self.0.wrapping_add(1);
         self.0
     }
 }
 
-/// Each queued intent carries ITS OWN optional request id, so every predicted
-/// drop is individually answered — a shared per-session latch would orphan all
-/// but the last id queued in a tick window (leaking the client's ledger).
 #[derive(Clone, Debug, Default)]
 pub struct DropQueue {
     pending: Vec<(PendingDropAction, Option<RequestId>)>,
@@ -48,9 +41,6 @@ impl DropQueue {
             .push((PendingDropAction::Selected { slot, all }, id));
     }
 
-    /// Queue a cursor throw of the whole available stack or a single item per
-    /// `amount`. `false` when there is nothing throwable — the caller must
-    /// answer the request id itself.
     pub fn queue_cursor(
         &mut self,
         inventory: &Inventory,
@@ -107,11 +97,6 @@ impl DropQueue {
 }
 
 impl ServerGame {
-    /// Close-time cleanup for a cursor-held GUI stack: merge it back into matching
-    /// inventory stacks, then empty slots, and queue only any leftover to drop into
-    /// the world on the next tick. Cursor throws already queued by an outside-panel
-    /// click are reservations: closing the menu stashes only the unreserved remainder
-    /// so the fixed tick can still apply the user's throw.
     pub fn close_cursor_stack_for(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
         sess.sim
@@ -119,9 +104,6 @@ impl ServerGame {
             .close_cursor_stack(&mut sess.player.inventory);
     }
 
-    /// Apply queued drop intents on the tick: remove the item from the inventory/cursor
-    /// and spawn the matching dropped entity in the same fixed-tick phase, before item
-    /// physics gives fresh drops their first step.
     pub fn tick_drops(&mut self, s: usize, events: &mut TickEvents) {
         for (action, request_id) in self.sessions[s].sim.drop_queue.drain() {
             let stack = match action {
@@ -182,8 +164,6 @@ impl ServerGame {
         }
     }
 
-    /// Spawn `stack` as a thrown dropped item from the throwing player's eye,
-    /// along their view direction.
     fn spawn_thrown_item(&mut self, s: usize, stack: ItemStack) {
         let (eye, dir) = {
             let p = &self.sessions[s].player;

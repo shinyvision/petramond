@@ -1,30 +1,22 @@
 //! Batched cave point queries.
 //!
-//! A single point query builds a degenerate one-voxel lattice: 8 world-anchored
-//! corners, every field group the decision reads, for one answer. The mod ABI's
-//! positional queries (`TerrainSolidAt`, `UndergroundBiomeAt`) arrive in batches
-//! of hundreds, and where those cluster — column probes, section sweeps — paying
-//! eight corners per position re-samples the same corners over and over.
+//! One point query builds a one-voxel lattice: 8 world-anchored corners for a single answer. The
+//! mod ABI's positional queries (`TerrainSolidAt`, `UndergroundBiomeAt`) show up hundreds at a time
+//! and tend to cluster, so doing that per position samples the same corners again and again.
 //!
-//! So a batch is solved by RECURSIVE SUBDIVISION under a cost bound: a box whose
-//! lattice needs no more corners than the naive `8 × positions` is built once and
-//! shared; a box that would waste corners on empty space is split at its longest
-//! axis and each half re-judged. Dense batches collapse to one lattice; a batch
-//! of scattered singletons degenerates to exactly the per-point cost, never worse.
+//! We split a batch recursively instead. A box shares one lattice if that costs no more corners
+//! than the naive `8 × positions`; if not, it's cut at its longest axis and each half tries again.
+//! Dense batches end up as one lattice, and scattered points cost the same as before.
 //!
-//! Byte-identical by construction: lattice corners are anchored on `LATTICE_STEP`
-//! world coordinates, so the corner values a shared lattice carries at a position
-//! are exactly the ones its own one-voxel lattice would sample, and the one
-//! box-dependent filter in the build (dropping a chamber that contributes zero
-//! everywhere in the box) is value-neutral by contract.
+//! Output is byte-identical. Corners sit on `LATTICE_STEP`, so a shared lattice has the same corner
+//! values a one-voxel lattice would. Dropping a chamber that's zero everywhere in the box is the
+//! one box-dependent filter, and it's value-neutral by contract.
 
 use petramond_world::block::Block;
 
 use super::query_cache::QueryMemo;
 use super::{CaveCut, CaveField, Col, Fields, CAVE_MIN_Y, CAVE_SURFACE_BUFFER, LATTICE_STEP};
 
-/// Per-position work order for the carve batch: the decision's two cheap
-/// precomputed gates. Positions the gates already answered are not enqueued.
 struct Carve {
     idx: u32,
     gate: bool,
@@ -32,10 +24,7 @@ struct Carve {
 }
 
 impl CaveField {
-    /// [`CaveField::cave_carved`] over a batch of `(position, column surface)`
-    /// pairs, sharing one lattice per box the subdivision keeps.
     pub fn cave_carved_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<bool>) {
-        // Openness never depends on what fills a cell, so no pools are gathered.
         self.cut_batch(
             queries,
             false,
@@ -46,9 +35,6 @@ impl CaveField {
         );
     }
 
-    /// [`Self::cave_carved_batch`] answering WHAT each open cell holds:
-    /// `None` where the cave leaves rock, else air or the fluid a pool or an
-    /// aquifer puts there.
     pub fn cave_fill_batch(&self, queries: &[([i32; 3], i32)], out: &mut Vec<Option<u16>>) {
         let fill = |cut| match cut {
             CaveCut::Air => Some(Block::Air.id()),
@@ -70,9 +56,6 @@ impl CaveField {
         out.clear();
         out.resize(queries.len(), rock);
 
-        // Gates first, exactly as the point path orders them: they are exact,
-        // cheap, and they reject the overwhelming majority of positions without
-        // any lattice at all.
         let mut work: Vec<Carve> = Vec::new();
         for (i, ([_, y, _], surf_y)) in queries.iter().enumerate() {
             let (y, surf_y) = (*y, *surf_y);
@@ -110,9 +93,6 @@ impl CaveField {
                     };
                     let lat = self
                         .build_lattice_filtered(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], fields);
-                    // Column-major within the group: probes arrive as column scans,
-                    // and one cursor per column hoists the x/z interpolation out of
-                    // the run exactly as the batch carve's walk does.
                     group.sort_unstable_by_key(|w| {
                         let [x, y, z] = queries[w.idx as usize].0;
                         (x, z, y)
@@ -131,7 +111,6 @@ impl CaveField {
         });
     }
 
-    /// [`CaveField::underground_biome_at`] over a batch, same subdivision.
     pub fn underground_biome_at_batch(&self, positions: &[[i32; 3]], out: &mut Vec<u8>) {
         out.clear();
         out.resize(positions.len(), 0);
@@ -168,15 +147,12 @@ impl CaveField {
     }
 }
 
-/// Lattice corners an inclusive world box needs.
 fn corner_count(lo: [i32; 3], hi: [i32; 3]) -> u64 {
     (0..3)
         .map(|a| (hi[a].div_euclid(LATTICE_STEP) - lo[a].div_euclid(LATTICE_STEP) + 2) as u64)
         .product()
 }
 
-/// Split `items` until every group's shared lattice costs no more corners than
-/// solving its positions one at a time, then hand each group to `eval`.
 fn subdivide<T>(
     items: &mut [T],
     pos: impl Fn(&T) -> [i32; 3] + Copy,
@@ -190,8 +166,6 @@ fn subdivide<T>(
         eval(items, lo, hi);
         return;
     }
-    // Longest axis, halved on a lattice boundary so neither side inherits the
-    // other's corner column.
     let axis = (0..3).max_by_key(|&a| hi[a] - lo[a]).expect("three axes");
     let mid = (lo[axis] + (hi[axis] - lo[axis]) / 2).div_euclid(LATTICE_STEP) * LATTICE_STEP;
     let n = partition(items, |t| pos(t)[axis] < mid);
@@ -204,8 +178,6 @@ fn subdivide<T>(
     subdivide(b, pos, eval);
 }
 
-/// In-place stable-enough partition (order within a side is irrelevant — every
-/// answer is written back through the item's own index). Returns the pivot.
 fn partition<T>(items: &mut [T], pred: impl Fn(&T) -> bool) -> usize {
     let mut n = 0;
     for i in 0..items.len() {

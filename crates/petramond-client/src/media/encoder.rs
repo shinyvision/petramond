@@ -23,7 +23,6 @@ use std::time::Duration;
 use mod_api::{ClientMediaAudio, ClientMediaFailure, ClientMediaPhase, ClientMediaVideo};
 use petramond::modding::client::media::{MediaInput, MediaWork, ABORTED};
 
-/// What the mod asked the file to be.
 #[derive(Clone, Debug)]
 pub struct EncoderSpec {
     pub ffmpeg: PathBuf,
@@ -48,8 +47,6 @@ fn options(options: &[(String, String)]) -> impl Iterator<Item = String> + '_ {
 }
 
 impl EncoderSpec {
-    /// Pass one: raw RGBA frames on stdin, encoded video out. With no audio
-    /// this is the finished file, so the mod's container options go here.
     pub fn video_args(&self, video: &ClientMediaVideo, out: &Path) -> Vec<String> {
         let mut args = strings(&["-hide_banner", "-loglevel", "error", "-y"]);
         args.extend(strings(&["-f", "rawvideo", "-pix_fmt", "rgba"]));
@@ -72,8 +69,6 @@ impl EncoderSpec {
         args
     }
 
-    /// Pass two: the encoded video (when there is one) copied, the sample
-    /// sidecar encoded beside it.
     pub fn mux_args(
         &self,
         audio: &ClientMediaAudio,
@@ -118,10 +113,8 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-/// The ffmpeg process running now, where an abort can reach it.
 type ChildSlot = Arc<Mutex<Option<Child>>>;
 
-/// One ffmpeg process with its error output collected on the side.
 struct Running {
     child: ChildSlot,
     stderr: Option<JoinHandle<String>>,
@@ -161,8 +154,6 @@ impl Running {
         ))
     }
 
-    /// Wait for the process without holding its slot, so an abort can still
-    /// kill it. `Err` carries ffmpeg's own words.
     fn wait(mut self) -> Result<(), String> {
         let status = loop {
             let polled = match lock(&self.child).as_mut() {
@@ -194,8 +185,6 @@ impl Running {
 }
 
 impl Drop for Running {
-    /// A process an error left unwaited is stopped and reaped, never left a
-    /// zombie; one that was waited for is gone from its slot already.
     fn drop(&mut self) {
         if let Some(mut child) = lock(&self.child).take() {
             let _ = child.kill();
@@ -215,7 +204,6 @@ fn describe(status: ExitStatus, log: &str) -> String {
     }
 }
 
-/// A media file being written: its writer thread and the process it feeds.
 pub struct Encoder {
     input: Arc<MediaInput>,
     child: ChildSlot,
@@ -223,8 +211,6 @@ pub struct Encoder {
 }
 
 impl Encoder {
-    /// Start writing the file `input` names: the file is `Open` from here.
-    /// A failure to start is published as the file's failure.
     pub fn start(spec: EncoderSpec, input: Arc<MediaInput>) -> Self {
         let child: ChildSlot = Arc::default();
         input.set_phase(ClientMediaPhase::Open);
@@ -253,12 +239,10 @@ impl Encoder {
         }
     }
 
-    /// The writer has stopped: the file is finished or has failed.
     pub fn done(&self) -> bool {
         self.worker.as_ref().is_none_or(JoinHandle::is_finished)
     }
 
-    /// Stop the file now if nobody closed it: whoever would have is gone.
     pub fn abandon(&self) {
         if !self.input.closed() {
             self.input.abort();
@@ -269,7 +253,6 @@ impl Encoder {
         self.input.aborted()
     }
 
-    /// Stop the process now; the writer then removes every partial.
     pub fn kill(&self) {
         if let Some(child) = lock(&self.child).as_mut() {
             let _ = child.kill();
@@ -278,8 +261,6 @@ impl Encoder {
 }
 
 impl Drop for Encoder {
-    /// A closed file finishes even when the game quits under it; any other
-    /// stops now and leaves nothing.
     fn drop(&mut self) {
         if !self.input.closed() {
             self.input.abort();
@@ -328,7 +309,6 @@ impl Job {
         }
     }
 
-    /// Hand every frame and sample to its stream until the file is closed.
     fn write(&self, partials: &Partials) -> Result<(), String> {
         if let Some(parent) = partials.finished.parent() {
             std::fs::create_dir_all(parent)
@@ -416,7 +396,6 @@ impl Job {
         Ok(())
     }
 
-    /// Pass two when there is audio, then the finished file into place.
     fn finish(&self, partials: &Partials) -> Result<u64, String> {
         if let Some(audio) = &self.spec.audio {
             let video = self

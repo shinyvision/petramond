@@ -36,8 +36,6 @@ enum RawOutcome {
     Empty,
 }
 
-/// The reward catalog stage of every content registry. Stack bounds read item
-/// definitions, so this stage must run after the item table is built.
 pub(crate) static CATALOG: crate::content::Slot<Loot> = crate::content::Slot::new(
     crate::content::stage::LOOT,
     &[crate::content::stage::ITEMS],
@@ -50,12 +48,10 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<Loot, String> {
     })
 }
 
-/// The current registry's reward catalog.
 pub fn catalog() -> &'static Loot {
     CATALOG.current()
 }
 
-/// Shared parser for runtime catalogs, asset validation, and authoring tools.
 pub fn parse_layers(
     layers: &[&str],
     resolve: impl Fn(&str) -> Option<ItemType>,
@@ -157,7 +153,6 @@ fn budget(
                 Outcome::Item(..) => (1, 0),
                 Outcome::Empty => (0, 0),
             };
-            // Count visits as well as output: nested empty tables still cost work.
             worst = worst.max(cost + 1);
             height = height.max(below);
         }

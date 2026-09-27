@@ -28,7 +28,6 @@ pub(super) fn find(
     } else {
         petramond_worldgen::underground_biomes_at(world.data().seed, &candidates)
     };
-    // A positional start avoids always preferring the highest cave floor.
     let offset = splitmix((x as i64 as u64) ^ (z as i64 as u64).rotate_left(32)) as usize;
     for n in 0..candidates.len() {
         let at = offset.wrapping_add(n) % candidates.len();

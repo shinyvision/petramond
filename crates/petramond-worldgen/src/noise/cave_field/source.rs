@@ -1,6 +1,3 @@
-//! Completed lattice corners are positional facts, including excavation influence.
-//! Share them across workers; keep repeated reads within a batch local.
-
 use super::{CaveField, Fields};
 use crate::cache::local::{self, LocalTable};
 use crate::cache::GenContext;

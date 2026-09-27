@@ -1,5 +1,3 @@
-//! Session-stable registry answers the golem and the table read repeatedly.
-
 use crate::fx::HashMap;
 
 use crate::host::prelude::*;
@@ -26,7 +24,6 @@ impl Caches {
             .as_ref()
     }
 
-    /// A block row's facts by its registry name.
     pub fn block_named(&mut self, name: &str) -> Option<&BlockInfoData> {
         let id = *self
             .named
@@ -70,7 +67,6 @@ mod tests {
             Some(1.5)
         );
         assert!(caches.block_named("nobody:nothing").is_none());
-        // With the world gone, every answer already given comes from memory.
         drop(session);
         assert_eq!(caches.display_name("petramond:oak_planks"), "Oak Planks");
         assert_eq!(caches.block(STONE).map(|b| b.hardness), Some(1.5));

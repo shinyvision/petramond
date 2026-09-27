@@ -1,4 +1,3 @@
-//! Atomic file operations and cheap indexing for the cross-world schematic library.
 use super::{
     archive::{self, Header, Metadata, Thumbnail, HEADER_SIZE},
     Schematic,
@@ -20,7 +19,6 @@ pub fn directory() -> PathBuf {
     petramond_util::paths::base_data_dir().join("schematics")
 }
 
-/// Read only the fixed header and small metadata section. No cells or image decoding.
 pub fn inspect(path: &Path) -> Result<Entry, String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
     let (header, metadata) = index(&mut file)?;
@@ -99,8 +97,6 @@ pub fn save(dir: &Path, schematic: &Schematic, thumbnail: &[u8]) -> Result<PathB
     Ok(path)
 }
 
-/// Publish a complete archive without overwriting an existing file. Temporary files
-/// stay outside the library index, including when encoding or disk I/O fails.
 pub fn save_as(path: &Path, schematic: &Schematic, thumbnail: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Schematic path has no directory")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;

@@ -14,9 +14,6 @@ pub(super) enum Node {
     Max(NodeId, NodeId),
     Abs(NodeId),
     RidgeFold(NodeId),
-    /// Soft terracing of a height-domain input: steps of `step` blocks with a
-    /// twice-sharpened smoothstep riser (cliffy treads, no hard discontinuity
-    /// so the C1 lattice reconstruction stays artifact-free).
     Terrace {
         input: NodeId,
         step: f64,
@@ -173,7 +170,6 @@ impl ScalarGraph {
         self.evaluate_node_cached_inner(node, point, cache)
     }
 
-    /// Evaluate several roots at one point, sharing all common dependencies.
     pub fn evaluate_nodes_cached<const N: usize>(
         &self,
         nodes: [NodeId; N],
@@ -417,8 +413,6 @@ fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
     }
 }
 
-/// Terrace a height value into `step`-block treads: the riser is a smoothstep
-/// applied twice, so treads are near-flat with steep (but C1) risers.
 pub(super) fn terrace_value(height: f64, step: f64) -> f64 {
     let cell = (height / step).floor();
     let t = height / step - cell;

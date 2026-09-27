@@ -1,4 +1,3 @@
-/// Test helper: a kind's .bbmodel source read through the asset roots.
 fn model_bytes(kind: BlockModelKind) -> Vec<u8> {
     let file = def(kind).model_file;
     crate::assets::read_bytes(file)
@@ -72,10 +71,6 @@ fn workbench_compiles_with_geometry_and_texture() {
     assert_eq!(m.texture_rgba.len(), 128 * 128 * 4);
 }
 
-/// A face's authored `cullface` lands on the cube in `Face::ALL` slot order,
-/// holding the CULL direction's slot — the mesher's neighbour test key. The
-/// shared mob frontend never reads it, so a model without cullfaces compiles
-/// to all-`None`.
 #[test]
 fn cullfaces_compile_into_face_slots() {
     const SRC: &str = r##"{
@@ -97,7 +92,6 @@ fn cullfaces_compile_into_face_slots() {
     )
     .expect("compiles");
     assert_eq!(m.cubes.len(), 1);
-    // Face::ALL order: PosX, NegX, PosY(up)=2, NegY(down)=3, PosZ, NegZ(north)=5.
     assert_eq!(
         m.cubes[0].cull[2],
         Some(2),
@@ -118,8 +112,6 @@ fn cullfaces_compile_into_face_slots() {
 
 #[test]
 fn every_registered_model_compiles_with_geometry_and_texture() {
-    // A bad bbmodel export degrades to an EMPTY model at runtime (log +
-    // invisible), so a compile failure must be caught here instead.
     for &kind in all() {
         let m = BlockModel::compile(&model_bytes(kind))
             .unwrap_or_else(|e| panic!("{kind:?} fails to compile: {e}"));
@@ -243,14 +235,12 @@ fn thick_model_cubes_emit_all_faces_without_bias() {
 #[test]
 fn every_footprint_cell_is_covered_and_splits_the_cubes() {
     let inst = instance(WB);
-    // Each cube is assigned to exactly one cell (the split partitions geometry).
     let total: usize = inst.cells.iter().map(|c| c.cubes.len()).sum();
     assert_eq!(
         total,
         inst.cubes.len(),
         "every cube assigned to exactly one cell"
     );
-    // The lower cells (resting on the floor, full Z) are present and collide.
     for off in [[0, 0, 0], [1, 0, 0]] {
         let c = inst.cell(off).expect("floor cell present");
         assert!(!c.collision.is_empty(), "floor cell {off:?} collides");
@@ -284,16 +274,12 @@ fn footprint_geometry_fits_the_cell_box() {
 
 #[test]
 fn collision_is_the_multi_box_model_shape_not_one_coarse_box() {
-    // The fix: collision follows the actual cubes (several boxes per cell), so the
-    // workbench isn't one solid 2×2×1 block. The bottom cells (legs + body + top) get
-    // many boxes; the outline is the whole model's tight box across all cells.
     let inst = instance(WB);
     let floor = inst.cell([0, 0, 0]).expect("floor cell");
     assert!(
         floor.collision.len() > 1,
         "collision is multiple cube boxes, not one"
     );
-    // Outline spans the whole 2×2×1 footprint (one box hugging the model).
     assert!(
         inst.bounds_max[0] - inst.bounds_min[0] > 1.5,
         "outline spans ~2 cells wide"
@@ -306,8 +292,6 @@ fn collision_is_the_multi_box_model_shape_not_one_coarse_box() {
 
 #[test]
 fn a_pass_through_part_keeps_its_visuals_but_loses_its_collision() {
-    // A solid cube plus a decorative "water" cube that should render and
-    // contribute to bounds/selection but not to player collision.
     let solid = ModelCube {
         name: "solid".into(),
         from: Vec3::new(0.0, 0.0, 0.0),
@@ -360,12 +344,6 @@ fn a_pass_through_part_keeps_its_visuals_but_loses_its_collision() {
     assert_eq!(model.cubes.len(), 2, "water cube is still rendered");
 }
 
-/// A row that declares no OPTIONAL parts must bake exactly what it always did:
-/// only part-ungated segments, contiguous and covering every vertex/index in
-/// order (the cullface/blend split still applies — those segments stay
-/// gate-checked per placement, not per parts mask). Every shipped model is in
-/// that class, so this is the guard that per-instance parts did not quietly
-/// reshape the whole model stream.
 #[test]
 fn a_row_without_optional_parts_bakes_only_part_free_segments() {
     for &kind in all() {
@@ -414,20 +392,15 @@ fn a_row_without_optional_parts_bakes_only_part_free_segments() {
 
 #[test]
 fn display_poses_are_parsed_and_cached() {
-    // The workbench authors a full `display` block; the compile must capture the gui +
-    // first-person poses (so the icon/held item pose as designed) rather than identity.
     let m = BlockModel::compile(&model_bytes(WB)).expect("compiles");
     let gui = m.display.gui;
     let fp = m.display.firstperson_righthand;
-    // Non-identity rotations were authored for both contexts.
     assert_ne!(gui.rotation, [0.0; 3], "gui pose has an authored rotation");
     assert_ne!(
         fp.rotation, [0.0; 3],
         "first-person pose has an authored rotation"
     );
-    // The cached accessor returns the same parsed data.
     assert_eq!(display(WB).gui, gui);
-    // A finite pose matrix is produced for posing.
     assert!(fp
         .base_matrix()
         .to_cols_array()
@@ -435,9 +408,6 @@ fn display_poses_are_parsed_and_cached() {
         .all(|f| f.is_finite()));
 }
 
-/// The display euler must compose exactly as Blockbench/three.js 'XYZ' does
-/// (matrix `Rx·Ry·Rz`) — the convention the in-hand pose replication depends on.
-/// Single-axis mappings pin each axis's direction; the composed case pins the order.
 #[test]
 fn display_base_matrix_matches_blockbench_euler_convention() {
     let with_rot = |r: [f32; 3]| DisplayTransform {
@@ -445,20 +415,14 @@ fn display_base_matrix_matches_blockbench_euler_convention() {
         ..Default::default()
     };
     let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
-    // Ry(+90°): +X → −Z (yaw left, as in Blockbench's preview).
     let m = with_rot([0.0, 90.0, 0.0]).base_matrix();
     assert!(close(m.transform_vector3(Vec3::X), -Vec3::Z));
-    // Rx(+90°): +Y → +Z (pitch toward the viewer's side).
     let m = with_rot([90.0, 0.0, 0.0]).base_matrix();
     assert!(close(m.transform_vector3(Vec3::Y), Vec3::Z));
-    // Order Rx·Ry: +X goes through Ry first (→ −Z), then Rx (→ +Y).
     let m = with_rot([90.0, 90.0, 0.0]).base_matrix();
     assert!(close(m.transform_vector3(Vec3::X), Vec3::Y));
 }
 
-/// With a `rotation_pivot` authored, the pose must rotate ABOUT that point: the
-/// pivot itself only moves by the authored translation. Pins the Blockbench
-/// position-correction algorithm (`pos -= R·piv − piv`).
 #[test]
 fn display_base_matrix_rotates_about_the_authored_pivot() {
     let piv = Vec3::new(0.25, -0.5, 0.125);
@@ -476,9 +440,6 @@ fn display_base_matrix_rotates_about_the_authored_pivot() {
     );
 }
 
-/// `display_from_unit` must be a POSITIVE uniform rescale + translation — no
-/// rotation, no mirrored axis. Any flip smuggled in here (the historical 180°-yaw /
-/// mirrored-euler hand bugs) would silently mis-pose every held model again.
 #[test]
 fn display_from_unit_is_an_unmirrored_uniform_rescale() {
     let m = instance(WB).display_from_unit;
@@ -501,10 +462,6 @@ fn display_from_unit_is_an_unmirrored_uniform_rescale() {
     );
 }
 
-/// A real furniture model (legs meeting a top) bakes some self-occlusion, and
-/// every factor stays a valid shade multiplier — the invariant is "joint
-/// definition exists and can never invert or black out a face"; the darkening
-/// depth itself is a tuned constant and is not pinned.
 #[test]
 fn baked_self_ao_darkens_joints_and_stays_a_valid_multiplier() {
     let inst = instance(WB);
@@ -526,17 +483,8 @@ fn baked_self_ao_darkens_joints_and_stays_a_valid_multiplier() {
     );
 }
 
-/// 1x1 red PNG data URI, byte-fixed so the canonical source below never
-/// depends on a test-time PNG encoder (the golden pins the COMPILED output).
 const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
-/// The [`Model`](crate::bbmodel::Model) guard's `.llblock` twin: canonical
-/// compiled bytes pinned against `FORMAT_VERSION` (see
-/// `compiled_model_layout_change_requires_a_format_version_bump` in
-/// `bbmodel::tests` for the full rationale — a layout change shipped without a
-/// bump lets stale caches mis-decode into valid-but-garbage models). If this
-/// fails: bump `FORMAT_VERSION` in `impl CompiledAsset for BlockModel` and
-/// update GOLDEN_VERSION + GOLDEN_HEX together.
 #[test]
 fn compiled_block_model_layout_change_requires_a_format_version_bump() {
     const GOLDEN_VERSION: u32 = 13;
@@ -575,10 +523,6 @@ fn compiled_block_model_layout_change_requires_a_format_version_bump() {
     );
 }
 
-/// A hitbox cube is picked by its bounds — a ray meeting it counts whatever
-/// the texel under the crossing says — while an ordinary cube with the same
-/// geometry defers to the texel test, exactly as the renderer draws only
-/// opaque texels.
 #[test]
 fn a_hitbox_part_picks_by_bounds_where_bare_geometry_defers_to_its_texels() {
     let cube = |name: &str| ModelCube {
@@ -597,7 +541,6 @@ fn a_hitbox_part_picks_by_bounds_where_bare_geometry_defers_to_its_texels() {
             Vec3::new(0.0, -1.0, 0.0),
             std::slice::from_ref(&c),
             |cube, face, mn, mx, hit| {
-                // Every texel transparent: nothing but a hitbox can be hit.
                 super::query::pick_face_solid(
                     |name| part_role(roles, PartRole::Visible, name).picks_by_bounds(),
                     cube,

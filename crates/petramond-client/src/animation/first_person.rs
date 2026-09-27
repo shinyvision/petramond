@@ -1,17 +1,3 @@
-//! The first-person viewmodel's animation: the rigs catalog's viewmodel rig,
-//! its animator, and this frame's posed bones — what the renderer's hand
-//! pass bakes the arms and carried items from, and whose camera bone the
-//! world view wears.
-//!
-//! The driver feeds the animator: the body's motion and the two hands'
-//! frames become the graph's params and events, by name. Beside the shared
-//! body core ([`super::inputs`]) it publishes `speed forward
-//! strafe vertical grounded sneaking sprinting swimming climbing pitch
-//! yaw_rate pitch_rate stride stride_weight hurt target` (`target`: 0 nothing,
-//! 1 a block, 2 a creature), `impact` (the fall speed of the last landing),
-//! and the events `hurt jump land`. What a clip's markers fire is the
-//! graph's own `markers` table.
-
 use std::sync::Arc;
 
 use glam::Mat4;
@@ -45,7 +31,6 @@ const BODY: &[(&str, BodyInput)] = &[
     ("target", |m| m.target as u8 as f32),
 ];
 
-/// Upward speed (blocks per second) that reads as a jump rather than a step.
 const JUMP_SPEED: f32 = 3.0;
 
 impl BodyMotion for LocalMotion {
@@ -59,11 +44,7 @@ pub(crate) struct Driver {
     jump: Option<EventId>,
     land: Option<EventId>,
     impact: Option<ParamId>,
-    /// The last landing's fall speed, written every frame so a released
-    /// claim on `impact` uncovers it.
     impact_value: f32,
-    /// Grounded last frame (`None` before the first), and the fastest fall
-    /// since leaving the ground.
     grounded: Option<bool>,
     fall: f32,
 }
@@ -92,7 +73,6 @@ impl Driver {
         &self.body.animator
     }
 
-    /// One frame, `dt` seconds after the last.
     pub fn update(
         &mut self,
         frames: &[HeldItemFrame; 2],
@@ -132,8 +112,6 @@ impl Driver {
     }
 }
 
-/// The viewmodel rig's animator and this frame's posed bones (model space,
-/// rig pixels) — the pose array the renderer's hand pass consumes.
 pub struct FirstPersonAnimator {
     row: &'static Rig,
     bones: Vec<Mat4>,
@@ -141,8 +119,6 @@ pub struct FirstPersonAnimator {
 }
 
 impl FirstPersonAnimator {
-    /// The catalog's viewmodel rig and its animator; `None` when either
-    /// failed to load (the renderer then draws no hand either).
     pub fn shipped() -> Option<Self> {
         let (id, row) = rigs::presented(Presenter::Viewmodel)?;
         let graph = row.graph.as_ref()?;
@@ -156,16 +132,11 @@ impl FirstPersonAnimator {
         })
     }
 
-    /// Back to the rest pose with nothing playing: a stale pose must not
-    /// survive into the next world.
     pub fn reset(&mut self) {
         self.driver.reset();
         self.row.model.resolve_local_into(&[], &[], &mut self.bones);
     }
 
-    /// Advance the animator one frame, `dt` seconds after the last, and pose
-    /// the rig. `inputs` are the local player's resolved animator claims and
-    /// the graph events fired on it this frame; only this rig's apply here.
     pub fn advance(
         &mut self,
         frames: &[HeldItemFrame; 2],
@@ -180,7 +151,6 @@ impl FirstPersonAnimator {
             .resolve_into(&self.row.model, &mut self.bones);
     }
 
-    /// This frame's posed bones.
     pub fn bones(&self) -> &[Mat4] {
         &self.bones
     }

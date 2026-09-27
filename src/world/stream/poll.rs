@@ -25,18 +25,12 @@ const DRAIN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_micros(
 const DISK_DRAIN_MIN_PER_POLL: usize = 16;
 
 impl ServerWorld {
-    /// Install one column's shared gen data: set the per-column biome + an initial
-    /// bare-ground surface and sky-cover maps, then keep the `Arc` for driving
-    /// per-section jobs. Before features/player edits they are identical: the
-    /// analytical top is solid ground or filtering water.
     fn install_column_gen(&mut self, pos: ChunkPos, col: Arc<ColumnGen>) {
         {
             let column = self.data.ensure_column(pos);
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     column.set_biome(x, z, col.biome_at(x, z));
-                    // Submerged / floorless columns top out at the waterline; land cave
-                    // mouths use their post-cave top so skylight can enter shafts.
                     let surface = col.heightmap_surface_y(x, z);
                     column.set_surface_y(x, z, surface);
                     column.set_sky_cover_y(x, z, surface);
@@ -63,11 +57,6 @@ impl ServerWorld {
         }
     }
 
-    /// Swap `pos`'s retained `ColumnGen` for its slimmed clone once the column has
-    /// no in-flight section gen. In-flight jobs keep their full `Arc`; premature
-    /// slimming is safe (a later tree-band job rebuilds the windows), so this is a
-    /// memory policy, not a correctness gate.
-    ///
     fn slim_settled_column_gen(&mut self, pos: ChunkPos) {
         let Some(col) = self.side.gen.column_gen.get(&pos) else {
             return;
@@ -79,10 +68,6 @@ impl ServerWorld {
         self.side.gen.column_gen.insert(pos, slim);
     }
 
-    /// The anchor that wants column `pos` most (min priority key) — the target
-    /// a landed column's section window should be built around, so a column
-    /// streamed for a far player fills near THAT player's `cy`. The primary
-    /// target while single-anchor.
     fn best_target_for_column(&self, target: LoadTarget, pos: ChunkPos) -> LoadTarget {
         let mut best = target;
         let mut best_key = target.column_priority_key(pos);
@@ -96,9 +81,6 @@ impl ServerWorld {
         best
     }
 
-    /// Gate for buffering [`StreamEvent`]s in `poll`. Set each tick from event-bus
-    /// listener presence, so with no `section_*` handlers the streamer never
-    /// touches the buffer. Turning capture off drops anything already buffered.
     pub fn set_stream_event_capture(&mut self, on: bool) {
         if !on {
             self.side.stream_events.clear();
@@ -106,19 +88,11 @@ impl ServerWorld {
         self.side.stream_events_enabled = on;
     }
 
-    /// Drain the section stream events buffered by `poll` since the last take.
     pub fn take_stream_events(&mut self) -> Vec<StreamEvent> {
         std::mem::take(&mut self.side.stream_events)
     }
 
-    /// Poll the worker and the save thread, then ingest: install each landed column's
-    /// shared data (and kick off its per-section jobs), install generated sections,
-    /// overlay any player-modified sections read from disk, and queue the affected
-    /// sections for column-map refresh + light + mesh. Returns the number of
-    /// columns whose shared data was installed this call.
     pub fn poll(&mut self) -> usize {
-        // Any change to what is loaded / stream-final re-keys the per-connection
-        // terrain senders (their wanted-vs-sent rescan gates on this).
         let before = self.stream_finality_fingerprint();
         let new_columns = self.poll_inner();
         if self.stream_finality_fingerprint() != before {
@@ -127,9 +101,6 @@ impl ServerWorld {
         new_columns
     }
 
-    /// The cheap "did loaded/in-flight content change?" probe `poll` brackets
-    /// itself with. Within one poll, installs only grow `sections` and every
-    /// finality transition shrinks an in-flight set, so length deltas suffice.
     fn stream_finality_fingerprint(&self) -> (usize, usize, usize, usize) {
         (
             self.data.sections.len(),
@@ -139,12 +110,6 @@ impl ServerWorld {
         )
     }
 
-    /// Budgeted drain shared by `poll_inner`'s worker/save pumps: pop and apply
-    /// results until the source runs dry, taking at least `min` per poll but
-    /// stopping once `budget` elapses — a big burst (e.g. a vertical move that
-    /// re-streams a whole disc layer) spreads its main-thread install/mark cost
-    /// over a few frames instead of one giant spike, and the rest stays buffered
-    /// at the source for the next poll.
     fn drain_budgeted<T>(
         &mut self,
         min: usize,
@@ -173,11 +138,8 @@ impl ServerWorld {
         let mut ingested: Vec<SectionPos> = Vec::new();
         let mut ingested_set: FxHashSet<SectionPos> = FxHashSet::default();
         let mut heightmap_recompute: FxHashSet<ChunkPos> = FxHashSet::default();
-        // The freshly GENERATED subset of `ingested` (disk loads are tracked
-        // separately) — these invalidate their neighbourhood's light in step 6.
         let mut gen_ingested: FxHashSet<SectionPos> = FxHashSet::default();
 
-        // 1. Drain worker outputs: column data, then the sections generated from it.
         self.drain_budgeted(
             GEN_DRAIN_MIN_PER_POLL,
             DRAIN_TIME_BUDGET,
@@ -195,14 +157,8 @@ impl ServerWorld {
                     new_columns += 1;
                     new_column_positions.push(pos);
                 }
-                // A panicked gen job: clear the pending flag so the position can be
-                // re-requested (or finally judged absent) instead of staying
-                // in-flight forever — which would both hide the terrain and freeze
-                // the sim guard around it.
                 GenOutput::ColumnFailed(pos) => {
                     w.side.gen.pending.remove(&pos);
-                    // No longer pending and not installed: the column is
-                    // missing again — let the scan re-find it.
                     w.data.missing_columns_settled = false;
                     w.data.deferred_recheck_needed = true;
                 }
@@ -212,9 +168,6 @@ impl ServerWorld {
                     w.side.gen.section_requests_unsettled = true;
                     w.queue_deferred_rechecks_around(sp);
                 }
-                // A hook is waiting on a fact another worker derives: run the
-                // job again at its priority. The section stays pending, so
-                // the streamer neither re-requests nor judges it absent.
                 GenOutput::SectionDeferred { sp, col, pending } => {
                     if !w.side.gen.pending_section_jobs.contains_key(&sp)
                         || !w.within_current_keep_radius(sp.chunk_pos())
@@ -260,10 +213,9 @@ impl ServerWorld {
             },
         );
 
-        // 1b. Column-gen cache answers ("Optimize explored terrain"): a hit
-        //     installs exactly like a generated column; a miss (corrupt record,
-        //     seed/version drift) hands the column to the worker — `pending`
-        //     stays set so the existing `GenOutput::Column` arm resolves it.
+        // 1b. Column-gen cache ("Optimize explored terrain"). Hit just installs like a
+        // generated column. Bad record or version mismatch: worker takes over, `pending`
+        // stays so `GenOutput::Column` still catches it.
         self.drain_budgeted(
             DISK_DRAIN_MIN_PER_POLL,
             DRAIN_TIME_BUDGET,
@@ -308,8 +260,6 @@ impl ServerWorld {
             },
         );
 
-        // 2. Newly-installed columns: submit their vertical window's section jobs now,
-        //    around whichever anchor wants each column most.
         for pos in new_column_positions {
             let best = self.best_target_for_column(target, pos);
             self.request_sections_for_column(pos, best);
@@ -328,8 +278,6 @@ impl ServerWorld {
             |w, loaded| {
                 let sp = loaded.pos;
                 let loaded_store = loaded.store;
-                // The save thread answered: the record is no longer in flight (whatever
-                // the answer), so the sim guard must not keep the section blocked.
                 w.side.gen.awaited_overlays.remove(&sp);
                 w.settle_stream_nonfinal(sp);
                 let disk_primary = w.side.gen.disk_primary_sections.remove(&sp);
@@ -361,9 +309,6 @@ impl ServerWorld {
                                 }
                             }
                         }
-                        // Missing, or unreadable (quarantined or write-protected by
-                        // the save). Overlay path: generation stands.
-                        // Disk-primary path: no base exists — generate it after all.
                         if disk_primary {
                             if let Some(col) = w.side.gen.column_gen.get(&sp.chunk_pos()).cloned() {
                                 let band_lo = *Self::surface_window_for_column(&col, 0).start();
@@ -385,7 +330,7 @@ impl ServerWorld {
                 };
                 if disk_primary {
                     if !w.side.gen.column_gen.contains_key(&sp.chunk_pos()) {
-                        return; // column evicted while the read was in flight
+                        return;
                     }
                     if !entities.is_empty() || !mobs.is_empty() {
                         if let Some(save) = w.side.save.as_mut() {
@@ -417,7 +362,6 @@ impl ServerWorld {
             },
         );
 
-        // 4. Overlay any buffered saved sections whose generated section is now installed.
         let overlaid = self.apply_pending_overlays();
         if self.side.stream_events_enabled {
             for sp in &overlaid {
@@ -431,12 +375,6 @@ impl ServerWorld {
             heightmap_recompute.insert(sp.chunk_pos());
         }
 
-        // Columns whose burst just finished (a section landed — generated,
-        // disk-primary, or overlaid — and nothing is pending for the column any
-        // more) retain only the slimmed ColumnGen: the ~15 KB tree windows are
-        // dead weight post-gen, and a rare late tree-band job rebuilds them
-        // locally (see worldgen::driver::FeatureWindows). This is also the
-        // column-gen cache capture point.
         let ingested_columns: FxHashSet<ChunkPos> =
             ingested.iter().map(|sp| sp.chunk_pos()).collect();
         for pos in &ingested_columns {
@@ -444,19 +382,12 @@ impl ServerWorld {
                 self.slim_settled_column_gen(*pos);
             }
         }
-        // Bound the column-cache buffer during long exploration flights between
-        // autosaves/unloads (each flush is one batched region write).
         if self.side.gen.pending_colgen_records.len() >= 128 {
             self.flush_pending_colgen_records();
         }
 
         if ingested.is_empty() {
-            // Deferred first-time sections can become ready without a fresh ingest
-            // (e.g. a target move re-shaped the wanted set), so always re-check.
             self.flush_settled_deferred_if_needed(target);
-            // Belt-and-suspenders single-anchor rescan; skipped once settled
-            // (the per-pump anchor update rescans whenever unsettled) and under
-            // multi-anchor streaming, where `update_load_multi` owns the scan.
             if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
                 self.request_missing_columns(target);
             }
@@ -464,17 +395,6 @@ impl ServerWorld {
             return new_columns;
         }
 
-        // 5. Derived sections can only raise the analytical bare maps with
-        // generated features. Authoritative records may have removed them, so
-        // only those columns pay for a full vertical rescan. Cover changes that
-        // escape normal ingest invalidation dirty their dependent vertical band:
-        // the planner's Full/Dark shortcut depends on the 2D map, not just the
-        // ingested section's 3×3×3.
-        // Each change carries whether it was raised purely by PERSISTED record
-        // content (disk-primary / overlay) — such changes spare sections still
-        // holding their untouched persisted bake (see
-        // `mark_sky_cover_light_dirty_around_many`), so reloading explored
-        // terrain re-queues no bakes.
         let mut sky_cover_changed: FxHashMap<ChunkPos, (SkyCoverChange, bool)> =
             FxHashMap::default();
         let note_change = |map: &mut FxHashMap<ChunkPos, (SkyCoverChange, bool)>,
@@ -492,9 +412,6 @@ impl ServerWorld {
             let cp = sp.chunk_pos();
             if !heightmap_recompute.contains(&cp) {
                 if let Some(change) = self.data.raise_column_heightmaps_from_section(sp) {
-                    // Step 6 already invalidates a generated section's 3x3x3.
-                    // Normal terrain/tree cover moves fit that band; only a
-                    // larger vertical jump needs this extra map-wide pass.
                     if change.escapes_section_neighborhood(sp) {
                         note_change(
                             &mut sky_cover_changed,
@@ -520,21 +437,6 @@ impl ServerWorld {
         }
         self.mark_sky_cover_light_dirty_around_many(sky_cover_changed);
 
-        // 6. Light + remesh the affected sections and their neighbours. Each ingested
-        //    section dirties its whole 3×3×3 (border face culling + light sampling), but
-        //    those neighbourhoods overlap massively for a contiguous batch — so collect the
-        //    UNIQUE affected set once and mark each section a single time, instead of
-        //    O(54 × ingested) redundant marks.
-        //
-        //    LIGHT INVALIDATION is keyed on how each section landed, by SOURCE.
-        //    Fresh GENERATION invalidates its 3×3×3: no persisted bake ever saw
-        //    this content. A saved OVERLAY invalidates too: its generated base
-        //    was transiently visible, and an in-flight bake may have read the
-        //    base. DISK-PRIMARY loads invalidate NOTHING — lit or not (fully
-        //    opaque records persist lightless by design), their content is
-        //    byte-exactly what every neighbouring record's persisted bake read
-        //    (records only persist with settled light) — this is what makes
-        //    persisted light load bake-free.
         let overlaid_set: FxHashSet<SectionPos> = overlaid.iter().copied().collect();
         let mut affected: Vec<SectionPos> = Vec::new();
         let mut seen: FxHashSet<SectionPos> = FxHashSet::default();
@@ -556,21 +458,12 @@ impl ServerWorld {
             }
         }
         for &sp in &affected {
-            // An all-air section (the sky band) produces no output. Its light
-            // still bakes below (cave pockets must read dark, and the server
-            // has no lazy mesh-gate bake).
             let no_mesh_output = self.section_produces_no_mesh(sp);
             let stale = light_stale.contains(&sp);
             if self.data.sections.contains_key(&sp) {
-                // Its FIRST bake (if its light is dirty at all) runs once, when
-                // the neighbourhood settles — not once per landing neighbour
-                // (the bulk of streaming's rebake churn came from eager
-                // marking here).
                 if stale {
                     self.mark_light_dirty_pos(sp);
                 }
-                // Unqueue any bake taken from the pre-landing neighbourhood so
-                // the settled re-request isn't dedup-dropped.
                 self.light_bakes.cancel(sp);
                 let needs_bake = self
                     .data
@@ -586,7 +479,6 @@ impl ServerWorld {
         self.data.deferred_rechecks.extend(affected.iter().copied());
         self.flush_settled_deferred_if_needed(target);
 
-        // 7. Kick generated/overlaid fluid that now has somewhere to flow.
         self.queue_loaded_section_fluid_updates(&ingested);
         if !self.data.missing_columns_settled && self.data.extra_load_targets.is_empty() {
             self.request_missing_columns(target);
@@ -595,14 +487,6 @@ impl ServerWorld {
         new_columns
     }
 
-    /// Whether the mob census is complete inside the spawn-relevant square around one
-    /// player. Natural spawning only needs the population near the player it is trying
-    /// to spawn around; unrelated far-edge streaming must not stop it.
-    ///
-    /// `radius` is Chebyshev chunk distance. The check intersects that square with the
-    /// player's streamable disc so render distances smaller than the census radius can
-    /// still become ready. Every column in that intersection must have landed, and no
-    /// saved section record in the square may still be awaiting or buffering its mobs.
     pub fn mob_census_loaded_around(&self, center: ChunkPos, radius: i32) -> bool {
         let radius = radius.max(0);
         let stream_radius = self.data.render_dist.max(0);
@@ -629,10 +513,6 @@ impl ServerWorld {
             && !self.side.gen.pending_overlays.keys().any(in_neighborhood)
     }
 
-    /// Overlay every buffered saved section whose generated section is present: replace
-    /// it with the saved blocks and restore its drops/mobs. Heightmap refresh is left to
-    /// the caller (`poll` recomputes every touched column once). Returns the overlaid
-    /// section positions.
     pub(super) fn apply_pending_overlays(&mut self) -> Vec<SectionPos> {
         let ready: Vec<SectionPos> = self
             .side
@@ -645,9 +525,6 @@ impl ServerWorld {
         for sp in &ready {
             let (section, entities, mobs) = self.side.gen.pending_overlays.remove(sp).unwrap();
             self.settle_stream_nonfinal(*sp);
-            // The record carried drops or mobs: remember that, so a later flush that finds
-            // the section free of them rewrites the record instead of leaving stale
-            // entities to resurrect (cross-session dupe).
             if !entities.is_empty() || !mobs.is_empty() {
                 if let Some(save) = self.side.save.as_mut() {
                     save.note_record_holds_entities(*sp);

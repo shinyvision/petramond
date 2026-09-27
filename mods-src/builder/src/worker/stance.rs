@@ -1,6 +1,3 @@
-//! Where the golem can stand to reach cells: footholds within its reach, the
-//! nearest few it can actually walk to.
-
 use crate::host::prelude::*;
 
 use super::route::{self, Hubs};
@@ -11,18 +8,11 @@ use crate::geometry::{feet_of, manhattan, offset, reaches};
 
 pub enum Search<T> {
     Found(T),
-    /// The route budget ran out this tick; ask again next tick.
     Busy,
     None,
-    /// Standing room in reach, but a line to the work from none of it: the
-    /// work is hidden behind what is already built.
     Unseen,
 }
 
-/// A reachable stance for working on `cells`. `off_top` keeps the stance
-/// from standing on the cells themselves (a dig would drop it).
-/// A stance is only ever one the golem can also walk home from, so a drop
-/// into a courtyard or a closed room never strands it.
 pub fn find(
     ctx: &mut Ctx,
     body: &Body,
@@ -51,9 +41,6 @@ pub fn find(
             }
         }
     }
-    // Nearest the golem walks least; but from another floor every one of
-    // those may look at the work through a floor, while the stances beside
-    // the work are never tried.
     let mut near_work = candidates.clone();
     near_work.sort_by_key(|s| manhattan(*s, target));
     candidates.sort_by_key(|s| (manhattan(*s, body.cell), (s[1] - body.cell[1]).abs()));
@@ -64,8 +51,6 @@ pub fn find(
         .take(NEAR_WORK)
         .collect();
     candidates.extend(extra);
-    // Fewest moves away first, where the flood from here answers: the stance
-    // beside the golem through a wall is the longest walk of all.
     let moves: Option<Vec<u32>> =
         route::region(ctx, body.cell, false, &[])
             .flatten()

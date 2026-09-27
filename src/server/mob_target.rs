@@ -1,15 +1,8 @@
-//! Authoritative resolution of client-claimed mob targets.
-
 use super::player::ConnectedPlayer;
 use crate::player;
 use crate::world::ServerWorld;
 use petramond_world::world::raycast;
 
-/// Resolve a client-claimed stable mob id against `sess`'s current view ray
-/// in `world`. The id is only a claim: it must name the nearest live body
-/// before both terrain and reach, from the drift-bounded authoritative eye.
-/// Dead players and spectators have no actionable mob target. Answers the
-/// validated handle itself.
 pub fn authoritative_mob_target(
     world: &ServerWorld,
     sess: &ConnectedPlayer,
@@ -26,9 +19,6 @@ pub fn authoritative_mob_target(
         .map(|(_, distance)| distance)
         .unwrap_or(player::REACH);
     let limit = terrain_dist.min(player::REACH);
-    // Placement can mount a player earlier in this same tick, before the
-    // riding pass refreshes the session mirror. The world registry is the
-    // attachment authority at every stage boundary.
     let own_mount = world
         .riding()
         .mount_of(sess.id.0)

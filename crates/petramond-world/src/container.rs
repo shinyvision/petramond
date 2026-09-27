@@ -1,40 +1,19 @@
-//! THE generic item-slot storage: one section-owned `Container` per block
-//! position backs chests, furnaces, and mod container blocks alike — there
-//! are NO parallel slot stores.
-//!
-//! The engine stores, renders, click-routes, persists, and scatters the
-//! slots; what the contents MEAN is the container's owner — engine machine
-//! state ([`crate::furnace::Furnace`]) or the owning mod's tick logic,
-//! reached through the `ContainerGet`/`ContainerSet` host calls.
-//!
-//! Slot SEMANTICS (which item groups shift-clicks route into a slot, which
-//! slots are take-only outputs) are [`SlotSpec`]s: engine-owned sets for the
-//! chest/furnace (`game::container::generic`), document slot nodes resolved
-//! at load for mod GUIs (`gui::documents`).
-
 use crate::item::{ItemStack, ItemTag};
 
-/// The most `container` role slots one mod document may declare (a double
-/// chest's worth). Bounds both the click surface and the per-record save size.
 pub const MAX_CONTAINER_SLOTS: usize = 54;
 
-/// One mod container block-entity: a flat row-major slot list sized by the
-/// owning GUI document when the session first opens (or grown by a mod write).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Container {
     pub slots: Vec<Option<ItemStack>>,
 }
 
 impl Container {
-    /// An empty container with `len` slots.
     pub fn with_len(len: usize) -> Container {
         Container {
             slots: vec![None; len.min(MAX_CONTAINER_SLOTS)],
         }
     }
 
-    /// Grow (never shrink) to at least `len` slots, clamped to the cap —
-    /// a re-authored document with more slots must not drop stored items.
     pub fn ensure_len(&mut self, len: usize) {
         let len = len.min(MAX_CONTAINER_SLOTS);
         if self.slots.len() < len {
@@ -42,8 +21,6 @@ impl Container {
         }
     }
 
-    /// How many items stack with `like` (same item, same instance data)
-    /// across every slot.
     pub fn count_like(&self, like: ItemStack) -> u32 {
         self.slots
             .iter()
@@ -53,8 +30,6 @@ impl Container {
             .sum()
     }
 
-    /// Whether the slots hold every stack of `cost`, equal stacks counted
-    /// together.
     pub fn holds_all(&self, cost: &[ItemStack]) -> bool {
         cost.iter().all(|want| {
             let needed: u32 = cost
@@ -66,8 +41,6 @@ impl Container {
         })
     }
 
-    /// Remove exactly `cost`, emptiest-last-slot first; `false` (and nothing
-    /// removed) when the slots do not hold it all.
     pub fn take_all(&mut self, cost: &[ItemStack]) -> bool {
         if !self.holds_all(cost) {
             return false;
@@ -93,27 +66,9 @@ impl Container {
     }
 }
 
-/// One item GROUP a slot admits, in whichever of the content layer's two
-/// vocabularies names it.
-///
-/// A TAG is a closed vocabulary a row opts into; a DATA key is the vocabulary a
-/// CONSUMING system already speaks about the items it understands. Both were
-/// always here — this type is only the admission that a slot filter is a
-/// question about item membership, not specifically about tags.
-///
-/// The data form is what lets a slot filter and a machine's own whitelist be
-/// ONE statement: the mod enumerates `ItemsWithData("forge:metal")` to learn
-/// what it can melt, and the slot admits exactly that set. It also reaches rows
-/// the naming pack does not own — a `{"patch"}` row attaches a data key to
-/// ANYONE's item (deliberately cross-namespace) and cannot attach a tag, so
-/// tags alone can never describe "this pack's notion of metal, including the
-/// engine's ingots".
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SlotFilter {
     Tag(ItemTag),
-    /// Any item whose row carries this namespaced `data` key, whatever its
-    /// value — membership is the question, and the value belongs to the
-    /// consumer that parses it.
     Data(&'static str),
 }
 
@@ -126,46 +81,18 @@ impl SlotFilter {
     }
 }
 
-/// Every authored filter active — the mask of a slot with no `accepts` bind,
-/// or a bind whose key the machine has not published.
 pub const FULL_MASK: u32 = u32::MAX;
 
-/// The most `accepts` filters one slot may declare: the runtime mask spends
-/// one BIT per filter, so a filter past the mask's width could never be
-/// activated. A document declaring more is rejected at load
-/// (`gui::documents`) rather than shipping a filter that silently never
-/// matches.
 pub const MAX_SLOT_FILTERS: usize = u32::BITS as usize;
 
-/// One document slot's host-interpreted semantics, resolved from the document's
-/// `accepts` filters / `take_only` flag at load. In-role index order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SlotSpec {
-    /// Item groups shift-clicks may route into this slot; empty = accepts any
-    /// item on shift-routing (a plain storage cell).
     pub accepts: Vec<SlotFilter>,
-    /// A take-only output: clicks only ever remove from it, and shift-routing
-    /// never targets it.
     pub take_only: bool,
-    /// The GUI-state key (`bind.accepts` on the slot node, interned) whose
-    /// `I32` value NARROWS the authored filters at runtime: bit `i` set =
-    /// `accepts[i]` active; absent key = all active; `0` = the slot admits
-    /// nothing. Machine state made admission — a socket cell that is locked,
-    /// occupied, or absent for the current tool refuses inserts on both
-    /// mirrors the same way the authored filters do. Takes are never gated.
     pub accepts_bind: Option<&'static str>,
 }
 
 impl SlotSpec {
-    /// The current filter mask for this slot: the session's published value
-    /// under the slot's `accepts` bind, else [`FULL_MASK`]. `gui_state` is
-    /// the SESSION's map — the server passes the acting session's, the
-    /// client its mirrored copy, so the two answer identically (staleness
-    /// resolves like any other prediction miss).
-    ///
-    /// The published value is `I32` because that is the whole GUI-state
-    /// integer vocabulary; it is reinterpreted as the mask's `u32` bits, so a
-    /// publisher passing `-1` opens every filter exactly like [`FULL_MASK`].
     pub fn accepts_mask(&self, gui_state: Option<&crate::gui_state::GuiStateMap>) -> u32 {
         match self.accepts_bind.and_then(|key| gui_state?.get(key)) {
             Some(crate::gui_state::GuiValue::I32(m)) => *m as u32,
@@ -173,9 +100,6 @@ impl SlotSpec {
         }
     }
 
-    /// Whether shift-routing may move `item` into this slot: never for an
-    /// output, matched against the ACTIVE filters when filters are declared,
-    /// always otherwise.
     pub fn routes(&self, item: crate::item::ItemType, mask: u32) -> bool {
         if self.take_only {
             return false;
@@ -183,17 +107,10 @@ impl SlotSpec {
         self.accepts.is_empty() || self.matches_active(item, mask)
     }
 
-    /// Whether a manual click may PUT `item` into this slot. The predicted
-    /// click and the authoritative one both ask THIS — a filter the client
-    /// mirrors differently from the server is a click that visibly succeeds
-    /// and then snaps back.
     pub fn admits(&self, item: crate::item::ItemType, mask: u32) -> bool {
         !self.take_only && self.routes(item, mask)
     }
 
-    /// Whether a shift-route of `item` should PREFER this slot: it names a
-    /// matching ACTIVE filter (the furnace's fuel→fuel-slot read), beating
-    /// unfiltered storage cells.
     pub fn routes_by_filter(&self, item: crate::item::ItemType, mask: u32) -> bool {
         !self.take_only && self.matches_active(item, mask)
     }
@@ -229,7 +146,6 @@ pub fn slot_admits(
     }
 }
 
-/// Route a stack through authored slot filters, merging before filling empty slots.
 pub fn route_into(
     src: &mut Option<ItemStack>,
     slots: &mut [Option<ItemStack>],
@@ -251,9 +167,6 @@ pub fn route_into(
         })
     });
     let routed: Vec<usize> = by_filter.chain(open).collect();
-    // Merge-then-fill over the routed order (the inventory's
-    // `insert_into_slots` discipline): top up matching stacks first,
-    // then open empties.
     for &s in &routed {
         if src.is_none() {
             break;
@@ -298,10 +211,6 @@ mod tests {
         assert!(!open.routes_by_filter(ItemType::Stone, FULL_MASK));
     }
 
-    /// The runtime mask narrows the AUTHORED filters per bit: bit `i` gates
-    /// `accepts[i]`, `0` admits nothing, an unbound slot (or an unpublished
-    /// key) keeps every filter active — and an UNFILTERED slot is never
-    /// touched by any mask, because there is nothing to narrow.
     #[test]
     fn a_bound_accepts_mask_narrows_the_authored_filters() {
         let cell = SlotSpec {
@@ -312,20 +221,17 @@ mod tests {
             take_only: false,
             accepts_bind: Some("m:cell0"),
         };
-        // Coal is fuel (bit 0); raw iron is smeltable (bit 1).
         assert!(cell.routes(ItemType::Coal, 0b01));
         assert!(!cell.routes(ItemType::Coal, 0b10));
         assert!(!cell.routes(ItemType::RawIron, 0b01));
         assert!(cell.routes(ItemType::RawIron, 0b10));
         assert!(!cell.routes(ItemType::Coal, 0), "mask 0 admits nothing");
         assert!(!cell.routes_by_filter(ItemType::Coal, 0b10));
-        // The mask resolves from the session's map; absent key = all active.
         let mut map = crate::gui_state::GuiStateMap::new();
         assert_eq!(cell.accepts_mask(Some(&map)), FULL_MASK);
         map.insert("m:cell0".into(), crate::gui_state::GuiValue::I32(0b10));
         assert_eq!(cell.accepts_mask(Some(&map)), 0b10);
         assert_eq!(cell.accepts_mask(None), FULL_MASK);
-        // An unfiltered storage cell ignores masks entirely.
         let open = SlotSpec::default();
         assert!(open.routes(ItemType::Stone, 0));
     }

@@ -1,11 +1,3 @@
-//! A rig's clips by NAMESPACED name: the clips embedded in its `.bbmodel`
-//! under the owning pack's namespace (`petramond:fp_idle`) plus any Bedrock
-//! `.animation.json` libraries, each under the namespace of the pack that
-//! ships it, resolved against the rig's bone names. [`ClipLibrary::insert`]
-//! replaces a clip of the same full name; who may do that is the animator
-//! document loader's rule, not the library's (a rig's own document restates
-//! its clips, a pack's only adds new ones).
-
 use rustc_hash::FxHashMap;
 
 use super::expr::intern;
@@ -19,7 +11,6 @@ impl ClipId {
         self.0 as usize
     }
 
-    /// The id at `index` in its library — for ids carried as plain numbers.
     pub fn from_index(index: usize) -> Self {
         ClipId(index as u32)
     }
@@ -38,8 +29,6 @@ impl ClipLibrary {
         Self::default()
     }
 
-    /// The clips authored inside `model`, each named `namespace:<name>`, in
-    /// name order so ids are stable.
     pub fn from_model(model: &Model, namespace: &str) -> Self {
         let mut names: Vec<&String> = model.animations.keys().collect();
         names.sort();
@@ -53,9 +42,6 @@ impl ClipLibrary {
         lib
     }
 
-    /// Add every clip in a Bedrock animation library under `namespace`,
-    /// bones resolved by name on `rig`. Answers how many clips it added or
-    /// replaced.
     pub fn add_bedrock(
         &mut self,
         text: &str,
@@ -70,8 +56,6 @@ impl ClipLibrary {
         Ok(count)
     }
 
-    /// Every clip's full name, in id order — the wire vocabulary a session
-    /// hands a peer so clip ids remap by name.
     pub fn names(&self) -> &[String] {
         &self.names
     }
@@ -101,7 +85,6 @@ impl ClipLibrary {
         &self.names[id.index()]
     }
 
-    /// The clip's name as the expression language compares it.
     pub fn interned(&self, id: ClipId) -> f32 {
         self.interned[id.index()]
     }

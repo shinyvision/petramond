@@ -1,20 +1,7 @@
-//! Explicit facade for package preview tools.
-//!
-//! The game/runtime modules stay crate-internal; binaries under `src/bin` are
-//! separate crates, so they use this narrow surface.
-
-/// The live `World`, for dev tools that must observe or drive real streaming
-/// rather than a re-derivation of it — generation/light/mesh pumping, the
-/// resident-memory census, and deterministic ticking.
 pub mod stream {
     pub use crate::world::{MemoryCensus, ServerWorld};
     pub use petramond_math::facing::Facing;
 
-    /// Run `n` deterministic game ticks over a streamed world.
-    ///
-    /// A containment audit has no other honest way to ask "does this water
-    /// move": the fluid sim only ever acts on the tick, and re-deriving its
-    /// spread rules in a tool would just be a mirror that can go stale.
     pub fn tick(world: &mut ServerWorld, n: u32) {
         let recipes = petramond_world::crafting::Recipes::default();
         for _ in 0..n {
@@ -22,13 +9,11 @@ pub mod stream {
         }
     }
 
-    /// Place a block by row name at `place_pos` the way a player click on the
-    /// cell below would (the placement ladder: model footprints, orientation,
-    /// per-cell state), committed with no body-occupancy check. A preview tool
-    /// placing a MODEL block needs exactly this — a raw `set_block_world`
-    /// writes one cell with no facing/offset state and renders a fragment.
-    /// Returns false when the placement refuses (unknown row, blocked
-    /// footprint).
+    /// Places a block at `place_pos` like a player click would: footprint, orientation, per-cell
+    /// state, skips body-occupancy check.
+    /// Preview tools need this for MODEL blocks - `set_block_world` just writes one cell, no
+    /// facing/offset, you get a fragment.
+    /// False if placement refuses (unknown row, blocked footprint).
     pub fn place_block(
         world: &mut ServerWorld,
         name: &str,
@@ -59,8 +44,6 @@ pub mod stream {
         world.commit_placement(&plan, true)
     }
 
-    /// Set a placed model block's per-instance parts mask (which optional
-    /// `parts` cubes draw), e.g. the forge furnace's `coals`.
     pub fn set_model_parts(world: &mut ServerWorld, pos: [i32; 3], parts: u32) -> bool {
         world.set_model_parts(
             petramond_math::math::IVec3::new(pos[0], pos[1], pos[2]),
@@ -70,29 +53,11 @@ pub mod stream {
     }
 }
 
-/// Loading the installed mod packs so a dev tool generates the SAME world the
-/// game does.
-///
-/// Mod worldgen hooks are installed by `ModHost::initialize`, whose only other
-/// caller is the game session. Without this a headless tool silently generates
-/// a world with every pack's DATA applied but none of its worldgen CODE run —
-/// which looks convincing and is wrong, the worst failure mode a preview tool
-/// can have.
 pub mod mods {
-    /// A loaded mod set with its worldgen hooks installed process-wide.
-    ///
-    /// Hold it for as long as you generate: dropping it releases the mod
-    /// instances the installed hooks borrow.
     pub struct WorldgenMods {
         _host: crate::modding::ModHost,
     }
 
-    /// Load every enabled pack's wasm for `seed` and install its worldgen
-    /// hooks.
-    ///
-    /// The init call wants a simulation context, so this builds a THROWAWAY
-    /// one — a scratch world and bus. Only registrations survive the call;
-    /// the scratch state is dropped immediately.
     pub fn load(seed: u32) -> WorldgenMods {
         let mut host = crate::modding::ModHost::load(seed, &Default::default());
         let mut world = crate::world::ServerWorld::with_pool(
@@ -108,11 +73,7 @@ pub mod mods {
     }
 }
 
-/// Recipe-catalog lookups for pack checks.
 pub mod recipes_query {
-    /// The `class` route for `item_key`, as the resulting item key — the same
-    /// answer a machine gets from `ContainerCall::RecipeResult`. `None` when the
-    /// item is unknown or the route does not exist.
     pub fn process(
         catalog: &petramond_world::crafting::Recipes,
         class: &str,
@@ -125,40 +86,23 @@ pub mod recipes_query {
     }
 }
 
-/// Mod-driven per-block draw sets — the primitive a mod uses to draw what it
-/// SIMULATES. Exposed so a preview tool can submit the same geometry a mod
-/// would.
 pub mod draw {
     pub use mod_api::DrawPrim;
 }
 
-/// The GUI documents every enabled pack ships, for tools that check a pack
-/// loaded cleanly.
 pub mod gui {
-    /// Every accepted `*.gui.json` document as `(kind key, container slot
-    /// count)` — the count from the server-owned slot contract table. A pack
-    /// machine missing from this list, or listed with zero container slots,
-    /// has a REJECTED or mis-declared document — which otherwise degrades
-    /// silently to plain storage.
     pub fn loaded_documents() -> Vec<(&'static str, usize)> {
         crate::gui::documents::loaded_documents()
     }
 }
 
-/// The loaded recipe catalog and the progression rule derived from it — what
-/// a developer tool needs to audit "which recipes does the player see once
-/// they have held X", without opening a world.
 pub mod recipes {
     pub use petramond_world::crafting::{CraftingCatalog, CraftingRecipe, Recipes, UnlockIndex};
 
-    /// Every enabled pack's crafting/processing rows (the same load the
-    /// server runs at session start, with nothing disabled).
     pub fn load() -> Result<Recipes, String> {
         petramond_world::crafting::load_recipes_for(&Default::default())
     }
 
-    /// The recipes a player who has held exactly `item_names` would have
-    /// unlocked under the engine's default rule. Unknown names are ignored.
     pub fn opened_by_items(index: &UnlockIndex, item_names: &[&str]) -> Vec<String> {
         let obtained: petramond_world::item::ItemSet = item_names
             .iter()
@@ -175,21 +119,15 @@ pub mod biome {
 pub mod block {
     pub use petramond_world::block::Block;
 
-    /// Runtime id of a namespaced block row key (`"petramond:torch"`), or
-    /// `None` when no loaded catalog layer declares it. Ids shift as packs
-    /// change, so tools must resolve by name rather than hardcode numbers.
     pub fn id_by_name(name: &str) -> Option<u16> {
         petramond_world::registry::names().blocks.id(name)
     }
 
-    /// The row key a runtime block id came from.
     pub fn name_of(id: u16) -> Option<&'static str> {
         petramond_world::registry::names().blocks.name(id)
     }
 }
 
-// Tile colour data, re-exported so dev tools (genmap) can derive block map
-// colours from the block rows' top tiles instead of a hand-maintained palette.
 pub mod atlas {
     pub use petramond_world::tile::{Tile, TileTint};
 }
@@ -200,7 +138,5 @@ pub mod chunk {
 
 #[cfg(feature = "tools")]
 pub mod worldgen {
-    //! Worldgen dev-tool surface — moved to `petramond_worldgen::preview`;
-    //! this shim keeps the tooling paths stable for genmap/littercensus.
     pub use petramond_worldgen::preview::*;
 }

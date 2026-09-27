@@ -1,25 +1,3 @@
-//! One-time worldgen passive herds — the world's initial animal stock.
-//!
-//! Terrain regenerates from seed every session, so "chunk generation time" is
-//! not a one-shot event here the way it is in persistent-chunk games. Instead
-//! each chunk column gets a DETERMINISTIC roll — a pure function of
-//! `(world seed, chunk)` — deciding whether it hosts a herd, of which species,
-//! and where. The roll is evaluated lazily, once per session per chunk, as
-//! loaded chunks near a player pass the mob census; a chunk that actually
-//! placed a herd is recorded in the world's persisted populated set (rides
-//! `level.dat`) so the stock never re-mints on later sessions. A chunk whose
-//! roll placed nothing is deliberately NOT recorded: the same seed re-rolls
-//! the same nothing next time, for free.
-//!
-//! Population is worldgen stock, so it deliberately IGNORES the natural-spawn
-//! population caps: geometry bounds it instead — the [`POPULATE_CHANCE`] roll
-//! thinned by [`HERD_SPACING_CHUNKS`] suppression (~4% of chunks host a herd,
-//! never two herds within the spacing radius) within
-//! [`POPULATE_CHUNK_RADIUS`] of a player. The runtime spawner
-//! ([`super::spawn`]) stays the slow cap-limited backfill trickle. Killing the
-//! stock is meant to be a non-renewable harvest — more animals should cost
-//! travel (virgin chunks) or, eventually, breeding.
-
 use rustc_hash::FxHashSet;
 
 use crate::world::ServerWorld;
@@ -46,30 +24,16 @@ const POPULATE_CHANCE: f32 = 0.10;
 /// as "sheep everywhere". Purely positional on purpose: a suppressor needs no
 /// valid terrain, so coastlines populate conservatively rather than doubly.
 const HERD_SPACING_CHUNKS: i32 = 2;
-/// Chebyshev chunk radius around each player anchor that gets populated. Must
-/// stay inside the nine-chunk census square the attempt is gated on, so every
-/// candidate's saved records (which may carry the herd's survivors) have
-/// already applied.
 const POPULATE_CHUNK_RADIUS: i32 = 8;
-/// At most this many herd rolls (chance already passed) run per tick — bounds
-/// the site-probing cost of a world join, where a whole disc of chunks becomes
-/// eligible at once. Chance-failed chunks cost one hash probe + one RNG draw
-/// and are not metered.
 const ROLL_BUDGET_PER_TICK: u32 = 8;
-/// Candidate anchor sites tried within the chunk before the roll gives up.
 const SITE_TRIES: u32 = 8;
-/// Decorrelates the population stream from every other consumer of the seed.
 const POPULATE_SALT: u64 = 0x0F0F_5EED_4E7D_0001;
 
-/// A herd the manager should place, tagged with the chunk to record as
-/// populated once at least one member actually spawned.
 pub(super) struct HerdSpawn {
     pub chunk: ChunkPos,
     pub spawns: Vec<Spawn>,
 }
 
-/// The deterministic per-chunk stream: pure in `(seed, chunk)`, sign-extended
-/// mixing in the spirit of the worldgen positional-seeding contract.
 fn chunk_rng(seed: u32, chunk: ChunkPos) -> MobRng {
     let mixed = splitmix(
         (seed as u64)
@@ -80,17 +44,11 @@ fn chunk_rng(seed: u32, chunk: ChunkPos) -> MobRng {
     MobRng::new(mixed)
 }
 
-/// A chunk's raw chance draw when it passes [`POPULATE_CHANCE`], as the f32's
-/// bit pattern (monotonic for the non-negative draw, so it orders like the
-/// float but is `Ord`). `None` = the chunk rolls no herd.
 fn herd_draw(seed: u32, chunk: ChunkPos) -> Option<u32> {
     let d = chunk_rng(seed, chunk).next_f32();
     (d < POPULATE_CHANCE).then(|| d.to_bits())
 }
 
-/// Whether `chunk`'s passing draw survives spacing suppression: it must be the
-/// strongest (lowest, coord-tiebroken) passing draw within
-/// [`HERD_SPACING_CHUNKS`]. Pure in `(seed, chunk)` like the draw itself.
 fn wins_spacing(seed: u32, chunk: ChunkPos, own: u32) -> bool {
     for dz in -HERD_SPACING_CHUNKS..=HERD_SPACING_CHUNKS {
         for dx in -HERD_SPACING_CHUNKS..=HERD_SPACING_CHUNKS {
@@ -109,19 +67,11 @@ fn wins_spacing(seed: u32, chunk: ChunkPos, own: u32) -> bool {
     true
 }
 
-/// Run one population step around `anchor`: scan its chunk square for chunks
-/// not yet checked this session, and roll a budgeted batch of them. `checked`
-/// is the per-session memo — a chunk enters it when its roll COMPLETED
-/// (chance failed, or placement ran against final terrain), never when it was
-/// merely skipped as unloaded, so frontier chunks retry as they stream in.
 pub(super) fn attempt(
     world: &ServerWorld,
     anchor: petramond_math::world_pos::WorldPos,
     checked: &mut FxHashSet<ChunkPos>,
 ) -> Vec<HerdSpawn> {
-    // Same gate as the trickle: until every nearby column landed and every
-    // saved record applied, the live world is not final — records may still
-    // carry this very herd's survivors from an earlier session.
     if !mob_census_ready(world, anchor) {
         return Vec::new();
     }
@@ -134,8 +84,6 @@ pub(super) fn attempt(
             if checked.contains(&chunk) {
                 continue;
             }
-            // Unloaded (e.g. a square corner outside the streamable disc):
-            // skip WITHOUT checking off, so it rolls when it streams in.
             if !world.data().chunk_loaded(chunk.cx, chunk.cz) {
                 continue;
             }
@@ -162,15 +110,8 @@ pub(super) fn attempt(
     herds
 }
 
-/// Roll the herd itself: an anchor site inside the chunk, the species the
-/// site's biome/ground admits, the group size, then members placed like a
-/// natural group — but with no player-distance band (the herd is "already
-/// there" when the player arrives) and no population caps.
 fn place_herd(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Option<Vec<Spawn>> {
     let (kind, first) = anchor_member(world, chunk, rng)?;
-    // Climate rarity: one roll gates the whole herd, from the chunk's own
-    // deterministic stream — a failed roll re-rolls the same nothing next
-    // session, like a failed chance draw.
     let (ax, az) = (first.pos.x.floor() as i32, first.pos.z.floor() as i32);
     if !biome_chance_passes(world, kind, ax, az, rng) {
         return None;
@@ -180,16 +121,13 @@ fn place_herd(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Option<
     let mut spawns = vec![first];
     while (spawns.len() as u32) < want {
         let Some(next) = nearby_spawn(world, kind, origin, &spawns, rng, &site_for) else {
-            break; // keep the partial herd; the chunk still counts as populated
+            break;
         };
         spawns.push(next);
     }
     Some(spawns)
 }
 
-/// Find the herd's first member: a valid foothold in the chunk plus a species
-/// whose spawn rule admits that site. Site-first (the biome decides what lives
-/// there), species drawn uniformly among the admitting passive rows.
 fn anchor_member(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Option<(Mob, Spawn)> {
     for _ in 0..SITE_TRIES {
         let wx = chunk.cx * CHUNK_SX as i32 + rng.next_range(0, CHUNK_SX as i32 - 1);
@@ -204,9 +142,6 @@ fn anchor_member(world: &ServerWorld, chunk: ChunkPos, rng: &mut MobRng) -> Opti
     None
 }
 
-/// Pick uniformly among the passive, naturally-spawnable, enabled species whose
-/// rule admits this exact site (reservoir sampling, like the trickle's picker —
-/// but per site instead of per population room).
 fn choose_kind_for_site(world: &ServerWorld, wx: i32, wz: i32, rng: &mut MobRng) -> Option<Mob> {
     let disabled = world.data().disabled_mods();
     let mut chosen = None;
@@ -237,8 +172,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::Chunk;
 
-    /// A census-ready flat grass neighborhood: the anchor's chunk plus the four
-    /// columns of the render-distance-1 streamable disc.
     fn grass_world(seed: u32) -> ServerWorld {
         let mut world = ServerWorld::new(seed, 1);
         for (cx, cz) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)] {
@@ -258,12 +191,6 @@ mod tests {
         WorldPos::new(8.0, 65.0, 8.0)
     }
 
-    /// A seed that actually PLACES a herd on the anchor chunk — searched, not
-    /// pinned, so retuning `POPULATE_CHANCE`, the spacing radius, or any
-    /// species' spawn rarity can't break these tests. The search runs the real
-    /// attempt rather than the chunk roll alone: a passing chunk roll can
-    /// still place nothing once the chosen species' own spawn chance is
-    /// drawn, and every caller below asserts on the placement.
     fn populating_seed() -> u32 {
         let anchor_chunk = ChunkPos::new(0, 0);
         (0..10_000u32)
@@ -304,9 +231,6 @@ mod tests {
 
     #[test]
     fn herd_chunks_keep_their_spacing() {
-        // Pure positional sweep — no world needed. Across a big region, no two
-        // surviving herd chunks may sit within the spacing radius of each
-        // other, and the suppression must still let a healthy share through.
         let seed = 12345;
         let winners: Vec<ChunkPos> = (-20..20)
             .flat_map(|cz| (-20..20).map(move |cx| ChunkPos::new(cx, cz)))
@@ -351,9 +275,6 @@ mod tests {
         let populated = world.populated_columns().clone();
         assert!(populated.contains(&ChunkPos::new(0, 0)));
 
-        // "Next session": terrain regenerates identically and the live mobs are
-        // gone; only the persisted populated set survives. The stock must not
-        // re-mint — this is the whole anti-farm invariant.
         let mut world = grass_world(seed);
         world.set_populated_columns(populated);
         let spawned = world.populate_mobs_tick(anchor());
@@ -364,9 +285,6 @@ mod tests {
     fn population_ignores_the_trickle_population_caps() {
         let seed = populating_seed();
         let mut world = grass_world(seed);
-        // Saturate the passive category cap. Worldgen stock is bounded by
-        // geometry (chance × radius), not by the trickle's caps — otherwise
-        // travelling at cap would silently leave new terrain barren.
         for i in 0..MobCategory::Passive.cap() {
             let pos = WorldPos::new(f64::from(8.0 + i as f32 * 0.2), 65.0, 8.0);
             assert!(world.spawn_mob(Mob::Sheep, pos, 0.0).is_some());

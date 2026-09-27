@@ -19,12 +19,10 @@ fn welded_box(pivot: Vec3, min: Vec3, max: Vec3, parent: Option<usize>) -> SkBon
     }
 }
 
-/// A solid floor (every cell below world y = 0) for the ragdoll tests.
 fn floor(c: IVec3) -> bool {
     c.y < 0
 }
 
-/// A root box with one child box stacked above it, jointed at their shared face.
 fn two_bone_skeleton() -> Skeleton {
     Skeleton {
         bones: vec![
@@ -57,7 +55,6 @@ fn sheep_skeleton() -> Skeleton {
 fn ragdoll_stays_connected_settles_above_ground_and_finishes() {
     let skel = two_bone_skeleton();
     let joint_rest = (skel.bones[1].pivot - skel.bones[0].pivot).length();
-    // Launch + tumble — the realistic case — must NOT pull the joint apart.
     let mut rag = Ragdoll::pending(42, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     assert!(rag.is_initialized());
@@ -65,9 +62,6 @@ fn ragdoll_stays_connected_settles_above_ground_and_finishes() {
     for _ in 0..(LIFETIME / 0.05) as usize + 1 {
         rag.step(0.05, 0.25, Vec3::ZERO, 0.0, &floor);
         let p = rag.positions();
-        // The joint pass keeps the child's joint locked to the root's; a rigid
-        // rotation preserves the pivot-to-pivot distance, so this stays tight even as
-        // the corpse flies and somersaults.
         let d = (p[1] - p[0]).length();
         assert!(
             (d - joint_rest).abs() < 0.1,
@@ -79,8 +73,6 @@ fn ragdoll_stays_connected_settles_above_ground_and_finishes() {
 
 #[test]
 fn the_body_tumbles_and_falls_over() {
-    // A tall box dropped onto the floor must rotate (tip/tumble) — the whole rigid
-    // body is simulated, not just joints.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 3.0, 0.0),
@@ -105,7 +97,6 @@ fn the_body_tumbles_and_falls_over() {
 
 #[test]
 fn the_killing_blow_flings_the_corpse_in_the_punched_direction() {
-    // A box flung toward +X (high up, so it stays airborne) should travel +X.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 10.0, 0.0),
@@ -129,9 +120,6 @@ fn the_killing_blow_flings_the_corpse_in_the_punched_direction() {
 
 #[test]
 fn the_launch_never_drags_a_bone_toward_the_attacker() {
-    // Two boxes stacked vertically (the lower one below the mob centre), flung +X high
-    // up. The spin is bounded below the launch, so EVERY bone must travel +X (away) —
-    // none swings back toward the attacker (the bug this guards).
     let skel = Skeleton {
         bones: vec![
             boxed(
@@ -165,10 +153,9 @@ fn the_launch_never_drags_a_bone_toward_the_attacker() {
 
 #[test]
 fn the_launch_is_world_space_regardless_of_facing() {
-    // The corpse must fly in the WORLD launch direction even when the mob faced some
-    // other way at death — the renderer re-applies the mob's yaw, so the sim stores
-    // the launch un-rotated into model space. (Without this, flight direction depends
-    // on facing and looks random.)
+    // The corpse flies in the world launch direction whichever way the mob faced at death. The
+    // renderer re-applies the mob's yaw, so the sim stores the launch un-rotated into model space.
+    // Without that, flight direction depends on facing and looks random.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 10.0, 0.0),
@@ -177,16 +164,14 @@ fn the_launch_is_world_space_regardless_of_facing() {
             None,
         )],
     };
-    let yaw = 1.3; // a non-zero facing
-    let mut rag = Ragdoll::pending(3, Vec3::X); // world launch = +X
+    let yaw = 1.3;
+    let mut rag = Ragdoll::pending(3, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, yaw);
     let p0 = rag.pose(1.0)[0].0;
     for _ in 0..8 {
         rag.step(0.05, 0.25, Vec3::ZERO, yaw, &floor);
     }
     let p1 = rag.pose(1.0)[0].0;
-    // The render applies `Ry(yaw)` to the model-space position, so transform the
-    // displacement the same way and check it points along world +X.
     let disp = glam::Quat::from_rotation_y(yaw) * (p1 - p0);
     assert!(disp.x > 1.0, "flies along world +X: {disp:?}");
     assert!(
@@ -197,8 +182,6 @@ fn the_launch_is_world_space_regardless_of_facing() {
 
 #[test]
 fn a_corpse_rests_on_a_block_and_does_not_sink_through() {
-    // A box dropped onto a solid floor (cells below world y=0) must settle on top, not
-    // pass through it. scale 1.0 → model space == world space.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 3.0, 0.0),
@@ -207,7 +190,7 @@ fn a_corpse_rests_on_a_block_and_does_not_sink_through() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(2, Vec3::ZERO); // no launch: drops straight down
+    let mut rag = Ragdoll::pending(2, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..80 {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
@@ -221,8 +204,6 @@ fn a_corpse_rests_on_a_block_and_does_not_sink_through() {
 
 #[test]
 fn a_long_fall_lands_on_thick_ground_instead_of_sinking_in() {
-    // Dropped from high up, the corpse crosses more than a cell per tick when it
-    // lands — landing must park it on the surface, never inside the terrain.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 28.0, 0.0),
@@ -245,8 +226,6 @@ fn a_long_fall_lands_on_thick_ground_instead_of_sinking_in() {
 
 #[test]
 fn a_fast_falling_corpse_does_not_skip_through_a_thin_floor() {
-    // A one-cell-thick floor far below: by landing time the corpse moves well over
-    // a cell per tick, and an endpoint-only collision test never sees the floor.
     let thin = |c: IVec3| c.y == 0;
     let skel = Skeleton {
         bones: vec![boxed(
@@ -270,10 +249,6 @@ fn a_fast_falling_corpse_does_not_skip_through_a_thin_floor() {
 
 #[test]
 fn a_corner_embedded_at_death_heals_out_instead_of_falling_through() {
-    // A mob can die with geometry slightly inside a movement-blocking cell (standing
-    // on a partial block like farmland; a joint slide can also embed a corner
-    // mid-life). Embedded corners must be pushed out of the nearest open face — if
-    // collision is simply disabled for them, the limb sinks through the floor.
     let skel = Skeleton {
         bones: vec![boxed(
             Vec3::new(0.0, 0.5, 0.0),
@@ -296,8 +271,6 @@ fn a_corner_embedded_at_death_heals_out_instead_of_falling_through() {
 
 #[test]
 fn a_corpse_falls_off_the_edge_of_a_block() {
-    // The floor only covers x < 0. A box dropped straddling the edge must drape/fall
-    // off the unsupported (+X) side — its lowest corner ends well below the floor top.
     let solid = |c: IVec3| c.y < 0 && c.x < 0;
     let skel = Skeleton {
         bones: vec![boxed(
@@ -321,10 +294,6 @@ fn a_corpse_falls_off_the_edge_of_a_block() {
 
 #[test]
 fn sheep_scale_ragdoll_goes_limp_and_does_not_spin() {
-    // The real sheep skeleton at its in-game scale, simulated for its full lifetime.
-    // A corpse must tumble briefly and settle limp: bounded per-tick rotation is not
-    // enough — the tornado bug span at the per-tick clamp EVERY tick (26+ rad total
-    // per bone over the lifetime), so also bound each bone's CUMULATIVE rotation.
     let skel = sheep_skeleton();
     let mut rag = Ragdoll::pending(11, Vec3::X);
     rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
@@ -360,7 +329,7 @@ fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
     // cube-less rig root. The corpse must COLLAPSE — the physical root visibly drops
     // from its standing height instead of hanging in a statue pose off the rig
     // placeholder — and must settle without the placeholder-noise flip that turned
-    // corpses upside down. Both were live bugs.
+    // corpses upside down. Both rotations must preserve the authored pose.
     let src = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/mods-src/monsters/pack/models/hushjaw.bbmodel"
@@ -396,9 +365,6 @@ fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
             "seed {seed}: the corpse collapsed to the ground, no statue: pivot y {} vs rest {rest_y}",
             prev[body].0.y
         );
-        // The joint pass (last, by design) may leave leg tips slightly dug in when
-        // the collapsed pose conflicts with the swing limit — but never deeper than
-        // a fraction of a block, and never through the floor. World units.
         assert!(
             rag.lowest_node_y() * 0.04 > -0.2,
             "seed {seed}: the corpse rests on the ground, not through it: {} model units",
@@ -409,9 +375,6 @@ fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
 
 #[test]
 fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
-    // A welded bone — and a welded bone welded to it — must stay EXACTLY rigid with
-    // its nearest physical ancestor for the whole flight: no sag, no joint swing, at
-    // tick boundaries and mid-tick render alphas alike (hushjaw teeth on the jaw).
     let skel = Skeleton {
         bones: vec![
             boxed(
@@ -465,9 +428,6 @@ fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
 
 #[test]
 fn limbs_never_swing_past_the_joint_limit() {
-    // The real sheep at its in-game scale, over its full lifetime: every child bone's
-    // orientation relative to its parent stays within the joint swing limit — legs sag
-    // with gravity but never fold into the body.
     let skel = sheep_skeleton();
     let mut rag = Ragdoll::pending(11, Vec3::X);
     rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
@@ -486,7 +446,6 @@ fn limbs_never_swing_past_the_joint_limit() {
             max_swing = max_swing.max(swing);
         }
     }
-    // The joints are limp within the limit, not welded: some limb visibly sags.
     assert!(
         max_swing > 0.2,
         "limbs still swing under gravity within the limit: max {max_swing}"
@@ -495,11 +454,6 @@ fn limbs_never_swing_past_the_joint_limit() {
 
 #[test]
 fn rotation_extraction_is_exact_regardless_of_box_size() {
-    // A perfectly rigid rotation must be recovered accurately even for a LARGE box
-    // (a fine-grid model like the sheep, 16 units/m): the cross-covariance magnitude
-    // grows with box size, and a scale-sensitive polar iteration returns garbage for
-    // big boxes — the cause of the corpse-tornado bug. Cold start (identity) is the
-    // worst case; in the sim it warm-starts from last tick's rotation.
     for half in [0.5f32, 2.0, 7.5] {
         let b = corners(Vec3::splat(-half), Vec3::new(half, half * 0.9, half * 1.5));
         let r = Quat::from_rotation_y(0.3) * Quat::from_rotation_x(0.2);

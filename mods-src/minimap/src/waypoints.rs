@@ -1,13 +1,7 @@
-//! Personal waypoints: the persisted list, deterministic colors, and the
-//! create/edit document flow (open, save, cancel, delete).
-
 use crate::keys::{CREATE_WAYPOINT_GUI, EDIT_WAYPOINT_GUI, WAYPOINT_NAME};
 use crate::*;
 
-/// The versioned waypoint list ([`WaypointList`]).
 const WAYPOINTS_KEY: &str = "minimap:waypoint_list";
-/// Where earlier builds stored the same list unversioned — read (as version
-/// 0) only while the versioned key has never been written.
 const LEGACY_WAYPOINTS_KEY: &str = "minimap:waypoints";
 
 #[derive(Clone)]
@@ -38,8 +32,6 @@ impl Minimap {
     }
 
     pub(crate) fn select_waypoint_at(&mut self, x: f32, y: f32) {
-        // Waypoints are the session's own; a presentation shows them, never
-        // changes them.
         if self.store.ephemeral {
             return;
         }
@@ -47,7 +39,6 @@ impl Minimap {
         let half = FULL_SIZE as f32 * 0.5;
         let wx = self.pan[0] + f64::from((x - half) * bpp);
         let wz = self.pan[1] + f64::from((y - half) * bpp);
-        // A steady ~12-canvas-pixel hit target at every zoom level.
         let radius = 12.0 * bpp;
         let Some((index, _)) = self
             .waypoints
@@ -165,9 +156,6 @@ impl Minimap {
     }
 }
 
-/// The persisted list: a count, then per waypoint its position, color and
-/// name. Version 0 is the same layout stored without the version byte (under
-/// [`LEGACY_WAYPOINTS_KEY`]).
 #[derive(Clone)]
 struct WaypointList(Vec<Waypoint>);
 
@@ -188,9 +176,6 @@ impl KvRecord for WaypointList {
     }
 }
 
-/// The list from what storage holds: the versioned value when there is one,
-/// else the legacy unversioned one. An unreadable value (a newer build's)
-/// starts an empty list rather than misreading it.
 fn load_list(current: Option<&[u8]>, legacy: Option<&[u8]>) -> Vec<Waypoint> {
     match (current, legacy) {
         (Some(bytes), _) => match decode_versioned::<WaypointList>(bytes) {

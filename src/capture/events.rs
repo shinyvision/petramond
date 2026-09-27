@@ -1,18 +1,3 @@
-//! Events logs: what happens in the presented world, frame by frame, into a
-//! mod file.
-//!
-//! Every presented frame in which anything happened — the apply changed the
-//! world, a local prediction or dig was presented, or the presented view
-//! moved — becomes ONE Frame record, appended to every running log. No frame
-//! is sampled and none is skipped. The frame's job holds values and `Arc`s
-//! only; its pieces are converted, encoded and checked once on the job pool,
-//! ahead of any bulk state work, and each log's record reaches the OS in one
-//! write. While no log runs, no frame job exists.
-//!
-//! A log never stalls and never drops a frame: a disk error fails it (the
-//! file ends at the last whole record), and a disk slower than the world
-//! grows its backlog until the mod ends it by its own policy.
-
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,42 +18,26 @@ use crate::world::{column_key, section_key, FrameChanges};
 use petramond_math::math::IVec3;
 use petramond_world::chunk::SectionPos;
 
-/// Where a frame's encoding runs in the job pool: ahead of every state
-/// record's chunks, so a frame is never behind a bulk record.
 const FRAME_JOB_KEY: i64 = super::state::STATE_JOB_KEY / 2;
 
-/// One world message a frame applied, as the frame record states it.
 pub enum Applied {
-    /// A section that arrived in full, as the replica holds it after the
-    /// apply (a section re-promoted from the client's cache included).
     Section(SectionSnap),
-    /// A column that arrived in full.
     Column(ColumnSnap),
-    /// A tick batch.
     Batch(Box<TickUpdate>),
-    /// Anything else world-scoped: a light bake, an unload, a roster change.
     Message(ServerToClient),
 }
 
-/// One presented frame, as the client session hands it over.
 pub struct FrameInput {
-    /// The presented world's revision base: which world this frame is of.
     pub world: u64,
     pub presented_tick: f64,
     pub applied: Vec<Applied>,
     pub cues: Option<CapturedCues>,
-    /// The locally presented view, and its documented pose.
     pub view: Option<(ViewCue, ClientCapturedView)>,
     pub changes: FrameChanges,
-    /// Cells holding an unconfirmed local prediction.
     pub predicted: Arc<[IVec3]>,
 }
 
 impl FrameInput {
-    /// Whether anything happened this frame, given the view the logs last
-    /// wrote.
-    /// A still frame that fired a hand event (a place jab) or changed what
-    /// the hands show happened too, though the eye never moved.
     fn happened(&self, last_view: Option<&ViewCue>) -> bool {
         let view = match (self.view.as_ref().map(|(cue, _)| cue), last_view) {
             (Some(cue), Some(last)) => !cue.events.is_empty() || !cue.presents_as(last),
@@ -90,12 +59,9 @@ struct Status {
     frames: u64,
     written_through: u64,
     backlog_bytes: u64,
-    /// Records queued and not yet landed.
     in_flight: u64,
-    /// The claim on the file while the log writes it.
     claim: Option<WriterClaim>,
     file: Option<FileRef>,
-    /// Told when the log has ended or failed.
     #[cfg(test)]
     finished: Vec<std::sync::mpsc::Sender<ClientEventsPhase>>,
 }
@@ -138,33 +104,25 @@ struct Log {
     owner: String,
     file: FileRef,
     envelopes: Option<FileRef>,
-    /// The desk's first frame whose apply ran after the log began.
     first_frame: u64,
-    /// The world the log is of, from its first frame.
     world: Option<u64>,
     seq: u64,
     status: Shared,
 }
 
-/// Every events log of one client runtime.
 #[derive(Default)]
 pub struct EventsLogs {
     logs: BTreeMap<u64, Log>,
-    /// The view the last frame record carried.
     last_view: Option<ViewCue>,
 }
 
 impl EventsLogs {
-    /// Whether any log takes frames: the client session then hands them.
     pub fn running(&self) -> bool {
         self.logs
             .values()
             .any(|log| lock(&log.status).phase.is_none())
     }
 
-    /// Start log `id` of `owner` into `file`, from the desk's frame
-    /// `first_frame` on. `Err` = refused (the file is in use by a writer that
-    /// excludes this one).
     pub fn begin(
         &mut self,
         id: u64,
@@ -195,12 +153,10 @@ impl EventsLogs {
         Ok(())
     }
 
-    /// Whether `owner` holds log `id`.
     pub fn owns(&self, id: u64, owner: &str) -> bool {
         self.logs.get(&id).is_some_and(|log| log.owner == owner)
     }
 
-    /// The log takes no new frame; queued frames land, the file syncs.
     pub fn end(&mut self, id: u64, why: Option<String>) {
         if let Some(log) = self.logs.get(&id) {
             let mut status = lock(&log.status);
@@ -214,7 +170,6 @@ impl EventsLogs {
         }
     }
 
-    /// The mods holding a running log.
     pub fn owners(&self) -> Vec<String> {
         let mut owners: Vec<String> = self
             .logs
@@ -226,7 +181,6 @@ impl EventsLogs {
         owners
     }
 
-    /// End every log `owner` holds (it stopped running).
     pub fn end_all_of(&mut self, owner: &str, why: &str) {
         let ids: Vec<u64> = self
             .logs
@@ -239,7 +193,6 @@ impl EventsLogs {
         }
     }
 
-    /// Told once log `id` has ended or failed.
     #[cfg(test)]
     pub fn watch(&self, id: u64) -> std::sync::mpsc::Receiver<ClientEventsPhase> {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -255,7 +208,6 @@ impl EventsLogs {
         rx
     }
 
-    /// Log `id`'s report; a finished log's final report is given once.
     pub fn poll(&mut self, id: u64, owner: &str) -> Option<ClientEventsReport> {
         let log = self.logs.get(&id).filter(|log| log.owner == owner)?;
         let (report, finished) = {
@@ -268,7 +220,6 @@ impl EventsLogs {
         Some(report)
     }
 
-    /// Hand every running log this frame (`frame`: the desk's counter).
     pub fn submit(&mut self, frame: u64, input: FrameInput, jobs: &Arc<JobPool>) {
         let mut takers = Vec::new();
         for log in self.logs.values_mut() {
@@ -320,7 +271,6 @@ impl EventsLogs {
     }
 }
 
-/// A log's record landed (or failed).
 fn frame_landed(status: &Shared, landed: Result<[u64; 2], String>) {
     let mut s = lock(status);
     s.in_flight = s.in_flight.saturating_sub(1);
@@ -345,7 +295,6 @@ fn fail(status: &Shared, why: String) {
     s.finish(ClientEventsPhase::Failed);
 }
 
-/// An ending log whose last record landed syncs its file, then has ended.
 fn settle(status: &Shared, mut s: std::sync::MutexGuard<'_, Status>) {
     if s.phase != Some(ClientEventsPhase::Ending) || s.in_flight > 0 {
         return;
@@ -367,7 +316,6 @@ fn settle(status: &Shared, mut s: std::sync::MutexGuard<'_, Status>) {
     });
 }
 
-/// The frame's pieces, in apply order, then its cues and its view.
 fn frame_pieces(input: &FrameInput) -> Result<(Vec<Piece>, Vec<u64>), String> {
     let predicted: rustc_hash::FxHashSet<SectionPos> = input
         .predicted

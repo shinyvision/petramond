@@ -1,25 +1,16 @@
-//! Terrain-shaping spline: the continent height offset, built as nested
-//! cubic-Hermite splines over the climate axes — the TEST REFERENCE the
-//! `offset` splines of `assets/density/terrain.json` were generated from (the
-//! live recipe is data, see [`crate::data::terrain`]).
+//! Continent height offset spline, nested cubic-Hermite over continentality, erosion and ridge.
+//! It's the test reference the `offset` splines in `assets/density/terrain.json` were generated
+//! from. The live recipe is data: [`crate::data::terrain`].
 //!
-//! This reproduces a well-studied reference generator's continent-offset
-//! shaping, keyed `continentality → erosion → ridge (folded peaks/valleys)`:
+//! [`offset_spline`] gives the offset. The surface sits where the vertical depth gradient cancels
+//! it: `base_height ~= 128*(1 - 0.50375) + 128*offset` (see the density assembly in `terrain.rs`).
+//! Built to match the reference land-spline exactly.
 //!
-//! - [`offset_spline`] is the continent height offset. The surface settles where
-//!   the vertical depth gradient cancels it, i.e. `base_height ≈ 128·(1 −
-//!   0.50375) + 128·offset` (see the density assembly in `terrain.rs`). It is
-//!   built procedurally from a small parameter set + the `offset_value` formula,
-//!   matching the reference land-spline construction exactly.
-//!
-//! The surface height is the depth-zero crossing only; the reference's squash
-//! factor and peak jaggedness shape the full density function (caves, overhangs),
-//! which the surface-height model does not use, so they are not built here.
+//! We only need the depth-zero crossing. The reference's squash factor and peak jaggedness shape
+//! caves and overhangs, which the surface-height model doesn't use, so they're not built here.
 
 use crate::graph::spline::{CubicSpline, SplinePoint};
 
-/// Spline coordinate names. These must match the axis nodes the terrain
-/// recipe feeds into each spline.
 pub mod axes {
     pub const CONTINENTALITY: &str = "continentality";
     pub const EROSION: &str = "erosion";
@@ -30,8 +21,6 @@ fn lerp(t: f64, a: f64, b: f64) -> f64 {
     a + t * (b - a)
 }
 
-/// The reference continent offset endpoint value for a given raw variance and
-/// continentality. Drives the leaf values of the mountain-ridge splines.
 fn offset_value(variance: f64, continentality: f64) -> f64 {
     let f0 = 1.0 - (1.0 - continentality) * 0.5;
     let f1 = 0.5 * (1.0 - continentality);
@@ -44,8 +33,6 @@ fn offset_value(variance: f64, continentality: f64) -> f64 {
     }
 }
 
-/// A ridge-axis spline of continent offset for one fixed continentality `f`.
-/// `bl` selects the "border-low" variant used by the inland branches.
 fn ridge_offset_spline(f: f64, bl: bool) -> CubicSpline {
     let i = offset_value(-1.0, f);
     let k = offset_value(1.0, f);
@@ -85,8 +72,6 @@ fn ridge_offset_spline(f: f64, bl: bool) -> CubicSpline {
     CubicSpline::new(axes::RIDGE, points)
 }
 
-/// A ridge-axis "flat offset" spline: five knots with derivatives derived from
-/// the neighbouring values (used for the eroded / coastal erosion branches).
 fn flat_offset_spline(f: f64, g: f64, h: f64, i: f64, j: f64, k: f64) -> CubicSpline {
     let l = (0.5 * (g - f)).max(k);
     let m = 5.0 * (h - g);
@@ -102,8 +87,6 @@ fn flat_offset_spline(f: f64, g: f64, h: f64, i: f64, j: f64, k: f64) -> CubicSp
     )
 }
 
-/// An erosion-axis spline of continent offset for one land branch. Mirrors the
-/// reference `createLandSpline` exactly.
 fn land_spline(f: f64, g: f64, h: f64, i: f64, j: f64, k: f64, bl: bool) -> CubicSpline {
     let sp1 = ridge_offset_spline(lerp(i, 0.6, 1.5), bl);
     let sp2 = ridge_offset_spline(lerp(i, 0.6, 1.0), bl);
@@ -111,7 +94,6 @@ fn land_spline(f: f64, g: f64, h: f64, i: f64, j: f64, k: f64, bl: bool) -> Cubi
     let ih = 0.5 * i;
     let sp4 = flat_offset_spline(f - 0.15, ih, ih, ih, i * 0.6, 0.5);
     let sp5 = flat_offset_spline(f, j * i, g * i, ih, i * 0.6, 0.5);
-    // sp6 and sp7 are identical in the reference; build one and reuse it.
     let sp6 = flat_offset_spline(f, j, j, g, h, 0.5);
     let sp8 = CubicSpline::new(
         axes::RIDGE,
@@ -141,8 +123,6 @@ fn land_spline(f: f64, g: f64, h: f64, i: f64, j: f64, k: f64, bl: bool) -> Cubi
     CubicSpline::new(axes::EROSION, points)
 }
 
-/// The continent height-offset spline (continentality at the top level), built
-/// procedurally to match the reference exactly.
 pub fn offset_spline() -> CubicSpline {
     let sp1 = land_spline(-0.15, 0.0, 0.0, 0.1, 0.0, -0.03, false);
     let sp2 = land_spline(-0.10, 0.03, 0.1, 0.1, 0.01, -0.03, false);

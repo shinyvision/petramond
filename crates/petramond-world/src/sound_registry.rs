@@ -1,114 +1,51 @@
-//! The sound-asset table: a stable [`Sound`] id per sound effect, mapped to its
-//! clip files and default playback parameters.
-//!
-//! The rows live in `assets/sounds.json` (a layered catalog like `blocks.json`):
-//! add an engine sound by adding a const + name here and a row + asset there; a
-//! mod pack overrides an engine row by bare name or ADDS a sound with a
-//! namespaced (`mod_id:name`) key, which registers a fresh id in load order
-//! (see [`crate::registry`] for the shared rules).
-
 use serde::Deserialize;
 
-/// Default distance, in blocks, where positional sounds fade to silence when a
-/// row does not state its own reach.
 pub const DEFAULT_ATTENUATION_DISTANCE: f32 = 32.0;
 
-/// A sound effect the game can play, identified by its opaque runtime id (the
-/// row index in the loaded table). Engine sounds own the low ids in the frozen
-/// const order below; pack sounds register after them.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Sound(pub u8);
 
-/// Engine sound consts, named like the enum variants they replaced.
 #[allow(non_upper_case_globals)]
 impl Sound {
-    /// The wood "punch" — re-triggered while mining wood (see `crate::mining`).
     pub const WoodPunch: Sound = Sound(0);
-    /// Placing a wood block.
     pub const WoodPlace: Sound = Sound(1);
-    /// Breaking / destroying a wood block.
     pub const WoodBreak: Sound = Sound(2);
-    /// Picking a dropped item up into the inventory — a global gameplay sound,
-    /// not a block sound.
     pub const ItemPickup: Sound = Sound(3);
-    /// A door swung open (its `open` bit just flipped to true).
     pub const DoorOpen: Sound = Sound(4);
-    /// A door swung shut (its `open` bit just flipped to false).
     pub const DoorClose: Sound = Sound(5);
-    /// A chest's lid is swinging open (its GUI was just opened).
     pub const ChestOpen: Sound = Sound(6);
-    /// A chest's lid is dropping shut (its GUI was just closed).
     pub const ChestClose: Sound = Sound(7);
-    /// The stone "punch" — re-triggered while mining stone (and ore, which
-    /// shares the stone set). See `crate::block::sounds::STONE`.
     pub const StonePunch: Sound = Sound(8);
-    /// A stone block finished breaking / was destroyed.
     pub const StoneBreak: Sound = Sound(9);
-    /// A stone block was placed into the world.
     pub const StonePlace: Sound = Sound(10);
-    /// The dirt "punch" — re-triggered while mining dirt, grass, gravel, and
-    /// other dirt-likes. See `crate::block::sounds::DIRT`.
     pub const DirtPunch: Sound = Sound(11);
-    /// A dirt block finished breaking / was destroyed.
     pub const DirtBreak: Sound = Sound(12);
-    /// A dirt block was placed into the world.
     pub const DirtPlace: Sound = Sound(13);
-    /// The player took damage (any source) — player feedback, non-positional.
     pub const PlayerHurt: Sound = Sound(14);
-    /// A shell/UI button or toggle was activated.
     pub const UiClick: Sound = Sound(15);
-    /// A sheep's ambient baa (the sheep row's `idle` hook).
     pub const SheepIdle: Sound = Sound(16);
-    /// A sheep took a hit (the sheep row's `hurt` hook).
     pub const SheepHurt: Sound = Sound(17);
-    /// Mining hit on a glass-family block (glass, panes, ice) — the punch loop.
     pub const GlassPunch: Sound = Sound(20);
-    /// A glass-family block shattered (broke or was destroyed).
     pub const GlassBreak: Sound = Sound(21);
-    /// A glass-family block was placed into the world.
     pub const GlassPlace: Sound = Sound(22);
-    /// Mining hit on a sand-family block (sand, red sand, clay, silt) — the
-    /// punch loop.
     pub const SandPunch: Sound = Sound(23);
-    /// A sand-family block finished breaking.
     pub const SandBreak: Sound = Sound(24);
-    /// A sand-family block was placed into the world.
     pub const SandPlace: Sound = Sound(25);
-    /// Mining hit on plant matter (leaves and every cross plant) — the punch loop.
     pub const LeafPunch: Sound = Sound(26);
-    /// Plant matter finished breaking.
     pub const LeafBreak: Sound = Sound(27);
-    /// Plant matter was placed into the world.
     pub const LeafPlace: Sound = Sound(28);
-    // FOOTSTEPS. Each is its material's PUNCH clips replayed quietly — a row
-    // pointing at the same variants at a low gain, the `farming:lamb_idle`
-    // pattern, so "how loud is a step" stays tunable data instead of a
-    // constant in the playback path. Swapping in dedicated step clips later is
-    // a `variants` edit and no code at all.
-    /// A footstep on wood.
     pub const WoodStep: Sound = Sound(29);
-    /// A footstep on stone or ore.
     pub const StoneStep: Sound = Sound(30);
-    /// A footstep on dirt, grass or gravel.
     pub const DirtStep: Sound = Sound(31);
-    /// A footstep on sand, clay or silt.
     pub const SandStep: Sound = Sound(32);
-    /// A footstep on glass or ice.
     pub const GlassStep: Sound = Sound(33);
-    /// A footstep on plant matter.
     pub const LeafStep: Sound = Sound(34);
-    /// Mining hit on snow (the snow layer and block) — the punch loop.
     pub const SnowPunch: Sound = Sound(35);
-    /// A snow block finished breaking.
     pub const SnowBreak: Sound = Sound(36);
-    /// A snow block was placed into the world.
     pub const SnowPlace: Sound = Sound(37);
-    /// A footstep on snow.
     pub const SnowStep: Sound = Sound(38);
 }
 
-/// Engine sound names in frozen id order (`ENGINE_SOUND_NAMES[id]` names
-/// `Sound(id)`); the completeness oracle `sounds.json` is validated against.
 const ENGINE_SOUND_NAMES: &[&str] = &[
     "petramond:wood_punch",
     "petramond:wood_place",
@@ -161,78 +98,39 @@ impl std::fmt::Debug for Sound {
 }
 
 impl Sound {
-    /// This sound's definition row.
     #[inline]
     pub fn def(self) -> &'static SoundDef {
         &defs()[self.0 as usize]
     }
 
-    /// Distance gain for this sound's row-owned travel distance. The curve fades
-    /// slowly near the listener and reaches silence at `attenuation_distance`.
     #[inline]
     pub fn distance_gain(self, distance: f32) -> f32 {
         distance_gain(distance, self.def().attenuation_distance)
     }
 }
 
-/// The broad mixing group a sound belongs to. Effective gain is
-/// `master × category × per-sound`; all categories are full volume today, so this
-/// is the hook for a future per-category (e.g. options-menu) volume control.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SoundCategory {
-    /// Block interaction — mining, breaking, placing, footsteps.
     Block,
-    /// Creature and entity presentation — idle calls, hurt barks, deaths.
     Mob,
-    /// UI / interface & player feedback — menu clicks, item pickup, etc.
     Ui,
-    /// Music tracks — the `music_volume` mixer group (Options → Sound).
-    /// No engine rows yet; music ships later.
     Music,
 }
 
-/// One row of the sound table: a sound's clip files + default playback
-/// parameters. Clips are read through the asset roots (so a mod pack can
-/// override one by shipping the same relative path) and decoded once at
-/// startup (see `crate::audio::Audio`); this is just the static description.
-/// Playback fields are read only by the `audio`-feature engine; the featureless
-/// (headless-server) build keeps the table for names/net tables alone.
 #[allow(dead_code)]
 pub struct SoundDef {
     pub sound: Sound,
-    /// The row's registry name (`"petramond:wood_punch"`, `"mod_id:zap"`) — the key mod
-    /// `EmitSound` HostCalls resolve through [`by_name`].
     pub name: &'static str,
-    /// One or more interchangeable source clips (OGG/Vorbis), as asset-relative
-    /// paths (`sounds/...`) resolved through [`crate::assets`] at startup. A random
-    /// variant is chosen each play — on top of the per-play pitch jitter — so a
-    /// repeated sound never sounds identical. Order is irrelevant; add or remove
-    /// clips freely.
     pub variants: &'static [&'static str],
-    /// Base linear gain on top of the category/master gain (`1.0` = unit).
     pub gain: f32,
-    /// Per-play pitch jitter as a ± fraction of unit playback speed: each play picks
-    /// a random speed in `[1 - v, 1 + v]`, so a repeated sound never sounds
-    /// identical. `0.0` = none. (Speed shifts pitch — rodio `Source::speed`.)
     pub pitch_variation: f32,
-    /// BASE playback speed multiplier (`1.0` = as authored; optional in the
-    /// row). The jitter varies around it (`pitch * (1 ± variation)`), so a row
-    /// can reuse another row's clips a constant interval up or down — the lamb
-    /// bleats the sheep's calls 30% higher without new audio files.
     pub pitch: f32,
-    /// Distance in blocks where positional playback fades to silence.
     pub attenuation_distance: f32,
     pub category: SoundCategory,
-    /// A handle-addressed spatial play of this row repeats its clip
-    /// seamlessly until `SoundStop` (a cart's roll, a machine's hum): the row
-    /// owns "this is a loop", so a mod starts it once and retunes it. The
-    /// clip is expected to be authored to loop (variant 0; loop rows are
-    /// single-variant). One-shot plays (`EmitSound`) ignore it.
     pub looped: bool,
 }
 
-/// One sound row as written in `sounds.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawSoundDef {
@@ -262,19 +160,14 @@ struct RawFile {
     sounds: Vec<RawSoundDef>,
 }
 
-/// The runtime [`Sound`] registered under `name` (engine `petramond:*` and pack
-/// `mod_id:name` keys alike), or `None` when no such row is loaded.
 pub fn by_name(name: &str) -> Option<Sound> {
     catalog().id(name).map(|id| Sound(id as u8))
 }
 
-/// The current registry's sound table, id-ordered (`defs()[sound.0]`). A
-/// missing or inconsistent `sounds.json` fails the registry build.
 pub fn defs() -> &'static [SoundDef] {
     catalog().rows()
 }
 
-/// The sound catalog stage of every content registry.
 pub(crate) static CATALOG: crate::content::Slot<crate::registry::Catalog<SoundDef>> =
     crate::content::Slot::new(crate::content::stage::SOUNDS, &[], load);
 
@@ -337,8 +230,6 @@ fn distance_gain(distance: f32, attenuation_distance: f32) -> f32 {
 mod tests {
     use super::*;
 
-    /// The shipped `assets/sounds.json` must cover the engine sound set — the
-    /// startup gate, surfaced as a test.
     #[test]
     fn shipped_sounds_json_loads_fully() {
         let (text, path) =
@@ -391,7 +282,6 @@ mod tests {
             DEFAULT_ATTENUATION_DISTANCE,
             "omitted reach uses the default"
         );
-        // A NEW bare name is refused.
         let bare = r#"{"sounds": [{"sound": "zap", "variants": [], "gain": 1, "pitch_variation": 0, "category": "ui"}]}"#;
         let err = parse_layers(&[&base, bare])
             .err()

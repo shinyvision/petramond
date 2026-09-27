@@ -1,12 +1,10 @@
-//! The surface biome placement table — a layered catalog
-//! (`assets/climate_table.json`): which biome the classifier picks for a
-//! point in the five-axis climate space (temperature, humidity,
-//! continentality, erosion, variance).
+//! Where surface biomes go in climate space. The table lives in `assets/climate_table.json`, and
+//! packs can layer on top of it. Its axes are temperature, humidity, continentality, erosion and
+//! variance.
 //!
-//! The table is a flat, ORDERED list of `(rectangle, biome)` rows served by
-//! [`BiomeClimateIndex`]: the lowest fitness distance wins and row order
-//! breaks ties, so the first row containing a point claims it. The file
-//! writes those rows compactly:
+//! It's just an ordered list of `(rectangle, biome)` rows in [`BiomeClimateIndex`]. Lowest fitness
+//! distance wins and ties go to the earlier row, so the first row containing a point gets it. On
+//! disk the rows are written compactly:
 //!
 //! ```json
 //! "bands": {"temperature": {"frozen": [-1.0, -0.3], ...}, ...},
@@ -21,25 +19,19 @@
 //! ]
 //! ```
 //!
-//! An axis names a BAND of that axis (`"coast"`) or a span of two
-//! (`"coast..far_inland"`, the low edge of the first to the high edge of the
-//! second). A plain group's rows each name one biome; a grid group expands
-//! every row across its temperature × humidity cells — temperature-major,
-//! then humidity, then the group's rows in order — taking each cell's biome
-//! from `biomes` (one key for every cell, or one entry per temperature that
-//! is a key for the whole row or a per-humidity list; `null` emits no row).
-//! `at` fixes axes for every row of the group, and every row states each of
-//! the five axes exactly once between the grid, `at` and itself. A row may
-//! carry an `offset` fitness penalty (added as `offset²`).
+//! An axis is either a band name (`"coast"`) or a span of two (`"coast..far_inland"` runs from the
+//! low edge of the first to the high edge of the second). Plain groups name one biome per row. Grid
+//! groups expand each row over their temperature × humidity cells (temperature-major, then
+//! humidity, then row order) and look up each cell's biome in `biomes`; `null` means no row. `at`
+//! fixes axes for the whole group, and every row has to end up stating all five axes exactly once.
+//! You can add an `offset`, which costs `offset²` fitness.
 //!
-//! Layering: bands merge by name across layers (a pack retuning `frozen`
-//! moves every row that names it), then rows resolve against the merged
-//! bands. A later layer's rows go FIRST, so a pack row claims the climate it
-//! contains ahead of the base table — the way a pack places its own biome in
-//! a niche; `"replace": true` drops every earlier layer's rows instead.
+//! Bands merge by name across layers, so if a pack retunes `frozen`, every row naming it moves.
+//! Later layers' rows go first, which is how a pack gets its own biome into a niche ahead of the
+//! base table. With `"replace": true` the earlier layers' rows are dropped instead.
 //!
-//! The temperature axis must define a `frozen` band: its upper edge is also
-//! the sea-ice line (see `density::surface`).
+//! The temperature axis must have a `frozen` band, since its upper edge is also the sea-ice line
+//! (see `density::surface`).
 
 use std::collections::BTreeMap;
 
@@ -49,7 +41,6 @@ use serde::Deserialize;
 use super::Fingerprint;
 use crate::biome::climate::{AxisRange, BiomeClimateIndex, ClimateRect};
 
-/// The climate axes, in [`ClimateRect`] order.
 const AXES: [&str; 5] = [
     "temperature",
     "humidity",
@@ -60,21 +51,14 @@ const AXES: [&str; 5] = [
 const TEMPERATURE: usize = 0;
 const HUMIDITY: usize = 1;
 
-/// The temperature band whose upper edge is the sea-ice line.
 const FROZEN_BAND: &str = "frozen";
 
-/// The loaded placement table.
 pub struct ClimateTable {
     pub index: BiomeClimateIndex,
-    /// Upper edge of the `frozen` temperature band: colder shallow water
-    /// freezes over.
     pub frozen_temperature_max: f32,
-    /// Hash of the resolved rows, stamped into the column-gen cache: a pack
-    /// that moves a biome must not be served stale cached columns.
     pub fingerprint: u64,
 }
 
-/// One layer of `climate_table.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawLayer {
@@ -133,9 +117,7 @@ struct RawRow {
     continentality: Option<String>,
     erosion: Option<String>,
     variance: Option<String>,
-    /// A plain group row's biome.
     biome: Option<String>,
-    /// A grid group row's per-cell biomes.
     biomes: Option<RawCells>,
     #[serde(default)]
     offset: f32,
@@ -153,8 +135,6 @@ impl RawRow {
     }
 }
 
-/// A grid row's biomes: one key for every cell, or one entry per
-/// temperature.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawCells {
@@ -162,8 +142,6 @@ enum RawCells {
     PerTemperature(Vec<RawCellRow>),
 }
 
-/// One temperature's cells: one key for the whole row, or one per humidity
-/// (`null` = no row for that cell).
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum RawCellRow {
@@ -171,13 +149,11 @@ enum RawCellRow {
     PerHumidity(Vec<Option<String>>),
 }
 
-/// The layers merged and resolved: the ordered rows the index is built from.
 pub(crate) struct ResolvedTable {
     pub rows: Vec<(ClimateRect, Biome)>,
     pub frozen_temperature_max: f32,
 }
 
-/// Every axis's bands, merged across layers.
 struct Bands([BTreeMap<String, AxisRange>; 5]);
 
 impl Bands {
@@ -209,7 +185,6 @@ impl Bands {
             .ok_or_else(|| format!("unknown {} band '{name}'", AXES[axis]))
     }
 
-    /// A band (`"coast"`) or a span of two (`"coast..far_inland"`).
     fn resolve(&self, axis: usize, spec: &str) -> Result<AxisRange, String> {
         match spec.split_once("..") {
             Some((lo, hi)) => {
@@ -231,9 +206,6 @@ fn biome_named(key: &str) -> Result<Biome, String> {
         .ok_or_else(|| format!("unknown biome '{key}'"))
 }
 
-/// The five axis specs of one row: each stated exactly once between the
-/// grid (temperature and humidity of a grid group), the group's `at` and
-/// the row itself.
 fn row_axes<'a>(
     grid_cell: Option<(&'a str, &'a str)>,
     at: [Option<&'a str>; 5],
@@ -271,7 +243,6 @@ fn resolve_rect(bands: &Bands, specs: [&str; 5], offset: f32) -> Result<ClimateR
     Ok(ClimateRect::surface(t, h, c, e, v).with_offset(offset))
 }
 
-/// The biome of grid cell `(i, j)`, `None` for a `null` cell.
 fn cell(cells: &RawCells, i: usize, j: usize) -> Option<&str> {
     match cells {
         RawCells::Uniform(key) => Some(key.as_str()),
@@ -353,7 +324,6 @@ fn resolve_group(bands: &Bands, group: &RawGroup) -> Result<Vec<(ClimateRect, Bi
     Ok(out)
 }
 
-/// Merge and resolve the layers (base first, packs after).
 pub(crate) fn parse_layers(texts: &[&str]) -> Result<ResolvedTable, String> {
     let layers = texts
         .iter()
@@ -416,8 +386,6 @@ impl ResolvedTable {
     }
 }
 
-/// The placement table stage (see [`super::content_stages`]); a missing or
-/// malformed layer fails the registry build.
 pub(crate) static TABLE: petramond_world::content::Slot<ClimateTable> =
     petramond_world::content::Slot::new(
         "climate_table.json",
@@ -435,7 +403,6 @@ fn load_table(reg: &petramond_world::content::ContentRegistry) -> Result<Climate
     .map(|table| table.build())
 }
 
-/// The current registry's placement table.
 pub fn table() -> &'static ClimateTable {
     TABLE.current()
 }

@@ -1,12 +1,3 @@
-//! Message-time application of discrete [`PlayerAction`] intents: each click,
-//! throw, or menu transition lands in its session's pending latch/queue here,
-//! and the fixed tick consumes it in stage order.
-//!
-//! EVERY latched request id must eventually receive an `ActionOutcome` — an
-//! unanswered id leaks the client's prediction-ledger entry forever. A
-//! single-slot latch denies the id it supersedes; an intent that cannot even
-//! queue is denied immediately.
-
 use crate::net::protocol::{
     ActionDenyReason, ActionOutcome, ClientRequestId, PlayerAction, TargetRef,
 };
@@ -57,10 +48,6 @@ impl ServerGame {
                 tool_item_id,
                 predicted,
             } => self.apply_break_finished(s, request_id, pos, tool_item_id, predicted),
-            // A mode switch is not tick input: applied at message time, like
-            // the direct call it replaces. The floating spectator must never
-            // be measured as falling — re-anchor the tracker (mirrors
-            // `Player::set_mode`).
             PlayerAction::ToggleMode => {
                 if self.is_operator(s) {
                     let sess = &mut self.sessions[s];
@@ -99,8 +86,6 @@ impl ServerGame {
             PlayerAction::Schematic(request) => self.apply_schematic_request(s, request),
             PlayerAction::Wake => self.sessions[s].input.wake_requested = true,
             PlayerAction::Respawn => self.sessions[s].input.respawn_requested = true,
-            // Menu transitions join clicks and crafts in one ordered queue so
-            // arrival order remains authoritative on the fixed tick.
             PlayerAction::OpenInventory => {
                 let kind = if self.sessions[s].player.abilities().item_catalog {
                     petramond_world::gui_state::GuiKind::Creative
@@ -130,12 +115,6 @@ impl ServerGame {
             predicted,
             jabbed,
         );
-        // A water-stopping ray is gameplay authority, not merely a client
-        // presentation choice. The SAME captured items that select this ray
-        // must still occupy the captured hands when Placement consumes the
-        // click. Either hand's water-ray item selects the water ray (main
-        // first) — the off-hand boat needs the water target for its second
-        // dispatch pass.
         click.target = self.authoritative_use_target(s, click.ray_item(), click.target);
         let sess = &mut self.sessions[s];
         if let Some(old) = sess
@@ -158,10 +137,6 @@ impl ServerGame {
         tool_item_id: Option<u16>,
         predicted: bool,
     ) {
-        // A newer finish supersedes any deferred TooFast wait — answer the old
-        // id so the ledger cannot leak. In-flight finishes are NOT superseded:
-        // instabreak blocks can legitimately finish two cells in one tick
-        // window, so each finish queues and resolves independently.
         let old_deferred = self.sessions[s].input.deferred_break_finished.take();
         if let Some(old) = old_deferred {
             self.sessions[s]
@@ -171,7 +146,6 @@ impl ServerGame {
                     old.request_id,
                     ActionDenyReason::Denied,
                 ));
-            // Old optimistic clear may still be on the client.
             let cells = self.world.break_footprint_cells(old.pos);
             self.sessions[s]
                 .replication
@@ -185,8 +159,6 @@ impl ServerGame {
             predicted,
         };
         if let Err(refused) = self.sessions[s].input.queue_break_finished(request) {
-            // A flood, not play: deny at once and restore the cells the
-            // client may have cleared optimistically.
             log::warn!(
                 "session {} overflowed its break queue; denying",
                 self.sessions[s].id.0
@@ -201,10 +173,6 @@ impl ServerGame {
         }
     }
 
-    /// Queue one menu intent for session `s` on its ordered, bounded queue.
-    /// A full queue is a flood, not play: the intent is dropped and, when it
-    /// carries a request id, denied at once so the client's prediction
-    /// ledger never leaks.
     pub(in crate::server) fn queue_menu_action(&mut self, s: usize, action: PendingMenuAction) {
         let sess = &mut self.sessions[s];
         let Err(refused) = sess.input.queue_menu_action(action) else {

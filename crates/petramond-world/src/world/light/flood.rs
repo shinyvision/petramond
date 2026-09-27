@@ -11,22 +11,9 @@ use super::neighborhood::cube_idx;
 use super::shape::LightCells;
 use super::{NBHD, NBHD_VOLUME};
 
-/// The standard torch-class emission level (x2 scale, level 14). Seeds come
-/// from each emitter row's own `emission` value; this constant remains as the
-/// reference level the engine's emitters (torch, lit furnace) all use — tests
-/// build their emitters with it.
 #[cfg(any(test, feature = "test-support"))]
 pub const EMITTER_LIGHT: u8 = 28;
 
-/// Reusable flood scratch: the working light cube plus the BFS queue. One per
-/// light worker thread (see `queue::run_light_bake`) so streaming bakes don't
-/// allocate ~110 KB per flood; the flood functions reset it on entry, and the
-/// clipped per-section results are allocated fresh since they outlive the bake.
-/// The cube grows on demand: per-section bakes flood 48³, batch bakes 64³.
-///
-/// Sky and block keep SEPARATE cubes. The sky flood runs on nearly every
-/// section and must not pay the colour cell's doubled clear; the RGB cube is
-/// touched only by a bake that actually found an emitter.
 pub struct FloodScratch {
     sky: Vec<u8>,
     block: Vec<LightRgb>,
@@ -48,8 +35,6 @@ impl FloodScratch {
         }
     }
 
-    /// No clear: [`skylight_cube`]'s pre-fill writes EVERY cell of the cube,
-    /// so a memset here would only be overwritten.
     fn reset_sky(&mut self, volume: usize) -> (&mut [u8], &mut VecDeque<Cursor>) {
         if self.sky.len() < volume {
             self.sky.resize(volume, 0);
@@ -69,7 +54,6 @@ impl FloodScratch {
     }
 }
 
-/// Flood skylight across the 3x3x3 section neighbourhood, then clip to the centre.
 pub fn skylight(
     pos: SectionPos,
     cells: LightCells<'_>,
@@ -82,9 +66,6 @@ pub fn skylight(
     clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
 }
 
-/// Flood skylight over a `dim`³ cube whose world origin Y is `cube_oy`, leaving the
-/// fixpoint in the returned scratch slice for the caller to clip per section.
-/// `surface` is the `dim`² sky-cover map, row-major `[z][x]`.
 pub fn skylight_cube<'s>(
     cube_oy: i32,
     dim: usize,
@@ -96,12 +77,6 @@ pub fn skylight_cube<'s>(
     debug_assert_eq!(surface.len(), dim * dim);
     let (light, queue) = scratch.reset_sky(dim * dim * dim);
 
-    // Every above-surface cell reads as full sky (the flood relaxations and the
-    // clipped output both read these), everything else starts dark. One
-    // horizontal plane of the cube is exactly one pass over `surface` — the
-    // cube's Y-major layout makes plane `y` and the cover map the same shape —
-    // so this is a branchless select the compiler vectorizes, and it is what
-    // lets the scratch skip its clear ...
     for y in 0..dim {
         let wy = cube_oy + y as i32;
         let plane = &mut light[y * dim * dim..(y + 1) * dim * dim];
@@ -113,9 +88,8 @@ pub fn skylight_cube<'s>(
     // ... but only the terrain-envelope FRONTIER enters the BFS queue: sky cells
     // with at least one in-cube neighbour at-or-below that neighbour's column
     // surface. An interior sky cell's pop can never push (all its neighbours
-    // already hold SKY_FULL), so skipping it is byte-identical — and a surface
-    // bake used to enqueue every one of its ~50k open-sky cells just to pop them
-    // for nothing. Per column the frontier is the band from the cell directly
+    // already hold SKY_FULL), so skipping it is byte-identical. Per column the
+    // frontier is the band from the cell directly
     // above the surface up to the highest of the four horizontal neighbours'
     // surfaces (cells beside terrain), clamped to the cube.
     let cube_y_lo = cube_oy;
@@ -167,7 +141,6 @@ pub fn skylight_cube<'s>(
     light
 }
 
-/// Flood block light from every emitter in the neighbourhood, then clip to the centre.
 pub fn block_light(
     pos: SectionPos,
     cells: LightCells<'_>,
@@ -185,8 +158,6 @@ pub fn block_light(
     clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
 }
 
-/// Flood block light over a `dim`³ cube at world `origin`, leaving the fixpoint in
-/// the returned scratch slice for the caller to clip per section.
 pub fn block_light_cube<'s>(
     origin: (i32, i32, i32),
     dim: usize,
@@ -211,12 +182,6 @@ pub fn block_light_cube<'s>(
             light[i] = merged;
             queue.push_back(cursor(x, y, z));
         }
-        // The emitter's OWN emission also steps straight out, gated only on
-        // whether the neighbour accepts it: a cell's matter cannot imprison
-        // the light that same matter makes, so a full opaque lamp radiates.
-        // Only the row's own value escapes this way — light that merely
-        // ARRIVED here is not the cell's to re-emit, which also keeps the
-        // result independent of the order emitters are seeded in.
         let out = emission.decayed();
         if out.is_dark() {
             continue;
@@ -242,9 +207,6 @@ pub fn block_light_cube<'s>(
     light
 }
 
-/// Packed BFS cursor: `x | y<<10 | z<<20`. The queue holds tens of thousands of
-/// entries per flood, so it rides 4 bytes instead of a 24-byte coordinate
-/// triple, and a neighbour step is one wrapping add of a constant.
 type Cursor = u32;
 
 #[inline]
@@ -252,7 +214,6 @@ fn cursor(x: usize, y: usize, z: usize) -> Cursor {
     (x as u32) | ((y as u32) << 10) | ((z as u32) << 20)
 }
 
-/// Neighbour deltas in [`FACE_NEIGHBORS`] order, as packed-cursor increments.
 const CURSOR_STEP: [u32; 6] = [
     1,
     1u32.wrapping_neg(),
@@ -262,13 +223,8 @@ const CURSOR_STEP: [u32; 6] = [
     (1u32 << 20).wrapping_neg(),
 ];
 
-/// The `+Y` entry of [`FACE_NEIGHBORS`]; its opposite (index 3) is the
-/// straight-down step direct skylight rides losslessly.
 pub(super) const DOWN: usize = 3;
 
-/// The sub-box of the flood cube whose values the caller will actually KEEP —
-/// the centre section for a per-section bake, the whole member group for a
-/// batch. Half-open per axis.
 #[derive(Copy, Clone)]
 pub struct Keep {
     lo: [u32; 3],
@@ -283,7 +239,6 @@ impl Keep {
         }
     }
 
-    /// Steps along one axis that a path from `v` into the box must take.
     #[inline]
     fn axis(v: u32, lo: u32, hi: u32) -> (u32, u32) {
         if v < lo {
@@ -295,11 +250,6 @@ impl Keep {
         }
     }
 
-    /// The lowest cube Y from which a FULL-STRENGTH seed in column `(x, z)`
-    /// can still reach the kept box, or `None` when the column is out of reach
-    /// horizontally. The horizontal half of [`Self::lossy_steps`] is constant
-    /// down a column, so the seed loop clamps a RANGE instead of testing every
-    /// cell — and skips whole columns outright.
     #[inline]
     fn seed_y_floor(self, x: u32, z: u32) -> Option<u32> {
         let (dx_lo, dx_hi) = Self::axis(x, self.lo[0], self.hi[0]);
@@ -309,16 +259,6 @@ impl Keep {
         (flat < reach).then(|| self.lo[1].saturating_sub(reach - flat - 1))
     }
 
-    /// The FEWEST attenuating steps any path from `(x, y, z)` into the kept box
-    /// can take, given that a cell already at full strength descends without
-    /// loss but pays for every horizontal or upward step.
-    ///
-    /// This is the whole reason a per-section bake is affordable: the flood
-    /// cube is 27× the volume it keeps, and light that cannot reach the kept
-    /// box is work thrown away. Below full strength every step costs `DECAY`,
-    /// so the L1 distance bounds the arrival; at full strength only the
-    /// non-descending part of the journey is charged (and one lossy step drops
-    /// the value below full for good, so it can never re-enter the free case).
     #[inline]
     fn lossy_steps(self, x: u32, y: u32, z: u32, at_full: bool) -> u32 {
         let (dx_lo, dx_hi) = Self::axis(x, self.lo[0], self.hi[0]);
@@ -333,11 +273,6 @@ impl Keep {
     }
 }
 
-/// Per-edge geometry, shared by both floods: whether the step stays in the
-/// cube, and the two aperture quadrant masks that must overlap for light to
-/// cross. `k` indexes [`FACE_NEIGHBORS`]; the packed aperture word orders its
-/// faces `-x,+x,-y,+y,-z,+z`, so the SOURCE cell's outgoing face is `k ^ 1`
-/// and the DESTINATION cell's incoming face is `k`.
 #[inline]
 fn in_cube(k: usize, x: u32, y: u32, z: u32, dim: u32) -> bool {
     match k {
@@ -355,9 +290,6 @@ pub(super) fn face_mask(word: u32, face: usize) -> u32 {
     (word >> (face * 4)) & 0xF
 }
 
-/// Skylight relaxation: scalar cells, plus the one exception colour never
-/// touches — an undecayed straight-down step through a cell that transmits
-/// DIRECT skylight.
 fn propagate_sky(
     dim: usize,
     cells: LightCells<'_>,
@@ -375,7 +307,6 @@ fn propagate_sky(
         if level <= DECAY {
             continue;
         }
-        // Nothing this cell can send survives the trip into the kept box.
         if u32::from(DECAY) * keep.lossy_steps(x, y, z, level == SKY_FULL) >= u32::from(level) {
             continue;
         }
@@ -409,13 +340,6 @@ fn propagate_sky(
     }
 }
 
-/// ONE FUSED relaxation over all three colour channels, never three floods.
-///
-/// Per edge the GEOMETRY dominates: the bounds step plus the two aperture
-/// masks. That work is entirely colour-blind — colour never decides whether
-/// light crosses, only what arrives — so relaxing a vector pays it ONCE and
-/// adds two more compares, where three scalar floods would pay it three times.
-/// The decay is the same for all six edges, so it is computed once per POP.
 fn propagate_block(
     dim: usize,
     cells: LightCells<'_>,
@@ -434,8 +358,6 @@ fn propagate_block(
         if next.is_dark() {
             continue;
         }
-        // Block light has no lossless step, so the L1 distance to the kept box
-        // bounds what the brightest channel could still deliver there.
         if u32::from(DECAY) * keep.lossy_steps(x, y, z, false) >= u32::from(level.luminance()) {
             continue;
         }
@@ -461,11 +383,7 @@ fn propagate_block(
     }
 }
 
-/// Copy one 16³ section out of a flooded `dim`³ cube; `off` is the section's cell
-/// offset inside the cube.
 pub fn clip_cube<T: Copy>(light: &[T], dim: usize, off: (usize, usize, usize)) -> Arc<[T]> {
-    // Row-appended rather than zero-filled and overwritten: the clip writes
-    // every cell, so the default init would be pure waste.
     let mut out = Vec::with_capacity(SECTION_VOLUME);
     for ly in 0..SECTION_SIZE {
         for lz in 0..SECTION_SIZE {
@@ -496,7 +414,6 @@ mod tests {
         LightCells::new(blocks, states, NBHD)
     }
 
-    /// A colourless emitter at the test's reference level.
     fn white(level: u8) -> LightRgb {
         LightRgb::grey(level)
     }
@@ -521,8 +438,6 @@ mod tests {
         clip_cube(&light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
     }
 
-    /// One stair cell, as the shape seam sees it — the fixture's stand-in for
-    /// a section, so the apertures come from the real family facet.
     struct OneStair(crate::block::ShapeState);
 
     impl crate::block::ShapeNeighborhood for OneStair {
@@ -535,7 +450,6 @@ mod tests {
     }
 
     fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
-        // The stair family's aperture answer, exactly as the gather asks for it.
         let k = Block::OakStairs.shape_kind().def();
         let states = entries
             .iter()
@@ -560,11 +474,6 @@ mod tests {
 
     #[test]
     fn frontier_seeding_matches_full_sky_seeding() {
-        // The frontier-only seed set must reproduce the full-seed flood exactly:
-        // an interior sky cell's pop can never push (its neighbours are all
-        // SKY_FULL already), so the two fixpoints are identical. Randomized
-        // rough terrain with cave holes exercises bands above/inside/below the
-        // cube and diagonal-neighbour seams.
         let pos = SectionPos::new(3, 2, -5);
         let noy = pos.origin_world().1 - SECTION_SIZE as i32;
         let mut rng = 0x1234_5678_9abc_def0u64;
@@ -598,7 +507,6 @@ mod tests {
                 &mut FloodScratch::new(),
             );
 
-            // Reference: the pre-optimization seeding — every above-surface cell.
             let want = full_seed_skylight(pos, cells(&blocks, &states), &surface);
 
             assert_eq!(&got[..], &want[..], "flood mismatch in round {round}");
@@ -673,18 +581,11 @@ mod tests {
         assert!(cube[section_idx(1, 8, 8)].is_dark());
     }
 
-    /// A lamp's own matter must not imprison the light that same matter makes,
-    /// so an emitter in an OPAQUE cell still lights what is around it. Transit
-    /// is untouched: nothing reaches the far pocket except what the lamp
-    /// itself radiates, which is what keeps "full solid cube" and
-    /// "see-through" from collapsing into one property.
     #[test]
     fn an_opaque_emitter_lights_out_without_becoming_a_conduit() {
         let pos = SectionPos::new(0, 0, 0);
         let mut blocks = vec![Block::Stone.id(); NBHD_VOLUME].into_boxed_slice();
         let (y, z) = (SECTION_SIZE + 8, SECTION_SIZE + 8);
-        // One opaque lamp cell at x=8 walling a near pocket (x=7) off from a
-        // far one (x=9,10); everything else is solid rock.
         for x in [7usize, 9, 10] {
             blocks[nbhd_idx(SECTION_SIZE + x, y, z)] = Block::Air.id();
         }
@@ -710,7 +611,6 @@ mod tests {
             cube[section_idx(10, 8, 8)],
             LightRgb::new(0, EMITTER_LIGHT - 4, 0)
         );
-        // Nothing enters the lamp cell, so no red crosses it to the far side.
         assert_eq!(cube[section_idx(8, 8, 8)], lamp);
     }
 
@@ -747,11 +647,6 @@ mod tests {
         assert!(!open[section_idx(0, 8, 8)].is_dark());
     }
 
-    /// The fused vector relaxation must be EXACTLY three independent scalar
-    /// floods, channel for channel — the whole justification for paying the
-    /// geometry once instead of three times. Cluttered geometry so the two
-    /// colours reach cells by different routes and the mixing is not a trivial
-    /// straight line.
     #[test]
     fn the_fused_flood_equals_three_independent_scalar_floods() {
         let pos = SectionPos::new(0, 0, 0);
@@ -812,11 +707,6 @@ mod tests {
             }
         }
 
-        // ... and the two hues really do MIX somewhere in between. A single
-        // saturated emitter already paints cells whose channels merely DIFFER,
-        // so the fixture is only honest if some cell takes different channels
-        // from different lamps: brighter in green than the purple lamp alone
-        // could reach it, AND brighter in blue than the blue lamp alone could.
         let only_purple = block_light(
             pos,
             cells(&blocks, &states),
@@ -836,11 +726,6 @@ mod tests {
         );
     }
 
-    /// THE feature: two differently-coloured lamps whose ranges overlap compose
-    /// by per-channel MAXIMUM, so the overlap reads as the mixed colour — never
-    /// "the nearer lamp wins". A pure red and a pure blue lamp facing each other
-    /// down a corridor must leave magenta between them, with red still falling
-    /// off toward the blue lamp and blue still falling off toward the red one.
     #[test]
     fn two_lamps_of_different_colour_mix_where_they_overlap() {
         let pos = SectionPos::new(0, 0, 0);
@@ -849,8 +734,6 @@ mod tests {
 
         let red = LightRgb::new(28, 0, 0);
         let blue = LightRgb::new(0, 0, 28);
-        // Both inside the centre section, 12 cells apart along X at (y=8, z=8):
-        // each reaches 14 cells, so the whole span between them is doubly lit.
         let (rx, bx) = (2i32, 14i32);
         let at = |x: usize| section_idx(x, 8, 8);
 
@@ -875,29 +758,20 @@ mod tests {
 
         for x in 0..SECTION_SIZE {
             let (m, r, b) = (mixed[at(x)], red_only[at(x)], blue_only[at(x)]);
-            // Per-channel maxima, exactly — the composition rule itself.
             assert_eq!(
                 m.channels(),
                 [r.r().max(b.r()), r.g().max(b.g()), r.b().max(b.b())],
                 "cell x={x} is not the per-channel max of the two lamps"
             );
-            // Neither lamp's channel is dragged down by the other's presence,
-            // and green is never invented out of thin air.
             assert_eq!(m.g(), 0, "cell x={x} grew a green channel from nowhere");
         }
 
-        // The span BETWEEN the lamps is genuinely magenta: both channels lit,
-        // and each still gradient-falls off toward the far lamp (a "nearest
-        // emitter wins" scheme would give one channel a hard cliff at the
-        // midpoint and zero on the far side).
         for x in (rx as usize)..=(bx as usize) {
             let c = mixed[at(x)];
             assert!(c.r() > 0 && c.b() > 0, "cell x={x} is not magenta: {c:?}");
         }
         assert!(mixed[at(rx as usize)].r() > mixed[at(bx as usize)].r());
         assert!(mixed[at(bx as usize)].b() > mixed[at(rx as usize)].b());
-        // Right AT the blue lamp, red must still be present (it travelled the
-        // whole 12 cells: 28 - 24 = 4) — the overlap is not clipped.
         assert_eq!(mixed[at(bx as usize)].channels(), [4, 0, 28]);
         assert_eq!(mixed[at(rx as usize)].channels(), [28, 0, 4]);
     }

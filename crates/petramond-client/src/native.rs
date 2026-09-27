@@ -1,5 +1,3 @@
-//! Native desktop platform host: winit window + wgpu surface.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,26 +28,16 @@ fn client_content_stages() -> [&'static dyn petramond_world::content::Stage; 3] 
 
 pub fn run() {
     petramond::platform::init_logging();
-    // Staged content changes land before any pack is discovered; the lock
-    // this process then holds (shared) keeps every other Petramond process
-    // from applying changes under it for as long as it runs.
     let (content_report, content_lock) = petramond::content::apply_pending();
-    // Every content catalog loads here, once, before anything touches one: a
-    // bad pack is a load report on stderr, not a panic on whichever thread
-    // first read a catalog.
     if let Err(e) = petramond::content::install_from_env(&client_content_stages()) {
         eprintln!("{e}");
         std::process::exit(1);
     }
-    // Pack discovery + any cold wasm compiles happen behind the shell menu,
-    // so the first world open finds every mod module ready.
     petramond::modding::prewarm_modules();
     let seed: u32 = std::env::var("PETRAMOND_SEED")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0x1234_5678);
-    // Env var > client.json > built-in default, so one-off runs can override
-    // the persistent setting.
     petramond::save::client::ensure_file();
     let client = petramond::save::client::load();
     let rd: i32 = std::env::var("PETRAMOND_RD")
@@ -68,17 +56,12 @@ pub fn run() {
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut host).unwrap();
 
-    // Final save on quit: queue the writes, then dropping `host` joins the save
-    // thread so everything is flushed before the process exits.
     let relaunch = host.app.as_mut().and_then(|app| {
         app.save_on_exit();
         app.take_relaunch()
     });
     let content_lock = host.content_lock.take();
     drop(host);
-    // What mods queued to their files (the instances' closing syncs
-    // included) reaches the disk before the I/O threads die with the
-    // process.
     petramond::modding::client::files::flush();
     if let Some(route) = relaunch {
         drop(content_lock);
@@ -94,14 +77,9 @@ struct NativeHost {
     app: Option<App>,
     seed: u32,
     render_dist: i32,
-    /// Gameplay frame period (from the `fps_cap` client setting / `PETRAMOND_FPS`).
     frame: Duration,
-    /// Frame period while a modal screen is up (cursor released): near-static
-    /// screens don't need the full gameplay rate. Still renders every frame.
     menu_frame: Duration,
-    /// When the next frame (`App::update` + redraw) is due — the frame cap.
     next_update: Instant,
-    /// Per-second update/render counters logged to stderr when `PETRAMOND_PERF` is set.
     perf_log: bool,
     perf_since: Instant,
     perf_updates: u32,
@@ -110,14 +88,9 @@ struct NativeHost {
     perf_update_max: Duration,
     perf_render_total: Duration,
     perf_render_max: Duration,
-    /// Last cursor grab/visibility state applied to the window. Cursor policy changes
-    /// only when screens open/close; reapplying it every redraw sends compositor work
-    /// through the hot mouse-look path.
     cursor_policy: Option<CursorPolicy>,
     modifiers: Modifiers,
-    /// The display refresh last handed to the app, in millihertz.
     refresh_mhz: Option<u32>,
-    /// The startup content apply's report, handed to the app once it exists.
     content_report: Option<petramond::content::ApplyReport>,
     content_lock: Option<petramond::content::ContentLock>,
 }
@@ -202,10 +175,6 @@ impl NativeHost {
         self.next_update = Instant::now();
     }
 
-    /// React to a failure the renderer reported. A lost device gets a new
-    /// renderer — the app re-applies its graphics settings and re-queues the
-    /// world's terrain for upload; running out of GPU memory, or failing to
-    /// build the replacement, ends the game with the error.
     fn recover_renderer(&mut self, event_loop: &ActiveEventLoop, failure: RenderFailure) {
         let RenderFailure::DeviceLost(reason) = &failure else {
             fatal_render_error(event_loop, &failure);
@@ -215,8 +184,6 @@ impl NativeHost {
         let (Some(window), Some(app)) = (self.window.clone(), self.app.as_mut()) else {
             return;
         };
-        // The dead renderer's surface must release the window before a new
-        // surface is created on it.
         self.renderer = None;
         let size = window.inner_size();
         match pollster::block_on(new_renderer_from_target(window, size.width, size.height)) {
@@ -253,12 +220,7 @@ fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, curs
         let size = window.inner_size();
         let center = PhysicalPosition::new(size.width as f64 * 0.5, size.height as f64 * 0.5);
         if cursor.grabbed {
-            // macOS re-associates cursor motion when warping, so centre before
-            // locking there. Wayland rejects this until locked and uses the
-            // retry below as its locked-pointer position hint.
             let centered_before_grab = window.set_cursor_position(center).is_ok();
-            // Locked keeps the hidden OS cursor from drifting while raw relative
-            // motion drives the camera. X11 cannot lock, so confine there.
             let _ = window
                 .set_cursor_grab(CursorGrabMode::Locked)
                 .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
@@ -266,8 +228,6 @@ fn apply_cursor_policy(window: &Window, applied: &mut Option<CursorPolicy>, curs
                 let _ = window.set_cursor_position(center);
             }
         } else {
-            // Set the unlock position while Wayland's locked-pointer protocol
-            // still permits it, so the visible menu cursor opens in the centre.
             if applied.is_some_and(|previous| previous.grabbed) {
                 let _ = window.set_cursor_position(center);
             }
@@ -316,8 +276,6 @@ impl ApplicationHandler for NativeHost {
         if let Some(report) = self.content_report.take() {
             app.set_content_report(report);
         }
-        // Graphics settings reach the renderer through the same call every
-        // later options change uses; there is no creation-time path.
         app.apply_graphics(&mut renderer);
         if let Ok(world_name) = std::env::var("PETRAMOND_WORLD") {
             if !world_name.is_empty() {
@@ -383,9 +341,6 @@ impl ApplicationHandler for NativeHost {
                         self.modifiers = modifiers;
                         app.set_modifiers(modifiers);
                     }
-                    // Remap capture (Options → Controls) preempts everything:
-                    // the pressed key BECOMES the binding (ESC cancels), so it
-                    // must never double as text/navigation/control input.
                     if app.remap_capture_key(code, down) {
                         if app.take_quit_requested() {
                             event_loop.exit();
@@ -409,9 +364,7 @@ impl ApplicationHandler for NativeHost {
                         }
                         if !app.take_quit_requested() {
                             if let Some(text) = text.as_ref() {
-                                if !app.handle_text_input(text.as_str()) {
-                                    // Text entry is opportunistic; non-text screens ignore it.
-                                }
+                                if !app.handle_text_input(text.as_str()) {}
                             }
                         }
                     }
@@ -420,10 +373,6 @@ impl ApplicationHandler for NativeHost {
                     let Some(code) = key_code(winit_code) else {
                         return;
                     };
-                    // The app resolves raw keys through the player's binding
-                    // table (engine + mod actions, fixed fallback keys
-                    // included). `false` = an unconsumed CloseScreen press —
-                    // quit, as always.
                     if !app.handle_raw_key(code, down) {
                         app.request_exit(ExitKind::Quit);
                     }
@@ -433,8 +382,6 @@ impl ApplicationHandler for NativeHost {
                 }
             }
             WindowEvent::ModifiersChanged(mods) => {
-                // Physical Ctrl/Shift state, tracked apart from the rebindable
-                // Sprint/Sneak controls so UI modifiers don't follow a rebind.
                 let state = mods.state();
                 self.modifiers = Modifiers {
                     ctrl: state.control_key(),
@@ -458,8 +405,6 @@ impl ApplicationHandler for NativeHost {
                 app.set_cursor_position(position.x as f32, position.y as f32);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                // EVERY button forwards raw — side buttons are bindable; the
-                // app routes left/right to the UI on menu screens itself.
                 app.handle_raw_mouse(mouse_button(button), state == ElementState::Pressed);
             }
             WindowEvent::RedrawRequested => {
@@ -473,8 +418,6 @@ impl ApplicationHandler for NativeHost {
                     }
                     self.refresh_mhz = refresh;
                 }
-                // The host requests this once per `App::update`; the simulation itself
-                // advances in `about_to_wait`.
                 let render_start = Instant::now();
                 if !app.render(renderer) {
                     self.next_update = Instant::now();
@@ -529,14 +472,12 @@ impl ApplicationHandler for NativeHost {
             return;
         };
         let now = Instant::now();
-        // Fixed frame-capped loop: every wake runs one `App::update` and draws it.
-        // The SERVER thread owns the fixed-step accumulator holding the sim at
-        // 20 TPS (`src/server/handle.rs`); updates here only exchange messages
-        // with it. A released cursor means a modal screen is up — SHELL screens
-        // take the cheaper menu cap, but a game menu (container/machine panel)
-        // keeps the gameplay cadence: its bound state is answering the server,
-        // and halving the frame rate taxes every round trip twice (input
-        // sampling and drain-to-present).
+        // Each wake runs one `App::update` and draws it. The server thread owns the fixed-step
+        // accumulator at 20 TPS, so updates here only exchange messages with it.
+        // A released cursor means a modal screen is up. Shell screens take the cheaper menu cap,
+        // but a game menu (container or machine panel) keeps gameplay cadence because its state
+        // is answering the server. Halving the frame rate would tax input sampling and
+        // drain-to-present on every round trip.
         if now >= self.next_update {
             let update_start = Instant::now();
             app.update(renderer);
@@ -553,8 +494,6 @@ impl ApplicationHandler for NativeHost {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
-            // A frame the stepped clock moves does not wait for the wall: its
-            // capture may be due at once. A held frame keeps the normal cap.
             let frame = if app.frame_uncapped() {
                 Duration::ZERO
             } else if app.cursor_policy().grabbed
@@ -612,18 +551,12 @@ impl ApplicationHandler for NativeHost {
     }
 }
 
-/// Report a renderer failure the game cannot continue past, and quit.
 fn fatal_render_error(event_loop: &ActiveEventLoop, error: &dyn std::error::Error) {
     log::error!("renderer: {error}");
     eprintln!("Petramond cannot continue: {error}");
     event_loop.exit();
 }
 
-/// A scroll event as a count of wheel notches (`1.0` == one detent). winit
-/// already divides Windows' raw `WHEEL_DELTA` (120) into `LineDelta`, so a
-/// classic detent is `1.0` and a hi-res / free-spin wheel reports the fractions
-/// that sum to it. Pixel-precise devices report `PixelDelta`, normalized through
-/// [`super::PIXELS_PER_NOTCH`] so both paths feed the accumulator the same unit.
 fn wheel_notches(delta: MouseScrollDelta) -> f32 {
     match delta {
         MouseScrollDelta::LineDelta(_, y) => y,

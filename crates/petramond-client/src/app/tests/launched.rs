@@ -1,5 +1,3 @@
-//! A pack started on the shell lives exactly as long as its own UI is up.
-
 use std::path::{Path, PathBuf};
 
 use super::super::{App, AppScreen};
@@ -10,8 +8,6 @@ use petramond_render::camera::Camera;
 
 const SCREEN: (u32, u32) = (1280, 720);
 
-/// A guest whose `mod_init` issues `init`, in order, and whose every
-/// dispatch answers `Unit`.
 fn guest(dir: &Path, name: &str, init: &[mod_api::HostCall]) -> PathBuf {
     let hex = |bytes: &[u8]| -> String { bytes.iter().map(|b| format!("\\{b:02x}")).collect() };
     let unit = mod_api::encode(&mod_api::GuestRet::Unit).unwrap();

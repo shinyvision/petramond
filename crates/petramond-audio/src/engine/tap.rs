@@ -21,11 +21,8 @@ use rodio::{ChannelCount, Sample, SampleRate};
 
 use super::Audio;
 
-/// Samples per copied chunk: ~10 ms of 48 kHz stereo, so a drain lags the
-/// device by no more than that.
 const CHUNK_SAMPLES: usize = 1024;
 
-/// The world sub-mix as the device plays it, copied while tapped.
 pub(super) struct TapSource {
     inner: MixerSource,
     tapped: Arc<AtomicBool>,
@@ -48,7 +45,6 @@ impl TapSource {
             })
             .unwrap_or_else(|_| Vec::with_capacity(CHUNK_SAMPLES));
         let full = std::mem::replace(&mut self.chunk, next);
-        // The frame side is gone only when the engine is; nothing to keep.
         let _ = self.out.send(full);
     }
 }
@@ -58,8 +54,6 @@ impl Iterator for TapSource {
 
     #[inline]
     fn next(&mut self) -> Option<Sample> {
-        // An empty mixer answers `None` until something sounds again; the
-        // device must never see the world sub-mix end.
         let sample = self.inner.next().unwrap_or(0.0);
         if self.tapped.load(Ordering::Relaxed) {
             self.chunk.push(sample);
@@ -91,7 +85,6 @@ impl Source for TapSource {
     }
 }
 
-/// The frame thread's end of the world sub-mix.
 pub(super) struct WorldSubmix {
     mixer: Mixer,
     format: (u16, u32),
@@ -101,8 +94,6 @@ pub(super) struct WorldSubmix {
 }
 
 impl WorldSubmix {
-    /// A sub-mix at the device's format and the source the device plays it
-    /// through.
     pub(super) fn new(channels: ChannelCount, sample_rate: SampleRate) -> (Self, TapSource) {
         let (mixer, inner) = mixer::mixer(channels, sample_rate);
         let tapped = Arc::new(AtomicBool::new(false));
@@ -132,26 +123,19 @@ impl WorldSubmix {
 }
 
 impl Audio {
-    /// The format the world's sound mixes at: the offline mixdown's while
-    /// one is open, else the device's; `None` = this engine has neither.
     pub fn world_format(&self) -> Option<(u16, u32)> {
         self.offline_format()
             .or_else(|| self.submix.as_ref().map(|submix| submix.format))
     }
 
-    /// Whether this build mixes the world's sound at all (a tap can take it).
     pub fn mixes(&self) -> bool {
         true
     }
 
-    /// Whether the world's sound plays on an output device.
     pub fn has_device(&self) -> bool {
         self.submix.is_some()
     }
 
-    /// Copy the world's sound as the device plays it (`true`) or stop
-    /// copying. Starting drops anything copied before, so a copy begins at
-    /// the device's present.
     pub fn set_world_copied(&mut self, copied: bool) {
         let Some(submix) = &self.submix else {
             return;
@@ -164,8 +148,6 @@ impl Audio {
         }
     }
 
-    /// Append what the device played since the last drain (interleaved, at
-    /// [`world_format`](Self::world_format)) to `out`.
     pub fn drain_world_copy(&mut self, out: &mut Vec<f32>) {
         let Some(submix) = &self.submix else {
             return;
@@ -194,7 +176,6 @@ mod tests {
         ));
         let tapped = Arc::clone(&submix.tapped);
         let mut played = Vec::new();
-        // Untapped, then tapped for a stretch that ends mid-chunk, then not.
         for _ in 0..3_000 {
             played.push(device_side.next().unwrap());
         }

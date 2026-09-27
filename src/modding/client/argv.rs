@@ -1,11 +1,3 @@
-//! The argv rule: a mod's container, codec and option names reach an
-//! external encoder's command line, so they are checked before they do. A
-//! mod can never point the encoder at a file, or add an input or an output.
-//! Length is not a safety property: an argv the OS refuses fails with the
-//! OS's words.
-
-/// Option names (their base, before any `:` stream suffix) that name a file,
-/// an input, an output or a filter graph.
 fn names_a_file(base: &str) -> bool {
     const EXACT: &[&str] = &[
         "i",
@@ -31,14 +23,12 @@ fn names_a_file(base: &str) -> bool {
         || base.starts_with("stats_")
 }
 
-/// A container or codec name: `[a-z0-9_-]+`.
 pub fn is_token(s: &str) -> bool {
     !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
 }
 
-/// Why `-name value` may not reach the encoder; `None` = it may.
 pub fn option_problem(name: &str, value: &str) -> Option<String> {
     let name_ok = name.starts_with(|c: char| c.is_ascii_lowercase())
         && name

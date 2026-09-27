@@ -1,21 +1,16 @@
-//! The local body's motion as the first-person animator reads it.
-
 use std::f32::consts::{PI, TAU};
 
 use super::body_pose::{movement_medium, MovementMedium};
 use super::Game;
 use crate::animation::{AimTarget, LocalMotion};
 
-/// How fast the look turns, from one frame's look to the next.
 #[derive(Default)]
 pub(super) struct LookRate {
     last: Option<(f32, f32)>,
-    /// Degrees per second, rightward and upward.
     rates: (f32, f32),
 }
 
 impl LookRate {
-    /// Degrees per second, rightward and upward.
     pub fn rates(&self) -> (f32, f32) {
         self.rates
     }
@@ -24,7 +19,6 @@ impl LookRate {
         self.rates = match self.last {
             Some((last_yaw, last_pitch)) if dt > 0.0 => {
                 let turn = (yaw - last_yaw + PI).rem_euclid(TAU) - PI;
-                // Yaw grows toward the view's left; a rightward turn reads positive.
                 (
                     (-turn / dt).to_degrees(),
                     ((pitch - last_pitch) / dt).to_degrees(),
@@ -37,8 +31,6 @@ impl LookRate {
 }
 
 impl Game {
-    /// This frame's motion for the first-person animator; `hurt` is the
-    /// seconds of hurt shake left.
     pub fn local_motion(&self, hurt: f32) -> LocalMotion {
         let player = &self.local.player;
         let (yaw, pitch) = (player.yaw, player.pitch);

@@ -3,11 +3,6 @@ use crate::rng::FeatureRng;
 use crate::surface::rule::SurfaceCtx;
 use petramond_world::chunk::SEA_LEVEL;
 
-/// The generation rules as they were compiled into worldgen before they
-/// moved to the biome rows. The shipped rows must reproduce them exactly —
-/// same surface material for every context, same ground-cover picks from the
-/// same random draws, same snow and flags — so moving the definition to data
-/// changes no generated block.
 mod legacy {
     use crate::rng::FeatureRng;
     use crate::surface::rule::{SurfaceCond, SurfaceRule};
@@ -145,7 +140,6 @@ mod legacy {
 
 type Picker = fn(&mut FeatureRng) -> Option<Block>;
 
-/// One biome's pre-migration rules.
 struct Legacy {
     surface: &'static SurfaceRule,
     tuft: Block,
@@ -159,7 +153,6 @@ struct Legacy {
     grass_cover: Option<Picker>,
     cluster: Option<CoverCluster>,
     snow: SnowCover,
-    /// `(ocean, beach_base, wet, mountain)`
     flags: (bool, bool, bool, bool),
 }
 
@@ -317,7 +310,6 @@ fn legacy(biome: Biome) -> Legacy {
     }
 }
 
-/// The engine biomes, the ones the compiled definitions covered.
 fn all_biomes() -> impl Iterator<Item = Biome> {
     Biome::all().take(petramond_world::biome::ENGINE_BIOME_COUNT)
 }
@@ -330,9 +322,6 @@ fn every_biome_has_its_rules_in_id_order() {
     assert_eq!(specs().len(), petramond_world::biome::count());
 }
 
-/// Every surface stack resolves exactly as its compiled predecessor for
-/// every depth band, altitude band, the underwater split and the redwood
-/// grass-cluster field.
 #[test]
 fn surface_rules_match_the_compiled_stacks() {
     let surf_ys = [
@@ -376,8 +365,6 @@ fn surface_rules_match_the_compiled_stacks() {
     }
 }
 
-/// A data cover roll draws exactly what the compiled picker drew — the same
-/// plant from the same stream, leaving the stream in the same state.
 fn assert_same_picks(biome: Biome, what: &str, data: Option<&CoverRoll>, compiled: Option<Picker>) {
     assert_eq!(data.is_some(), compiled.is_some(), "{biome:?} {what}");
     let (Some(data), Some(compiled)) = (data, compiled) else {
@@ -428,9 +415,6 @@ fn vegetation_snow_and_flags_match_the_compiled_profiles() {
     }
 }
 
-/// The vocabulary refuses what would generate wrongly instead of guessing: a
-/// row without generation rules, a cover roll that can come up empty, an
-/// unknown flag or field.
 #[test]
 fn malformed_generation_rules_are_refused() {
     let biome = Biome::PLAINS;
@@ -458,8 +442,6 @@ fn malformed_generation_rules_are_refused() {
     assert!(spec.flags.wet && !spec.flags.beach_base && !spec.flags.ocean);
 }
 
-/// A surface band deeper than the engine's skin limit would be flattened by
-/// the deep fill fast path, so the row is refused; one at the limit loads.
 #[test]
 fn surface_bands_past_the_skin_limit_are_refused() {
     let limit = crate::surface::MAX_SKIN_BAND_DEPTH;
@@ -477,10 +459,6 @@ fn surface_bands_past_the_skin_limit_are_refused() {
     }
 }
 
-/// Ground the fixed slots do not name gets its cover from the row's `covers`
-/// table: the mycelium mushroom roll that used to be compiled into the
-/// vegetation pass is one entry, drawing the same plants from the same
-/// stream.
 #[test]
 fn a_covers_entry_reproduces_the_compiled_mycelium_roll() {
     let spec = parse(

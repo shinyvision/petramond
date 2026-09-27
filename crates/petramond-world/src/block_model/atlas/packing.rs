@@ -1,5 +1,3 @@
-//! Deterministic shelf packing, independent of model and texture storage.
-
 pub(super) struct Layout {
     pub size: [u32; 2],
     pub origins: Vec<[u32; 2]>,

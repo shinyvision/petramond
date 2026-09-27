@@ -1,17 +1,7 @@
-//! Interleaved f32 audio carried from one format to another, a stream at a
-//! time: the world's sound as each tap asked for it.
-
-/// A streaming converter from `(channels, sample_rate)` to another. Channels
-/// are mapped first (a mono side is spread or averaged), then the rate is
-/// resampled linearly, with the position carried across calls so a stream
-/// cut into any pieces converts to the same samples.
 pub struct FormatConverter {
     from: (u16, u32),
     to: (u16, u32),
-    /// The next output frame's position, in input frames after `last`.
     pos: f64,
-    /// The last input frame of the previous call (already mapped), once one
-    /// has arrived.
     last: Option<Vec<f32>>,
     mapped: Vec<f32>,
 }
@@ -32,8 +22,6 @@ impl FormatConverter {
         self.to
     }
 
-    /// Append `input` (interleaved, whole frames at the input format)
-    /// converted to `out`; answers the frames appended.
     pub fn convert(&mut self, input: &[f32], out: &mut Vec<f32>) -> usize {
         let (from_ch, from_rate) = (usize::from(self.from.0), self.from.1);
         let (to_ch, to_rate) = (usize::from(self.to.0), self.to.1);

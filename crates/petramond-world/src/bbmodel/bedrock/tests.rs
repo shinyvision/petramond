@@ -27,11 +27,6 @@ fn arm(name: &str) -> Option<usize> {
     (name == "arm").then_some(0)
 }
 
-/// Blockbench's importer, reproduced: exported arrays flip back into
-/// Blockbench's axes (rotation X/Y, position X) while a uniform number does
-/// not, a key whose leaving value is the next key's arriving value becomes a
-/// step (its `lerp_mode` notwithstanding), bone names resolve verbatim then
-/// lowercased, unknown bones drop, and effect tracks become markers.
 #[test]
 fn a_library_reads_back_into_blockbench_axes_with_steps_modes_and_markers() {
     let lib = parse_library(LIBRARY, arm).expect("a valid library");
@@ -78,8 +73,6 @@ fn a_document_without_animations_is_refused() {
     assert!(parse_library("{", arm).is_err());
 }
 
-/// Only the pair right before the last key decides whether it steps: an
-/// earlier step in the track never leaks onto the end.
 #[test]
 fn the_last_key_steps_only_when_the_pair_before_it_does() {
     let track = |keys: &str| {

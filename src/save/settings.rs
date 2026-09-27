@@ -1,18 +1,3 @@
-//! Per-world settings: `settings.json` in the save dir.
-//!
-//! Currently one knob: `disabled_mods` — the pack ids the player switched OFF
-//! for this world (World Settings screen). An absent file means "everything
-//! enabled", so worlds created before this existed change nothing. The set is
-//! consulted once at world open (`save::open_at` / `Game::new`); editing it
-//! for a world that is not open takes effect on the next open (no live
-//! reload). Serialization is deterministic: a `BTreeSet` encodes sorted.
-//! Unknown fields are ignored, so files written by retired knobs (the old
-//! `optimize_explored_terrain` toggle — explored terrain always persists now)
-//! keep loading.
-//!
-//! Ids of packs that are no longer installed stay in the set untouched, so
-//! reinstalling a mod does not silently re-enable it.
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -20,17 +5,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorldSettings {
-    /// Mod pack ids disabled for this world. Everything else is enabled.
     #[serde(default)]
     pub disabled_mods: BTreeSet<String>,
-    /// Keep the inventory on death instead of spilling it at the body.
     #[serde(default)]
     pub keep_inventory: bool,
-    /// Open the world to LAN automatically when it loads (host sessions).
     #[serde(default)]
     pub auto_open_lan: bool,
-    /// Day length in real minutes (the night lasts as long; the player only
-    /// ever sees "day length"). Clamped to 10..=30 at consumption.
     #[serde(default = "default_day_minutes")]
     pub day_minutes: u32,
 }
@@ -52,10 +32,6 @@ impl Default for WorldSettings {
     }
 }
 
-/// Read the world's settings, with the first-sight rule folded in (see
-/// [`first_sight`]); never writes. Absent file = defaults (all mods
-/// enabled); an unreadable file warns and falls back to defaults — settings
-/// must never block opening a world.
 pub fn load(dir: &Path) -> WorldSettings {
     let mut settings = read(dir);
     first_sight(
@@ -66,8 +42,6 @@ pub fn load(dir: &Path) -> WorldSettings {
     settings
 }
 
-/// [`load`], writing the fold back when it held a pack off: what opening
-/// the world does, so the hold survives the pack being recorded.
 pub fn load_persisting(dir: &Path) -> WorldSettings {
     let settings = load(dir);
     if settings != read(dir) {
@@ -78,12 +52,6 @@ pub fn load_persisting(dir: &Path) -> WorldSettings {
     settings
 }
 
-/// The first-sight rule: a pack the content library installed that can
-/// change a world (`held`) starts OFF in an existing world that has never
-/// seen it — one whose `mods.json` (`recorded`) does not list it and whose
-/// settings do not already say. A legacy save without a record is left
-/// alone, and so is anything not in `held` (shipped packs, loose packs,
-/// presentation-only packs: ON everywhere). `true` = something was held off.
 pub fn first_sight(
     settings: &mut WorldSettings,
     recorded: Option<&BTreeSet<String>>,
@@ -119,7 +87,6 @@ fn read(dir: &Path) -> WorldSettings {
     }
 }
 
-/// Write the world's settings (atomic tmp+rename, like every save-dir file).
 pub fn store(dir: &Path, settings: &WorldSettings) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
@@ -135,12 +102,9 @@ mod tests {
         let scratch = petramond_util::test_dirs::TestScratchDir::new("settings-test");
         let dir = scratch.join("world");
 
-        // Absent file (directory doesn't even exist) = all mods enabled.
         assert_eq!(load(&dir), WorldSettings::default());
         assert!(load(&dir).disabled_mods.is_empty());
 
-        // Roundtrip, with deterministic (sorted) serialization. The world
-        // rules ride along non-default to prove they persist.
         let settings = WorldSettings {
             disabled_mods: ["zeta".to_owned(), "alpha".to_owned()]
                 .into_iter()
@@ -158,7 +122,6 @@ mod tests {
             "encoding is sorted (deterministic): {text}"
         );
 
-        // A file written by a retired knob (unknown field) still loads.
         std::fs::write(
             dir.join("settings.json"),
             br#"{ "disabled_mods": ["alpha"], "optimize_explored_terrain": false }"#,
@@ -166,7 +129,6 @@ mod tests {
         .unwrap();
         assert!(load(&dir).disabled_mods.contains("alpha"));
 
-        // A corrupt file degrades to defaults instead of blocking the open.
         std::fs::write(dir.join("settings.json"), b"{ nope").unwrap();
         assert_eq!(load(&dir), WorldSettings::default());
 

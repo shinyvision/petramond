@@ -1,6 +1,3 @@
-//! The local-player subsystem driven on its own — no server, no replica —
-//! the isolation the subsystem split exists to allow.
-
 use super::*;
 use petramond::player::PlayerMode;
 use petramond_math::world_pos::WorldPos;
@@ -38,7 +35,7 @@ fn looking_turns_the_body_and_mirrors_onto_the_camera() {
 #[test]
 fn a_walker_wishes_flat_and_a_spectator_flies_where_it_looks() {
     let mut local = local_at(WorldPos::new(0.0, 70.0, 0.0));
-    local.apply_look((0.0, -400.0)); // look well up
+    local.apply_look((0.0, -400.0));
     let forward = gameplay(crate::game::MovementInput {
         forward: true,
         ..Default::default()

@@ -24,8 +24,6 @@ impl Drag {
         let y = f64::from(-up[face.axis] * face.normal as f32);
         let projected = x * x + y * y;
         let scale = depth.max(1.0) * 0.0025;
-        // A face viewed head-on has no screen-space normal: use vertical dragging
-        // rather than dividing by an almost zero projection and jumping blocks.
         let mouse_axis = if projected < 0.0625 {
             [0.0, -scale]
         } else {

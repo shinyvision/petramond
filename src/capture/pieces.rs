@@ -1,12 +1,3 @@
-//! One capture piece as a record lays it out: its bytes (a 40-byte head and
-//! one body frame) and what the record's envelope says about it.
-//!
-//! What each kind's body holds is [`super::body`]'s, the one codec both the
-//! writers and a presentation use. Every body is at most one protocol frame:
-//! a batch's entity lanes that would pass it split into several `BatchRows`
-//! pieces at entry boundaries, so every piece the engine writes, its reader
-//! reads.
-
 use std::sync::OnceLock;
 
 use mod_api::capture::{ClientPieceInfo, ClientPieceKind, ClientStateKey};
@@ -15,8 +6,6 @@ use serde::Serialize;
 use super::body::{self, BatchRows};
 use crate::net::protocol::{EntityLane, NameTables, RowSet, TickUpdate};
 
-/// One encoded piece, and what its record's envelope says about it (its
-/// range is filled in where the record lays it out).
 #[derive(Clone, Debug)]
 pub struct Piece {
     pub bytes: Vec<u8>,
@@ -33,7 +22,6 @@ impl Piece {
     }
 }
 
-/// The id vocabulary every piece this build writes is in, and its hash.
 pub fn vocabulary() -> &'static (NameTables, u64) {
     static TABLES: OnceLock<(NameTables, u64)> = OnceLock::new();
     TABLES.get_or_init(|| {
@@ -43,11 +31,8 @@ pub fn vocabulary() -> &'static (NameTables, u64) {
     })
 }
 
-/// Why a piece could not be encoded (a body past one protocol frame).
 pub type EncodeError = String;
 
-/// A piece of `kind` at `key` with `value` as its body: compressed when
-/// opaque, never when documented.
 pub fn piece<T: Serialize>(
     kind: ClientPieceKind,
     key: [u8; 12],
@@ -73,7 +58,6 @@ pub fn piece<T: Serialize>(
     })
 }
 
-/// A state piece of `key`.
 pub fn state<T: Serialize>(
     key: ClientStateKey,
     provisional: bool,
@@ -82,17 +66,12 @@ pub fn state<T: Serialize>(
     piece(key.kind(), key.key_bytes(), provisional, value)
 }
 
-/// The key bytes of a batch piece.
 pub fn batch_key(tick: u64) -> [u8; 12] {
     let mut key = [0u8; 12];
     key[0..8].copy_from_slice(&tick.to_le_bytes());
     key
 }
 
-/// A tick batch split by role: its world deltas, its rows (several parts
-/// when one would pass a protocol frame), and the rest of its world content.
-/// The chrome (request answers, creative and schematic replies, menu sync)
-/// is in none of them.
 pub fn split_batch(t: &TickUpdate) -> Result<Vec<Piece>, EncodeError> {
     let key = batch_key(t.tick);
     let (world, rows, rest) = body::split_batch(t);
@@ -102,8 +81,6 @@ pub fn split_batch(t: &TickUpdate) -> Result<Vec<Piece>, EncodeError> {
     Ok(out)
 }
 
-/// `rows` as `BatchRows` pieces, each within one protocol frame: halved at
-/// entry boundaries until every part fits, in order.
 fn split_rows(key: [u8; 12], rows: BatchRows, out: &mut Vec<Piece>) -> Result<(), EncodeError> {
     match piece(ClientPieceKind::BatchRows, key, false, &rows) {
         Ok(piece) => {
@@ -119,8 +96,6 @@ fn split_rows(key: [u8; 12], rows: BatchRows, out: &mut Vec<Piece>) -> Result<()
     }
 }
 
-/// `rows` cut at its middle entry. Every list keeps its order, so the parts'
-/// lists concatenated in order are the whole lanes again.
 fn halve(rows: BatchRows) -> (BatchRows, BatchRows) {
     let mut take = rows.entries() / 2;
     let (mobs, mobs_rest) = split_lane(rows.mobs, &mut take);
@@ -140,8 +115,6 @@ fn halve(rows: BatchRows) -> (BatchRows, BatchRows) {
     )
 }
 
-/// The first `take` entries of `lane` — despawns, then spawns, then updates —
-/// and the rest; `take` counts down by what the first part took.
 fn split_lane<R: Clone, K>(
     lane: EntityLane<R, K>,
     take: &mut usize,

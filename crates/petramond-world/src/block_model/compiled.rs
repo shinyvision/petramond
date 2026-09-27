@@ -9,68 +9,38 @@ use crate::block::Aabb;
 use super::defs::{part_role, PartRole};
 use super::{all, def, posed_cube_bounds, BlockDisplay};
 
-/// One cube of a model: an axis-aligned box with a pivot + static rotation and a
-/// per-face UV rect (in `Face::ALL` order; `None` = the face is omitted). The cached
-/// [`BlockModel`] stores these in MODEL space; the runtime `ModelInstance` re-stores
-/// them in footprint space with atlas-remapped UVs.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ModelCube {
-    /// The authored Blockbench element name — preserved because names carry
-    /// per-ROW meaning: a `models.json` row gives cubes roles by name (the
-    /// unlit oven hides its `fire` cube; see `BlockModel::apply_part_roles`).
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
-    /// Pivot for this cube's static `rotation`.
     pub origin: Vec3,
-    /// Static euler rotation in degrees, about `origin`.
     pub rotation: Vec3,
-    /// Per-face texture mapping, `Face::ALL` order — exactly as the mob model
-    /// stores it, per-face rotation included.
     pub faces: [Option<crate::bbmodel::FaceUv>; 6],
-    /// The face's authored `cullface`, `Face::ALL` order: `Some(slot)` = the mesher
-    /// omits this face when the world neighbour in direction `slot` is an opaque
-    /// block. Block-only (mobs never sit in a chunk mesh), so the shared mob
-    /// frontend doesn't read it — [`BlockModel::compile`] parses it from the raw
-    /// JSON. Authored in MODEL space; the per-facing template bake rotates it to
-    /// a world direction.
     pub cull: [Option<u8>; 6],
 }
 
-/// A compiled bbmodel block: cubes + the embedded RGBA texture, PLUS the collision
-/// boxes and bounding box BAKED FROM THE GEOMETRY at compile time — all in MODEL space.
-/// The cached, expensive-to-produce parse; placement/render/collision derive from this
-/// (the cheap footprint fit + per-cell split happens at startup, see `ModelInstance`).
 #[derive(Serialize, Deserialize)]
 pub struct BlockModel {
     pub cubes: Vec<ModelCube>,
     pub texture_rgba: Vec<u8>,
     pub tex_w: u32,
     pub tex_h: u32,
-    /// One AABB per SOLID cube (each posed by its static tilt), MODEL space — the block's
-    /// collision SHAPE, hugging the actual cubes (legs, top, …) rather than one coarse
-    /// box. Flat/degenerate cubes (a decorative plane, a locator point) contribute none.
-    /// Computed + cached from the geometry; `CollisionSpec` chooses whether to use it.
     pub collision: Vec<Aabb>,
-    /// The model's tight bounding box (MODEL space) over all cubes — the raycast/outline
-    /// shape, so the black wireframe hugs the model's real extent. Cached from geometry.
+    /// Tight bounding box over all cubes, model space. Used for raycast/outline so the wireframe
+    /// hugs the real extent. Cached from geometry.
     pub bounds: Aabb,
     /// The Blockbench `display` poses (hand / GUI / …), cached so the held item + slot
     /// icon orient the model exactly as authored rather than via a hardcoded angle.
     pub display: BlockDisplay,
-    /// The point (MODEL space, authored pixel coords) the `display` poses transform
-    /// about: the centre of the authored 16³ block cell. Blockbench pivots display
-    /// previews there regardless of the model's real extent, so replicating a pose
-    /// needs this exact point, not the geometric centre. Where it sits in authored
-    /// coords depends on the format's grid: centred formats (bedrock_block, …) author
-    /// x/z about 0 → pivot `(0, 8, 0)`; corner-grid formats (java_block) author
-    /// `0..16` → pivot `(8, 8, 8)`.
+    /// Pivot for the `display` poses, in authored pixel coords. It's the middle of the 16³ block
+    /// cell, because that's where Blockbench pivots its previews no matter how big the model is.
+    /// Centered formats (`bedrock_block`) put it at `(0, 8, 0)`, corner-grid ones (`java_block`)
+    /// at `(8, 8, 8)`.
     pub display_pivot: [f32; 3],
 }
 
 impl BlockModel {
-    /// An empty placeholder (no cubes, a 1×1 transparent texture) so a parse failure
-    /// degrades to "nothing drawn" instead of crashing.
     pub fn empty() -> Self {
         BlockModel {
             cubes: Vec::new(),
@@ -87,13 +57,7 @@ impl BlockModel {
         }
     }
 
-    /// Per-cube `cullface` directions parsed from the raw bbmodel JSON, zipped
-    /// onto the cubes [`from_model`](Self::from_model) produced (same `elements`
-    /// order, same non-cube filter). Each entry is `Face::ALL`-ordered: the
-    /// slot the NAMED face sits in holds the `Face::ALL` slot of the CULL
-    /// direction (`"cullface": "north"` on the `up` face → `cull[2] = Some(5)`).
     fn parse_culls(root: &Value) -> Vec<[Option<u8>; 6]> {
-        // Blockbench direction name -> `Face::ALL` slot (matches parse.rs NAMES).
         const DIRS: [(&str, u8); 6] = [
             ("east", 0),
             ("west", 1),
@@ -133,8 +97,7 @@ impl BlockModel {
     /// animations, but authored GROUP rotations are part of the rest pose Blockbench
     /// displays (the bed is authored under a 90°-turned group) — they are baked into
     /// each cube here (composed rotation + shifted box, an exact equivalence) so the
-    /// compiled model is WYSIWYG with the Blockbench scene. Dropping them was the
-    /// 2026-07-05 "held bed 90° off" bug.
+    /// compiled model matches the Blockbench scene.
     fn from_model(m: &Model) -> Self {
         let rest = m.rest_pose();
         let cubes: Vec<ModelCube> = m
@@ -150,16 +113,9 @@ impl BlockModel {
                         origin: c.origin,
                         rotation: c.rotation,
                         faces: c.faces,
-                        // Filled by `compile` (the mob frontend drops `cullface`).
                         cull: [None; 6],
                     };
                 }
-                // Fold the bone-chain pose `A` into the cube: the posed cube
-                // `A · (T(o)·Rc·T(−o))` equals a plain cube with rotation
-                // `R = A_rot·Rc` about `o' = A(o)` and its box shifted by `o' − o`
-                // (derivation: `R(p + s − o') + o' = A_rot·Rc·p + A(o) − A_rot·Rc·o`
-                // with `s = o' − o`). Faces stay attached to the cube's local axes,
-                // exactly like an authored static tilt.
                 let rot = Quat::from_mat4(&pose) * euler_quat(c.rotation);
                 let (ez, ey, ex) = rot.to_euler(glam::EulerRot::ZYX);
                 let origin = pose.transform_point3(c.origin);
@@ -185,8 +141,6 @@ impl BlockModel {
                 min: [0.0; 3],
                 max: [1.0; 3],
             },
-            // `from_model` has only the parsed geometry; `compile` fills the display
-            // poses + pivot from the raw JSON (the mob frontend drops them).
             display: BlockDisplay::default(),
             display_pivot: [0.0, 8.0, 0.0],
         };
@@ -194,23 +148,12 @@ impl BlockModel {
         model
     }
 
-    /// Re-bake collision + bounds from the current cubes — required after any
-    /// geometry change (the initial bake, per-row part hiding/posing).
     pub(in crate::block_model) fn rebake(&mut self) {
         let (collision, bounds) = bake_collision_bounds(&self.cubes, |_| true);
         self.collision = collision;
         self.bounds = bounds;
     }
 
-    /// Apply a row's per-cube roles on top of the cache's FULL model and bake
-    /// what the row ends up with: hidden cubes are dropped, collision comes
-    /// from the cubes that collide, and the bounds hug every cube still
-    /// drawn or aimed at, so the selection outlines the whole piece. Two
-    /// `models.json` rows may share one authored file (a machine's lit and
-    /// unlit twins toggling a `fire` cube, a rail's sixteen forms); the
-    /// compiled `.llblock` always holds the full model. A named cube
-    /// matching nothing warns: a typo must not silently show, collide with,
-    /// or un-aim a part.
     pub(in crate::block_model) fn apply_part_roles(
         &mut self,
         roles: &[(&str, PartRole)],
@@ -229,13 +172,6 @@ impl BlockModel {
         self.bounds = bounds;
     }
 
-    /// Translate the cubes named in `offsets` (authored pixels) — the
-    /// per-ROW `part_offsets` posing, applied after the cache load and
-    /// before the part roles bake the result: rows sharing one authored
-    /// file place a part differently per variant (the composter's fill
-    /// surface rising with its stages). `origin` moves with the box so a
-    /// rotated part keeps rotating about its own pivot. A name matching no
-    /// cube warns: a typo must not silently leave the part unposed.
     fn offset_parts(&mut self, offsets: &[(&str, [f32; 3])], row_key: &str) {
         for (name, off) in offsets {
             let off = Vec3::from_array(*off);
@@ -253,10 +189,6 @@ impl BlockModel {
     }
 }
 
-/// Collision = one posed AABB per SOLID cube matching `include_in_collision`
-/// (skip flat/degenerate — a zero-extent cube is decoration, not a wall).
-/// Bounds = the tight box over ALL cubes (a cube-less model degrades to the
-/// unit cell).
 fn bake_collision_bounds(
     cubes: &[ModelCube],
     include_in_collision: impl Fn(&ModelCube) -> bool,
@@ -268,10 +200,6 @@ fn bake_collision_bounds(
         let (mn, mx) = posed_cube_bounds(c);
         bmn = bmn.min(mn);
         bmx = bmx.max(mx);
-        // An authored zero-thickness plane is decoration whatever its pose: a
-        // tilted one still has a solid-looking posed AABB (a sloped rail's
-        // plane spanned its whole cell), so the skip reads the authored
-        // extent, not the posed one.
         if include_in_collision(c)
             && !super::geometry::cube_is_flat_plane(c)
             && (mx - mn).min_element() > 1e-4
@@ -297,40 +225,21 @@ fn bake_collision_bounds(
 }
 
 impl CompiledAsset for BlockModel {
-    /// `LLBLK` — the compiled bbmodel-block container (geometry + texture + baked
-    /// collision/bounds), distinct from the mob `LLMOB` so the two never alias.
     const MAGIC: [u8; 8] = *b"LLBLK\0\0\0";
-    /// v6: model-space cubes (per-face UV, group REST POSES baked in) + RGBA texture +
-    /// baked per-cube collision + bounding box + the FULL Blockbench `display` poses
-    /// (incl. rotation/scale pivots) + the authored display pivot. (v1 had no
-    /// collision/bounds; v2 no display; v3 predates the multi-texture sheet; v4 the
-    /// display pivots; v5 dropped group rest poses; each bump rebuilds stale caches.)
-    /// v7: the shared loader bakes element `inflate` into the cube box.
-    /// v8: cubes carry their authored element NAME (per-row part roles
-    /// need it).
-    /// v9: cubes carry their per-face `cullface` directions.
-    /// v13: composed group/cube rotations retain the authored ZYX order.
     const FORMAT_VERSION: u32 = 13;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llblock";
 
-    /// Compile = parse the authored `.bbmodel` via the shared mob frontend (geometry +
-    /// texture), then parse the `display` poses from the raw JSON (the mob frontend
-    /// drops them — only a block needs them).
     fn compile(source: &[u8]) -> Result<Self, String> {
         let src = std::str::from_utf8(source).map_err(|e| format!("bbmodel utf-8: {e}"))?;
         let mut model = BlockModel::from_model(&Model::load(src)?);
         let root: Value = serde_json::from_str(src).map_err(|e| format!("json: {e}"))?;
         model.display = BlockDisplay::parse(&root);
-        // Per-face cullfaces: the mob frontend drops them (a mob never meshes
-        // into a chunk), so they ride their own block-only parse.
         let culls = Self::parse_culls(&root);
         debug_assert_eq!(culls.len(), model.cubes.len(), "cullface/cube zip drifted");
         for (cube, cull) in model.cubes.iter_mut().zip(culls) {
             cube.cull = cull;
         }
-        // The display pivot follows the authoring grid: java_block authors 0..16
-        // (corner grid), every other Blockbench format centres x/z about 0.
         let corner_grid = root
             .get("meta")
             .and_then(|m| m.get("model_format"))
@@ -345,17 +254,12 @@ impl CompiledAsset for BlockModel {
     }
 }
 
-/// Every kind's compiled [`BlockModel`], indexed by raw kind id — the cached parse
-/// (compiling each `.bbmodel` → `.llblock` on a miss, else fast-loading the
-/// `.llblock`). A derived view of the content registry, compiled on first use: a
-/// model that fails to load logs and draws empty rather than failing the registry.
 static MODELS: crate::content::Slot<Vec<BlockModel>> = crate::content::Slot::new(
     "compiled block models",
     &[crate::content::stage::MODELS],
     compile_models,
 );
 
-/// The current registry's compiled models (see [`MODELS`]).
 #[inline]
 pub(super) fn models() -> &'static [BlockModel] {
     MODELS.current()
@@ -378,18 +282,10 @@ fn compile_models(_: &crate::content::ContentRegistry) -> Result<Vec<BlockModel>
                     log::error!("block model precache failed for {k:?}: {e}");
                     BlockModel::empty()
                 });
-            // The cache always holds the FULL model; the row's part poses and
-            // part roles are applied on top so rows sharing one file stay one
-            // cache entry each (the cache is keyed by row key) with
-            // independent pose, visibility, collision and aim.
             if !d.part_offsets.is_empty() {
                 model.offset_parts(d.part_offsets, d.key);
             }
             model.apply_part_roles(d.part_roles, d.other_parts, d.key);
-            // `parts` and `tint_parts` resolve by NAME at template-bake time,
-            // where a name matching no cube produces an empty run and the bit
-            // silently draws nothing. They carry a cross-file bit contract, so
-            // they warn like every other per-row name list here.
             for (list, what) in [(d.parts, "part"), (d.tint_parts, "tint part")] {
                 for name in list {
                     if !model.cubes.iter().any(|c| c.name == *name) {

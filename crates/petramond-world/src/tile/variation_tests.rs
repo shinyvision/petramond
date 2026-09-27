@@ -68,8 +68,6 @@ fn only_face_selecting_tiles_vary_per_face() {
         {"name":"test_cell","file":"stone.png","variants":["dirt.png","sand.png"],"variation":"cell"},
         {"name":"test_plain","file":"stone.png","variants":["dirt.png","sand.png"]}]}"#;
     let d = build(&[&base, layer], crate::content::current().packs()).unwrap();
-    // The face selector's arithmetic against the synthetic table (the tile
-    // methods read the process-wide manifest).
     let select = |name: &str, cell: [i32; 3], normal: u32| {
         let t = d.by_name[name];
         let meta = &d.cells[t.index()];

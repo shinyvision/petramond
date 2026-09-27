@@ -1,18 +1,11 @@
-//! The field's advection offset: how it follows the weather clock, and how it
-//! persists so a storm front survives a reload mid-crossing.
-
 use mod_sdk::*;
 use weather_core::advance_offset;
 
-/// World-KV key persisting the offset.
 const KV_OFF: &str = "weather:off";
 
-/// The persisted offset: two f64, versioned. A bare 16-byte value is the
-/// unversioned layout earlier builds wrote: version 0, the same two f64.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Stored([f64; 2]);
 
-/// The unversioned layout's length.
 const LEGACY_LEN: usize = 16;
 
 impl KvRecord for Stored {
@@ -39,7 +32,6 @@ impl KvRecord for Stored {
     }
 }
 
-/// Read a stored offset value (see [`Stored`]); `None` when it cannot be read.
 fn parse(bytes: &[u8]) -> Option<[f64; 2]> {
     match decode_versioned_or_legacy::<Stored>(bytes, LEGACY_LEN) {
         Ok(stored) => Some(stored.0),
@@ -52,17 +44,12 @@ fn parse(bytes: &[u8]) -> Option<[f64; 2]> {
     }
 }
 
-/// The offset the world saved, or the origin for a new world.
 pub fn load() -> [f64; 2] {
     world_kv_get(KV_OFF)
         .and_then(|bytes| parse(&bytes))
         .unwrap_or([0.0, 0.0])
 }
 
-/// Advances the offset with the weather clock. The first tick after load only
-/// latches the clock — advancing on it would leak one step of drift into a
-/// frozen world — and a clock that did not move (`time freeze`) freezes the
-/// whole sky, not just the storm phase.
 #[derive(Default)]
 pub struct Advection {
     pub off: [f64; 2],
@@ -77,7 +64,6 @@ impl Advection {
         }
     }
 
-    /// Step to `clock`; `true` when the offset moved.
     pub fn step(&mut self, clock: u64, seed: u32) -> bool {
         let moved = self.last_clock.is_some_and(|last| last != clock);
         if moved {
@@ -87,8 +73,6 @@ impl Advection {
         moved
     }
 
-    /// Persist the offset. Called only when it moved: world KV rides the
-    /// normal save, and a reload must not visibly rewind the deck.
     pub fn store(&self) {
         world_kv_store(KV_OFF, &Stored(self.off));
     }

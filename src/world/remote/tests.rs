@@ -15,8 +15,6 @@ use petramond_world::section::Section;
 use petramond_world::slab::SlabSlot;
 use petramond_world::torch::TorchPlacement;
 
-/// A flat-floored server world and a fresh replica, sharing ONE job pool —
-/// the in-process (singleplayer / listen-host) topology.
 fn server_and_replica() -> (ServerWorld, ReplicaWorld) {
     let pool = Arc::new(JobPool::new(2));
     let mut server = ServerWorld::with_pool(0, 1, pool.clone());
@@ -35,11 +33,6 @@ fn server_and_replica() -> (ServerWorld, ReplicaWorld) {
     (server, replica)
 }
 
-/// The replica convergence contract: everything a client can SEE —
-/// A furnace lighting (or going out) after join must flip the replica's
-/// front texture. Lit is the block ID (`furnace` ⇄ `furnace_lit`), so the
-/// flip rides an ordinary block delta — no bespoke lit lane — and the front
-/// FACING survives the swap through the delta's cell state.
 #[test]
 fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
     let (mut server, mut replica) = server_and_replica();
@@ -60,8 +53,6 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
         "fixture: joins unlit"
     );
 
-    // The furnace lights; `tick_furnaces` swaps the skin row through the
-    // block-write lanes, which record the delta.
     server.set_replication_capture(true);
     {
         let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
@@ -91,7 +82,6 @@ fn furnace_lit_flip_reaches_the_replica_through_a_delta() {
         "the front facing survives the row swap on the wire"
     );
 
-    // ...and the flame going out flips it back.
     {
         let (furnace, _) = server.furnace_parts_mut(pos).unwrap();
         furnace.burn_remaining = 1;
@@ -124,18 +114,14 @@ fn column_payload_keeps_visible_glass_separate_from_sky_cover() {
     );
 }
 
-/// block ids, fluid meta, and every sparse state map — reads back
-/// identically through the public query surface after installing the
-/// column payloads, the section payloads, and a tick's coalesced deltas.
 #[test]
 fn replica_converges_on_payloads_and_deltas() {
     let (mut server, mut replica) = server_and_replica();
 
-    // One of each replicated state, through the normal edit funnels.
     assert!(server.set_block_world(2, 65, 2, Block::Stone));
     assert!(server.cell_kv_set(2, 65, 2, "testmod:heat".into(), vec![7, 1]));
-    assert!(server.set_fluid_world(IVec3::new(3, 65, 3), Block::Water, 0)); // source
-    assert!(server.set_fluid_world(IVec3::new(4, 65, 3), Block::Water, 0x83)); // falling
+    assert!(server.set_fluid_world(IVec3::new(3, 65, 3), Block::Water, 0));
+    assert!(server.set_fluid_world(IVec3::new(4, 65, 3), Block::Water, 0x83));
     assert!(server.place_door(IVec3::new(5, 65, 5), Block::OakDoor, Facing::East));
     assert!(server.place_stair(
         IVec3::new(6, 65, 6),
@@ -150,8 +136,6 @@ fn replica_converges_on_payloads_and_deltas() {
     assert!(server.set_block_world(2, 65, 6, Block::OakSapling));
     assert!(server.set_block_world(1, 65, 1, Block::Chest));
     server.insert_chest(IVec3::new(1, 65, 1), Facing::West);
-    // A BURNING furnace: the lit skin is the block id (`furnace_lit` row),
-    // installed by the tick's row swap — written directly here.
     assert!(server.set_block_world(4, 65, 4, Block::FurnaceLit));
     server.insert_furnace(IVec3::new(4, 65, 4), Facing::South);
     {
@@ -173,8 +157,6 @@ fn replica_converges_on_payloads_and_deltas() {
         Facing::East,
     ));
 
-    // Join-time capture: columns + sections. One deep all-stone section is
-    // deliberately withheld so the summaries have to answer for it.
     let held_back = SectionPos::new(0, -2, 0);
     assert!(
         server.data.sections.contains_key(&held_back),
@@ -195,7 +177,6 @@ fn replica_converges_on_payloads_and_deltas() {
         .map(|(_, s)| s.to_payload())
         .collect();
 
-    // Post-join edits ride the delta log.
     server.set_replication_capture(true);
     assert!(server.set_block_world(8, 65, 8, Block::Dirt));
     assert!(server.set_fluid_world(IVec3::new(9, 65, 9), Block::Water, 0x05));
@@ -211,7 +192,6 @@ fn replica_converges_on_payloads_and_deltas() {
     for d in &deltas {
         replica.apply_remote_delta(d.clone());
     }
-    // A delta for a section nobody installed drops silently.
     replica.apply_remote_delta(BlockDelta {
         pos: IVec3::new(200, 65, 200),
         block_id: Block::Stone.id(),
@@ -221,7 +201,6 @@ fn replica_converges_on_payloads_and_deltas() {
     });
     assert_eq!(replica.data.chunk_block(200, 65, 200), 0);
 
-    // Raw content converges (blocks + fluid meta) at every touched cell.
     for (x, y, z) in [
         (2, 65, 2),
         (3, 65, 3),
@@ -252,7 +231,6 @@ fn replica_converges_on_payloads_and_deltas() {
     }
     assert!(replica.is_water_source_world(IVec3::new(3, 65, 3)));
 
-    // Every state map reads back through the public query surface.
     assert_eq!(
         replica.data.cell_kv_get(2, 65, 2, "testmod:heat"),
         Some(&[7u8, 1][..])
@@ -304,14 +282,10 @@ fn replica_converges_on_payloads_and_deltas() {
         "the lit furnace face replicates as its block row"
     );
 
-    // Absent sections answer physics/placement from the column summaries.
     assert!(!replica.data.sections.contains_key(&held_back));
     assert_eq!(replica.data.physics_block(2, -20, 2), Block::Stone);
     assert!(!replica.data.placement_cell_open(IVec3::new(2, -20, 2)));
 
-    // Authoritative light is server-owned: installs queue MESH work only. A lightless
-    // payload installs light-CLEAN (the ship gate only lets one through
-    // when it never bakes) — ingest must never queue a replica-side bake.
     assert!(replica.dirty_mesh_count() > 0, "installs queue mesh work");
     assert!(
         !replica
@@ -322,15 +296,9 @@ fn replica_converges_on_payloads_and_deltas() {
     );
 }
 
-/// Deltas carry the cell's OPAQUE unified block state verbatim, and a fresh
-/// replica applying them converges on every stateful kind — placements whose
-/// state lands AFTER the announcing block write (chest facing, torch
-/// placement) included, because the drain re-reads the store.
 #[test]
 fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     let (mut server, mut replica) = server_and_replica();
-    // Converge on the pristine floor first (the delta path needs installed
-    // sections on the replica).
     let columns: Vec<_> = server
         .data
         .columns
@@ -471,7 +439,6 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
         "the chest placed post-join renders on the replica with its facing"
     );
 
-    // Breaking the stair clears the replicated state too (state: None).
     server.set_replication_capture(true);
     assert!(server.set_block_world(stair.x, stair.y, stair.z, Block::Air));
     for d in server.take_block_deltas() {
@@ -484,10 +451,6 @@ fn deltas_carry_cell_state_and_replicas_converge_on_it() {
     );
 }
 
-/// A door TOGGLE flips the door map with no
-/// block-id write — it must still log deltas (state carries the open bit)
-/// and the replica's door map must follow, so collision + the resting
-/// swing angle are right.
 #[test]
 fn door_toggles_replicate_the_open_bit_without_a_block_change() {
     let (mut server, mut replica) = server_and_replica();
@@ -531,7 +494,6 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
         );
     }
 
-    // And back closed.
     assert_eq!(server.toggle_door(base), Some(base));
     for d in server.take_block_deltas() {
         replica.apply_remote_delta(d);
@@ -539,8 +501,6 @@ fn door_toggles_replicate_the_open_bit_without_a_block_change() {
     assert!(!replica.door_state_at(base.x, base.y, base.z).unwrap().open);
 }
 
-/// A hand-built column payload: flat maps, all-unknown summaries, and the
-/// given deep band floor — the minimum a replica needs to classify deep.
 fn column_payload_fixture(
     pos: ChunkPos,
     deep_band_lo: i32,
@@ -559,10 +519,6 @@ fn column_payload_fixture(
     }
 }
 
-/// The replica classifies deep from the replicated band floor — and a
-/// section that lands BEFORE its column (an ordering regression the sender
-/// currently prevents) must still be re-classified when the column
-/// arrives, not silently stay meshable forever.
 #[test]
 fn replica_deep_classification_heals_out_of_order_column_installs() {
     let deep_pos = SectionPos::new(0, -2, 0);
@@ -574,13 +530,10 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
     };
     let make_replica = || {
         let mut r = ReplicaWorld::new(0, 4);
-        // View centre far above the section so the always-mesh near ring
-        // doesn't mask the classification.
         r.set_replica_view_center(0, 10, 0);
         r
     };
 
-    // Normal order: column (with its band floor) before the section.
     let mut replica = make_replica();
     replica.install_remote_column(column_payload_fixture(deep_pos.chunk_pos(), 2));
     replica.install_remote_section(solid.to_payload());
@@ -589,7 +542,6 @@ fn replica_deep_classification_heals_out_of_order_column_installs() {
         "a below-band section installed after its column classifies deep"
     );
 
-    // Regressed order: section first — the column landing must heal it.
     let mut replica = make_replica();
     replica.install_remote_section(solid.to_payload());
     assert!(
@@ -611,7 +563,7 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
 
     w.set_replication_capture(true);
     assert!(w.set_block_world(3, 70, 3, Block::Stone));
-    assert!(w.set_block_world(3, 70, 3, Block::Dirt)); // same cell, same tick
+    assert!(w.set_block_world(3, 70, 3, Block::Dirt));
     assert!(w.set_fluid_world(IVec3::new(4, 70, 4), Block::Water, 0x83));
     let deltas = w.take_block_deltas();
     assert_eq!(deltas.len(), 2, "one delta per cell per take");
@@ -630,11 +582,6 @@ fn replication_log_coalesces_latest_wins_and_respects_capture() {
     assert!(w.take_block_deltas().is_empty(), "take drains the log");
 }
 
-/// The per-connection send plan: wanted loaded+FINAL sections ship (both
-/// finality gates: in-flight streaming AND light not yet baked), sent
-/// terrain leaving the keep shape (or the server) plans an unload, and the
-/// send key is stable across pumps that change nothing — the
-/// incrementality gate.
 #[test]
 fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     use crate::world::store::LoadAnchor;
@@ -657,8 +604,6 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
 
     let mut sent_columns: FxHashSet<ChunkPos> = FxHashSet::default();
     let mut sent = crate::world::SentSections::default();
-    // Light gates shipping: a never-baked (non-opaque) section is not
-    // presentable — the replica can't bake it, so the server holds it.
     let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent, 128);
     assert!(
         !plan.sections.contains(&sp),
@@ -675,8 +620,6 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     sent_columns.insert(sp.chunk_pos());
     sent.insert(sp);
 
-    // The send key: stable while nothing moved; re-keyed by new content
-    // and by an anchor chunk move.
     let k = w.terrain_send_key(anchor(0));
     assert_eq!(k, w.terrain_send_key(anchor(0)));
     assert_ne!(k, w.terrain_send_key(anchor(1)), "a chunk move re-keys");
@@ -686,8 +629,6 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     w.insert_section_for_test(SectionPos::new(1, 4, 0), other);
     assert_ne!(k, w.terrain_send_key(anchor(0)), "new content re-keys");
 
-    // A loaded section whose saved overlay is still in flight is NOT
-    // final: it must not ship until the overlay resolves.
     w.side.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
     w.note_stream_nonfinal(SectionPos::new(1, 4, 0));
     let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent, 128);
@@ -700,8 +641,6 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent, 128);
     assert!(plan.sections.contains(&SectionPos::new(1, 4, 0)));
 
-    // A sent section the server evicted (vertical exit) unloads even while
-    // its column is kept.
     let gone = SectionPos::new(0, 9, 0);
     sent.insert(gone);
     let plan = w.plan_terrain_send(anchor(0), &sent_columns, &sent, 128);
@@ -709,16 +648,11 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     assert!(plan.drop_columns.is_empty());
     sent.remove(gone);
 
-    // The whole column leaving the keep shape plans a ColumnUnload (its
-    // sections drop with it — no per-section messages).
     let plan = w.plan_terrain_send(anchor(20), &sent_columns, &sent, 128);
     assert!(plan.drop_columns.contains(&sp.chunk_pos()));
     assert!(!plan.drop_sections.contains(&sp));
 }
 
-/// Deep sections below the column surface band stay off the wire until the
-/// connection's vertical window (or near ring) needs them — they would park
-/// on the replica without meshing anyway.
 #[test]
 fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     use crate::world::store::LoadAnchor;
@@ -733,9 +667,6 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
     let band_lo = *ServerWorld::surface_window_for_column(&gen, 0).start();
     w.set_column_gen(cp, Arc::new(gen));
 
-    // Deepest legal cy: a surface anchor at band_lo+2 has vwin down to
-    // band_lo-3, so SECTION_MIN_CY must sit below that for the deferral
-    // case to be distinguishable (true for any band_lo ≥ SECTION_MIN_CY+4).
     let deep_cy = petramond_world::chunk::SECTION_MIN_CY;
     assert!(
         deep_cy < band_lo,
@@ -751,8 +682,6 @@ fn terrain_send_defers_deep_sections_outside_the_anchor_window() {
         "fixture must be ship-final"
     );
 
-    // Place the surface anchor so its vertical window (radius 5) and near
-    // ring both miss SECTION_MIN_CY.
     let surface_cy = (deep_cy + 6).max(band_lo + 2);
     assert!(!ServerWorld::vertical_window(surface_cy, 0).contains(&deep_cy));
     let plan = w.plan_terrain_send(
@@ -820,9 +749,6 @@ fn sealed_mixed_section_is_not_final_without_light() {
     );
 }
 
-/// The server has no mesh queue to fill (the mesh pipeline is replica
-/// state), yet its edits keep light bookkeeping current; the same edit on a
-/// replica queues the meshes it touched.
 #[test]
 fn server_edits_relight_while_replica_edits_queue_meshes() {
     let mut server = ServerWorld::new(0, 1);
@@ -845,9 +771,6 @@ fn server_edits_relight_while_replica_edits_queue_meshes() {
     );
 }
 
-/// Per-connection view distance: the send shape follows the anchor's own
-/// radius, clamped by the server world's budget — a client may shrink its
-/// stream but never widen it past the server setting.
 #[test]
 fn send_target_clamps_anchor_radius_to_the_world_budget() {
     use crate::world::LoadAnchor;
@@ -864,11 +787,9 @@ fn send_target_clamps_anchor_radius_to_the_world_budget() {
     assert_ne!(key(2), key(4), "smaller requests shrink the send shape");
 }
 
-/// The live cell-KV delta lane: a server-side KV write/delete on a loaded
-/// section is captured (behind the replication gate), drains coalesced, and
-/// converges the replica — including the ordering contract with block
-/// deltas: a same-tick block flip WIPES the cell's KV on both sides, so the
-/// KV delta must apply after the block delta to survive.
+/// Cell KV writes and deletes should make it to the replica. The tricky bit is a block flip in the
+/// same tick, which wipes that cell's KV on both sides, so the KV delta has to land after the block
+/// delta.
 #[test]
 fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     let (mut server, mut replica) = server_and_replica();
@@ -879,14 +800,10 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         replica.install_remote_section(s.to_payload());
     }
 
-    // Capture OFF: writes replicate nothing (the SP-no-clients fast path).
     assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![1]));
     assert!(server.take_cell_kv_deltas().is_empty());
 
     server.set_replication_capture(true);
-    // The fill shape: block flip first, then the cell's KV — one tick. The
-    // covering block delta's drain-time KV snapshot carries the value; no
-    // separate KV delta is logged (it would be redundant).
     assert!(server.set_block_world(2, 65, 2, Block::Stone));
     assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![200, 30, 40]));
     let blocks = server.take_block_deltas();
@@ -903,7 +820,6 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         "the KV rides the block delta's snapshot"
     );
 
-    // A value-only change (no block flip) and a delete both converge.
     assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![9]));
     for kv in server.take_cell_kv_deltas() {
         replica.apply_remote_cell_kv(kv);
@@ -918,10 +834,6 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     }
     assert_eq!(replica.data.cell_kv_get(2, 65, 2, "testmod:color"), None);
 
-    // A CORRECTIVE delta — `block_delta_at`'s snapshot of an UNCHANGED cell,
-    // shipped whenever a click resolves to nothing — must not erase replica
-    // KV the server still holds (the gray-dye bug, 2026-07-23): the delta
-    // carries the cell's KV map and re-installs it after its own wipe.
     assert!(server.cell_kv_set(2, 65, 2, "testmod:color".into(), vec![5, 6, 7]));
     for kv in server.take_cell_kv_deltas() {
         replica.apply_remote_cell_kv(kv);
@@ -934,11 +846,6 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
         "a corrective snapshot must carry the cell's KV across its wipe"
     );
 
-    // The GHOST-KV hazard, reversed order: a KV write logged BEFORE a
-    // same-tick block flip is stale — the flip wiped the cell's KV — so the
-    // block delta's capture must scrub it. Without the scrub the stale KV
-    // delta replays AFTER the block delta and resurrects a key on the
-    // replica that the server holds clean.
     assert!(server.cell_kv_set(2, 65, 2, "testmod:ghost".into(), vec![1]));
     assert!(server.set_block_world(2, 65, 2, Block::Dirt));
     assert_eq!(server.data.cell_kv_get(2, 65, 2, "testmod:ghost"), None);
@@ -961,9 +868,6 @@ fn cell_kv_deltas_replicate_and_apply_after_block_deltas() {
     );
 }
 
-/// A draw set is RETAINED state, and the delta lane only carries changes — so
-/// a machine that last redrew itself before a player joined must still arrive,
-/// on the section, or it is invisible to everyone but the placer.
 #[test]
 fn retained_draw_sets_ride_the_section_to_a_late_joiner() {
     use mod_api::DrawPrim;
@@ -982,7 +886,6 @@ fn retained_draw_sets_ride_the_section_to_a_late_joiner() {
         }]
         .into(),
     );
-    // Everything the delta lane had to say has already been said.
     let _ = server.take_block_draw_deltas();
 
     for cp in server.data.columns.keys().copied().collect::<Vec<_>>() {
@@ -1046,8 +949,6 @@ fn a_draw_set_costs_nothing_to_resubmit_and_dies_with_its_block() {
     }
     assert!(replica.block_draw_at(pos).is_some(), "fixture: shipped");
 
-    // The cell becomes something else. Not a BREAK — a plain block write, the
-    // path whose own rule is that per-cell state dies with the block.
     assert!(server.set_block_world(pos.x, pos.y, pos.z, Block::Stone));
     assert!(
         server.block_draw_at(pos).is_none(),
@@ -1062,8 +963,6 @@ fn a_draw_set_costs_nothing_to_resubmit_and_dies_with_its_block() {
     );
 }
 
-/// A mod computing geometry can produce a non-finite corner (a divide by a
-/// zero-length pour). Those must not reach the vertex buffer.
 #[test]
 fn non_finite_draw_geometry_is_dropped_at_the_boundary() {
     use mod_api::DrawPrim;
@@ -1099,9 +998,6 @@ fn non_finite_draw_geometry_is_dropped_at_the_boundary() {
     assert_eq!(set.resolved.len(), 1, "the renderer only gets the sane box");
 }
 
-/// The wire payload's state lists come out cell-sorted however the section's
-/// state was written, so the same logical section ships identical bytes from
-/// every server and every run.
 #[test]
 fn section_state_payload_is_independent_of_insertion_order() {
     const CELLS: usize = 48;

@@ -1,12 +1,3 @@
-//! Folders the PLAYER chooses for a client mod ([`ClientStorageScope::Chosen`]):
-//! the OS folder picker the app installs, and each mod's remembered choices.
-//!
-//! The choices live beside the mod's pack bucket, where its own file calls
-//! cannot reach: a mod names a folder SLOT, never a path, so the only folders
-//! it can write outside its bucket are ones a player picked for it.
-//!
-//! [`ClientStorageScope::Chosen`]: mod_api::ClientStorageScope::Chosen
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,20 +7,14 @@ use mod_api::{ClientFileAnswer, ClientFolderInfo};
 
 use super::TicketSink;
 
-/// The remembered choices, one JSON map of slot → folder per pack bucket.
 const CHOICES: &str = "chosen_folders.json";
 
-/// One folder the player is asked for.
 pub struct FolderRequest {
     pub title: String,
-    /// Where the picker opens: the slot's folder, else the player's videos.
     pub start: Option<PathBuf>,
-    /// Answered once, from any thread; dropped unanswered, it cancels.
     pub done: FolderAnswer,
 }
 
-/// What the player picked in one picker: [`answer`](Self::answer) it with
-/// the folder, or `None` for a cancel.
 pub struct FolderAnswer(Option<Box<dyn FnOnce(Option<PathBuf>) + Send>>);
 
 impl FolderAnswer {
@@ -48,27 +33,20 @@ impl Drop for FolderAnswer {
     }
 }
 
-/// Shows the OS folder picker without blocking the caller.
 pub type FolderChooser = Arc<dyn Fn(FolderRequest) + Send + Sync>;
 
 static CHOOSER: Mutex<Option<FolderChooser>> = Mutex::new(None);
 
-/// One picker at a time, whichever mod asked.
 static OPEN: AtomicBool = AtomicBool::new(false);
 
-/// The app's folder picker. Without one (a headless server, a test that sets
-/// none) every choice is refused.
 pub fn install_chooser(chooser: Option<FolderChooser>) {
     *CHOOSER.lock().unwrap_or_else(PoisonError::into_inner) = chooser;
 }
 
-/// What the player reads for `folder`.
 pub fn label(folder: &Path) -> String {
     folder.display().to_string()
 }
 
-/// The folder chosen for `slot` in the pack bucket at `pack`, while it still
-/// exists.
 pub fn chosen(pack: &Path, slot: u32) -> Option<PathBuf> {
     read(pack).remove(&slot).filter(|dir| dir.is_dir())
 }
@@ -77,8 +55,6 @@ pub fn info(pack: &Path, slot: u32) -> Option<ClientFolderInfo> {
     chosen(pack, slot).map(|dir| ClientFolderInfo { label: label(&dir) })
 }
 
-/// Ask the player for `slot`'s folder; `sink` answers with what they chose.
-/// `Err` = refused before anything opened.
 pub fn choose(pack: &Path, slot: u32, title: String, sink: TicketSink) -> Result<(), String> {
     let Some(chooser) = CHOOSER
         .lock()
@@ -109,7 +85,6 @@ pub fn choose(pack: &Path, slot: u32, title: String, sink: TicketSink) -> Result
     Ok(())
 }
 
-/// The player's videos folder, else their home.
 fn videos() -> Option<PathBuf> {
     if cfg!(test) {
         return None;

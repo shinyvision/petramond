@@ -86,9 +86,6 @@ fn a_closed_door_spans_two_cells_tall_on_its_edge() {
 
 #[test]
 fn thin_edge_faces_carry_a_uv_slice_mode() {
-    // The 3/16-deep edge faces crop their tile (packed bits 29..32) so the
-    // plank side isn't a whole tile squished flat; the wide art is full-tile.
-    // Faces are emitted per box in ALL_FACES order, 4 verts each.
     let (v, _) = bake(&[inst(Block::OakDoor, Facing::South, 0, 0.0)]);
     let slice = |face: usize| (v[face * 4].packed >> petramond_mesh::UV_MODE_SHIFT) & 0x3;
     assert_eq!(slice(0), 1, "PosX side edge crops U");
@@ -97,7 +94,6 @@ fn thin_edge_faces_carry_a_uv_slice_mode() {
     assert_eq!(slice(3), 2, "NegY bottom edge crops V");
     assert_eq!(slice(4), 0, "PosZ front art is full-tile");
     assert_eq!(slice(5), 0, "NegZ back art is full-tile");
-    // A part that does not declare thin edges keeps every tile whole.
     let (chest, _) = bake(&[inst(Block::Chest, Facing::South, 0, 0.0)]);
     assert!(chest
         .iter()
@@ -123,10 +119,6 @@ fn opening_lifts_a_trapdoor_off_the_floor_onto_an_edge() {
 
 #[test]
 fn a_swung_panel_keeps_to_its_own_cell() {
-    // The point of the inset hinge: the RESTING poses lie exactly in the
-    // cell, and mid-swing the corner nearest the hinge sweeps only the tiny
-    // arc a rigid rotation about an inset pivot must — bounded by
-    // (√2 - 1)·T/2, reached at 45°.
     let arc = (std::f32::consts::SQRT_2 - 1.0) * THICKNESS / 2.0 + 1e-4;
     for facing in FACINGS {
         for variant in [0, 1] {

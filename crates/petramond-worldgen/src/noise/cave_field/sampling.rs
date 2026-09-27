@@ -1,20 +1,12 @@
-//! Sample only the source groups required by a query.
-
 use std::sync::Arc;
 
 use super::*;
 
-/// Excavation fields are gathered once per 64-block column cell padded by
-/// this many blocks and shared by every generator; a lattice inside the
-/// padded cell restricts that field to its own box.
 const CHAMBER_CELL: i32 = 64;
 const CHAMBER_PAD: i32 = 32;
 pub(super) type ChamberKey = (crate::cache::GenContext, [i32; 2]);
 
 impl CaveField {
-    /// The excavation terms reaching `bounds`: restricted from the shared
-    /// per-cell field when the box fits one padded cell, gathered directly
-    /// otherwise (a wide positional batch).
     fn chamber_field_for(
         &self,
         bounds: [[i32; 3]; 2],
@@ -61,7 +53,6 @@ impl CaveField {
             .restrict(lo, hi)
     }
 
-    /// Every field over a box — the tests' view of what a carve reads.
     #[cfg(test)]
     pub(super) fn build_lattice(
         &self,
@@ -86,10 +77,6 @@ impl CaveField {
         z1: i32,
         mut fields: Fields,
     ) -> CaveLattice {
-        // What a carve can meet in this box, from the habitat leaf grid: with
-        // no aquifer row possible the barrier neighbourhood is never read, with
-        // no lining row possible no shell cell is ever painted, and with only
-        // stone possible the shell width is the base width without asking.
         let (no_aquifer, unlined, plain, geology) = if fields.carve {
             let ids = self
                 .underground_biome_ids_in_box([x0 - 1, y0 - 1, z0 - 1], [x1 + 1, y1 + 1, z1 + 1]);
@@ -106,8 +93,6 @@ impl CaveField {
         } else {
             (false, false, false, false)
         };
-        // Padded by the barrier neighbourhood: a fluid cell on the box edge
-        // reads whether the cell beyond it is aquifer water.
         let pad = i32::from(
             fields.carve
                 && !no_aquifer
@@ -250,8 +235,6 @@ impl CaveField {
             }
         }
         if let Some(walks) = &lat.walks {
-            // Which lattice cells any cut can reach, so a voxel outside them
-            // never asks the walk index.
             let (mx, my, mz) = (nx - 1, ny - 1, nz - 1);
             lat.walk_cells = (0..mx * my * mz)
                 .map(|i| {

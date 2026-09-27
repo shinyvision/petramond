@@ -15,7 +15,6 @@ fn chunk_distance_is_chebyshev_to_the_nearest_player() {
     assert_eq!(chunk_distance(&anchors, WorldPos::new(15.9, 64.0, 0.0)), 0);
     assert_eq!(chunk_distance(&anchors, WorldPos::new(16.0, 64.0, 0.0)), 1);
     assert_eq!(chunk_distance(&anchors, WorldPos::new(-0.5, 64.0, 70.0)), 4);
-    // Nearer to the second player (chunk (-3, 12)).
     assert_eq!(
         chunk_distance(&anchors, WorldPos::new(-40.0, 64.0, 180.0)),
         1
@@ -90,8 +89,6 @@ fn a_nonsensical_policy_is_sanitized() {
 
 #[test]
 fn frozen_mobs_do_not_simulate_while_near_ones_do() {
-    // No floor anywhere: a simulating owl falls, a frozen one hangs exactly
-    // where it was, pose held for rendering.
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     mobs.set_sim_distance(SimDistance::default());
@@ -112,7 +109,6 @@ fn frozen_mobs_do_not_simulate_while_near_ones_do() {
         "its pose is held, not re-interpolated"
     );
 
-    // Unlimited (the bare manager's default): the far owl falls too.
     let mut mobs = Mobs::new(0);
     assert!(mobs.spawn(Mob::Owl, far_spot, 0.0));
     for _ in 0..10 {
@@ -135,8 +131,6 @@ fn a_frozen_mob_is_still_distance_despawned() {
 
 #[test]
 fn a_coasting_mob_keeps_moving_on_its_last_decision() {
-    // Reduced band with a long interval, so almost every tick coasts: the
-    // body still integrates (falls through the floorless world) each tick.
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     mobs.set_sim_distance(SimDistance {

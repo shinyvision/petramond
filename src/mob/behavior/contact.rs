@@ -1,28 +1,12 @@
-//! Contact chase (`chase_contact`): lock onto whatever TOUCHES the mob.
-//!
-//! The node reads the touch perception channel (`AiCtx::contacts` — the
-//! entities whose bodies overlapped this mob, recorded by the manager's push
-//! pass) and locks onto the nearest one: player or mob, any species, no
-//! chance roll — a body pressed against yours is unambiguous in a way a
-//! distant sound is not, and nothing silences it (a sneaking player can stay
-//! unheard, but not unfelt). While locked it chases the target's live position
-//! and publishes the lock for `melee_attack`, exactly like the other chase
-//! nodes; `memory_ticks` without a renewed touch drops it. The lock is
-//! committed — new bumps neither refresh nor steal a live lock (the touched
-//! mob answers the first offender before the next).
-
 use serde::Deserialize;
 
 use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::EntityRef;
 use super::chase::goal_cell_near;
 
-/// `chase_contact` params as written in a `mobs.json` brain row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChaseContactParams {
-    /// Consecutive ticks without a renewed touch from the locked target
-    /// before the lock drops.
     memory_ticks: u32,
 }
 
@@ -41,7 +25,6 @@ impl ChaseContactAi {
         }
     }
 
-    /// Build from a brain row's `params` — the `chase_contact` node factory core.
     pub(super) fn from_params(params: &serde_json::Value) -> Result<Self, String> {
         let p: ChaseContactParams =
             serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
@@ -54,14 +37,11 @@ impl ChaseContactAi {
 
 impl AiBehavior for ChaseContactAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
-        // A dead/vanished target unlocks immediately.
         if let Some(locked) = self.target {
             if !ctx.entity_alive(locked) {
                 self.target = None;
             }
         }
-        // The touch countdown: a renewed contact from the locked target resets
-        // it; memory_ticks without one drops the lock.
         if let Some(locked) = self.target {
             if ctx.contacts.contains(&locked) {
                 self.untouched_ticks = 0;
@@ -73,9 +53,6 @@ impl AiBehavior for ChaseContactAi {
             }
         }
         if self.target.is_none() {
-            // Acquire the NEAREST touching entity (they all overlap the body,
-            // so distances differ by fractions — nearest keeps ties honest and
-            // deterministic; the contact order itself is deterministic too).
             self.target = ctx
                 .contacts
                 .iter()
@@ -152,8 +129,6 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChaseContactAi::new(40);
         let mob = WorldPos::new(8.5, 64.0, 8.5);
-        // A sneaking player pressed against the mob: no noise exists anywhere,
-        // only the touch.
         let players = [PlayerAnchor {
             id: PlayerId(3),
             pos: WorldPos::new(9.1, 64.9, 8.5),
@@ -173,7 +148,6 @@ mod tests {
         assert_eq!(out.target, Some(EntityRef::Player(PlayerId(3))));
         assert!(out.goal.is_some(), "the bump locks and chases");
 
-        // No further touches: the lock persists for memory_ticks - 1, then drops.
         for t in 1..40 {
             let out = ai.tick(&mut ctx(
                 &world,
@@ -202,8 +176,6 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChaseContactAi::new(40);
         let mob = WorldPos::new(8.5, 64.0, 8.5);
-        // A sheep (not on any whitelist — contact needs none) pressed into it,
-        // plus a bogus self-contact which must never lock.
         let mobs = MobSnapshot::from_mobs([AiMob {
             id: 9,
             kind: Mob::Sheep,
@@ -234,7 +206,7 @@ mod tests {
             },
             PlayerAnchor {
                 id: PlayerId(4),
-                pos: WorldPos::new(8.5, 64.9, 9.0), // nearer than the locked target
+                pos: WorldPos::new(8.5, 64.9, 9.0),
                 ..Default::default()
             },
         ];

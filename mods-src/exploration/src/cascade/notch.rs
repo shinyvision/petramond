@@ -1,16 +1,8 @@
-//! Spill notches: one channel per link, the shortest cardinal path from the
-//! lower basin back to its source basin. Channel cells open at the source's
-//! surface (cut through a natural lip if need be), the plunge column opens
-//! down the weir face to the target's surface, and channel flanks are sealed
-//! so the pour runs where it was routed.
-
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use super::basin::{Basins, Col};
 use super::{DAM_MAX, NOTCH_PATH_MAX, SIDES};
 
-/// Cut every link's notch into the sealed chain: removes the silt the
-/// channels pass through, adds flank dams, and returns the cut rock cells.
 pub(super) fn cut_notches(
     basins: &Basins,
     silt: &mut BTreeSet<[i32; 3]>,
@@ -51,11 +43,6 @@ pub(super) fn cut_notches(
     Ok(cuts)
 }
 
-/// The plunge is a CHUTE: its slot stays open toward its own basin `j` (the
-/// visible fall face) and toward whatever feeds it, and is walled everywhere
-/// else. An open lateral side is the leak class this exists for — another
-/// basin's source at slot level can convert inside the slot and sheet out
-/// onto the shore.
 fn wall_chute(
     basins: &Basins,
     silt: &mut BTreeSet<[i32; 3]>,
@@ -80,8 +67,6 @@ fn wall_chute(
     Ok(())
 }
 
-/// Flank a channel cell where it is grounded; over a drop the water is
-/// already falling and falling water spreads nowhere.
 fn flank_channel(
     basins: &Basins,
     silt: &mut BTreeSet<[i32; 3]>,
@@ -105,7 +90,6 @@ fn flank_channel(
     Ok(())
 }
 
-/// One dam-with-foundation, shared by channel and chute flanks.
 fn flank(
     basins: &Basins,
     silt: &mut BTreeSet<[i32; 3]>,
@@ -130,9 +114,9 @@ fn flank(
     Ok(())
 }
 
-/// Shortest cardinal path from basin `j`'s columns to basin `i`'s, through
-/// unowned columns, returned source-first (the last element is the plunge
-/// column inside basin `j`). Deterministic: BFS layers expand in sorted order.
+/// Path from basin `j`'s columns to basin `i`'s, unowned columns only.
+/// Last entry is the plunge column in `j`.
+/// BFS layers go in sorted order, so we always get the same path.
 pub(super) fn notch_path(
     cols: &BTreeMap<Col, (usize, i32)>,
     j: usize,
@@ -172,8 +156,6 @@ pub(super) fn notch_path(
                 c = parent[&c];
                 path.push(c);
             }
-            // `path` runs from just-outside-i back into j; the last element
-            // is basin j's own column — the plunge.
             return Some(path);
         }
         frontier = next;

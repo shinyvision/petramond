@@ -2,9 +2,6 @@ use super::*;
 use crate::face::{should_flip, vertex_ao};
 use petramond_world::block_state::{SlabSplit, SlabState};
 
-/// Leaves occlude AO onto/within themselves: a solid leaf cluster floating in
-/// air must produce darkened (ao < 3) leaf faces -- interior faces are buried
-/// by surrounding leaves. (Before, leaves never occluded, so AO stayed 3.)
 #[test]
 fn leaves_self_occlude() {
     assert!(Block::OakLeaves.occludes_ao());
@@ -31,63 +28,40 @@ fn leaves_self_occlude() {
     );
 }
 
-/// The AO occlusion table: brightest with no occluders, one step per single
-/// occluder, and the buried-corner special case (both edges solid -> 0).
 #[test]
 fn vertex_ao_levels() {
-    assert_eq!(vertex_ao(false, false, false), 3); // open
-    assert_eq!(vertex_ao(true, false, false), 2); // one edge
-    assert_eq!(vertex_ao(false, false, true), 2); // diagonal only
-    assert_eq!(vertex_ao(true, false, true), 1); // edge + diagonal
-    assert_eq!(vertex_ao(true, true, false), 0); // both edges -> buried
-    assert_eq!(vertex_ao(true, true, true), 0); // both edges, diagonal irrelevant
+    assert_eq!(vertex_ao(false, false, false), 3);
+    assert_eq!(vertex_ao(true, false, false), 2);
+    assert_eq!(vertex_ao(false, false, true), 2);
+    assert_eq!(vertex_ao(true, false, true), 1);
+    assert_eq!(vertex_ao(true, true, false), 0);
+    assert_eq!(vertex_ao(true, true, true), 0);
 }
 
-/// Flip exactly when the 0-2 diagonal is the brighter pair; ties keep default.
 #[test]
 fn flip_runs_along_darker_diagonal() {
-    assert!(should_flip([3, 0, 3, 0])); // 0-2 bright (6) vs 1-3 dark (0) -> flip
-    assert!(!should_flip([0, 3, 0, 3])); // 1-3 brighter -> keep default
-    assert!(!should_flip([3, 3, 3, 3])); // symmetric -> no flip
-    assert!(!should_flip([2, 1, 1, 2])); // equal sums (3 == 3) -> no flip
+    assert!(should_flip([3, 0, 3, 0]));
+    assert!(!should_flip([0, 3, 0, 3]));
+    assert!(!should_flip([3, 3, 3, 3]));
+    assert!(!should_flip([2, 1, 1, 2]));
 }
 
-/// AO produces the exact occlusion contract at a known concave corner, on a
-/// hand-built fixture (no worldgen coupling). A 1-tall step block sits beside a
-/// 2-tall pillar one cell over in +X; the pillar's upper cube edge-occludes the
-/// step block's TOP face along its shared +X edge. The two top corners on that
-/// edge therefore read ao == 2 (one solid edge neighbour:
-/// `vertex_ao(true, false, false)`), while the two corners on the open -X edge
-/// stay at the un-occluded ao == 3. The precise table is pinned separately by
-/// `vertex_ao_levels`; this proves the builder feeds it the right neighbourhood.
 #[test]
 fn ao_exact_at_concave_step_corner() {
     let m = mesh(&section_with(&[
-        // The step block.
         ((8, 8, 8), Block::Stone),
-        // The 2-tall pillar one cell over in +X; its upper cube (9,9,8) is the
-        // single edge-occluder of the step block's top (+Y) face.
         ((9, 8, 8), Block::Stone),
         ((9, 9, 8), Block::Stone),
     ]));
 
-    // The step block's top face is the only +Y (PosY -> shade idx 0) quad whose
-    // four corners lie at y == 9 over the step cell x in [8,9], z in [8,9].
     let ao_at = |wx: f32, wz: f32| ao_idx(vert_at(&m.opaque, 0, [wx, 9.0, wz]));
 
-    // The two corners on the shared +X edge (x == 9), adjacent to the pillar:
-    // one solid edge neighbour each -> ao == 2.
     assert_eq!(ao_at(9.0, 8.0), 2, "concave +X corner is edge-occluded");
     assert_eq!(ao_at(9.0, 9.0), 2, "concave +X corner is edge-occluded");
-    // The two corners on the open -X edge (x == 8): no occluder -> ao == 3.
     assert_eq!(ao_at(8.0, 8.0), 3, "open -X corner is fully lit");
     assert_eq!(ao_at(8.0, 9.0), 3, "open -X corner is fully lit");
 }
 
-/// The unified box-set emitter's self-AO: a lone stair floating in air
-/// darkens its own inner crease (the tread corners against the riser probe
-/// into the upper box), while a lone full cube in the same empty air keeps
-/// every corner at AO 3 — the probes reduce to the (empty) grid ring there.
 #[test]
 fn stair_crease_gets_self_ao_but_lone_cube_stays_open() {
     let m_cube = mesh(&section_with(&[((8, 8, 8), Block::Stone)]));
@@ -97,8 +71,6 @@ fn stair_crease_gets_self_ao_but_lone_cube_stays_open() {
     );
 
     let m_stair = mesh(&section_with(&[((8, 8, 8), Block::StoneStairs)]));
-    // Only the crease darkens: some up-facing (shade 0) vertices on the
-    // tread's mid line drop below 3; fully open corners elsewhere stay 3.
     let tread_creased = m_stair
         .opaque
         .iter()
@@ -113,9 +85,6 @@ fn stair_crease_gets_self_ao_but_lone_cube_stays_open() {
     );
 }
 
-/// Sub-cell AO CASTING: a stair sitting on a floor darkens the neighbouring
-/// floor cell's top-face corners toward it (the cast probes find the stair's
-/// occupied half), while corners away from the stair stay fully lit.
 #[test]
 fn stair_casts_onto_the_terrain_beside_it() {
     let m = mesh(&section_with(&[
@@ -133,9 +102,6 @@ fn stair_casts_onto_the_terrain_beside_it() {
                 && v.pos[0] <= 8.0 + 1.0e-3
         })
         .collect();
-    // The x == 8 plane holds corners of BOTH floor faces: the exposed face's
-    // (darkened by the cast) and the face buried under the stair (open —
-    // its ring is the stair's own cell, never probed, exactly like grid AO).
     assert!(
         floor_top
             .iter()
@@ -151,10 +117,6 @@ fn stair_casts_onto_the_terrain_beside_it() {
     );
 }
 
-/// Fences are smooth-lit box sets like everything else: a lone post in air
-/// has no occluders anywhere (probes find nothing — a centred post casts and
-/// receives nothing), while a connected fence self-shadows the post/rail
-/// junctions.
 #[test]
 fn fence_self_ao_at_rail_junctions_only() {
     let m_lone = mesh(&section_with(&[((8, 8, 8), Block::OakFence)]));
@@ -183,13 +145,10 @@ fn fence_self_ao_at_rail_junctions_only() {
 fn cast_pockets_reach_an_inset_neighbour_base() {
     use crate::builder::corner_cast_probes;
     use crate::face::Face;
-    // A floor's top face fronted by air at world (0,0,0); the shape sits in
-    // the side cell (1,0,0) with its base inset 1/16 from every boundary.
     let base_lo = [1.0 / 16.0, 0.0, 1.0 / 16.0];
     let base_hi = [15.0 / 16.0, 3.0 / 16.0, 15.0 / 16.0];
     for sv in [-1, 1] {
         let pockets = corner_cast_probes(Face::PosY, 1, sv, 0.0);
-        // The side-u pocket, moved into the side cell's local frame.
         let (lo, hi) = pockets[0];
         let (lo, hi) = ([lo[0] - 1.0, lo[1], lo[2]], [hi[0] - 1.0, hi[1], hi[2]]);
         let overlap = (0..3).all(|a| lo[a] < base_hi[a] && hi[a] > base_lo[a]);
@@ -205,9 +164,8 @@ fn cast_pockets_reach_an_inset_neighbour_base() {
 /// matter and the flush tops of neighbouring bottom slabs (a half-height
 /// floor is one continuous surface — no per-slab darkening), while a
 /// neighbouring TOP slab, whose matter rises above the plane, darkens the
-/// corners toward it exactly like a wall. Regression pin for the probe
-/// pockets being cast on the cell floor instead of the actual plane, which
-/// made every slab placed beside a slab darken it like a full cube.
+/// corners toward it exactly like a wall. Probe pockets must follow the
+/// actual plane rather than the cell floor.
 #[test]
 fn slab_top_plane_ignores_matter_below_it() {
     let top_face_ao = |m: &ChunkMesh, x: f32| -> Vec<u32> {
@@ -260,23 +218,13 @@ fn slab_top_plane_ignores_matter_below_it() {
     );
 }
 
-/// AO is a function of the SHAPE, never the placement: the same outer-corner
-/// stair reached from two different placed facings must cast identical AO on
-/// its neighbours. Scene A places the corner facing WEST (refined by the
-/// victim straight stair on its +x high side); scene B places it facing NORTH
-/// (refined by a west helper on its +z high side, present in both scenes).
-/// Both refine to the same single-quadrant corner — only the placed byte
-/// differs — so the meshes must carry identical AO everywhere. Regression pin
-/// for `occupies_pocket` decoding the placed facing instead of the stored
-/// refined corner, which grew a phantom occupied quadrant that shadowed the
-/// straight neighbour only for one of the two placements.
 #[test]
 fn stair_corner_ao_is_placement_independent() {
     let build = |corner_facing: Facing| {
         let mut s = section_with(&[
-            ((9, 8, 8), Block::OakStairs),  // the corner under test
-            ((10, 8, 8), Block::OakStairs), // victim straight stair (north)
-            ((9, 8, 9), Block::OakStairs),  // scene-B refiner (west)
+            ((9, 8, 8), Block::OakStairs),
+            ((10, 8, 8), Block::OakStairs),
+            ((9, 8, 9), Block::OakStairs),
         ]);
         s.set_stair_facing(9, 8, 8, corner_facing);
         s.set_stair_facing(10, 8, 8, Facing::North);
@@ -286,8 +234,6 @@ fn stair_corner_ao_is_placement_independent() {
     let a = build(Facing::West);
     let b = build(Facing::North);
 
-    // Both placements must refine to the SAME outer corner (one quadrant);
-    // anything else means the fixture no longer exercises the invariant.
     let corner_a = refined(&a).cell_state(9, 8, 8).byte(1);
     let corner_b = refined(&b).cell_state(9, 8, 8).byte(1);
     assert_eq!(corner_a, corner_b, "both placements refine to one corner");
@@ -312,12 +258,9 @@ fn stair_corner_ao_is_placement_independent() {
     );
 }
 
-/// The INTERIOR quadrant: sub-cell matter standing ON a face darkens the
-/// exposed part of that same face (its front cell holds the matter — grid
-/// AO never probes there), and the quadrant-symmetric rule makes the shared
-/// corner between the supporting face and the neighbouring floor face
-/// compute the SAME level from both sides — no hard edge at the cell
-/// boundary (the cauldron-gutter fix, exercised here with a vertical slab).
+/// Interior quadrant. Sub-cell matter on a face should darken the rest of that face, and the
+/// corner it shares with the neighbouring floor face should match from both sides. That was the
+/// cauldron-gutter fix; a vertical slab exercises it here.
 #[test]
 fn matter_standing_on_a_face_darkens_it_seamlessly() {
     let mut section = section_with(&[
@@ -336,9 +279,6 @@ fn matter_standing_on_a_face_darkens_it_seamlessly() {
     );
     let m = mesh(&section);
 
-    // The vertical slab occupies the west half of its cell. At the shared
-    // boundary x = 8 every top-face corner (supporting face AND neighbour
-    // face) must agree and darken; the far corners of both faces stay open.
     let floor_top: Vec<_> = m
         .opaque
         .iter()

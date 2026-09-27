@@ -10,7 +10,6 @@ const STONE_ROW: [([i32; 3], &str); 3] = [
     ([2, 0, 0], "petramond:stone"),
 ];
 
-/// Three stones in a row on the floor, and a fourth cell of `extra`.
 fn row(session: &Session, extra: Option<&str>) -> Design {
     let mut cells = STONE_ROW.to_vec();
     cells.extend(extra.map(|name| ([3, 0, 0], name)));
@@ -62,7 +61,6 @@ fn a_changed_cell_is_measured_again_and_the_totals_follow() {
     assert_eq!(bill(&survey), vec![(stone(), 2)]);
     assert_eq!(survey.open(), 2);
 
-    // Earth in the way is cleared, then built: the bill already counts it.
     session.world.set([2, 0, 0], DIRT);
     survey.step(&design, 16, 3, 0, &[[2, 0, 0]], false);
     let summary = survey.summary().unwrap();
@@ -70,7 +68,6 @@ fn a_changed_cell_is_measured_again_and_the_totals_follow() {
     assert_eq!(summary.clear_blocks.get(&DIRT), Some(&1));
     assert_eq!(bill(&survey), vec![(stone(), 2)]);
 
-    // A chest holding items is in the way, and guarded.
     session.world.chest([0, 0, 0], 4);
     session
         .world
@@ -87,7 +84,6 @@ fn a_changed_cell_is_measured_again_and_the_totals_follow() {
         }
     ));
 
-    // All of it built: nothing is owed.
     session.world.set([0, 0, 0], STONE);
     session.world.set([2, 0, 0], STONE);
     survey.step(&design, 16, 5, 0, &[[0, 0, 0], [2, 0, 0]], false);
@@ -104,10 +100,8 @@ fn a_tick_the_survey_sat_out_measures_everything_again() {
     let mut survey = Survey::new(&design);
     survey.step(&design, 16, 1, 0, &[], true);
     session.world.set([0, 0, 0], STONE);
-    // Told nothing changed, the next tick believes it.
     survey.step(&design, 16, 2, 0, &[], false);
     assert_eq!(bill(&survey), vec![(stone(), 3)]);
-    // A tick missed is a stretch of the change log never seen.
     survey.step(&design, 16, 4, 0, &[], false);
     assert_eq!(bill(&survey), vec![(stone(), 2)]);
 }
@@ -118,7 +112,6 @@ fn a_unit_on_unloaded_ground_is_asked_again_on_the_retry_round() {
     let design = row(&session, None);
     session.world.unload([2, -1, 0], [2, 0, 0]);
     let mut survey = Survey::new(&design);
-    // Stagger 12: the retry round falls on tick 2, the slow sweep on tick 4.
     survey.step(&design, 16, 1, 12, &[], true);
     let far = design.unit_at([2, 0, 0]).unwrap();
     assert_eq!(survey.known[far], Known::Unloaded);
@@ -166,7 +159,6 @@ fn a_bill_counts_items_by_their_exact_data() {
     summary.count(&Known::Place(vec![plain.clone(), marked]), &[], false);
     assert_eq!(summary.bill.len(), 1, "the marked stack is paid off");
     assert_eq!(summary.open, 1);
-    // Taking back more than was counted never goes below nothing.
     summary.count(&Known::Place(vec![stack("petramond:stone", 9)]), &[], false);
     summary.count(&Known::Place(Vec::new()), &[], false);
     assert!(summary.bill.is_empty());

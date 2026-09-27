@@ -1,8 +1,6 @@
 use super::*;
 use crate::data::underground;
 
-/// A synthetic pool row: certain at every cell, so a small sweep always
-/// holds pools whatever the shipped rows are tuned to.
 fn pool_row(key: &str, fluid: &str) -> String {
     format!(
         r#"{{"fluid_pool":"{key}","fluid":"{fluid}","anchor_y":-40,"chance":1.0,
@@ -19,9 +17,6 @@ fn field_with_pools(seed: u32, rows: &[(&str, &str)]) -> CaveField {
 
 const TOP: i32 = 0;
 
-/// A pool belongs to its lattice cell, never to the box that asked: two boxes
-/// sharing a cell answer the same fluid for it, or neighbouring section carves
-/// would disagree wherever a pool crosses a batch edge.
 #[test]
 fn overlapping_boxes_answer_the_same_fluid() {
     let field = field_with_pools(0x1A7A_7001, &[("test:lava", "petramond:lava")]);
@@ -50,10 +45,6 @@ fn overlapping_boxes_answer_the_same_fluid() {
     assert!(filled > 0, "the swept boxes hold no pool");
 }
 
-/// The property the design rests on: every filled cell's lateral and lower
-/// neighbours are filled too or rock the cave left standing, so nothing is
-/// added to seal a pool and none pours when the world loads it. Surfaces
-/// stand at more than one height: the level is the hollow's, not a plane's.
 #[test]
 fn a_pool_is_closed_sideways_and_downward_by_the_cave_alone() {
     let field = field_with_pools(0x1A7A_7002, &[("test:lava", "petramond:lava")]);
@@ -93,8 +84,6 @@ fn a_pool_is_closed_sideways_and_downward_by_the_cave_alone() {
     assert!(surfaces.len() > 1, "pool surfaces only at {surfaces:?}");
 }
 
-/// Two rows over the same caves: the earlier row claims first, and a later
-/// row's pool never touches it — two generated fluids never meet at load.
 #[test]
 fn a_later_row_never_touches_an_earlier_rows_pool() {
     let field = field_with_pools(

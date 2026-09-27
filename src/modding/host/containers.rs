@@ -1,7 +1,3 @@
-//! Container calls: engine-backed mod container slots plus the machine
-//! recipe reads machine mods compose with. (Item registry reads live in the
-//! `registry` domain.)
-
 use mod_api::{ContainerCall, HostRet};
 
 use crate::events::SimCtx;
@@ -12,8 +8,6 @@ use super::guards::{
 
 mod access;
 
-/// Mod container slots + the machine recipe read that makes furnace-like
-/// mod logic possible without duplicating engine data.
 pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRet {
     match call {
         ContainerCall::ContainerGet { at } => {
@@ -50,8 +44,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
             let mod_api::EntityRef::Mob(mob_id) = actor else {
                 return HostRet::Bool(false);
             };
-            // A holder is a viewer: whatever really stores slots can be
-            // held, by the same resolution every container call reads through.
             let Some(access::Target::Block(pos)) = access::resolve_read(ctx, at) else {
                 return HostRet::Bool(false);
             };
@@ -72,8 +64,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
             to,
             count,
         } => sim_query(|ctx| {
-            // Both ends must be writable before anything leaves the source,
-            // so a refused destination costs nothing.
             if access::resolve_write(ctx, to).is_none() {
                 return HostRet::ItemStack(None);
             }
@@ -90,8 +80,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                 Some(_) => None,
             };
             if let Some(left) = remainder {
-                // The source slot gave up `taken` a moment ago, so it has room
-                // for exactly what comes back.
                 let source = access::resolve_write(ctx, from).expect("source resolved by take");
                 let cell = access::slots_mut(ctx, source)
                     .and_then(|c| c.slots.get_mut(slot as usize))
@@ -108,8 +96,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
             if let Some(err) = batch_guard("ContainerSet slot entry", slots.len()) {
                 return err;
             }
-            // Resolve+validate every entry BEFORE any write, so a bad entry
-            // can't leave a half-applied batch.
             let mut writes: Vec<(usize, Option<petramond_world::item::ItemStack>)> = Vec::new();
             for (i, slot) in &slots {
                 let i = *i as usize;
@@ -122,9 +108,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                 let stack = match slot {
                     None => None,
                     Some(data) => {
-                        // A typo'd registry name is not a protocol break: warn
-                        // and refuse the batch (the GiveItem/EffectApply
-                        // policy), don't trap the whole mod.
                         let Some(item) = item_by_name(&data.item) else {
                             log::warn!(
                                 "[mod {mod_id}] ContainerSet: unknown item '{}' — \
@@ -154,13 +137,9 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                 let Some(target) = access::resolve_write(ctx, at) else {
                     return HostRet::Bool(false);
                 };
-                // A mod owns only its own storage: the block at the anchor, or
-                // the mob's species, must be registered to the caller.
                 let Some(owner) = access::owner_name(ctx, target) else {
                     return HostRet::Bool(false);
                 };
-                // Whose storage stands there is the world's to say and changes
-                // under a mod: someone else's answers `false`, never an error.
                 if !key_owned_by_namespace(&mod_id, owner) {
                     log::debug!("ContainerSet: '{owner}' at {at:?} is not mod '{mod_id}''s");
                     return HostRet::Bool(false);
@@ -172,7 +151,6 @@ pub(super) fn handle_container_call(mod_id: &str, call: ContainerCall) -> HostRe
                             return HostRet::Bool(false);
                         }
                     }
-                    // A mob's capacity is its row's: a write never grows it.
                     access::Target::Mob(_) => {
                         if access::slots(ctx, target).is_none_or(|c| c.slots.len() < len) {
                             return HostRet::Bool(false);
@@ -209,8 +187,6 @@ fn read_slots(
     access::slots(ctx, target).map(|c| c.slots.iter().map(|s| s.map(item_stack_data)).collect())
 }
 
-/// Route `stack` into the container `at` through its admission rules,
-/// leaving whatever it refuses in `stack`.
 fn insert(
     ctx: &mut SimCtx<'_>,
     at: mod_api::ContainerAddress,
@@ -228,7 +204,6 @@ fn insert(
     access::touched(ctx, target);
 }
 
-/// Take at most `count` from one slot of the container `at`.
 fn take(
     ctx: &mut SimCtx<'_>,
     at: mod_api::ContainerAddress,

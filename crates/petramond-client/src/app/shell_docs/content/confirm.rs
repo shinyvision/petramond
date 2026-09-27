@@ -1,10 +1,3 @@
-//! The browser's confirm page: an in-panel page, never a modal window, for
-//! everything that destroys or cannot be taken back without a restart —
-//! deleting a pack, replacing a hand-installed copy, withdrawing an install
-//! another waiting install needs, and ending the game while downloads run.
-//!
-//! Enter is the right-hand button; Escape is Cancel.
-
 use petramond::content::ListingRow;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
@@ -13,12 +6,9 @@ use super::rows::{cap, name_list, Entry, NAME_CAP};
 use crate::app::content::{ContentSession, PendingKind};
 use crate::app::ExitKind;
 
-/// Which buttons the page shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Variant {
-    /// Cancel left, a danger action right.
     Destroy,
-    /// A danger "now" far left; Cancel and a benign "when done" right.
     Exit,
 }
 
@@ -35,9 +25,7 @@ pub(in crate::app) struct ConfirmPage {
     pub(in crate::app) question: String,
     pub(in crate::app) body: String,
     pub(in crate::app) variant: Variant,
-    /// The right-hand (danger or benign) button's text.
     pub(in crate::app) action_text: &'static str,
-    /// The exit variant's far-left danger text.
     pub(in crate::app) now_text: &'static str,
     pub(in crate::app) confirmed: Confirmed,
 }
@@ -50,8 +38,6 @@ pub(super) fn populate(page: Option<&ConfirmPage>, state: &mut UiState) {
         "confirming_destroy",
         UiValue::Bool(variant == Some(Variant::Destroy)),
     );
-    // The benign-only variant waits for the listing to name dependencies
-    // ("Get all"); nothing opens it yet.
     state.set("confirming_go", UiValue::Bool(false));
     state.set(
         "confirming_exit",
@@ -115,7 +101,6 @@ fn open(content: &mut ContentSession, page: ConfirmPage) {
     }
 }
 
-/// Do what the page asked. `now` is the exit variant's far-left button.
 fn accept(ctx: &mut ScreenCtx, now: bool) {
     let content = &mut *ctx.content;
     let Some(page) = content.view.as_mut().and_then(|v| v.confirm.take()) else {
@@ -140,7 +125,6 @@ fn accept(ctx: &mut ScreenCtx, now: bool) {
     }
 }
 
-/// Every name that needs `id`: installed packs and pending installs.
 fn dependents(content: &ContentSession, id: &str, pending_only: bool) -> Vec<String> {
     let view = content.view.as_ref();
     let installed = view
@@ -166,8 +150,6 @@ fn needs_sentence(names: &[String], consequence: &str) -> String {
     format!("{} {verb} it and {consequence}.", name_list(names))
 }
 
-/// The saves whose recorded packs include `id` and that do not switch it
-/// off: a few small reads, done when the confirm opens.
 fn worlds_using(id: &str) -> Vec<String> {
     if cfg!(test) {
         return Vec::new();
@@ -258,8 +240,6 @@ pub(super) fn open_replace(content: &mut ContentSession, entry: &Entry, row: Lis
     );
 }
 
-/// Ask before withdrawing an install another waiting install needs.
-/// Returns whether the page opened (an undo with no dependent is immediate).
 pub(super) fn open_undo_dependency(content: &mut ContentSession, entry: &Entry) -> bool {
     let Some(dir) = content
         .pending_of(&entry.dir, &entry.key)
@@ -286,7 +266,6 @@ pub(super) fn open_undo_dependency(content: &mut ContentSession, entry: &Entry) 
     true
 }
 
-/// The copy of the exit confirm: `(question, body, when done, now)`.
 pub(in crate::app) fn exit_copy(
     kind: &ExitKind,
     jobs: usize,

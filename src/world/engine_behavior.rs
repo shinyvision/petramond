@@ -1,9 +1,3 @@
-//! The engine half of block behaviour dispatch. Behaviours whose logic needs
-//! orchestration (fluid flow, fragile support, sapling growth, doors) live on
-//! this trait, keyed by the same `blocks.json` behaviour names as the data
-//! layer's `EngineHook` facts; the tick resolves a key here FIRST and only
-//! falls back to the data-layer behaviour object.
-
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 
@@ -19,8 +13,6 @@ pub(crate) trait EngineBlockBehavior: Sync {
     }
 }
 
-/// Engine behaviour registry — the orchestration twin of the data layer's
-/// `behavior::by_name` engine hooks.
 pub(crate) fn engine_behavior(key: &str) -> Option<&'static dyn EngineBlockBehavior> {
     Some(match key {
         "fluid" => &crate::world::fluid::FLUID,
@@ -33,8 +25,6 @@ pub(crate) fn engine_behavior(key: &str) -> Option<&'static dyn EngineBlockBehav
 
 #[cfg(test)]
 mod tests {
-    /// Every data-layer `EngineHook` key resolves in the engine registry and
-    /// vice versa — the two-tier dispatch cannot drift.
     #[test]
     fn engine_hooks_and_registry_agree() {
         for key in ["fluid", "fragile", "sapling", "door"] {

@@ -1,5 +1,3 @@
-//! `ClientEntities`: the replicated bodies the last presented frame drew.
-
 use mod_api::{ClientEntitiesNear, HostRet};
 use rustc_hash::{FxHashMap, FxHashSet};
 

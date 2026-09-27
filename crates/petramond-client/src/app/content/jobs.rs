@@ -1,12 +1,3 @@
-//! The download queue: one download at a time, first in first out, each on
-//! its own worker thread. A job downloads the archive into the installed
-//! root's hidden `.staging/`, then unpacks, admits and stages it as a pending
-//! install; nothing it writes is ever seen by discovery before a restart.
-//!
-//! A busy site (429 `too_many_downloads`) is never an error: the job waits
-//! out `Retry-After` and tries again by itself. Cancel works throughout: the
-//! worker checks its flag between reads and is woken from a wait.
-
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -19,16 +10,11 @@ use petramond::content::install::{self, Offer};
 use petramond::content::{Dirs, ListingRow};
 use petramond::service::ServiceError;
 
-/// Where a job is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Phase {
     Queued,
     Downloading,
-    /// petramond.com is busy: trying again at `until`.
-    Waiting {
-        until: Instant,
-    },
-    /// Unpacking and checking the archive.
+    Waiting { until: Instant },
     Checking,
 }
 
@@ -38,14 +24,12 @@ pub(in crate::app) struct Job {
     pub(in crate::app) progress: Arc<Progress>,
     serial: u64,
     cancel: Arc<AtomicBool>,
-    /// The worker, woken on cancel so a wait ends at once.
     thread: Option<std::thread::Thread>,
     dirs: Dirs,
     shipped: BTreeSet<String>,
 }
 
 impl Job {
-    /// Bytes done and expected (the listing's size until the answer says).
     pub(in crate::app) fn bytes(&self) -> (u64, u64) {
         let total = self.progress.total.load(Ordering::Relaxed);
         let total = if total == 0 {
@@ -57,18 +41,12 @@ impl Job {
     }
 }
 
-/// What the queue tells the session.
 #[derive(Debug)]
 pub(in crate::app) enum Event {
-    /// A pending install was written for this pack id.
     Staged(String),
-    /// The pack id's download failed, with the reason the row shows.
     Failed(String, String),
-    /// petramond.com no longer has the pack (404).
     Gone(String),
-    /// A download re-fetched the listing because its package changed.
     Listing(Vec<ListingRow>),
-    /// The stored sign-in is dead.
     SignedOut,
 }
 
@@ -79,7 +57,6 @@ enum Message {
 }
 
 enum Outcome {
-    /// A pending install was written for this pack id.
     Staged(String),
     Failed(String),
     Gone,
@@ -92,7 +69,6 @@ pub(in crate::app) struct Jobs {
     tx: Sender<(u64, Message)>,
     rx: Receiver<(u64, Message)>,
     next_serial: u64,
-    /// Workers run only outside tests.
     network: bool,
 }
 
@@ -139,8 +115,6 @@ impl Jobs {
         self.start_next();
     }
 
-    /// Cancel `mod_id`'s job. Its worker removes its own files; the next job
-    /// starts at once.
     pub(in crate::app) fn cancel(&mut self, mod_id: &str) {
         if let Some(i) = self.queue.iter().position(|j| j.row.mod_id == mod_id) {
             if let Some(job) = self.queue.remove(i) {
@@ -156,7 +130,6 @@ impl Jobs {
         }
     }
 
-    /// Start the front job if nothing runs.
     fn start_next(&mut self) {
         let Some(job) = self.queue.front_mut() else {
             return;
@@ -190,13 +163,10 @@ impl Jobs {
         }
     }
 
-    /// Drain the workers' messages.
     pub(super) fn poll(&mut self) -> Vec<Event> {
         let mut events = Vec::new();
         while let Ok((serial, message)) = self.rx.try_recv() {
             let Some(i) = self.queue.iter().position(|j| j.serial == serial) else {
-                // A cancelled job still reporting: its listing is still news,
-                // and a stage it finished anyway is a real pending install.
                 match message {
                     Message::Listing(rows) => events.push(Event::Listing(rows)),
                     Message::Done(Outcome::Staged(id)) => events.push(Event::Staged(id)),
@@ -226,7 +196,6 @@ impl Jobs {
         events
     }
 
-    /// Put `mod_id`'s job in `phase` (tests arrange what a worker would).
     #[cfg(test)]
     pub(in crate::app) fn set_phase(&mut self, mod_id: &str, phase: Phase, done: u64) {
         if let Some(job) = self.queue.iter_mut().find(|j| j.row.mod_id == mod_id) {
@@ -243,7 +212,6 @@ fn stop(job: &Job) {
     }
 }
 
-/// A partial download's path: hidden, and unique for this process's life.
 fn partial_path(dirs: &Dirs, mod_id: &str) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -253,7 +221,6 @@ fn partial_path(dirs: &Dirs, mod_id: &str) -> PathBuf {
     ))
 }
 
-/// One job, start to staged. Blocks: the worker's whole life.
 fn run(
     mut row: ListingRow,
     dirs: &Dirs,
@@ -288,8 +255,6 @@ fn run(
                 return Outcome::SignedOut
             }
             Err(DownloadError::Changed) if !refetched => {
-                // The package was replaced after the listing was fetched:
-                // look once more, and follow the new row if it moved.
                 refetched = true;
                 match api::listing() {
                     Ok(rows) => {
@@ -316,7 +281,6 @@ fn run(
     }
 }
 
-/// Sleep until `until`, or until cancelled (the canceller unparks us).
 fn wait_until(until: Instant, cancel: &AtomicBool) {
     while !cancel.load(Ordering::Relaxed) {
         let left = until.saturating_duration_since(Instant::now());

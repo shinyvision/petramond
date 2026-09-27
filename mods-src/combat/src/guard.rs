@@ -1,32 +1,12 @@
-//! The whole shield law, and every tuned number behind it.
-//!
-//! [`guard_of`] is a pure function of the actor snapshot, whether the use
-//! press is the guard's, and one scalar — how far through the post-hit
-//! recoil the body is — and answers everything: whether the hit is
-//! absorbed, how fast the body walks, which clip each shielding hand plays
-//! and how far through it. The server tick, the client frame and
-//! the damage handler all call it, which makes a prediction that disagrees
-//! with the authority impossible rather than merely unlikely.
-//!
-//! The engine knows nothing about a shield. Nothing outside this module may
-//! mirror these values.
-
 use crate::body::BodyClocks;
 use crate::claims::{Body, Claims, Cover, Rule};
 use crate::keys;
 use mod_sdk::*;
 
-/// Land-speed multiplier while the shield is up.
 const GUARD_SPEED_SCALE: f32 = 0.5;
 
-/// Ticks the shield stays INACTIVE after absorbing a hit — knocked aside, and
-/// it has to be brought back. A second attacker inside that window gets
-/// through, so a pack is still a real threat to somebody hiding behind one.
 pub const IMPACT_TICKS: u32 = 10;
 
-/// The guard's cover: 60° each way off the look direction. A hit from the
-/// SIDE is not one the shield is in front of, and a hit from behind never
-/// was.
 const GUARD_COVER: Cover = Cover { arc_cos: 0.5 };
 
 /// The clips a shielding hand plays (engine rig clips): the carry while the
@@ -45,7 +25,6 @@ const GUARD_3P: &str = "petramond:body_guard";
 const RECOIL_3P: &str = "petramond:body_guard_impact";
 const SLOTS: [&str; 2] = ["main_claim", "off_claim"];
 
-/// Every rig clip the guard plays, `(rig, clip)`.
 #[cfg(test)]
 pub(crate) const CLIPS: [(&str, &str); 5] = [
     (rig::PLAYER_FIRST_PERSON, CARRY_1P),
@@ -55,23 +34,16 @@ pub(crate) const CLIPS: [(&str, &str); 5] = [
     (rig::PLAYER_BODY, RECOIL_3P),
 ];
 
-/// One body's recoil clock: ticks since its shield took a hit, running
-/// only through the window. Both sides run one — whole ticks on the
-/// server, frame seconds over the tick length on the client — and only the
-/// meaning has to agree, which is why it answers a FRACTION.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct Recoil {
     elapsed: Option<f32>,
 }
 
 impl Recoil {
-    /// The shield just took a hit.
     pub fn start(&mut self) {
         self.elapsed = Some(0.0);
     }
 
-    /// Advance by `dt_ticks`; the clock releases itself when the window is
-    /// out.
     pub fn step(&mut self, dt_ticks: f32) {
         if let Some(elapsed) = self.elapsed {
             let elapsed = elapsed + dt_ticks.max(0.0);
@@ -79,49 +51,24 @@ impl Recoil {
         }
     }
 
-    /// How far through the window the body is, `0..1`; `None` settled.
     pub fn progress(&self) -> Option<f32> {
         self.elapsed.map(|elapsed| elapsed / IMPACT_TICKS as f32)
     }
 }
 
-/// What the shield is doing for one actor.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct Guard {
-    /// This body's use press belongs to the shield. Still true while it is
-    /// reeling: the player never let go, it just is not stopping anything.
     pub raised: bool,
-    /// Which hands hold the shield — only a shielding hand is ever posed, so
-    /// the other keeps its ordinary hold.
     pub main_holds: bool,
     pub off_holds: bool,
-    /// How far through the post-hit window this body is (`None` = settled).
-    ///
-    /// ONE value gates the block AND drives the animation: an inactive shield
-    /// has to LOOK inactive, and a separate presentation timer would eventually
-    /// disagree with the rule about which it was.
     impact: Option<f32>,
 }
 
 impl Guard {
-    /// Does this guard stop a hit? Only a raised shield that is not still
-    /// reeling from the last one.
     pub fn absorbs(&self) -> bool {
         self.raised && self.impact.is_none()
     }
 
-    /// What a raised shield stops the body doing. Both hands are committed to
-    /// the guard — the off hand is on the grip whichever hand carries it — so
-    /// there is nothing left to punch or mine with.
-    ///
-    /// Without it the shield is a free answer to every mob in the game: hold
-    /// the button, walk in, and work from behind an invulnerable wall. The
-    /// interact needs no barring here — holding the GESTURE is what keeps the
-    /// button from doing anything else, and it lets go the moment the guard
-    /// does.
-    ///
-    /// A reeling shield still denies both, for the same reason it still slows
-    /// you: it is up, it is just not stopping anything.
     fn denied(&self) -> Vec<BodyAction> {
         if self.raised {
             vec![BodyAction::Attack, BodyAction::Mine]
@@ -130,8 +77,6 @@ impl Guard {
         }
     }
 
-    /// The land-speed multiplier to claim (`1.0` releases the claim). A
-    /// reeling shield is still up and still heavy.
     pub fn speed_scale(&self) -> f32 {
         if self.raised {
             GUARD_SPEED_SCALE
@@ -140,8 +85,6 @@ impl Guard {
         }
     }
 
-    /// What one hand (`0` main, `1` off) plays: nothing unless it holds the
-    /// shield.
     fn plays(&self, hand: usize, holds: bool) -> Vec<AnimatorPlay> {
         if !holds {
             return Vec::new();
@@ -170,9 +113,6 @@ impl Guard {
         out
     }
 
-    /// Everything the guard claims about the body this tick, for the
-    /// publisher to merge: the lowered carry still animates a shielding hand,
-    /// everything else releases with the guard.
     pub fn claims(&self) -> Claims {
         Claims {
             holds_press: self.raised,
@@ -189,20 +129,7 @@ impl Guard {
     }
 }
 
-/// The entire shield law, as a pure function of the actor snapshot, the
-/// press and the recoil clock — free of `self` and of the host, so the
-/// tests below pin it directly and all three call sites share it verbatim.
-///
-/// `press` is whether the use press is the guard's — the composition's
-/// answer, never the raw button: the press only becomes a guard once
-/// nothing else took it, so opening a door with a shield in hand opens the
-/// door and leaves the shield down, and a bow drawing over an off-hand
-/// shield keeps it lowered. `impact` is `Some(progress)` — `0..1` through
-/// [`IMPACT_TICKS`] — while the shield is still reeling.
 pub fn guard_of(shield: ItemId, state: &PlayerSnapshot, press: bool, impact: Option<f32>) -> Guard {
-    // Deciding a spectator HERE rather than by skipping the publish is what
-    // RELEASES the claim: skipping would leave half speed and a raised shield
-    // latched on a body no rule is evaluating any more.
     let holds = |slot: Option<ItemId>| !state.spectator && slot == Some(shield);
     let main_holds = holds(state.held);
     let off_holds = holds(state.off_held);
@@ -215,15 +142,11 @@ pub fn guard_of(shield: ItemId, state: &PlayerSnapshot, press: bool, impact: Opt
     }
 }
 
-/// The shield as one of the pack's rules: a shield in EITHER hand takes a
-/// free press and holds it as the guard until the button comes up.
 pub struct ShieldRule {
     shield: ItemId,
 }
 
 impl ShieldRule {
-    /// Resolve the shield row; `None` (a build without it) leaves the guard
-    /// out of the list.
     pub fn resolve() -> Option<ShieldRule> {
         let shield = resolve_item(keys::SHIELD_ITEM);
         if shield.is_none() {
@@ -285,8 +208,6 @@ mod tests {
         }
     }
 
-    /// The law under the press the composition hands it: the snapshot's
-    /// own `holds_use` (nothing earlier in the list took it).
     fn guard(state: &PlayerSnapshot, impact: Option<f32>) -> Guard {
         guard_of(SHIELD, state, state.holds_use, impact)
     }
@@ -308,9 +229,6 @@ mod tests {
         );
     }
 
-    /// A shield that just took a hit is still UP but stops nothing until it
-    /// settles: the window has to be something you can watch it come out of,
-    /// not a shield that blinks away.
     #[test]
     fn a_reeling_shield_stays_raised_and_stops_absorbing() {
         let settled = guard(&guarding(), None);
@@ -326,11 +244,6 @@ mod tests {
         }
     }
 
-    /// Only a shielding hand plays, and it plays what the shield is DOING:
-    /// the carry, the guard, or the recoil scrubbed at the window's progress.
-    /// A settled guard still scrubbing its recoil parks the shield knocked
-    /// aside; a reeling one showing the guard hides the only sign that the
-    /// next hit gets through.
     #[test]
     fn the_shielding_hand_plays_what_the_shield_is_doing() {
         let main = |g: Guard| g.plays(0, g.main_holds);
@@ -377,10 +290,6 @@ mod tests {
         }
     }
 
-    /// A SPECTATOR is not guarding, whatever their hotbar and button say — and
-    /// the RULE has to say so rather than the publish loop skipping them, or a
-    /// player who goes spectator mid-guard keeps half speed and a raised shield
-    /// until something else happens to clear them.
     #[test]
     fn a_spectator_is_not_guarding_and_so_releases_every_claim() {
         let mut watching = actor(Some(SHIELD), Some(SHIELD), true);
@@ -392,9 +301,6 @@ mod tests {
         assert!(g.claims().plays.is_empty());
     }
 
-    /// A released guard claims the NEUTRAL speed and bars nothing, which is
-    /// what hands the slots back rather than pinning the body at half speed
-    /// with its hands tied.
     #[test]
     fn releasing_the_guard_releases_every_claim() {
         let up = guard(&guarding(), None);
@@ -406,9 +312,6 @@ mod tests {
         assert!(down.denied().is_empty());
     }
 
-    /// A shield knocked aside still ties the hands: the recoil is where it
-    /// stops PROTECTING you, and handing back the punch it was costing would
-    /// make taking a hit the best moment to attack.
     #[test]
     fn a_reeling_shield_still_denies_the_hands() {
         let hit = guard(&guarding(), Some(0.5));

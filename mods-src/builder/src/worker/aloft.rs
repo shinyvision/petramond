@@ -1,7 +1,3 @@
-//! Moving on while up high: work not seen from a pillar is walked to along the
-//! pillar's course or reached from a scaffold walkway laid from here, before
-//! the golem digs down to walk round and climb again.
-
 use crate::host::prelude::*;
 
 use super::bridge::{self, Bridge};
@@ -21,25 +17,15 @@ enum Way {
     Walkway(Vec<[i32; 3]>),
 }
 
-/// What moving on from where the golem stands up high is weighed against.
 struct Outlook {
-    /// The pillar's top, the way back down.
     top: [i32; 3],
-    /// What a climb down, round and up again costs.
     climb: i32,
-    /// The walkway standing out from the pillar, if one does.
     walkway: Option<Bridge>,
-    /// How many cells of walkway stand.
     chain: usize,
-    /// Whether a walkway may be laid on from where the golem stands.
     lays_from_here: bool,
-    /// The stances walked to, and what walking to each (and back) costs in
-    /// moves.
     moves: Vec<([i32; 3], i32)>,
 }
 
-/// The step on toward the nearest open work reached from up here, or `None`
-/// when nothing up here reaches any and the golem goes down.
 pub fn move_on(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -79,8 +65,6 @@ pub fn move_on(
             }
             None => return Some(Step::Plan),
         }
-        // Laid from there, it must not cut the way back to the top (a walkway
-        // not laid yet is asked from its end once it stands).
         if matches!(way, Way::Walk(_)) && stance != outlook.top && plan::places(job, task) {
             let walls = plan::as_walls(ctx, job, &cells);
             match route::probe(ctx, stance, outlook.top, walls) {
@@ -97,9 +81,6 @@ pub fn move_on(
     None
 }
 
-/// Walked to for work that was not done there after all, or out along a
-/// walkway laid for work not done from its end: never that stance for it
-/// again.
 fn forget_failed_stances(job: &mut Job, body: &Body) {
     if let Some((task, at)) = job.crew.aloft.aimed.take() {
         if at == body.cell {
@@ -118,14 +99,9 @@ fn forget_failed_stances(job: &mut Job, body: &Body) {
     }
 }
 
-/// Where the golem can move on to from here, and what each costs. `None` =
-/// no route budget this tick.
 fn outlook(ctx: &mut Ctx, job: &Job, body: &Body, perch: Pillar) -> Option<Outlook> {
     let top = perch.top_cell();
     let walkway = job.crew.aloft.bridge.clone();
-    // Stances walked to: with a walkway standing, only its own cells (it
-    // comes down on the way back to where it starts, before the golem walks
-    // anywhere else); otherwise the pillar's whole course.
     let stances: Vec<[i32; 3]> = match &walkway {
         Some(w) => w.path.clone(),
         None => course::around(ctx, top)?.unwrap_or_default(),
@@ -139,8 +115,6 @@ fn outlook(ctx: &mut Ctx, job: &Job, body: &Body, perch: Pillar) -> Option<Outlo
             Some((s, moves as i32))
         })
         .collect();
-    // Every step out along the course away from the top is walked back
-    // before the golem climbs down.
     let moves = if walkway.is_some() {
         moves
     } else {
@@ -156,8 +130,6 @@ fn outlook(ctx: &mut Ctx, job: &Job, body: &Body, perch: Pillar) -> Option<Outlo
             })
             .collect()
     };
-    // A walkway goes on from where the golem stands: the end of the one
-    // standing, or anywhere on the course.
     let chain = walkway.as_ref().map_or(0, |w| w.path.len());
     let lays_from_here = walkway
         .as_ref()
@@ -173,8 +145,6 @@ fn outlook(ctx: &mut Ctx, job: &Job, body: &Body, perch: Pillar) -> Option<Outlo
     })
 }
 
-/// The cheapest stance walked to that works `task` (its `cells`), and what
-/// the walk costs in ticks.
 fn cheapest_walk(
     job: &Job,
     body: &Body,
@@ -210,9 +180,6 @@ fn cheapest_walk(
         .min_by_key(|(_, cost)| *cost)
 }
 
-/// The longest walkway worth laying for work walked to at `walk` (its stance
-/// and cost), if at all: one only where it beats the walk and a new pillar —
-/// a climb back up here and down again for the work, more for a taller one.
 fn longest_walkway(outlook: &Outlook, unreachable: bool, walk: Option<([i32; 3], i32)>) -> i32 {
     let mut longest = if outlook.lays_from_here {
         (WALKWAY_CHAIN - outlook.chain).min(WALKWAY_LENGTH as usize) as i32
@@ -228,7 +195,6 @@ fn longest_walkway(outlook: &Outlook, unreachable: bool, walk: Option<([i32; 3],
     longest
 }
 
-/// How to get within reach of `task`: a walkway laid out to it, or the walk.
 fn way_to(
     ctx: &mut Ctx,
     job: &Job,
@@ -239,8 +205,6 @@ fn way_to(
     walk: Option<([i32; 3], i32)>,
 ) -> Option<Way> {
     let unreachable = matches!(task, Task::Unit(i) if job.crew.access.unreachable.contains(&i));
-    // Past what a climb down, round and up again costs, the ground way is
-    // as good, and keeps the golem off long walks along wall tops.
     let walk = if !unreachable && outlook.walkway.is_none() {
         walk.filter(|(_, cost)| *cost <= outlook.climb)
     } else {
@@ -266,7 +230,6 @@ fn way_to(
     }
 }
 
-/// Set out along `way` for `task`.
 fn set_out(
     ctx: &mut Ctx,
     job: &mut Job,

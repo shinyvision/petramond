@@ -6,26 +6,10 @@ use petramond_math::face::Face;
 
 use super::ModelCube;
 
-// ---------------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------------
-
-/// Cube-space thickness below which a cube is treated as an authored plane. Blockbench
-/// lets artists use zero-thickness cubes for decals/details; emitting both collapsed
-/// opposite faces in our depth-tested pass creates z fighting.
 const FLAT_FACE_EPS: f32 = 1e-4;
-/// Tiny local-space offset applied to an emitted flat-cube surface so it sits just above
-/// the supporting face it was authored onto (paper on the tabletop, plans on the back).
-/// Keep it visibly flat, but large enough to survive depth precision at distance.
 pub(super) const FLAT_FACE_BIAS: f32 = 1.0 / 64.0;
-/// Maximum gap, in footprint/world-cell units, at which a solid overlapping cube is
-/// considered the surface a flat detail was authored onto.
 const FLAT_SUPPORT_MAX_GAP: f32 = 0.125;
 
-/// Whether the cube is an authored zero-thickness plane (flat on exactly one
-/// axis, so [`render_face_bias`] keeps exactly one of its faces). The kept face
-/// is the only model geometry that must render DOUBLE-sided — the model
-/// pipelines cull back faces, so the template bake duplicates it reversed.
 pub fn cube_is_flat_plane(cube: &ModelCube) -> bool {
     let extent = (cube.to - cube.from).abs();
     let flat = [
@@ -36,11 +20,6 @@ pub fn cube_is_flat_plane(cube: &ModelCube) -> bool {
     flat.into_iter().filter(|&v| v).count() == 1
 }
 
-/// Whether `face` should be emitted for `cube`, plus a local-space positional bias to
-/// apply to each corner before the cube's static rotation. Non-flat cubes return a zero
-/// bias. A cube flat on exactly one axis keeps only one of the collapsed opposite faces,
-/// preferring the face that points away from the nearest overlapping solid support.
-/// Cubes flat on two or three axes have no renderable area.
 pub fn render_face_bias(cube: &ModelCube, all_cubes: &[ModelCube], face: Face) -> Option<Vec3> {
     let extent = (cube.to - cube.from).abs();
     let flat = [
@@ -97,10 +76,6 @@ fn face_normal(face: Face) -> Vec3 {
     }
 }
 
-/// Pick the side of a zero-thickness cube that points away from the closest overlapping
-/// non-flat support cube. For example, a paper sitting on a tabletop keeps +Y; a poster
-/// sitting on the front of a back board keeps -Z. If no plausible support is found, the
-/// caller falls back to Blockbench's positive face.
 fn supported_flat_face(
     cube: &ModelCube,
     all_cubes: &[ModelCube],
@@ -161,8 +136,6 @@ fn flat_support_overlaps(flat: &ModelCube, support: &ModelCube, flat_axis: usize
     true
 }
 
-/// Bounds of ONE cube POSED by its static tilt (its 8 corners rotated about its pivot),
-/// so a rotated cube's true extent is captured. Works in any space (model or footprint).
 pub(super) fn posed_cube_bounds(c: &ModelCube) -> (Vec3, Vec3) {
     let tilt = Mat4::from_translation(c.origin)
         * Mat4::from_quat(euler_quat(c.rotation))
@@ -177,8 +150,6 @@ pub(super) fn posed_cube_bounds(c: &ModelCube) -> (Vec3, Vec3) {
     (mn, mx)
 }
 
-/// The cell-local union bbox of `boxes` clipped to the unit cell at `offset`, or `None`
-/// if none reach into it. Used for a cell's targeting box (the geometry overlapping it).
 pub(super) fn union_clip_to_cell(boxes: &[Aabb], offset: Vec3) -> Option<Aabb> {
     let mut mn = [f32::INFINITY; 3];
     let mut mx = [f32::NEG_INFINITY; 3];
@@ -195,7 +166,6 @@ pub(super) fn union_clip_to_cell(boxes: &[Aabb], offset: Vec3) -> Option<Aabb> {
     any.then_some(Aabb { min: mn, max: mx })
 }
 
-/// The 8 corners of box `[from, to]`.
 pub(super) fn box_corners(from: Vec3, to: Vec3) -> [Vec3; 8] {
     [
         Vec3::new(from.x, from.y, from.z),
@@ -209,7 +179,6 @@ pub(super) fn box_corners(from: Vec3, to: Vec3) -> [Vec3; 8] {
     ]
 }
 
-/// The footprint cell (clamped into `0..footprint`) containing footprint-space point `p`.
 pub(super) fn cell_of(p: Vec3, footprint: [u8; 3]) -> [u8; 3] {
     [
         (p.x.floor() as i32).clamp(0, footprint[0] as i32 - 1) as u8,
@@ -218,8 +187,6 @@ pub(super) fn cell_of(p: Vec3, footprint: [u8; 3]) -> [u8; 3] {
     ]
 }
 
-/// Clip footprint-space box `b` to the unit cell at `offset`, returning it in CELL-LOCAL
-/// `0..1` coordinates, or `None` if the box doesn't reach into that cell.
 pub(super) fn clip_to_cell(b: &Aabb, offset: Vec3) -> Option<Aabb> {
     let mut min = [0.0f32; 3];
     let mut max = [0.0f32; 3];

@@ -1,16 +1,6 @@
-//! From the finished world image to the frame: the post-process node, the
-//! world-space outline, and the scene's chrome (crosshair, the scene's UI
-//! layer, drag overlay) drawn ungraded over the final image. The MSAA
-//! resolve is no node of its own: the graph resolves at the end of the last
-//! world pass. The same UI-layer recording also draws the window's layer,
-//! after the frame's capture point (`frame.rs`).
-
 use super::*;
 
 impl SceneTargets {
-    /// POST-PROCESS: supersample reduction + colour grade (or low-resolution
-    /// upscale) of the finished world image, scene texture → swapchain (see
-    /// `grade.wgsl`). Everything after it draws ungraded over the result.
     pub(super) fn record_grade(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.grade_pipe);
         pass.set_bind_group(0, &self.grade_bind, &[]);
@@ -27,9 +17,6 @@ impl ChromePass {
         self.crosshair_vertex_count > 0
     }
 
-    /// OUTLINE: the targeted block's wireframe, depth-tested without writes
-    /// so it draws over terrain and water at the target but stays occluded
-    /// behind nearer geometry.
     pub(super) fn record_outline(&self, pass: &mut wgpu::RenderPass<'_>, ctx: &PassCtx<'_>) {
         pass.set_pipeline(self.outline_pipe.get(ctx.samples));
         pass.set_bind_group(0, &self.outline_bind, &[]);
@@ -37,7 +24,6 @@ impl ChromePass {
         pass.draw(0..self.outline_vertex_count, 0..1);
     }
 
-    /// CROSSHAIR: the centre invert-blend crosshair.
     pub(super) fn record_crosshair(&self, pass: &mut wgpu::RenderPass<'_>) {
         pass.set_pipeline(&self.crosshair_pipe);
         pass.set_vertex_buffer(0, self.crosshair_vbuf.slice(..));
@@ -64,37 +50,22 @@ impl UiLayer {
 }
 
 impl UiPass {
-    /// UI: under-chrome HUD layers (hurt vignette) → the GUI-document draw
-    /// list (all screen chrome, including its own dim backdrop) → the
-    /// over-chrome HUD layers (hearts, status effects, …) → client overlays →
-    /// per-slot item icons, all through the UI pipeline (own alpha blend, no
-    /// depth). Each layer binds its own texture; solid quads bind the icon
-    /// atlas (the solid sentinel skips the sampler, so any layout-compatible
-    /// texture works).
     pub(super) fn record_base(&self, pass: &mut wgpu::RenderPass<'_>, layer: &UiLayer) {
         let theme = self.theme.as_ref();
         let solid = &self.icon_atlas.bind;
         let screen = layer.prepared_viewport.size;
         pass.set_pipeline(&self.pipe);
         self.draw_hud_layers(pass, layer, true);
-        // The GUI-document draw list: every panel, slot face, hover, gauge,
-        // text and dim quad of the frame's screen.
         layer
             .doc_ui
             .draw(pass, layer.doc_ui.base(), theme, solid, screen);
         self.draw_hud_layers(pass, layer, false);
         layer.client_overlays.draw(pass, theme, solid, screen);
-        // Per-slot item icons (icon atlas), one bind + one draw.
         if layer.icon_quad_vertex_count > 0 {
             self.draw_icons(pass, layer, 0..layer.icon_quad_vertex_count);
         }
     }
 
-    /// UI OVERLAY / DRAG: stack counts, then the document's overlay tier
-    /// (floating tooltip chrome) with its own icons and counts over the base
-    /// tier's, then the cursor-held icon and its count — keeping the whole
-    /// dragged stack front-most. Icons and counts of each tier sit back to
-    /// back in the shared icon and solid buffers: normal, tooltip, drag.
     pub(super) fn record_overlay(&self, pass: &mut wgpu::RenderPass<'_>, layer: &UiLayer) {
         pass.set_pipeline(&self.pipe);
         let counts = layer.count_vertex_count;
@@ -104,7 +75,6 @@ impl UiPass {
         if counts > 0 {
             self.draw_solid(pass, layer, 0..counts);
         }
-        // Floating tooltip chrome, over every base-tier icon and count.
         layer.doc_ui.draw(
             pass,
             layer.doc_ui.overlay(),
@@ -132,7 +102,6 @@ impl UiPass {
         }
     }
 
-    /// The HUD layers on one side of the document chrome, in list order.
     fn draw_hud_layers(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -152,7 +121,7 @@ impl UiPass {
                 HudLayerTexture::Texture(b) => b.as_ref(),
             };
             let Some(bind) = bind else {
-                continue; // the layer's art is missing — draw nothing
+                continue;
             };
             pass.set_bind_group(0, bind, &[]);
             pass.set_vertex_buffer(0, hud.vbuf.slice(..));
@@ -160,7 +129,6 @@ impl UiPass {
         }
     }
 
-    /// A vertex range of the layer's icon-quad buffer, sampling the icon atlas.
     fn draw_icons(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -172,8 +140,6 @@ impl UiPass {
         pass.draw(vertices, 0..1);
     }
 
-    /// A vertex range of the layer's solid-quad buffer (stack counts), drawn
-    /// with the icon-atlas bind the solid sentinel ignores.
     fn draw_solid(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -187,9 +153,6 @@ impl UiPass {
 }
 
 impl Renderer {
-    /// One UI layer over `target`, outside the frame graph: the window's
-    /// layer, drawn after the frame's capture point. The same recording as
-    /// the graph's `Ui` and `UiOverlay` nodes, in one pass.
     pub(in crate::renderer) fn encode_ui_layer(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -210,8 +173,6 @@ impl Renderer {
     }
 }
 
-/// A pass drawing over what `target` already holds, with no depth: the
-/// window's layers over the finished frame.
 pub(in crate::renderer) fn overlay_pass<'e>(
     enc: &'e mut wgpu::CommandEncoder,
     target: &wgpu::TextureView,

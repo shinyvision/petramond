@@ -1,16 +1,8 @@
-//! The underground-biome catalog LOADER: the raw JSON file shape, the value
-//! ranges every field is validated against, and the conversion into the
-//! resolved table the queries read.
-//!
-//! Kept apart from the vocabulary it produces, the way `block/load.rs` is kept
-//! apart from `block.rs`.
-
 use super::*;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFile {
-    /// Absent in a layer that only adds fluid rows.
     #[serde(default)]
     underground_biomes: Vec<RawUndergroundBiome>,
     #[serde(default)]
@@ -19,11 +11,6 @@ struct RawFile {
     fluid_falls: Vec<fluids::RawFall>,
 }
 
-/// A `shell` past ~2 stops reading as a LINING and starts painting most of the
-/// biome's rock (measured: 4.0 lines over half the sampled volume), and it
-/// widens the skip mask for the whole world, so it costs every generating
-/// thread. Legal, deliberately — some biome may want cathedral-thick walls —
-/// but it is a heavy choice, not a free one.
 const SHELL_MAX: f64 = 8.0;
 
 const BLEND_FIELD_MAX: f64 = 0.5;
@@ -134,8 +121,6 @@ fn convert(
                     l.shell
                 ));
             }
-            // Air is the carver's "no lining" sentinel, so a row asking for it
-            // would silently do nothing instead of what it says.
             if l.block.id() == Block::Air.id() {
                 return Err(
                     "'lining.block' must not be air: a lining PAINTS the cave wall; \
@@ -192,7 +177,6 @@ fn convert(
         shell,
         pattern,
         geology: r.geology.map(pattern::RawPattern::resolve).transpose()?,
-        // An unbounded height rule has no vertical lining edge to feather.
         blend: (blend[0], if whole_column { 0.0 } else { blend[1] }),
     })
 }
@@ -370,12 +354,6 @@ const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 
 const FNV_PRIME: u64 = 0x1_0000_0000_01b3;
 
-/// FNV-1a over the compiled table's canonical form. Identity for the column-gen
-/// cache: two runs whose tables hash alike generate identical columns.
-///
-/// EVERY field the carver reads has to be here. This is a hand-written list, so
-/// adding a knob without adding it here serves stale `top_surf` columns from
-/// the cache with no version byte moving — a retune that silently half-applies.
 fn fingerprint(rows: &[UndergroundBiomeDef], fluids: &fluids::Rows) -> u64 {
     let mut h = FNV_OFFSET;
     let mut eat = |bytes: &[u8]| {

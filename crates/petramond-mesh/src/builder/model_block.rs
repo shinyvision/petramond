@@ -6,17 +6,12 @@ use petramond_world::facing::Facing;
 use super::super::face::Face;
 use super::super::vertex::{ContactShadowVertex, ModelVertex};
 
-/// The model streams a bbmodel cell lands in: one shared vertex buffer and
-/// its opaque and alpha-blend index streams.
 pub(super) struct ModelStreams<'m> {
     pub(super) verts: &'m mut Vec<ModelVertex>,
     pub(super) indices: &'m mut Vec<u32>,
     pub(super) blend_indices: &'m mut Vec<u32>,
 }
 
-/// One placed bbmodel cell: which model, which of its footprint cells (the
-/// authored offset), how it is turned, and where it sits — its world cell and
-/// the mesh-space origin positions are relative to.
 #[derive(Copy, Clone)]
 pub(super) struct PlacedModelCell {
     pub(super) kind: BlockModelKind,
@@ -27,18 +22,12 @@ pub(super) struct PlacedModelCell {
 }
 
 impl PlacedModelCell {
-    /// The rotated footprint base in mesh space: the chunk stores the authored
-    /// cell offset + placed facing, and together those resolve it. Templates
-    /// are baked relative to that base, so placing a cell is one translate per
-    /// vertex.
     fn mesh_base(self) -> Vec3 {
         let base = block_model::base_from_cell(self.cell, self.kind, self.offset, self.facing);
         (base - self.anchor).as_vec3()
     }
 }
 
-/// How a model cell's copied runs are finished: the mesh-space translate, the
-/// packed cell light, and the tint its tinted faces take.
 #[derive(Copy, Clone)]
 struct RunStyle {
     basef: Vec3,
@@ -46,19 +35,6 @@ struct RunStyle {
     tint: u32,
 }
 
-/// Stream one bbmodel-block cell's geometry into the `model` buffers: copy the cell's
-/// startup-baked template (positions already taken through the cube rotation + placement
-/// facing) translated to its base in mesh space (relative to `anchor`), carrying the cell's sky light and its
-/// COLOURED block light separately so the world-model shader applies the
-/// day/night scale at draw time. No matrices / quaternions / face-bias work
-/// happens per remesh — it's all resolved once in [`block_model::ModelInstance`],
-/// so meshing a placed model is a translate + scale + copy.
-///
-/// Each template segment is gated before copying: an optional parts-mask bit,
-/// then an optional cullface world direction tested through `cull` (true = the
-/// neighbour is opaque and the run is skipped). Blend-routed segments (faces
-/// with semi-transparent texels) index into `blend_indices` — the same shared
-/// vertex buffer, drawn later by the alpha-blend pass.
 pub(super) fn emit_model_block(
     out: ModelStreams<'_>,
     at: PlacedModelCell,
@@ -154,15 +130,10 @@ fn copy_run(
     );
 }
 
-/// Stream one bottom footprint cell's contact-shadow stamp: the startup-baked
-/// single-cell pieces translated to the base in mesh space, coincident with the top
-/// face of the supported floor (the contact pass's coplanar bias resolves the
-/// depth tie). Each piece — the cell's own floor AND its owned spill onto the
-/// dilation ring — is gated INDIVIDUALLY through `supports_stamp(x, z)` on the
-/// stamped cell's own column, which is what lets the shadow cross onto the
-/// grass next to the model while an unsupported neighbouring cell still clips
-/// it. Every stamped cell is within ±1 of the cell's column by construction,
-/// so the gate's reads stay inside the mesh pad.
+/// Contact-shadow stamp for one bottom footprint cell, on the supported floor's top face.
+/// Pieces are gated one by one via `supports_stamp(x, z)` on their own column, so the shadow
+/// spills onto neighbouring grass but an unsupported neighbour still clips it.
+/// Stamped cells are within ±1 of this column, so the gate stays inside the mesh pad.
 pub(super) fn emit_model_contact(
     contact: &mut Vec<ContactShadowVertex>,
     at: PlacedModelCell,
@@ -193,8 +164,6 @@ mod tests {
     use crate::vertex::MODEL_TINT_NONE;
     use block_model::{ModelCellTemplate, ModelTemplateVertex, PartRun, TemplateSegment};
 
-    /// A three-segment template: 2 always-on verts, then two optional parts of
-    /// 2 verts each, every run's indices numbered against the WHOLE template.
     fn template() -> ModelCellTemplate {
         let v = |x: f32, tinted: bool| ModelTemplateVertex {
             appearance: block_model::FaceAppearance::default(),
@@ -251,10 +220,6 @@ mod tests {
         }
     }
 
-    /// The copy/gate core of [`emit_model_block`] without the `BlockModelKind`
-    /// lookup: emit `mask`'s segments, beside the TEMPLATE vertices their
-    /// indices should have resolved to — the x coordinate identifies each
-    /// uniquely.
     fn emit(mask: u32) -> (Vec<ModelVertex>, Vec<u32>, Vec<f32>) {
         let tmpl = template();
         let (mut verts, mut indices) = (Vec::new(), Vec::new());
@@ -281,9 +246,6 @@ mod tests {
         (verts, indices, want)
     }
 
-    /// Every mask must emit indices that address ITS OWN vertices. Skipping a
-    /// run shifts everything after it, and an index left pointing at the
-    /// template's numbering draws the wrong part rather than failing.
     #[test]
     fn every_part_mask_emits_indices_addressing_its_own_vertices() {
         for mask in 0..4u32 {
@@ -297,8 +259,6 @@ mod tests {
         }
     }
 
-    /// Only the cubes a row named tintable may carry the tint; the mask must
-    /// not shift which vertices those are.
     #[test]
     fn the_tint_lane_follows_the_vertex_not_the_slot() {
         let (verts, ..) = emit(0b01);
@@ -306,8 +266,6 @@ mod tests {
         assert_eq!(verts[2].tint, 0, "part 0's cubes are the tinted ones");
     }
 
-    /// One quad per segment: ungated-opaque, cull-gated, blend-routed — each
-    /// vert's x identifies its segment.
     fn gated_template() -> ModelCellTemplate {
         let quad = |x: f32| {
             (0..4)
@@ -366,9 +324,6 @@ mod tests {
         }
     }
 
-    /// A cullface-gated segment draws only while its world neighbour is
-    /// non-opaque: the predicate suppresses exactly that run, and remeshing
-    /// after the neighbour leaves must restore it byte-identically.
     #[test]
     fn cull_gated_segments_follow_the_neighbour_predicate() {
         let tmpl = gated_template();
@@ -408,9 +363,6 @@ mod tests {
         );
     }
 
-    /// Blend-routed segments index into the BLEND stream but address the SAME
-    /// vertex buffer as the opaque runs — a split vertex stream would leave
-    /// the blend indices pointing at ghosts.
     #[test]
     fn blend_segments_share_the_vertex_buffer() {
         let tmpl = gated_template();

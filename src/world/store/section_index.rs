@@ -2,14 +2,12 @@ use crate::world::WorldData;
 use crate::world::{ServerWorld, World, WorldSide};
 use petramond_world::chunk::{ChunkPos, SectionPos, SECTION_MIN_CY};
 
-/// The bit of section `cy` in a per-column `cy` bitset.
 #[inline]
 pub(crate) fn column_cy_bit(cy: i32) -> u32 {
     debug_assert!(WorldData::column_section_range().contains(&cy));
     1u32 << (cy - SECTION_MIN_CY) as u32
 }
 
-/// Iterate set bits of a per-column `cy` bitset.
 #[inline]
 pub(crate) fn for_each_column_cy(bits: u32, mut f: impl FnMut(i32)) {
     let mut b = bits;
@@ -28,13 +26,7 @@ impl<S: WorldSide> World<S> {
             .entry(pos.chunk_pos())
             .or_insert(0) |= column_cy_bit(pos.cy);
         self.data.random_tick_dirty.insert(pos);
-        // A bulk section load bypasses the per-edit bake trigger, so mark any
-        // custom-shape cells for a (re)bake now (a chair restored from
-        // disk must rebuild its geometry, not sit on the static fallback).
         self.data.scan_section_custom_bakes(pos);
-        // ...and re-refine the section's refining cells, so stored refined
-        // state placed under an older vocabulary heals instead of rendering
-        // stale forever (authoritative sides only — see the sweep's doc).
         self.refine_section_shapes(pos);
     }
 
@@ -58,8 +50,6 @@ impl<S: WorldSide> World<S> {
         self.data.section_column_rt.remove(&pos);
     }
 
-    /// Clear one section's random-tickable bit, dropping the column entry when
-    /// nothing tickable is left in it.
     #[inline]
     fn clear_random_tick_bit(&mut self, pos: SectionPos) {
         let column = pos.chunk_pos();
@@ -71,10 +61,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Re-derive the random-tickable bit of every section marked stale (see
-    /// [`World::random_tick_dirty`]). The scan calls this once per tick before
-    /// it walks; the cost is one map read per EDITED section, not per loaded
-    /// one.
     pub(in crate::world) fn repair_random_tick_index(&mut self) {
         if self.data.random_tick_dirty.is_empty() {
             return;
@@ -96,7 +82,6 @@ impl<S: WorldSide> World<S> {
                 self.clear_random_tick_bit(*pos);
             }
         }
-        // Reuse the drained allocation rather than the fresh empty one.
         let mut dirty = dirty;
         dirty.clear();
         self.data.random_tick_dirty = dirty;
@@ -104,7 +89,6 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ServerWorld {
-    /// Track a newly pending section gen/disk-primary request.
     #[inline]
     pub(in crate::world) fn insert_pending_section(&mut self, sp: SectionPos) -> bool {
         if self.side.gen.pending_sections.insert(sp) {
@@ -121,7 +105,6 @@ impl ServerWorld {
         }
     }
 
-    /// Clear a pending section; returns whether it was pending.
     #[inline]
     pub(in crate::world) fn remove_pending_section(&mut self, sp: SectionPos) -> bool {
         if !self.side.gen.pending_sections.remove(&sp) {

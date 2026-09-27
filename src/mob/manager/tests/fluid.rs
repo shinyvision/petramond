@@ -157,9 +157,6 @@ fn swimmers_bob_and_floaters_settle(name: &str, world: &ServerWorld) {
     );
 }
 
-/// Exposure a body of species `name` feels over two seconds in a syrup pool:
-/// whether any hit arrived, whether one came from burning, and whether it
-/// ever held burning.
 fn soak(name: &str) -> (bool, bool, bool) {
     let burning = petramond_world::condition::by_name("petramond:burning").unwrap();
     let world = pool(block(SYRUP), 75);

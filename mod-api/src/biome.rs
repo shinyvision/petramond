@@ -1,23 +1,3 @@
-//! The stable biome vocabulary for mods.
-//!
-//! Worldgen hooks receive biomes as raw `u8` ids (see
-//! [`GuestCall::GenFeature`](crate::GuestCall::GenFeature)). The ENGINE biome
-//! ids are a frozen append-only range (they serialize into chunk bytes), so
-//! they are stable across sessions and saves and may be named as constants.
-//! Mods must still address engine biomes through these names — never copied
-//! numeric literals; the engine pins this table against its own biome
-//! registry, so a drift fails an engine test, not a mod at runtime.
-//!
-//! Surface biomes are pack-extensible: a pack biome registers an id after
-//! the engine range in pack load order, so it has no constant here and
-//! [`name`] / [`by_name`] do not know it. UNDERGROUND biomes are the
-//! precedent for addressing such ids: the ABI speaks NAMES and session ids
-//! ([`WorldgenCall::ResolveUndergroundBiome`](crate::HostCall) +
-//! `UndergroundBiomeAt`), and there is deliberately no frozen name table
-//! here for them.
-
-/// Engine biome names, indexed by `id - 1` (biome ids start at 1; 0 is
-/// unused). Append-only, mirroring the engine's biome table.
 pub const BIOME_NAMES: &[&str] = &[
     "ocean",
     "beach",
@@ -76,15 +56,12 @@ pub const MOUNTAIN_EDGE: u8 = 25;
 pub const DESERT_LAKES: u8 = 26;
 pub const SNOWY_PLAINS: u8 = 27;
 
-/// The stable snake_case name for a biome id, `None` for an unknown id.
 pub fn name(id: u8) -> Option<&'static str> {
     (id >= 1)
         .then(|| BIOME_NAMES.get(id as usize - 1).copied())
         .flatten()
 }
 
-/// Resolve a stable biome name to its id, `None` for an unknown name — for
-/// mods whose biome choices are data (config strings) rather than constants.
 pub fn by_name(name: &str) -> Option<u8> {
     BIOME_NAMES
         .iter()

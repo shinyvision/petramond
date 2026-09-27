@@ -1,24 +1,11 @@
-//! Shared gameplay body geometry for entity-like things.
-//!
-//! A body is an upright AABB used by gameplay systems that need entity
-//! occupancy: soft entity pushing, placement blocking, targeting/reach checks,
-//! and similar rules. The body is only geometry; each caller decides which
-//! bodies participate in its rule.
-
 use crate::block::Aabb;
 use crate::mathh::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 
-/// Boundary epsilon in world units. Face-touching boxes are not overlapping;
-/// only genuine interpenetration counts.
 const EPS: f64 = 1e-4;
 
-/// Push speed imparted per metre of overlap (1/s): a body overlapping another by
-/// `overlap` metres is pushed off it at `overlap * PUSH_STRENGTH` m/s this tick.
 const PUSH_STRENGTH: f32 = 4.0;
 
-/// An entity-like gameplay body: an upright box `hw` half-wide on X and Z,
-/// centred horizontally at `(x, z)`, spanning `[y0, y1]`.
 #[derive(Copy, Clone, Debug)]
 pub struct Body {
     pub x: f64,
@@ -29,7 +16,6 @@ pub struct Body {
 }
 
 impl Body {
-    /// A body with feet at `pos`, `height` tall and `hw` half-wide.
     pub fn new(pos: WorldPos, hw: f32, height: f32) -> Self {
         Body {
             x: pos.x,
@@ -40,7 +26,6 @@ impl Body {
         }
     }
 
-    /// World-space min/max corners.
     pub fn aabb(self) -> ([f64; 3], [f64; 3]) {
         let hw = f64::from(self.hw);
         (
@@ -49,7 +34,6 @@ impl Body {
         )
     }
 
-    /// Whether this body overlaps any supplied cell-local block collision box.
     pub fn overlaps_block_boxes(self, cell: IVec3, boxes: &[Aabb]) -> bool {
         let (amin, amax) = self.aabb();
         let origin = [cell.x, cell.y, cell.z].map(f64::from);
@@ -61,16 +45,11 @@ impl Body {
     }
 }
 
-/// Strict AABB overlap with a small epsilon, so face-touching boxes are allowed.
 fn aabb_overlaps((amin, amax): ([f64; 3], [f64; 3]), (bmin, bmax): ([f64; 3], [f64; 3])) -> bool {
     (0..3).all(|i| amin[i] < bmax[i] - EPS && bmin[i] < amax[i] - EPS)
 }
 
-/// The horizontal push velocity (m/s) to add to body `a` this tick to ease it
-/// off body `b`, or `None` if the two do not overlap.
 pub fn separation(a: Body, b: Body) -> Option<Vec3> {
-    // Vertical spans must overlap; otherwise one is stacked above the other and
-    // gets no sideways push.
     if a.y1 <= b.y0 || b.y1 <= a.y0 {
         return None;
     }
@@ -83,14 +62,9 @@ pub fn separation(a: Body, b: Body) -> Option<Vec3> {
         return None;
     }
 
-    // The bodies are AABBs, so diagonal corner overlap is still contact. Keep
-    // the established centre-line shove direction, but scale it by the
-    // shallowest axis penetration so segment depth remains comparable.
     let dist_sq = dx * dx + dz * dz;
     let dist = dist_sq.sqrt();
     let overlap = overlap_x.min(overlap_z);
-    // Exactly coincident centres have no defined direction. Split along +X so
-    // perfectly stacked bodies still separate deterministically.
     let (nx, nz) = if dist > EPS as f32 {
         (dx / dist, dz / dist)
     } else {
@@ -109,7 +83,6 @@ mod tests {
         max: [1.0, 1.0, 1.0],
     }];
 
-    /// A unit-ish body (half-width 0.25, 1 tall) with feet at `(x, y, z)`.
     fn body(x: f64, y: f64, z: f64) -> Body {
         Body::new(WorldPos::new(x, y, z), 0.25, 1.0)
     }

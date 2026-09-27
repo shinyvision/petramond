@@ -6,8 +6,6 @@ fn body_rig() -> &'static Rig {
     rigs::presented(Presenter::Body).expect("the body rig").1
 }
 
-/// The placement the client's animation gives a standing body at yaw 0:
-/// authored front −Z turned to face engine-forward, at the model scale.
 fn standing_placement() -> Mat4 {
     Mat4::from_rotation_y(std::f32::consts::PI) * Mat4::from_scale(Vec3::splat(PLAYER_MODEL_SCALE))
 }
@@ -29,8 +27,6 @@ fn instance() -> PlayerRenderInstance {
     }
 }
 
-/// Place one body standing in the rest pose into a fresh batch, answering the
-/// batch and its hands.
 fn pose(inst: &PlayerRenderInstance) -> (SkinBatch, Mat4, Mat4) {
     let mut batch = SkinBatch::default();
     let rest = body_rig().model.rest_pose();
@@ -45,8 +41,6 @@ fn pose(inst: &PlayerRenderInstance) -> (SkinBatch, Mat4, Mat4) {
     (batch, hand, off)
 }
 
-/// The renderer computes no pose: each palette slot is the given bone
-/// placed at the feet under the given placement, nothing more.
 #[test]
 fn a_body_skins_exactly_the_pose_it_is_given() {
     let model = &body_rig().model;
@@ -68,8 +62,6 @@ fn a_body_skins_exactly_the_pose_it_is_given() {
 
 #[test]
 fn a_body_carries_its_hurt_fire_and_light_to_the_instance() {
-    // The inputs the CPU bake folded into every vertex's tint ride the
-    // instance row (`skinned` pins the shader's fold against `body_tint`).
     let mut inst = instance();
     inst.emitter_tint = [1.0, 0.7, 0.4];
     inst.hurt = 0.5;
@@ -90,7 +82,6 @@ fn a_body_carries_its_hurt_fire_and_light_to_the_instance() {
     );
 }
 
-/// The two hand attach frames of a body at rest.
 fn hands(inst: &PlayerRenderInstance) -> (Mat4, Mat4) {
     let (_, hand, off) = pose(inst);
     (hand, off)
@@ -106,13 +97,6 @@ fn off_hand(inst: &PlayerRenderInstance) -> Mat4 {
 
 /// The third-person bbmodel attach adds `Rx(-90°)` and NOTHING ELSE.
 ///
-/// It carried an extra `Ry(180°)` until 2026-08-22, which turned every
-/// bbmodel item end-over-end in the fist relative to its own Blockbench
-/// preview — the game contradicting the model file. It hid for as long as
-/// it did because the only bbmodel items were the buckets, which are
-/// four-fold symmetric about exactly the axis it flipped; it surfaced the
-/// moment an item with a top and a bottom went in a hand.
-///
 /// Pinned as DIRECTIONS rather than a matrix so it reads as the contract
 /// it is: display "up" (+Y) points forward out of the fist, display
 /// "forward" (+Z) points up, and neither the item's left nor its top is
@@ -126,8 +110,6 @@ fn the_third_person_attach_reorients_without_flipping_the_item() {
     let ItemRenderKind::Model(kind) = bucket.render_kind() else {
         panic!("the bucket is a bbmodel item")
     };
-    // In the ARM's own frame (the rest arm hangs unrotated, so its axes are
-    // the authored model's: +Y up, −Z the body's front).
     let m = held_model_at(Grip::body(Mat4::IDENTITY), kind);
     let dir = |v: Vec3| m.transform_vector3(v).normalize();
 
@@ -154,9 +136,7 @@ fn the_third_person_attach_reorients_without_flipping_the_item() {
 ///
 /// It is why neither view needs a per-hand rule for a claimed pose — the
 /// off-hand paths already conjugate the frame the pose rides in. Off-hand
-/// mirroring has been got wrong here before, and the failure is always
-/// silent: the item hangs somewhere plausible and wrong. Pin the algebra so
-/// a change of euler convention argues with a test, not with a playtest.
+/// mirroring follows this algebra across Euler convention changes.
 #[test]
 fn conjugating_a_display_transform_is_exactly_the_left_hand_rule() {
     use petramond_world::block_model::DisplayTransform;
@@ -185,10 +165,6 @@ fn conjugating_a_display_transform_is_exactly_the_left_hand_rule() {
     }
 }
 
-/// A pose that changes nothing must leave the attach frame BIT-identical,
-/// not merely close: every hand without a mod pose takes this path every
-/// frame, and a matrix round trip there would move every held item in the
-/// game by a rounding error.
 #[test]
 fn an_identity_pose_leaves_the_hand_frame_untouched() {
     let inst = instance();

@@ -1,7 +1,3 @@
-//! World-select controller: pick a world, play it (double-click/Enter),
-//! create a new one, open per-world settings (Delete key follows the button),
-//! back to title.
-
 use super::{ScreenCtx, ShellCommand};
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
@@ -62,13 +58,11 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     }
 }
 
-/// Open the Create World page with a fresh session (all mods enabled).
 fn open_create_world(ctx: &mut ScreenCtx) {
     ctx.shell.open_create_world();
     ctx.goto(AppScreen::CreateWorld);
 }
 
-/// Open the World Settings page for the selected world, if any.
 fn open_world_settings(ctx: &mut ScreenCtx) {
     if ctx.shell.open_world_settings() {
         ctx.goto(AppScreen::WorldSettings);

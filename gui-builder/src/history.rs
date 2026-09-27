@@ -1,7 +1,3 @@
-//! Undo/redo: a snapshot ring of Document clones. Continuous gestures (canvas
-//! drags, inspector drag-values) coalesce into one entry: the gesture pushes
-//! the pre-gesture snapshot once and further edits ride on it until release.
-
 use petramond_ui::Document;
 
 const DEPTH: usize = 256;
@@ -18,16 +14,12 @@ impl History {
         History::default()
     }
 
-    /// Record a discrete edit: call with the document state *before* mutating.
-    /// Inside a gesture this is a no-op (the gesture already snapshotted).
     pub fn record(&mut self, before: &Document) {
         if !self.gesture {
             self.push(before.clone());
         }
     }
 
-    /// Start a continuous gesture (drag). Snapshots once; edits until
-    /// `end_gesture` coalesce into this single entry.
     pub fn begin_gesture(&mut self, before: &Document) {
         if !self.gesture {
             self.push(before.clone());
@@ -35,7 +27,6 @@ impl History {
         }
     }
 
-    /// Finish the gesture. If it made no net change, the snapshot is dropped.
     pub fn end_gesture(&mut self, current: &Document) {
         if self.gesture {
             self.gesture = false;
@@ -158,7 +149,7 @@ mod tests {
         h.begin_gesture(&d);
         for i in 0..5 {
             set(&mut d, &format!("drag{i}"));
-            h.record(&d); // mid-gesture records are no-ops
+            h.record(&d);
         }
         h.end_gesture(&d);
         assert!(h.undo(&mut d), "one entry for the whole drag");

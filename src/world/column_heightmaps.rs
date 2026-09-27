@@ -1,7 +1,3 @@
-//! Per-column surface / direct-sky-cover map maintenance, plus the change
-//! envelope ([`SkyCoverChange`]) streaming and edits use to bound skylight
-//! invalidation.
-
 use crate::world::ServerWorld;
 use crate::world::WorldData;
 use petramond_world::block::Block;
@@ -10,13 +6,8 @@ use petramond_world::column::NO_SURFACE;
 
 use petramond_world::world::column_heightmaps::SkyCoverChange;
 
-/// Recompute a column's visible surface and direct-sky cover from its
-/// currently-loaded sections. Used after overlaying saved terrain, whose
-/// blocks can differ from generation. Returns the changed cover envelope.
 impl ServerWorld {
     pub(super) fn recompute_column_heightmaps(&mut self, cpos: ChunkPos) -> Option<SkyCoverChange> {
-        // Gather both maps under immutable section borrows, then write the
-        // column once (the section and column maps are distinct fields).
         let mut surf = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let mut sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let mut surface_remaining = surf.len();

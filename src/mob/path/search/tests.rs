@@ -1,8 +1,6 @@
 use super::*;
 use crate::mob::path::find_path_nav;
 
-/// A walled maze-ish field: floor below y=1, a wall along x=5 with one gap,
-/// and a pillar the goal sits on (so one query is unreachable).
 fn solid(c: IVec3) -> bool {
     c.y < 1 || (c.x == 5 && c.z != 9 && c.y < 3) || (c.x == 12 && c.z == 3 && c.y < 4)
 }
@@ -23,7 +21,6 @@ fn cost(c: IVec3) -> u32 {
     }
 }
 
-/// The fixture's probe set, as plain function pointers.
 type FnProbes = SearchProbes<
     'static,
     fn(IVec3) -> bool,
@@ -47,8 +44,6 @@ fn probes() -> FnProbes {
     }
 }
 
-/// Run a search in slices of `grant` expansions until it finishes, returning
-/// the route, the number of slices, and the total spent.
 fn sliced(
     start: IVec3,
     goal: IVec3,
@@ -76,7 +71,7 @@ fn a_sliced_search_finds_exactly_the_one_shot_route() {
     for goal in [
         IVec3::new(10, 1, 0),
         IVec3::new(9, 1, 14),
-        IVec3::new(12, 4, 3), // on the pillar: unreachable, partial route
+        IVec3::new(12, 4, 3),
     ] {
         let one_shot = find_path_nav(
             start, goal, params, &solid, &solid, no_fluid, any_step, cost,
@@ -93,8 +88,6 @@ fn a_sliced_search_finds_exactly_the_one_shot_route() {
 
 #[test]
 fn the_node_cap_spans_every_slice() {
-    // The cap bounds the whole search, not each slice: an unreachable goal
-    // stops after `max_nodes` expansions however it is sliced.
     let params = PathParams {
         max_nodes: 50,
         ..PathParams::default()

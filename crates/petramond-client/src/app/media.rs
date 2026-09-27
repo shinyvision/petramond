@@ -1,14 +1,3 @@
-//! The app's half of frames, time and sound for client mods: it carries out
-//! what the runtime's media desk holds (armed captures, the stepped clock,
-//! taps, media files waiting for an encoder), routes each capture that comes
-//! back from the GPU, and paces the frames the stepped clock holds.
-//!
-//! Stepped, presentation time moves only on an advance, and the world's
-//! sound mixes offline on that timeline: exactly the seconds a frame moves
-//! are pulled, at the start of the frame that moves them, after the sounds
-//! of the frame before started. On the wall clock the world's sound stays on
-//! the device and a tap copies it.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
@@ -30,11 +19,8 @@ use crate::media::ffmpeg;
 
 use super::{now_seconds, App};
 
-/// The format the world mixes at offline when neither a device nor a tap
-/// says one.
 const FALLBACK_FORMAT: (u16, u32) = (2, 48_000);
 
-/// A display refresh until the window says its own.
 const DEFAULT_REFRESH: f64 = 1.0 / 60.0;
 
 struct Probed {
@@ -42,14 +28,12 @@ struct Probed {
     capabilities: ClientMediaCapabilities,
 }
 
-/// A capture taken and on its way back from the GPU.
 struct InFlight {
     desk: MediaDesk,
     into: Destination,
     time: f64,
 }
 
-/// A tap's conversion from the world's mix to what it asked for.
 struct TapRoute {
     from: (u16, u32),
     converter: FormatConverter,
@@ -57,20 +41,16 @@ struct TapRoute {
 
 pub(super) struct MediaHost {
     pub(super) clock: PresentationClock,
-    /// The claim the clock follows.
     claim: Option<ClockClaim>,
     probe: Option<Arc<OnceLock<Probed>>>,
     encoders: BTreeMap<u64, Encoder>,
     in_flight: BTreeMap<u64, InFlight>,
     taps: BTreeMap<u64, TapRoute>,
-    /// The seed the world's sound mixes offline with, while it does.
     offline: Option<u64>,
     samples: Vec<f32>,
     converted: Vec<f32>,
     last_present: f64,
-    /// Seconds per display refresh.
     refresh: f64,
-    /// A capture was armed at the last look.
     capture_armed: bool,
 }
 
@@ -94,14 +74,10 @@ impl Default for MediaHost {
 }
 
 impl MediaHost {
-    /// What this machine can write, once asked. Tests never ask: the answer
-    /// is this machine's, not the code's.
     fn probed(&self) -> Option<&Probed> {
         self.probe.as_ref()?.get()
     }
 
-    /// Ask the machine again, unless a probe is already asking: one OS helper
-    /// at a time.
     fn start_probe(&mut self) {
         if cfg!(test) || self.probe.as_ref().is_some_and(|cell| cell.get().is_none()) {
             return;
@@ -125,8 +101,6 @@ impl MediaHost {
         }
     }
 
-    /// Answer every probe with `ffmpeg`, as though the machine had it and it
-    /// could write `capabilities`.
     #[cfg(test)]
     pub(super) fn use_encoder_for_test(
         &mut self,
@@ -141,9 +115,6 @@ impl MediaHost {
         self.probe = Some(cell);
     }
 
-    /// Stop what was aborted, and what nobody on a desk in `live` can close
-    /// any more; forget the encoders that are done. A closed file whose desk
-    /// is gone still finishes.
     fn tend_encoders(&mut self, live: &BTreeSet<u64>) {
         self.encoders.retain(|id, encoder| {
             if !live.contains(id) {
@@ -161,7 +132,6 @@ impl MediaHost {
         self.last_present
     }
 
-    /// Whether any capture of this host is on its way into media file `id`.
     fn frames_on_their_way(&self, id: u64) -> bool {
         self.in_flight
             .values()
@@ -174,14 +144,10 @@ fn f32_bytes(samples: &[f32]) -> Vec<u8> {
 }
 
 impl App {
-    /// "Now" for every presentation system: the wall, or the stepped
-    /// timeline.
     pub(super) fn now(&self) -> f64 {
         self.media.clock.now(now_seconds())
     }
 
-    /// The frame about to run moves a stepped clock: the host lifts its frame
-    /// cap for it, since the next capture may be due at once.
     pub fn frame_uncapped(&self) -> bool {
         self.media
             .clock
@@ -189,29 +155,21 @@ impl App {
             .is_some_and(|clock| clock.pending() > 0)
     }
 
-    /// The display's refresh rate, which paces a held frame's presents.
     pub fn set_display_refresh_hz(&mut self, hz: f64) {
         if hz.is_finite() && hz > 0.0 {
             self.media.refresh = 1.0 / hz;
         }
     }
 
-    /// Whether a capture waits to be taken: a window-only screen then
-    /// reaches the window alone (see `scene_screen`).
     pub(super) fn capture_armed(&self) -> bool {
         self.media.capture_armed
     }
 
-    /// The desk this frame carries out: the session's runtime, or with no
-    /// session the shell's.
     fn media_desk(&self) -> Option<MediaDesk> {
         self.client_mods_now()
             .map(|runtime| runtime.media_desk().clone())
     }
 
-    /// Start a frame on the stepped clock: the seconds it moves (`None` on
-    /// the wall clock). The world's sound for exactly those seconds is pulled
-    /// here, after the previous frame's sounds started and before this one's.
     pub(super) fn step_media_clock(&mut self) -> Option<f64> {
         let desk = self.media_desk();
         let clock = self.media.clock.stepped_mut()?;
@@ -236,8 +194,6 @@ impl App {
             .map(|clock| clock.take_step())
     }
 
-    /// Carry out what the desk holds, after the client mods' frame (where it
-    /// was asked) and before the world ticks and plays its sounds.
     pub(super) fn drive_media(&mut self, renderer: &mut Renderer, wall_dt: f64) {
         let captured = renderer.take_captured();
         self.route_captures(captured);
@@ -277,8 +233,6 @@ impl App {
         }
     }
 
-    /// Step the clock on the claim's step from the next frame, or give it
-    /// back to the wall.
     fn follow_clock_claim(&mut self, desk: &MediaDesk) {
         let claim = desk.clock();
         if claim == self.media.claim {
@@ -292,11 +246,6 @@ impl App {
         self.media.claim = claim;
     }
 
-    /// Where the world's sound goes this frame, and the taps' share of it on
-    /// the wall clock. Stepped, it mixes offline on the timeline (a device
-    /// plays at the wall's pace). On the wall clock it stays on the device
-    /// and a tap copies it; with no device it mixes offline at the wall's
-    /// pace instead.
     fn route_world_sound(&mut self, desk: &MediaDesk, wall_dt: f64) {
         let taps = desk.taps();
         for (id, tap) in &taps {
@@ -365,8 +314,6 @@ impl App {
         self.media.samples = samples;
     }
 
-    /// Hand `samples` (interleaved at `format`, starting at presentation time
-    /// `from`) to every running tap, each in its own format.
     fn deliver_world_sound(
         &mut self,
         desk: &MediaDesk,
@@ -433,8 +380,6 @@ impl App {
         }
     }
 
-    /// Start queued media files in order while encoders are free, close the
-    /// ones whose frames have all come back, and stop the aborted.
     fn drive_media_files(&mut self, desk: &MediaDesk) {
         let files = desk.media();
         let parallel = std::thread::available_parallelism().map_or(1, usize::from);
@@ -494,7 +439,6 @@ impl App {
             .insert(id, Encoder::start(spec, Arc::clone(&media.input)));
     }
 
-    /// Hand every capture that came back to where it was going.
     fn route_captures(&mut self, captured: Vec<Captured>) {
         for Captured { id, frame } in captured {
             let Some(flight) = self.media.in_flight.remove(&id) else {
@@ -565,15 +509,6 @@ impl App {
         }
     }
 
-    /// Draw the frame `render` built, taking every armed capture whose
-    /// moment has come. Stepped, a frame presents only once a display refresh
-    /// has passed since the last present, and a frame with nothing to
-    /// present or capture draws nothing.
-    ///
-    /// `Settled` is this frame's `world_settled`: after its mesh upload, the
-    /// replica has no section waiting to be (re)meshed or relit, no mesh job
-    /// or light bake in flight and no stream work pending, and the renderer
-    /// has no column queued for upload.
     pub(super) fn present_frame(&mut self, renderer: &mut Renderer) {
         let wall = now_seconds();
         let present = self.media.clock.stepped().is_none()
@@ -593,8 +528,6 @@ impl App {
                     let takes = files
                         .iter()
                         .any(|(id, file)| *id == m && file.input.takes_frame());
-                    // One frame per file per draw: the next waits on the
-                    // encoder's own pipe.
                     if !takes || !fed.insert(m) {
                         continue;
                     }

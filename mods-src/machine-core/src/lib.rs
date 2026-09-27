@@ -33,48 +33,21 @@ use mod_sdk::*;
 mod burner;
 pub use burner::Burner;
 
-/// Bytes one anchor occupies in a persisted shard (three LE `i32`).
 const ANCHOR_BYTES: usize = 12;
 
-/// Anchors per persisted world-KV record. A value is capped at
-/// [`KV_MAX_VALUE_BYTES`], so a single record tops out around 5.4k machines —
-/// the same class of silent ceiling as the batch cap, and the same answer:
-/// shard it. Shard 0 keeps the ORIGINAL key, so worlds saved before this
-/// reload unchanged.
 const ANCHORS_PER_SHARD: usize = 4096;
 
-/// The shard size is only correct BECAUSE it fits one KV value; state that to
-/// the compiler rather than in the sentence above, so raising it cannot
-/// silently start producing writes the host rejects.
 const _: () = assert!(ANCHORS_PER_SHARD * ANCHOR_BYTES <= KV_MAX_VALUE_BYTES);
 
-/// One machine KIND's identity plus its per-tick step. Everything a placed
-/// machine shares — the persisted anchor registry, container-session
-/// tracking, and the batched prune/read tick preamble — is [`Machine`];
-/// a spec only says which rows are its and what one machine does per tick.
 pub trait MachineSpec: Default {
-    /// The GUI container kind key (`ContainerKind::key`).
     const KIND_KEY: &'static str;
-    /// The placeable base block row; unresolvable = this kind stays idle.
     const BLOCK_KEY: &'static str;
-    /// Same-footprint visual-variant rows in a fixed order (lit oven, full
-    /// miller, the forging furnace's whole pour sequence). A row that fails to
-    /// resolve degrades that ONE visual, never the machine.
     const VARIANT_KEYS: &'static [&'static str];
-    /// World-KV key of the persisted anchor list.
     const ANCHORS_KEY: &'static str;
-    /// Per-cell KV key this kind stores one machine's state blob under. The
-    /// driver reads every live machine's blob in ONE call and writes back only
-    /// the ones that changed, so a spec never touches cell KV itself.
     const STATE_KEY: &'static str;
-    /// Additional pages sharing the machine's anchor and viewers.
     const PANEL_KEYS: &'static [&'static str] = &[];
-    /// Independent persistent records read beside the state.
     const AUX_KEYS: &'static [&'static str] = &[];
 
-    /// Resolve whatever REGISTRY data this kind reads (row data tables, item
-    /// ids), once, while the driver is initialising. Registry calls only —
-    /// this runs inside `mod_init`.
     fn init(&mut self) {}
 
     /// One machine's game tick. `slots` is `None` while no container exists
@@ -112,59 +85,37 @@ pub trait MachineSpec: Default {
     fn forget(&mut self, _pos: [i32; 3]) {}
 }
 
-/// One live machine's tick context: where it is, what its anchor currently
-/// decodes to, the resolved rows, and whether its GUI session is open (the
-/// gauge publish gate).
 pub struct StepCtx<'a> {
     pub pos: [i32; 3],
-    /// The anchor's current block this tick (base or one of the variants).
     pub current: BlockId,
     pub block: BlockId,
     variants: &'a [Option<BlockId>],
-    /// Auxiliary records in AUX_KEYS order.
     pub aux: &'a [Vec<u8>],
-    /// The sessions with THIS machine's panel open right now — the gauge
-    /// publish list, and empty for a machine nobody is watching.
-    ///
-    /// It is a LIST of players rather than a bool because a gauge is written
-    /// into one session's state map: with a bool the best a spec could do was
-    /// publish into whichever session the tick happens to act as, so two
-    /// people at two machines read each other's numbers.
     pub viewers: &'a [PlayerId],
 }
 
 impl StepCtx<'_> {
-    /// Whether anyone is watching — the cheap gate before computing gauges.
     pub fn gui_open(&self) -> bool {
         !self.viewers.is_empty()
     }
 
-    /// Publish one gauge to every session watching THIS machine.
     pub fn publish(&self, key: &str, value: GuiValue) {
         for &player in self.viewers {
             gui_state_set_for(player, key, value.clone());
         }
     }
 
-    /// The `i`th [`MachineSpec::VARIANT_KEYS`] row, or `None` if that row is
-    /// missing from the pack.
     pub fn variant(&self, i: usize) -> Option<BlockId> {
         self.variants.get(i).copied().flatten()
     }
 
-    /// The `i`th variant, falling back to the base block — what a spec wants
-    /// when it is choosing which row the anchor should be wearing right now.
     pub fn variant_or_base(&self, i: usize) -> BlockId {
         self.variant(i).unwrap_or(self.block)
     }
 }
 
-/// The shared driver for one placed-machine kind: resolved rows, the anchor
-/// registry, and the open GUI session, stepped through the spec each tick.
 pub struct Machine<S: MachineSpec> {
     block: Option<BlockId>,
-    /// One entry per [`MachineSpec::VARIANT_KEYS`] row; `None` degrades to
-    /// working with that visual missing, never to not working.
     variants: Vec<Option<BlockId>>,
     anchors: AnchorRegistry,
     spec: S,
@@ -182,8 +133,6 @@ impl<S: MachineSpec> Default for Machine<S> {
 }
 
 impl<S: MachineSpec> Machine<S> {
-    /// Resolve blocks + restore the anchor list; `false` = the pack's rows
-    /// are missing and this machine kind stays idle.
     pub fn init(&mut self) -> bool {
         self.block = resolve_block_logged(S::BLOCK_KEY);
         if self.block.is_none() {
@@ -198,36 +147,24 @@ impl<S: MachineSpec> Machine<S> {
         true
     }
 
-    /// `block_placed.pos` is the multi-cell anchor — the same cell the engine
-    /// keys the container at.
     pub fn on_placed(&mut self, pos: [i32; 3], block: BlockId) {
         if Some(block) == self.block || self.variants.contains(&Some(block)) {
             self.anchors.record(pos);
         }
     }
 
-    /// Revalidate a panel action after the machine may have been removed.
     pub fn is_present(&self, pos: [i32; 3]) -> bool {
         get_block(pos).is_some_and(|b| Some(b) == self.block || self.variants.contains(&Some(b)))
     }
 
-    /// The spec, for the event handlers a machine kind wires up itself.
     pub fn spec(&self) -> &S {
         &self.spec
     }
 
-    /// Mutable spec access, for handlers that stage work for the next step
-    /// (a panel button click recorded until the tick reads the slots).
     pub fn spec_mut(&mut self) -> &mut S {
         &mut self.spec
     }
 
-    /// Opening a panel self-heals a lost anchor. There is deliberately no
-    /// CLOSE half: who is watching is not tracked mod-side at all any more.
-    /// `container_opened`/`closed` name no player, so the best a mod could
-    /// keep was a count — and a count cannot address a gauge. The engine
-    /// knows the whole viewer set (`gui_viewers`), and it is read fresh each
-    /// tick, so disconnects and world unloads need no bookkeeping here.
     pub fn on_container_opened(&mut self, kind: &ContainerKind, at: Option<ContainerAddress>) {
         if !kind.is(S::KIND_KEY) && !S::PANEL_KEYS.iter().any(|k| kind.is(k)) {
             return;
@@ -237,12 +174,7 @@ impl<S: MachineSpec> Machine<S> {
         }
     }
 
-    /// One tick for every live machine of this kind, in a FIXED number of
-    /// host crossings: prune, read (blocks, containers, state), step, write
-    /// back (state, parts, draws). Nothing in here is per machine.
     pub fn tick(&mut self, caches: &mut Caches) {
-        // Destructured so the spec can be stepped MUTABLY while it reads the
-        // resolved variant rows — disjoint fields, no clone per machine.
         let Machine {
             block,
             variants,
@@ -257,9 +189,6 @@ impl<S: MachineSpec> Machine<S> {
         }
         let Pruned { live, gone } =
             anchors.prune_live(|b| b == block || variants.contains(&Some(b)));
-        // BEFORE the `live.is_empty()` bail, because breaking the LAST machine
-        // of a kind is exactly the case where nothing is left to step — and it
-        // is also the case whose blob would otherwise never be dropped.
         for pos in gone {
             spec.forget(pos);
         }
@@ -305,16 +234,6 @@ impl<S: MachineSpec> Machine<S> {
     }
 }
 
-/// One tick's presentation and state writes for a whole machine KIND,
-/// submitted in one crossing each at the end of the tick.
-///
-/// Specs push into this instead of calling `set_block_draw` /
-/// `set_model_parts` / `section_kv_set` themselves, and that is the whole
-/// scalability property of this crate: presentation cost stops tracking how
-/// many machines the player has built. It is also why the change gates stay
-/// where they are — the ENGINE drops an unchanged draw submission, so a spec
-/// still submits unconditionally and a machine that has never transitioned is
-/// still drawn.
 #[derive(Default)]
 pub struct Presentation {
     draws: Vec<([i32; 3], Vec<DrawPrim>)>,
@@ -323,12 +242,10 @@ pub struct Presentation {
 }
 
 impl Presentation {
-    /// This machine's parts mask (and optional tint) for the tick.
     pub fn parts(&mut self, pos: [i32; 3], mask: u32, tint: Option<[u8; 3]>) {
         self.parts.push((pos, mask, tint));
     }
 
-    /// This machine's draw set for the tick. An empty list clears it.
     pub fn draw(&mut self, pos: [i32; 3], prims: Vec<DrawPrim>) {
         self.draws.push((pos, prims));
     }
@@ -339,19 +256,12 @@ impl Presentation {
             parts,
             state,
         } = self;
-        // Every batch goes through `paged`: "you built too many machines"
-        // must never be a way to lose the pack. An empty one costs nothing.
         paged(state, |page| section_kv_set_many(state_key, page));
         paged(parts, set_model_parts_many);
         paged(draws, set_block_draws);
     }
 }
 
-/// Who currently has one KIND's panels open, keyed by the machine they opened.
-///
-/// Read from the engine once per kind per tick rather than tracked mod-side:
-/// `container_opened`/`container_closed` name no player, so the best a mod
-/// could keep was a count, and a count cannot address a gauge.
 struct Watchers {
     by_anchor: HashMap<[i32; 3], Vec<PlayerId>>,
 }
@@ -376,9 +286,6 @@ impl Watchers {
     }
 }
 
-/// What one prune pass found: the anchors still standing, and the ones that
-/// have just stopped being this kind's. The second list is not bookkeeping —
-/// it is the only moment a machine kind learns one of its machines is gone.
 pub struct Pruned {
     pub live: Vec<([i32; 3], BlockId)>,
     pub gone: Vec<[i32; 3]>,
@@ -401,14 +308,9 @@ pub struct Pruned {
 pub struct AnchorRegistry {
     kv_key: &'static str,
     anchors: Vec<[i32; 3]>,
-    /// Membership index — `record` is called on every placement and every GUI
-    /// open, and a linear scan there is the one place this list is touched
-    /// interactively.
     seen: HashSet<[i32; 3]>,
 }
 
-/// The 16³ section containing `pos` — the unit of loading, and therefore the
-/// unit of "is it worth reading these anchors".
 fn section_of(pos: [i32; 3]) -> [i32; 3] {
     [pos[0] >> 4, pos[1] >> 4, pos[2] >> 4]
 }
@@ -438,9 +340,6 @@ impl AnchorRegistry {
         }
     }
 
-    /// Read shard 0, then 1, 2, ... until one is absent. A gap cannot happen —
-    /// [`store`](Self::store) always writes a contiguous run and deletes the
-    /// tail past it.
     pub fn load(&mut self) {
         self.anchors.clear();
         self.seen.clear();
@@ -471,7 +370,6 @@ impl AnchorRegistry {
         self.anchors.len().div_ceil(ANCHORS_PER_SHARD).max(1)
     }
 
-    /// Rewrite every shard and delete whatever the list has shrunk past.
     fn store(&self) {
         let shards = self.shard_count();
         for i in 0..shards {
@@ -483,8 +381,6 @@ impl AnchorRegistry {
         }
     }
 
-    /// Record a newly placed (or GUI-self-healed) anchor. Only the shard it
-    /// landed in is rewritten — appending must not cost the whole list.
     pub fn record(&mut self, pos: [i32; 3]) {
         if !self.seen.insert(pos) {
             return;
@@ -549,9 +445,6 @@ impl AnchorRegistry {
     }
 }
 
-/// Session caches for registry data (stable per session — never re-ask the
-/// host per tick): item stack caps, fuel burn ticks, and per-(class, input)
-/// machine recipe results.
 #[derive(Default)]
 pub struct Caches {
     fuel_ticks: HashMap<String, u32>,
@@ -578,10 +471,6 @@ impl Caches {
         m
     }
 
-    /// The loaded `class` recipe result for input `item` (registry name), or
-    /// `None` for no recipe. The class is a plain `&str` because a machine may
-    /// pick it at runtime — the forging furnace reads the class off the mould
-    /// sitting in its basin.
     pub fn recipe_for(&mut self, class: &str, item: &str) -> Option<ItemStackData> {
         let key = (class.to_owned(), item.to_owned());
         if let Some(cached) = self.recipes.get(&key) {
@@ -593,8 +482,6 @@ impl Caches {
     }
 }
 
-/// Whether `result` fits into the `output` slot (empty, or same item with
-/// stack headroom).
 pub fn output_accepts(
     caches: &mut Caches,
     output: &Option<ItemStackData>,
@@ -602,8 +489,6 @@ pub fn output_accepts(
 ) -> bool {
     match output {
         None => true,
-        // Saturating: a stack saved above a row's (since lowered) cap must
-        // read as "no headroom", not wrap around.
         Some(o) => {
             o.item == result.item
                 && o.data == result.data
@@ -612,8 +497,6 @@ pub fn output_accepts(
     }
 }
 
-/// Merge `result` into the `output` slot (the caller checked
-/// [`output_accepts`]).
 pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) {
     *output = Some(match output.take() {
         None => result.clone(),
@@ -624,7 +507,6 @@ pub fn merge_output(output: &mut Option<ItemStackData>, result: &ItemStackData) 
     });
 }
 
-/// Decrement a consumed input slot by one.
 pub fn consume_one(slot: &mut Option<ItemStackData>) {
     if let Some(s) = slot.take() {
         *slot = (s.count > 1).then(|| ItemStackData {
@@ -634,7 +516,6 @@ pub fn consume_one(slot: &mut Option<ItemStackData>) {
     }
 }
 
-/// Write back only the slots that changed, as one batched call.
 pub fn write_changed_slots(
     pos: [i32; 3],
     before: &[Option<ItemStackData>],
@@ -646,17 +527,6 @@ pub fn write_changed_slots(
     }
 }
 
-/// The slots that MOVED, as container writes. Split out from
-/// [`write_changed_slots`] because it is the whole decision and the host call
-/// is not testable from a mod crate.
-///
-/// Both lists read as though they went on forever holding empty slots, and
-/// that is what a length change means in BOTH directions: a grown `after`
-/// writes its new tail, and a shrunk one CLEARS the slots it dropped. A
-/// container write can say "this slot is empty" perfectly well — what it
-/// cannot say is nothing, which is what silently truncating the diff here
-/// would leave behind: a stack the machine believes it consumed still sitting
-/// in the container.
 pub fn changed_slots(
     before: &[Option<ItemStackData>],
     after: &[Option<ItemStackData>],
@@ -667,7 +537,6 @@ pub fn changed_slots(
         .collect()
 }
 
-/// Slot `i`, or the empty slot every list has past its end.
 fn slot_at(slots: &[Option<ItemStackData>], i: usize) -> &Option<ItemStackData> {
     const EMPTY: &Option<ItemStackData> = &None;
     slots.get(i).unwrap_or(EMPTY)
@@ -685,9 +554,6 @@ mod tests {
         }
     }
 
-    /// A consumed input must EMPTY rather than sit at zero: a zero-count stack
-    /// still names an item, so every "is there input" test downstream would
-    /// keep answering yes and the machine would run on nothing.
     #[test]
     fn the_last_of_an_input_leaves_an_empty_slot() {
         let mut slot = Some(stack("petramond:coal", 1));
@@ -699,9 +565,6 @@ mod tests {
         assert_eq!(slot.map(|s| s.count), Some(2));
     }
 
-    /// Merging must keep the EXISTING stack's identity, not the incoming
-    /// result's: the two compared equal on item and data, but only the stored
-    /// one carries what a variant recorded when it was made.
     #[test]
     fn merging_output_keeps_the_stored_stack() {
         let mut out = Some(ItemStackData {
@@ -714,12 +577,6 @@ mod tests {
         assert_eq!(out.data.len(), 1, "the stored stack's data survives");
     }
 
-    /// The persisted anchor list outgrew ONE world-KV value long before a big
-    /// base would, and an oversized write is the
-    /// same disabled-mod error as an oversized batch. Sharding is the fix; the
-    /// invariants that matter are that shard 0 keeps the ORIGINAL key (so
-    /// existing worlds load), and that a placement rewrites only the shard it
-    /// landed in.
     #[test]
     fn the_anchor_list_shards_and_shard_zero_keeps_the_plain_key() {
         let mut reg = AnchorRegistry::new("m:anchors");
@@ -733,10 +590,8 @@ mod tests {
         assert_eq!(reg.shard_count(), 2);
         assert_eq!(reg.encode_shard(0).len(), ANCHORS_PER_SHARD * ANCHOR_BYTES);
         assert_eq!(reg.encode_shard(1).len(), 3 * ANCHOR_BYTES);
-        // Every shard stays inside one KV value.
         assert!(reg.encode_shard(0).len() <= KV_MAX_VALUE_BYTES);
 
-        // The shards concatenate back to the list, in placement order.
         let mut bytes = reg.encode_shard(0);
         bytes.extend(reg.encode_shard(1));
         let mut r = ByteReader::new(&bytes);
@@ -747,10 +602,6 @@ mod tests {
         assert_eq!(back, reg.anchors);
     }
 
-    /// Writing back only what MOVED is the batching this helper exists for —
-    /// and a length change must neither panic nor silently drop the tail. A
-    /// dropped tail is the dangerous direction: the machine believes it
-    /// consumed those slots and the container would keep holding them.
     #[test]
     fn slot_writeback_diffs_and_tolerates_a_length_change() {
         let before = vec![Some(stack("a", 1)), None, Some(stack("c", 2))];
@@ -764,10 +615,7 @@ mod tests {
         assert_eq!(changed[0].1.as_ref().map(|s| s.item.as_str()), Some("b"));
         assert!(changed[1].1.is_none(), "the dropped tail is CLEARED");
 
-        // A shrunk `after` whose surviving slots all match still clears the
-        // tail, and reads nothing past the shorter list.
         assert_eq!(changed_slots(&before, &before[..1]), vec![(2, None)]);
-        // ...and a GROWN `after` writes its new tail.
         let grown = vec![
             Some(stack("a", 1)),
             None,

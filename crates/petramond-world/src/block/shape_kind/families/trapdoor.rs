@@ -1,12 +1,5 @@
-//! The trapdoor: a thin panel lying flat across a cell, swinging up onto the
-//! edge it is hinged to.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A trapdoor; a thin panel across a cell with per-cell facing/open/half state.
 pub struct TrapdoorFamily;
 
 impl ShapeSim for TrapdoorFamily {
@@ -35,7 +28,6 @@ impl ShapeRender for TrapdoorFamily {
         MeshEmitter::Nothing
     }
 
-    /// Variant `0` lies on the floor, variant `1` hangs from the ceiling.
     fn animated_pose(
         &self,
         _p: &ShapeParams,
@@ -106,13 +98,10 @@ impl ShapePlacement for TrapdoorFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A trapdoor is hung ON the thing it was clicked against: it hinges on
-        // the edge facing that block, and a click on a WALL puts the panel in
-        // the half of the cell the click landed in (upper half → hung from the
-        // ceiling). A click on a horizontal face has no wall to hinge on, so
-        // the placer's own facing picks the edge and the face picks the half —
-        // landing on a block's top lays the panel on the floor, landing under
-        // one hangs it from the ceiling.
+        // Hangs on the block it was clicked against, hinged on the edge facing it.
+        // Click a wall and the click spot's half of the cell picks top/bottom.
+        // Click floor/ceiling and there's no wall to hinge on, so player facing picks the edge.
+        // Land on top, it lies flat; land underneath, it hangs from the ceiling.
         let p = inputs.place_pos;
         let state = match inputs.support_side() {
             Some(side) => crate::trapdoor::TrapdoorState {
@@ -133,8 +122,6 @@ impl ShapePlacement for TrapdoorFamily {
     }
 }
 
-/// Whether `block` is a trapdoor-shaped row — the ownership test of the
-/// trapdoor cell state.
 pub fn is_trapdoor(block: Block) -> bool {
     block.shape_family() == ShapeFamily::Trapdoor
 }

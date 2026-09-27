@@ -1,7 +1,3 @@
-//! Basin growth: classifying probed columns against a working surface,
-//! growing the head basin and the chain of terraces below it, and adopting
-//! the natural pits a basin encloses.
-
 use mod_sdk::{FxHashMap, FxHashSet};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -10,34 +6,25 @@ use super::{
     ADOPT_MAX, BED_BAND, GROW_DILATE, MAX_POOLS, MAX_STEP, MIN_POOLS, MIN_POOL_AREA, SIDES,
 };
 
-/// A floor column `(x, z)`.
 pub(super) type Col = (i32, i32);
 
-/// The basin chain: pool surfaces, links, and which pool owns each column.
 pub(super) struct Basins {
-    /// Water-surface row of each pool (index = pool id). A pool emptied by
-    /// the seal retreat keeps its slot with no columns.
     pub(super) pools: Vec<i32>,
-    /// Which pool spills into pool `j` (`from[0]` is unused).
     pub(super) from: Vec<usize>,
-    /// Column -> (pool, bed row). Water occupies `bed+1..=surface`.
     pub(super) cols: BTreeMap<Col, (usize, i32)>,
 }
 
 impl Basins {
-    /// Is `(x, y, z)` water as the chain stands?
     pub(super) fn wet_at(&self, x: i32, z: i32, y: i32) -> bool {
         self.cols
             .get(&(x, z))
             .is_some_and(|&(pi, bed)| y > bed && y <= self.pools[pi])
     }
 
-    /// The pool that owns a column, if any.
     pub(super) fn pool_of(&self, c: Col) -> Option<usize> {
         self.cols.get(&c).map(|&(pi, _)| pi)
     }
 
-    /// Columns each pool still holds.
     pub(super) fn counts(&self) -> Vec<usize> {
         let mut count = vec![0usize; self.pools.len()];
         for &(pi, _) in self.cols.values() {
@@ -46,7 +33,6 @@ impl Basins {
         count
     }
 
-    /// The wet set: water from over the bed up to the surface.
     pub(super) fn wet(&self) -> BTreeSet<[i32; 3]> {
         let mut wet = BTreeSet::new();
         for (&(x, z), &(pi, bed)) in &self.cols {
@@ -58,25 +44,16 @@ impl Basins {
     }
 }
 
-/// A column's classification at a working surface `s`.
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum Mem {
-    /// Basin member; water `bed+1..=s`, bed one under the floor.
     In(i32),
-    /// Floor above the surface: natural shore.
     Rock,
-    /// Floor a full step below: a candidate seed for the NEXT basin (its
-    /// would-be surface carried along), or too deep to use.
     Step(Option<i32>),
-    /// Past the probe or the growth band.
     Off,
 }
 
-/// The probed window of one trace, and the columns a basin may grow into.
 pub(super) struct Survey<'t, T> {
-    /// Probe column -> its inclusive row window.
     window: FxHashMap<Col, (i32, i32)>,
-    /// Columns within `GROW_DILATE` of a traced sample.
     growable: FxHashSet<Col>,
     terrain: &'t T,
 }
@@ -105,7 +82,6 @@ impl<'t, T: Fn([i32; 3]) -> Option<bool>> Survey<'t, T> {
             .is_some_and(|&(lo, hi)| y >= lo && y <= hi)
     }
 
-    /// World box the probes cover, for the caller to gather giants against.
     pub(super) fn domain(&self) -> ([i32; 3], [i32; 3]) {
         let (mut lo, mut hi) = ([i32::MAX; 3], [i32::MIN; 3]);
         for (&(x, z), &(l, h)) in self.window.iter() {
@@ -149,8 +125,6 @@ impl<'t, T: Fn([i32; 3]) -> Option<bool>> Survey<'t, T> {
         }
     }
 
-    /// Region-grow one basin at surface `s` from `seed_col`, over columns no
-    /// other basin owns. Returns member column -> bed row.
     fn grow(
         &self,
         s: i32,
@@ -180,8 +154,6 @@ impl<'t, T: Fn([i32; 3]) -> Option<bool>> Survey<'t, T> {
         members
     }
 
-    /// The head basin behind the trace's anchor, then terrace after terrace
-    /// down the fall line until the chain is full or finds no next step.
     pub(super) fn grow_chain(&self, trace: &Trace) -> Result<Basins, &'static str> {
         let mut basins = Basins {
             pools: Vec::new(),
@@ -220,10 +192,6 @@ impl<'t, T: Fn([i32; 3]) -> Option<bool>> Survey<'t, T> {
         Ok(basins)
     }
 
-    /// The next basin seeds from the highest floor a full step below any
-    /// existing basin's surface, just past its edge — the fall line, or the
-    /// contour continuing to roll downward. `(surface, seed column, source
-    /// pool)`.
     fn next_seed(&self, basins: &Basins, banned: &BTreeSet<Col>) -> Option<(i32, Col, usize)> {
         let mut best: Option<(i32, Col, usize)> = None;
         for (&(x, z), &(pi, _)) in &basins.cols {
@@ -267,8 +235,6 @@ pub(super) fn adopt_pits(basins: &mut Basins, terrain: &impl Fn([i32; 3]) -> Opt
             if basins.cols.contains_key(&c) || outside.contains(&c) {
                 continue;
             }
-            // The pit joins the pool that surrounds it: any cardinal member
-            // neighbour names it (enclosed, so one exists).
             let Some(&(pi, _)) = SIDES
                 .iter()
                 .find_map(|&(dx, dz)| basins.cols.get(&(x + dx, z + dz)))
@@ -277,7 +243,7 @@ pub(super) fn adopt_pits(basins: &mut Basins, terrain: &impl Fn([i32; 3]) -> Opt
             };
             let s = basins.pools[pi];
             if terrain([x, s, z]) != Some(false) {
-                continue; // a rock island stays an island
+                continue;
             }
             let mut b = s - 1;
             while s - b < ADOPT_MAX && terrain([x, b, z]) == Some(false) {
@@ -294,8 +260,6 @@ pub(super) fn adopt_pits(basins: &mut Basins, terrain: &impl Fn([i32; 3]) -> Opt
     }
 }
 
-/// Flood the non-member columns from the rim of the members' bounding box
-/// (grown by one); whatever it cannot reach is enclosed.
 fn outside_of(
     cols: &BTreeMap<Col, (usize, i32)>,
     (x0, x1, z0, z1): (i32, i32, i32, i32),

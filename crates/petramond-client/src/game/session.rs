@@ -16,10 +16,6 @@ use petramond_worldgen::SurfaceDensitySystem;
 use super::section_cache::section_cache_registry_key;
 use super::Game;
 
-/// Everything `Game` needs beyond the [`ServerHandle`]: the client replica +
-/// the join-time seeds, built from the session's [`JoinData`] — the same
-/// payload whether the server is in-process ([`petramond::local_host`]) or
-/// remote (the TCP handshake's `JoinAccept`).
 pub struct ClientBootstrap {
     replica: ReplicaWorld,
     jobs: Arc<JobPool>,
@@ -30,20 +26,11 @@ pub struct ClientBootstrap {
     fallback_world: SurfaceDensitySystem,
     client_mods: petramond::modding::client::ClientModRuntime,
     crafting: CraftingCatalog,
-    /// Whether the server is REMOTE (joined over TCP) rather than in-process.
     remote: bool,
-    /// Who this session is and which packs shape it, for what captures it.
     identity: super::capture::SessionIdentity,
 }
 
 impl ClientBootstrap {
-    /// The bootstrap for a join: the replica world (fed by the server's
-    /// terrain payloads and deltas, it lights + meshes for the renderer and
-    /// answers the client's collision/raycast/placement reads — it never
-    /// generates), the locally-simulated player restored from the join's
-    /// `SelfRestore`, and the replicated self view seeded from the same
-    /// restore so the HUD is right before the first tick's batch arrives.
-    /// `enabled` is the pack set the session's client mods activate for.
     fn from_join(
         join: JoinData,
         jobs: Arc<JobPool>,
@@ -77,8 +64,6 @@ impl ClientBootstrap {
         }
     }
 
-    /// A presented world's client half: no server stands behind it, so its
-    /// player is a viewer no capture names and its session has no identity.
     pub(super) fn presented(
         replica: ReplicaWorld,
         jobs: Arc<JobPool>,
@@ -103,9 +88,6 @@ impl ClientBootstrap {
         }
     }
 
-    /// The bootstrap for an in-process session: the replica shares the
-    /// host's job pool, and client mods activate for the world's ENABLED
-    /// packs — the same authority the server host uses.
     pub(super) fn local(world_name: &str, render_dist: i32, session: LocalSession) -> Self {
         let t_client = std::time::Instant::now();
         let join = *session.join;
@@ -137,8 +119,6 @@ impl ClientBootstrap {
 }
 
 impl Game {
-    /// The session's background pool, for presentation work that must stay
-    /// off the frame thread.
     pub fn jobs(&self) -> &Arc<JobPool> {
         &self.jobs
     }
@@ -146,16 +126,10 @@ impl Game {
     pub fn new(cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
         let t0 = std::time::Instant::now();
         let (key, name) = local_player();
-        // The host builds the server and moves the sim onto its own
-        // self-clocked thread; from here the client owns only the message
-        // handle and the join payload, exactly like a remote join.
         let (handle, session) =
             petramond::local_host::launch(world_name, new_seed, render_dist, key, name);
         let bootstrap = ClientBootstrap::local(world_name, render_dist, session);
         let mut game = Self::assemble(cam, handle, bootstrap);
-        // Loopback skips the remap, so the local vocabulary IS the session's
-        // — binding it keys this cache for a later harvest (a remote join to
-        // a server with identical tables may legitimately claim it).
         game.replica
             .section_cache
             .adopt_session(section_cache_registry_key(
@@ -169,13 +143,6 @@ impl Game {
         game
     }
 
-    /// The REMOTE client session: no save, no
-    /// `ServerGame` — `handle` fronts a TCP connection
-    /// ([`ServerHandle::from_remote`]) and `join` came from
-    /// [`petramond::net::handshake::client_handshake`]. The connect worker
-    /// runs the handshake off-thread, spawns the connection (which installs
-    /// the id remap), and hands both here; everything after this constructor
-    /// is the ordinary replicated-client path.
     pub fn new_remote(
         cam: Camera,
         join: Box<JoinData>,
@@ -187,13 +154,7 @@ impl Game {
     ) -> Self {
         let join = *join;
         let registry_key = section_cache_registry_key(&join.tables);
-        // The replica gets its OWN pool: unlike the in-process split there is
-        // no server world in this process to share one with.
         let pool = Arc::new(JobPool::new(JobPool::default_threads()));
-        // Client mods are gated by the SERVER's mod set (the handshake's
-        // ModList): a client mod that changes what a world holds, and the
-        // server does not run, must not activate. A presentation-only pack
-        // loads regardless where the server consents to it.
         let policy = join.client_policy;
         let mut enabled = server_mods.clone();
         if policy.presentation_packs {
@@ -219,25 +180,20 @@ impl Game {
             true,
         );
         let mut game = Self::assemble(cam, handle, bootstrap);
-        // A cache retained from an earlier session re-promotes only under
-        // the same id vocabulary — its blocks are client-local ids whose
-        // meaning this session's remap tables define. adopt_session clears
-        // on drift (a fresh cache just binds the key); any Join claims
-        // already made for cleared entries heal through the
-        // SectionCacheMiss fallback.
+        // A retained cache only re-promotes under the same id vocabulary, since its block ids
+        // are client-local and this session's remap tables define them. `adopt_session` clears
+        // on drift; a fresh cache just binds the key. Join claims already made for cleared
+        // entries heal through the `SectionCacheMiss` fallback.
         let mut cache = retained_section_cache.unwrap_or_default();
         cache.adopt_session(registry_key);
         game.replica.section_cache = cache;
         game
     }
 
-    /// Hand the section cache to the app shell at session teardown — the next
-    /// remote join's manifest claims it.
     pub fn take_section_cache(&mut self) -> crate::game::section_cache::SectionCache {
         std::mem::take(&mut self.replica.section_cache)
     }
 
-    /// Assemble the client half around an already-connected server handle.
     pub fn assemble(cam: Camera, handle: ServerHandle, bootstrap: ClientBootstrap) -> Self {
         let entities = super::replicated::EntityReplica::new(bootstrap.self_id, bootstrap.players);
         Self {
@@ -266,9 +222,6 @@ impl Game {
     }
 }
 
-/// This machine's player identity (`<data>/identity.key`, created on first
-/// use). Under test a throwaway one, so the suite never creates or reads the
-/// developer's real identity file.
 pub(crate) fn player_identity() -> std::io::Result<PlayerIdentity> {
     if cfg!(test) {
         PlayerIdentity::generate()
@@ -277,9 +230,6 @@ pub(crate) fn player_identity() -> std::io::Result<PlayerIdentity> {
     }
 }
 
-/// The LOCAL player: this machine's identity keys its per-world save file
-/// (`players/<key>.dat`); the display name comes from client.json / env /
-/// OS username.
 pub(super) fn local_player() -> (PlayerKey, String) {
     let name = petramond::save::client::resolve_player_name(&petramond::save::client::load());
     let key = match player_identity() {
@@ -295,13 +245,9 @@ pub(super) fn local_player() -> (PlayerKey, String) {
     (key, name)
 }
 
-/// Rebuild the local predicted player from the join handshake's restore —
-/// the wire twin of `save::player::PlayerData::restore` (wire ids arrived
-/// remapped to local ids at the transport; effects travel by name).
 fn player_from_restore(r: &petramond::net::protocol::SelfRestore) -> Player {
     let mut player = Player::new(r.transform.pos);
     player.set_mode(petramond::player::PlayerMode::from_u8(r.mode));
-    // `set_mode` clears velocity; restore motion after it.
     player.vel = r.transform.vel;
     player.yaw = r.transform.yaw;
     player.pitch = r.transform.pitch;
@@ -311,9 +257,6 @@ fn player_from_restore(r: &petramond::net::protocol::SelfRestore) -> Player {
         .map(|(bed, spot)| petramond::player::BedSpawn { bed, spot });
     player.inventory = crate::game::replicated::inventory_from_wire(&r.inventory, r.active_slot);
     player.craft_craftable_only = r.craft_craftable_only;
-    // The client mirrors only the UNLOCKED set — what its browser may show.
-    // The obtained set is server-side progression bookkeeping and never
-    // crosses the wire.
     player
         .progression
         .restore(std::iter::empty(), r.unlocked_recipes.clone());

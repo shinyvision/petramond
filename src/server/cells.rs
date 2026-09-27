@@ -1,22 +1,14 @@
-//! The server's bulk cell-edit funnel: announce the edit, then write it in
-//! budgeted slices with the block hooks bracketed around each one.
-
 use super::game::ServerGame;
 use crate::{
     events::{tick::TickEvents, CellsEditPre, Outcome, PostEvent},
     world::cells::{CellEdit, CellHooks, CellPolicy, Cells},
 };
 
-/// Cells one edit writes per tick.
 pub(super) const CELLS_PER_TICK: usize = 8192;
 
-/// Post events emitted between drains, well under the bus's per-drain bound
-/// so a slice of any size never has its hooks dropped.
 const HOOKS_PER_DRAIN: usize = 1024;
 
 impl ServerGame {
-    /// Validate and announce an edit by session `s`. A refusal hands the
-    /// cells back untouched.
     pub(super) fn begin_cell_edit(
         &mut self,
         s: usize,
@@ -48,8 +40,6 @@ impl ServerGame {
         Ok(edit)
     }
 
-    /// Write this tick's share of session `s`'s `edit`. Returns whether it
-    /// is complete. The block hooks drain as the editing session.
     pub(super) fn step_cell_edit(
         &mut self,
         s: usize,

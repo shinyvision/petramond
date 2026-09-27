@@ -1,5 +1,3 @@
-//! Planning from the top of a pillar, a roof course or a walkway.
-
 use std::ops::ControlFlow;
 
 use crate::host::prelude::*;
@@ -23,8 +21,6 @@ use crate::worker::{
     aloft, course, pillar, route, scaffold, sight, Body, Ctx, Step, Task, Then, TRACE,
 };
 
-/// Whether the golem, out on a course at `body.cell`, still walks back to the
-/// pillar's `top` once `cells` stand. `None` = no route budget this tick.
 fn way_back(
     ctx: &mut Ctx,
     job: &Job,
@@ -36,8 +32,6 @@ fn way_back(
     route::probe(ctx, body.cell, top, walls)
 }
 
-/// The first open placement seen from where the golem stands out on a roof
-/// course that it has not just tried from here.
 fn try_here(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -76,7 +70,6 @@ fn try_here(
         if body.cell != top {
             match way_back(ctx, job, body, top, &cells) {
                 Some(Route::Open) => {}
-                // No budget is no answer: ask again rather than walk away.
                 None => return Some(Step::Plan),
                 Some(route) => {
                     trace!("TRACE try here {task:?}: way back to {top:?} {route:?}");
@@ -85,8 +78,6 @@ fn try_here(
                 }
             }
         }
-        // Once until something lands: a landed block gives its neighbours a
-        // face and every one gets another try.
         job.crew.deferrals.tried.insert(i);
         let verdict = viability(ctx, job, body, task, body.pos);
         if verdict != Viable::Now {
@@ -113,8 +104,6 @@ fn try_here(
     None
 }
 
-/// Plan from up a pillar, out on its course or at a walkway's end: what the
-/// climb was for, then what is seen from here, then higher, onward or down.
 pub(super) fn from_perch(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -139,10 +128,6 @@ pub(super) fn from_perch(
         ControlFlow::Continue(higher) => higher,
     };
     trace::perch_top(job, body, top, candidates);
-    // Up a pillar or out on a roof course: every block it sees gets a try
-    // before it leaves, waits or no. A climb is dear, and a ridge whose blocks
-    // wait on each other for a face only starts when one is tried.
-    // (A job going home lays nothing more.)
     if let Some(step) = try_here(ctx, job, body, project, mode, perch) {
         return Flow::Go(step);
     }
@@ -157,21 +142,15 @@ pub(super) fn from_perch(
     leave(ctx, job, body, project, perch, candidates)
 }
 
-/// Whether the golem, just up or just walked out, should settle onto the
-/// centre of its cell before judging what it sees.
 fn unsettled(ctx: &Ctx, job: &Job, body: &Body, top: [i32; 3]) -> bool {
     let [dx, dz] = body.off_centre();
     if dx.abs().max(dz.abs()) <= PERCH_OFF_CENTRE {
         return false;
     }
-    // The perch was chosen for what its centre sees; judged from the edge the
-    // jump left the golem on, a wall's corner hides it.
     let settling = ctx.now < job.crew.aloft.settle_until;
     if body.cell == top && settling {
         return true;
     }
-    // Likewise at a walkway's end: a reach judged from its rim fell short
-    // and the walkway was taken down and laid again, over and over.
     let at_walkway_end = job
         .crew
         .aloft
@@ -181,13 +160,9 @@ fn unsettled(ctx: &Ctx, job: &Job, body: &Body, top: [i32; 3]) -> bool {
     if at_walkway_end {
         return true;
     }
-    // And at a stance walked to along the course.
     settling && job.crew.aloft.aimed.is_some_and(|(_, at)| at == body.cell)
 }
 
-/// What the climb or the walkway was planned for is done first, as planned:
-/// it was checked then, and is only passed over if the world no longer lets
-/// it be seen.
 fn work_committed(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -200,15 +175,11 @@ fn work_committed(
     let committed = match &job.crew.aloft.bridge {
         Some(walkway) if body.cell == *walkway.path.last().unwrap_or(&top) => Some(walkway.task),
         Some(_) => None,
-        // From the top or wherever the climb's course led: the onward
-        // stance was chosen for it.
         None => job.crew.aloft.climbed_for.map(|(task, _)| task),
     };
     if let (true, Some(task)) = (TRACE, committed) {
         trace::committed(ctx, job, body, task);
     }
-    // Off a walkway it still counts as laid (knocked off it, stepped down
-    // onto a roof beside it): it comes down from where the golem stands.
     if job
         .crew
         .aloft
@@ -218,12 +189,9 @@ fn work_committed(
     {
         return Some(Flow::Go(Step::Unbridge { since: ctx.now }));
     }
-    // Going home, what the climb was for is left unlaid.
     let task = committed.filter(|task| mode == Mode::Building || !places(job, *task))?;
     let open = still_open(ctx, job, project, perch, task);
     let cells = task_cells(job, task);
-    // Walked out to for it and not workable after all: never this stance
-    // for it again, or the same climb is planned and left forever.
     if open && body.cell != top && !sees_from_here(job, task, body, &cells) {
         job.crew.deferrals.strike(task, body.cell);
     }
@@ -234,15 +202,11 @@ fn work_committed(
     {
         return None;
     }
-    // Planned or not, it must not shut the way back to the top, nor wall
-    // ground off.
     if body.cell != top && places(job, task) {
         match way_back(ctx, job, body, top, &cells) {
             Some(Route::Open) => {}
             None => return Some(Flow::Go(Step::Plan)),
             Some(_) => {
-                // Laid from here it strands the golem out here: never this
-                // stance for it again, or the climb repeats.
                 job.crew.deferrals.strike(task, body.cell);
                 job.crew.deferrals.tried.insert(task.unit());
                 defer_task(ctx, job, task, SEALED_WAIT);
@@ -267,7 +231,6 @@ fn work_committed(
     }))
 }
 
-/// Whether the work a climb was committed to is still there to do.
 fn still_open(
     ctx: &Ctx,
     job: &Job,
@@ -277,14 +240,11 @@ fn still_open(
 ) -> bool {
     match (task, job.survey.as_ref()) {
         (Task::Unit(i), Some(s)) => s.known[i].open() && !job.crew.built.contains(&i),
-        // Only while what it opens a way to still waits: re-laid once that
-        // stands, a climb's reopen would be dug out again forever.
         (Task::Reopen(o), Some(s)) => {
             matches!(s.known[o], Known::Satisfied)
                 && job.crew.access.reopen.values().flatten().any(|v| *v == o)
         }
         (Task::Trim(cell), _) => job.crew.access.trims.contains(&cell),
-        // A stray scaffold up high is work a pillar is climbed for too.
         (Task::Scaffold(cell), _) => {
             project.scaffolds.contains(&cell)
                 && !perch.holds(cell)
@@ -294,10 +254,6 @@ fn still_open(
     }
 }
 
-/// From up here the golem's ground is never stranded (it walked to the
-/// pillar's foot first), but ground must not be walled off nor the way back
-/// to the top cut; that is asked where it stands. Off the pillar's course
-/// altogether (fallen, knocked down), the top is no longer the way anywhere.
 fn off_the_course(ctx: &mut Ctx, job: &mut Job, body: &Body, top: [i32; 3]) -> Option<Flow> {
     if job.crew.aloft.bridge.is_some() || body.cell == top {
         return None;
@@ -315,8 +271,6 @@ fn off_the_course(ctx: &mut Ctx, job: &mut Job, body: &Body, top: [i32; 3]) -> O
     None
 }
 
-/// Lay the first candidate seen from where the golem stands; else whether a
-/// higher pillar would bring some into sight.
 fn work_in_sight(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -336,7 +290,6 @@ fn work_in_sight(
                 settle_verdict(ctx, job, *task, verdict);
                 continue;
             }
-            // Out on a roof course, the way back to the top must survive it.
             if body.cell != top {
                 match way_back(ctx, job, body, top, &cells) {
                     Some(Route::Open) => {}
@@ -365,11 +318,6 @@ fn work_in_sight(
     ControlFlow::Continue(higher)
 }
 
-/// On the way down the pillar is never raised again, but a level still
-/// bridges out to work it reaches and cannot see: the pillar underfoot is
-/// paid for, and the other way to that block is digging this one down and
-/// raising another beside it. The walkway's price against what is left of
-/// the climb keeps it from bridging near the ground.
 fn descending(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -391,8 +339,6 @@ fn descending(
     Flow::Go(Step::Descend { since: ctx.now })
 }
 
-/// At the top with no walkway out: on to the stance the pillar was planned
-/// with, or up a few levels to work the top cannot see.
 fn onward_or_higher(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -402,8 +348,6 @@ fn onward_or_higher(
     higher: bool,
 ) -> Option<Flow> {
     if let Some(stance) = perch.onward {
-        // The course it was planned along may have changed under it since
-        // (overgrowth it stood on cut away): walking on at a hole is a fall.
         let standing = stands_at(stance);
         let walks = standing
             && match route::probe(ctx, body.cell, stance, Vec::new()) {
@@ -440,9 +384,6 @@ fn onward_or_higher(
     }))
 }
 
-/// Nothing more to lay from here: work up here out of sight goes along the
-/// course or out on a walkway before down and round and up again; failing
-/// that, back to the top and down.
 fn leave(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -462,8 +403,6 @@ fn leave(
         job.crew.deferrals.tried.clear();
         return Flow::Go(walk_to(ctx, top, Then::Regroup));
     }
-    // A climb that did no work is not planned again: not this perch for this
-    // task, however long it waits.
     if let Some((task, 0)) = job.crew.aloft.climbed_for.take() {
         job.crew.deferrals.strike(task, top);
         defer_task(ctx, job, task, IDLE_CLIMB);
@@ -473,10 +412,6 @@ fn leave(
     Flow::Go(Step::Descend { since: ctx.now })
 }
 
-/// How many levels higher the golem's pillar would have to be for it to lay
-/// open work beside it that it cannot see from here (a roof slope climbs away
-/// from a pillar at its eave): a few blocks underfoot cost far less than
-/// climbing down and raising another. `Err` = no answer this tick.
 fn raise_for(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -491,7 +426,6 @@ fn raise_for(
     if room <= 0 {
         return Ok(None);
     }
-    // Open air over the head all the way up, none of it the design's.
     let over: Vec<[i32; 3]> = (2..2 + room)
         .map(|dy| [perch.column[0], perch.top + dy, perch.column[1]])
         .collect();
@@ -533,7 +467,6 @@ fn raise_for(
             *count += i32::from(ok && refusal.is_none());
         }
     }
-    // The lowest level that lays the most.
     let best = lays.iter().copied().max().unwrap_or(0);
     if best == 0 {
         return Ok(None);
@@ -541,7 +474,6 @@ fn raise_for(
     Ok(lays.iter().position(|n| *n == best).map(|l| l as i32 + 1))
 }
 
-/// Up a pillar, the plan is made from there and nowhere else.
 pub(super) fn aloft(
     ctx: &mut Ctx,
     _projects: &mut Projects,

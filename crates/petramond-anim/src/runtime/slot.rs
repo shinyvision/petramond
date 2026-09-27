@@ -1,28 +1,19 @@
-//! Montage slots: one-shot clips (and their follow-up segments) that events
-//! and code start over whatever the layers beneath are doing.
-
 use super::Animator;
 use crate::graph::{Ease, ExprId, Graph, Until};
 use crate::inertia::{settle_halflife, Inertia};
 use crate::library::ClipId;
 
-/// A montage started from code rather than a graph rule.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlaySpec {
     pub clip: ClipId,
     pub rate: f32,
-    /// Play the clip over exactly this many seconds instead of at `rate`.
     pub duration: Option<f32>,
     pub fade_in: f32,
     pub fade_out: f32,
     pub ease: Ease,
-    /// Cut in and out at full weight and let inertialization absorb the
-    /// jump (`fade_in` / `fade_out` are then settle times).
     pub inertial: bool,
     pub mirror: bool,
-    /// Loop until stopped.
     pub looping: bool,
-    /// A playing montage refuses a newcomer of lower priority.
     pub priority: i32,
 }
 
@@ -43,31 +34,20 @@ impl PlaySpec {
     }
 }
 
-/// The handle [`Animator::play`] answers: it addresses that one montage —
-/// to seek it, stop it, or ask where it stands — whatever else starts in
-/// the slot afterwards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct PlayId(pub(super) u64);
 
-/// Where a montage a handle names stands ([`Animator::play_state`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayState {
-    /// In its slot and playing.
     Playing,
-    /// It reached its end on its own.
     Finished,
-    /// Something else took the slot from it: a newer montage cut in or
-    /// faded in over it, or the slot was stopped.
     Displaced,
 }
 
-/// What a slot is playing.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Playing {
     pub clip: ClipId,
-    /// Seconds into the current clip.
     pub time: f32,
-    /// 0..1 through the current clip.
     pub progress: f32,
     pub weight: f32,
 }
@@ -99,11 +79,8 @@ pub(super) struct Montage {
     seg: usize,
     time: f32,
     age: f32,
-    /// (elapsed, duration) once it is leaving.
     out: Option<(f32, f32)>,
-    /// The frame an ended montage holds while it fades.
     hold_at: Option<f32>,
-    /// A newer montage in the slot is fading in over this one.
     interrupted: bool,
 }
 
@@ -169,7 +146,6 @@ impl Montage {
         self.segments[self.seg]
     }
 
-    /// Seconds into the current clip, as sampled.
     pub fn local_time(&self, len: f32) -> f32 {
         if let Some(t) = self.hold_at {
             return t;
@@ -188,14 +164,9 @@ impl Montage {
         (clip, t, if len > 0.0 { t / len } else { 1.0 })
     }
 
-    /// Scrub to `seconds` into the current clip (clamped to it). Answers
-    /// the forward stretch crossed, for its markers: `(clip, from, to,
-    /// mirrored)`, or `None` when it moved backward or was already leaving.
     pub fn seek(&mut self, g: &Graph, seconds: f32) -> Option<(ClipId, f32, f32, bool)> {
         let clip = self.segment().clip;
         let len = g.clips.get(clip).length.max(0.0);
-        // A looping segment wraps AT its length; stop a hair short so the
-        // last frame of a scrub is the clip's end, not its start.
         let end = match self.segment().until {
             Until::Once => len,
             _ => (len - 1e-4).max(0.0),
@@ -212,8 +183,6 @@ impl Montage {
         ))
     }
 
-    /// Begin leaving at its end; answers the settle time inertialization
-    /// must absorb.
     fn end(&mut self) -> Option<f32> {
         if self.out.is_some() {
             return None;
@@ -227,8 +196,6 @@ impl Montage {
         }
     }
 
-    /// Begin leaving early over `fade` seconds (an inertial montage cuts at
-    /// once); answers whether the cut needs inertialization.
     fn leave(&mut self, fade: f32) -> bool {
         if self.out.is_some() {
             return false;
@@ -243,14 +210,9 @@ pub(super) struct SlotRt {
     pub montages: Vec<Montage>,
     pub freeze: f32,
     pub inertia: Inertia,
-    /// The last [`FINISHED_KEPT`] montages that reached their end and left —
-    /// how a handle to one that is gone still reads finished.
     finished: Vec<PlayId>,
 }
 
-/// How many finished handles a slot remembers: enough that a caller asking
-/// a few updates late, with other montages finishing meanwhile, still hears
-/// that its own play ended rather than that it was displaced.
 const FINISHED_KEPT: usize = 8;
 
 fn remember_finished(finished: &mut Vec<PlayId>, play: PlayId) {
@@ -261,7 +223,6 @@ fn remember_finished(finished: &mut Vec<PlayId>, play: PlayId) {
 }
 
 impl SlotRt {
-    /// Would a montage of `priority` be admitted over what is playing?
     pub fn accepts(&self, priority: i32) -> bool {
         !self
             .montages
@@ -316,7 +277,6 @@ impl SlotRt {
         }
     }
 
-    /// `slot.<name>`, `.time`, `.progress`, `.clip`.
     pub fn vars(&self, g: &Graph) -> [f32; 4] {
         let Some(top) = self.montages.last() else {
             return [0.0; 4];
@@ -342,8 +302,6 @@ impl SlotRt {
     }
 
     fn settle_fades(&mut self) {
-        // An interrupted montage leaves with whatever interrupted it, so it
-        // can never resurface from under a newcomer's fade-out.
         for k in (0..self.montages.len().saturating_sub(1)).rev() {
             if self.montages[k].interrupted && self.montages[k].out.is_none() {
                 if let Some(out) = self.montages[k + 1].out {
@@ -399,8 +357,6 @@ impl Animator {
         let rate = self.montage_rate(g, m, seg, len);
         let prev = m.time;
         m.time += dt * rate;
-        // A montage's markers are its action's, so they fire from its first
-        // frame whatever its fade — but never after it was cut short.
         let fire = !m.interrupted && m.out.is_none();
         let last = m.seg + 1 == m.segments.len();
         let mut settle = None;
@@ -463,9 +419,6 @@ impl Animator {
                 }
             }
         }
-        // A cross-faded montage starts leaving so its fade completes as its
-        // final clip does. An interrupted one holds and leaves with whatever
-        // covers it.
         if last
             && !m.inertial
             && !m.interrupted

@@ -1,24 +1,3 @@
-//! Beds: sleeping, the bed spawn point, and death respawn — all on the tick.
-//!
-//! Interacting with a bed (`BlockInteraction::Sleep`) tucks the player in and
-//! sets the spawn point in one go; the sleep timer then runs [`SLEEP_TICKS`]
-//! fixed ticks and either completes (time skips to next morning) or is
-//! cancelled by an app-side wake request (ESC / the "Leave bed" button). The
-//! presentation side only draws the dark overlay from `crate::game::Game::sleep_progress01`
-//! and owns which screen is up; every mutation here happens on the game tick.
-//!
-//! With multiple players, the morning skip is a CROSS-player decision: it fires
-//! only when every alive, non-spectator player is asleep and the longest
-//! sleeper finished the timer — see [`ServerGame::resolve_sleep_completion`].
-//!
-//! Waking (and respawning at a bed) never drops the player inside a wall: the
-//! deterministic outward scan in `find_wake_spot` picks the closest cell
-//! beside the bed whose body space is free of collision boxes over solid
-//! footing. Respawn without a (still existing) bed falls back to the same
-//! random-surface-near-origin pick a fresh world uses
-//! ([`petramond_worldgen::spawn::find_spawn`] — deliberately OS-entropy random,
-//! like the fresh spawn).
-
 use crate::player::{BedSpawn, MAX_HEALTH, PITCH_LIMIT};
 use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
@@ -27,39 +6,18 @@ use petramond_world::block::{Block, BlockTag};
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 
-/// Fixed ticks a full sleep takes — 3 seconds at 20 TPS, matching the overlay
-/// fade the presentation draws from the same progress.
 pub const SLEEP_TICKS: u32 = 60;
 
-/// Horizontal Chebyshev reach of the wake-spot scan around the bed cells. Past
-/// this the bed is walled in tightly enough that waking ON the bed reads better
-/// than teleporting through a wall.
 const WAKE_SCAN_RADIUS: i32 = 3;
 
-/// Vertical candidate offsets per column, preference order: same level first,
-/// then one step up/down, then two (a bed on a ledge or in a pit).
 const WAKE_SCAN_DY: [i32; 5] = [0, 1, -1, 2, -2];
 
-/// The in-flight sleep session: which bed (rotated-footprint base cell) and how
-/// many ticks have elapsed.
 pub struct SleepState {
     base: IVec3,
     progress: u32,
 }
 
 impl ServerGame {
-    /// Right-clicked a sleepable block (`interaction: "sleep"`): on a BED (the
-    /// `bed` tag — identity, not the sleep capability) set the spawn point
-    /// beside it (first interaction is enough — completing the sleep is not
-    /// required, and a daytime interaction still sets it) and, at night, start
-    /// sleeping. A sleepable block WITHOUT the tag gives the sleep, never a
-    /// spawn anchor — the spawn bookkeeping (verify at respawn, clear on
-    /// break) only tracks tagged beds, so recording one here would leave a
-    /// spawn nothing else maintains.
-    /// Returns whether anything HAPPENED (the spawn anchor moved and/or the
-    /// sleep started) — the interact consumer's claim follows this verdict:
-    /// checking a bed is free, consuming means an effect (see
-    /// `server::interact`).
     pub(super) fn start_sleep(&mut self, s: usize, pos: IVec3) -> bool {
         let Some((_, base, cells)) = self.world.model_group(pos) else {
             return false;
@@ -70,45 +28,26 @@ impl ServerGame {
             self.sessions[s].player.bed_spawn = Some(BedSpawn { bed: base, spot });
             acted = true;
         }
-        // Sleeping is a night action: a daytime click only (re)sets the spawn.
         if !super::daynight::is_night(&self.world) {
             return acted;
         }
-        // A rider already has an authoritative physical owner. Starting a
-        // second body state here would let the later riding pass pull the
-        // sleeping body back onto its moving seat while the sleep timer kept
-        // advancing. Keep the spawn update above, but reject night sleep until
-        // the player dismounts.
         let player_id = self.sessions[s].id.0;
         if self.world.riding().mount_of(player_id).is_some() {
             return acted;
         }
-        // Tuck the player into the bed for the sleep; physics settles them onto
-        // the mattress (movement input is off while the sleep screen is up).
         let sess = &mut self.sessions[s];
         sess.player.teleport(group_centre(&cells));
         sess.player.vel = Vec3::ZERO;
         sess.player.pitch = PITCH_LIMIT;
         sess.sim.sleep = Some(SleepState { base, progress: 0 });
-        // The camera mirror that used to run here for the local player is
-        // presentation: the client applies it after the fixed ticks, keyed on
-        // this open request (`Game::tick`), before any presentation read.
         sess.replication.request_open_sleep = true;
         true
     }
 
-    /// The bed base cell session `s` currently sleeps in (a session read — the
-    /// client derives the lying body's head yaw from it against the REPLICA's
-    /// model group; see `Game::sleep_head_yaw`). `None` while awake.
     pub fn sleep_bed_base(&self, s: usize) -> Option<IVec3> {
         Some(self.sessions[s].sim.sleep.as_ref()?.base)
     }
 
-    /// While session `s` sleeps, the engine yaw the lying body's head faces:
-    /// from the bed's base (foot) cell toward its pillow cell — the server
-    /// twin of `Game::sleep_head_yaw`, computed against the AUTHORITATIVE
-    /// model group and replicated in `PlayerStateRow::sleep_yaw` so observers
-    /// without the bed's section still pose the sleeper right.
     pub fn sleep_head_yaw(&self, s: usize) -> Option<f32> {
         let base = self.sleep_bed_base(s)?;
         let (_, _, cells) = self.world.model_group(base)?;
@@ -117,10 +56,6 @@ impl ServerGame {
         Some((d.x as f32).atan2(d.z as f32))
     }
 
-    /// Sleep fade progress in `[0, 1]` while session `s` sleeps (clamped — a
-    /// sleeper waiting on other players holds at full). `None` while awake.
-    /// Replicated per tick in the session's `SelfState`; the client overlay
-    /// reads its `SelfView` mirror.
     pub fn sleep_progress01(&self, s: usize) -> Option<f32> {
         self.sessions[s]
             .sim
@@ -129,9 +64,6 @@ impl ServerGame {
             .map(|st| (st.progress as f32 / SLEEP_TICKS as f32).clamp(0.0, 1.0))
     }
 
-    /// Advance sleeping and consume any latched respawn request, on the tick.
-    /// Sleep COMPLETION (the morning skip) is cross-player and resolves once
-    /// per tick in [`resolve_sleep_completion`](Self::resolve_sleep_completion).
     pub fn tick_bed_and_respawn(&mut self, s: usize, events: &mut TickEvents) {
         self.tick_respawn(s, events);
         self.tick_sleep(s, events);
@@ -143,8 +75,6 @@ impl ServerGame {
             sess.input.wake_requested = false;
             return;
         };
-        // Dying in bed ends the sleep without a wake teleport — the death
-        // screen (and later the respawn) takes over from here.
         if sess.player.health() == 0 {
             sess.sim.sleep = None;
             events.player(s).sleep_ended = true;
@@ -160,11 +90,6 @@ impl ServerGame {
         state.progress += 1;
     }
 
-    /// The night skips to morning only when EVERY alive, non-spectator player
-    /// is asleep and the longest sleeper has slept the full [`SLEEP_TICKS`] —
-    /// then every sleeper wakes at their own bed. A single awake player blocks
-    /// the skip; sleepers just keep lying (ESC leaves the bed). With one player
-    /// this matches the old single-player behaviour tick-for-tick.
     pub fn resolve_sleep_completion(&mut self, events: &mut TickEvents) {
         let everyone_asleep = self.sessions.iter().all(|sess| {
             sess.sim.sleep.is_some() || sess.player.is_spectator() || sess.player.health() == 0
@@ -187,10 +112,6 @@ impl ServerGame {
         }
     }
 
-    /// Any damage while asleep interrupts the sleep at once (no time skip):
-    /// the player wakes beside the bed to face whatever hit them. Called from
-    /// the damage funnel; a lethal hit skips the wake teleport — the death
-    /// screen takes over where they lay.
     pub(super) fn interrupt_sleep(&mut self, s: usize, events: &mut TickEvents) {
         let Some(state) = self.sessions[s].sim.sleep.take() else {
             return;
@@ -205,8 +126,6 @@ impl ServerGame {
         if !std::mem::take(&mut self.sessions[s].input.respawn_requested) {
             return;
         }
-        // Respawn is only meaningful for a dead player; a stale request
-        // (button mashed as the screen closed) must not teleport the living.
         if self.sessions[s].player.health() > 0 {
             return;
         }
@@ -216,19 +135,14 @@ impl ServerGame {
         player.vel = Vec3::ZERO;
         player.set_health(MAX_HEALTH);
         player.clear_damage_immunity();
-        // A fresh life starts clean: lingering status effects die with the body.
         player.clear_effects();
         player.clear_exposure();
         events.player(s).respawned = true;
     }
 
-    /// Where a respawn lands: beside the (still existing) spawn bed, or a
-    /// random dry-land surface column near the origin — the fresh-spawn pick.
     fn respawn_position(&mut self, s: usize) -> petramond_math::world_pos::WorldPos {
         if let Some(bs) = self.sessions[s].player.bed_spawn {
             if !self.world.data().chunk_loaded(bs.bed.x >> 4, bs.bed.z >> 4) {
-                // The bed's chunk isn't loaded, so it can't be verified (or
-                // rescanned) — trust the spot chosen when the spawn was set.
                 return cell_centre(bs.spot);
             }
             if bed_at(&self.world, bs.bed) {
@@ -239,15 +153,12 @@ impl ServerGame {
                 }
                 return cell_centre(bs.spot);
             }
-            // The bed is gone — the spawn point disappears with it.
             self.sessions[s].player.bed_spawn = None;
         }
         let surface = petramond_worldgen::spawn::find_spawn(self.world.data().seed);
         petramond_math::world_pos::WorldPos::block_min(surface) + Vec3::new(0.5, 1.0, 0.5)
     }
 
-    /// Wake beside `base`: the freshest safe spot, or on top of the bed when
-    /// the scan finds nothing (the bed is walled in).
     fn wake_at_bed(&mut self, s: usize, base: IVec3) {
         let cells = self
             .world
@@ -260,8 +171,6 @@ impl ServerGame {
         player.vel = Vec3::ZERO;
     }
 
-    /// A bed cell at `pos` was broken (before the group is removed): any
-    /// session whose spawn bed it was loses that spawn point.
     pub fn clear_bed_spawn_at(&mut self, pos: IVec3) {
         let Some(base) = self.world.model_group(pos).map(|(_, base, _)| base) else {
             return;
@@ -273,8 +182,6 @@ impl ServerGame {
         }
     }
 
-    /// A bed broke somewhere without a position-aware hook (a natural
-    /// break): re-check that every stored spawn bed still exists.
     pub(super) fn validate_bed_spawn(&mut self) {
         for s in 0..self.sessions.len() {
             let Some(bs) = self.sessions[s].player.bed_spawn else {
@@ -289,26 +196,18 @@ impl ServerGame {
     }
 }
 
-/// Whether the block at `pos` IS a bed — the `bed` tag, block identity. The
-/// sleep-flow dispatch keys on `interaction() == Sleep` (a use capability);
-/// spawn bookkeeping deliberately does not, so a pack's sleepable non-bed
-/// never inherits it.
 fn bed_at(world: &ServerWorld, pos: IVec3) -> bool {
     Block::from_id(world.data().chunk_block(pos.x, pos.y, pos.z)).has_tag(BlockTag::BED)
 }
 
-/// Feet position standing centred on top of the bed's base cell — the fallback
-/// when no clear spot exists beside it.
 fn bed_top_cell(base: IVec3) -> IVec3 {
     IVec3::new(base.x, base.y + 1, base.z)
 }
 
-/// Feet position at the centre of cell `c` (feet on the cell's floor).
 fn cell_centre(c: IVec3) -> petramond_math::world_pos::WorldPos {
     petramond_math::world_pos::WorldPos::block_min(c) + Vec3::new(0.5, 0.0, 0.5)
 }
 
-/// Centre of the bed group, slightly above the mattress, for the tuck-in.
 fn group_centre(cells: &[IVec3]) -> petramond_math::world_pos::WorldPos {
     let n = cells.len().max(1) as f64;
     let (sx, sz) = cells.iter().fold((0.0, 0.0), |(x, z), c| {
@@ -318,13 +217,6 @@ fn group_centre(cells: &[IVec3]) -> petramond_math::world_pos::WorldPos {
     petramond_math::world_pos::WorldPos::new(sx / n, f64::from(base_y) + 0.6, sz / n)
 }
 
-/// The closest cell beside the bed where the player safely fits: both body
-/// cells (feet + head) free of collision boxes, solid footing below, never a
-/// bed cell itself. Deterministic: candidates are ordered by horizontal ring
-/// distance from the bed cells, then by the fixed [`WAKE_SCAN_DY`] preference,
-/// then by coordinate — the same world state always wakes at the same spot.
-/// `None` when nothing within [`WAKE_SCAN_RADIUS`] qualifies (or the area
-/// isn't loaded).
 pub(super) fn find_wake_spot(world: &ServerWorld, bed_cells: &[IVec3]) -> Option<IVec3> {
     let base_y = bed_cells.iter().map(|c| c.y).min()?;
     for r in 1..=WAKE_SCAN_RADIUS {
@@ -337,7 +229,7 @@ pub(super) fn find_wake_spot(world: &ServerWorld, bed_cells: &[IVec3]) -> Option
                     }
                     let c = IVec3::new(bed.x + dx, base_y, bed.z + dz);
                     if bed_cells.iter().any(|b| b.x == c.x && b.z == c.z) {
-                        continue; // beside the bed, not on/under/over it
+                        continue;
                     }
                     if !ring.contains(&c) {
                         ring.push(c);
@@ -345,8 +237,6 @@ pub(super) fn find_wake_spot(world: &ServerWorld, bed_cells: &[IVec3]) -> Option
                 }
             }
         }
-        // Multi-cell beds emit overlapping rings; a fixed order keeps the
-        // pick deterministic regardless of footprint iteration order.
         ring.sort_by_key(|c| (c.x, c.z));
         for dy in WAKE_SCAN_DY {
             for c in &ring {
@@ -360,9 +250,6 @@ pub(super) fn find_wake_spot(world: &ServerWorld, bed_cells: &[IVec3]) -> Option
     None
 }
 
-/// Whether a player standing at the centre of cell `c` fits: the column is
-/// loaded (an absent section reads as air and would lie), feet and head cells
-/// hold no collision boxes, and the cell below does (solid footing).
 fn wake_spot_clear(world: &ServerWorld, c: IVec3) -> bool {
     if !world.data().chunk_loaded(c.x >> 4, c.z >> 4) {
         return false;
@@ -383,8 +270,6 @@ mod tests {
     use super::*;
     use petramond_world::chunk::{Chunk, ChunkPos};
 
-    /// A loaded, empty chunk at (0,0) with a stone floor at y=63 under a 4×4
-    /// pad around (5..9, 5..9), so candidates have footing.
     fn world_with_floor() -> ServerWorld {
         let mut w = ServerWorld::new(1, 4);
         w.clear_world();
@@ -409,7 +294,6 @@ mod tests {
         let mut w = world_with_floor();
         let cells = place_bed(&mut w, IVec3::new(7, 64, 7));
         let spot = find_wake_spot(&w, &cells).expect("open ground has a spot");
-        // Beside the bed: ring distance 1, same level, standing on the floor.
         assert_eq!(spot.y, 64);
         assert!(
             cells.iter().all(|c| c.x != spot.x || c.z != spot.z),
@@ -437,11 +321,9 @@ mod tests {
         let base = IVec3::new(7, 64, 7);
         let cells = place_bed(&mut w, base);
         let first = find_wake_spot(&w, &cells).expect("spot");
-        // Wall the first pick off (feet-height block) — the scan must move on.
         w.set_block_world(first.x, first.y, first.z, Block::Stone);
         let second = find_wake_spot(&w, &cells).expect("another spot");
         assert_ne!(first, second, "an obstructed cell is never chosen");
-        // Same world state → same answer.
         assert_eq!(find_wake_spot(&w, &cells), Some(second));
     }
 
@@ -450,8 +332,6 @@ mod tests {
         let mut w = world_with_floor();
         let base = IVec3::new(7, 64, 7);
         let cells = place_bed(&mut w, base);
-        // Seal a generous box around the bed, floor to above head height,
-        // except the bed cells themselves.
         for x in base.x - 5..=base.x + 6 {
             for z in base.z - 5..=base.z + 6 {
                 for y in 62..=70 {

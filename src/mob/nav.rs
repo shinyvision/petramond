@@ -48,98 +48,35 @@ pub use probe::{
 use step_gate::floor_top;
 pub(super) use step_gate::navigation_step_gate;
 
-/// Largest horizontal distance (m) within which a waypoint counts as reached. The
-/// actual threshold tightens for wide mobs so they don't turn before their body has
-/// cleared a corner.
 const MAX_ARRIVE_XZ: f32 = 0.3;
-/// Never require perfect centre hits; discrete tick movement can step over a waypoint
-/// by a few centimetres.
 const MIN_ARRIVE_XZ: f32 = 0.04;
-/// Vertical distance (m) within which the mob is "on the waypoint's level" — so a
-/// descent waypoint isn't marked reached until the mob has actually fallen to it.
 const ARRIVE_Y: f32 = 1.1;
-/// Begin a jump once the body's leading edge is this close to the higher waypoint's
-/// centre. The actual centre-distance threshold is `half_width + this`: wider mobs
-/// reach a ledge with their body before their centre gets near it.
 const JUMP_TRIGGER_FRONT_XZ: f32 = 0.7;
-/// Ticks of negligible movement before the path is abandoned (~2 s at 20 TPS).
 const STUCK_TICKS: u32 = 40;
-/// Squared per-tick displacement below which the mob counts as "not progressing".
 const STUCK_EPS_SQ: f32 = 0.015 * 0.015;
-/// Steered ticks without the body improving its BEST-ACHIEVED distance to the
-/// held goal before the route is abandoned. Raw displacement cannot prove
-/// liveness for a ballistic gait: a hopper whose ~1-block stride cannot
-/// resolve a pocket smaller than itself ping-pongs between its faces at full
-/// speed forever — plenty of movement, zero progress (the 2026-08-17 rabbit
-/// cliff-edge trap). Net progress toward the GOAL is the definition of going
-/// somewhere, and it survives repaths (unlike any per-waypoint signal — a
-/// repath can legitimately re-target a just-passed cell). Sized above any
-/// honest non-improving phase of a local detour, far below "forever".
 const GOAL_STALL_CALLS: u32 = 60;
-/// Lateral distance (m) from a route segment's line within which the body
-/// counts as ON that segment for passing consumption (see
-/// [`Navigator::advance_cursor`]). Wide enough to absorb a ballistic
-/// landing's drift off the line and a shove; narrow enough that a parallel
-/// corridor one cell over never reads as this one.
 const PASS_CORRIDOR: f32 = 0.6;
-/// Minimum progress (m) past a waypoint — along its outgoing segment, or
-/// beyond the end of its incoming one — that counts as having PASSED it.
-/// Big enough that float noise at a corner can't consume the turn before
-/// the body actually rounds it; far below one tick's step for any real
-/// walk speed.
 const PASS_EPS: f32 = 0.05;
-/// How many waypoints ahead of the cursor the passing scan examines. A
-/// ballistic arc (a mod-driven hop, a knockback flight) can carry the body
-/// past at most a couple of one-cell waypoints between two ticks.
 const PASS_LOOKAHEAD: usize = 3;
-/// Re-pathfind toward an *unchanged* goal once this many ticks have passed since the
-/// current path was computed — once a second at 20 TPS. Long enough that holding a goal
-/// across ticks is cheap, short enough that a path computed against an earlier world
-/// state is refreshed: it invalidates a route since blocked by terrain changes, and
-/// picks up a now-shorter one, instead of a mob following a stale path forever. The
-/// stuck tally (above) carries across the refresh, so a mob wedged the whole time still
-/// eventually gives up rather than re-pathing into the same wall indefinitely.
 const REPATH_TICKS: u32 = 20;
-/// Longest same-goal retry interval after repeated partial/failed searches.
 const MAX_REPATH_BACKOFF_TICKS: u32 = 200;
 
 pub struct Navigator {
     path: Vec<IVec3>,
-    /// Index of the next waypoint to walk to.
     index: usize,
     goal: Option<IVec3>,
-    /// Whether the current path reaches `goal`. Failed searches still keep a
-    /// best-effort partial path, but same-goal refreshes back off.
     path_reaches_goal: bool,
     params: PathParams,
     half_width: f32,
-    /// The body's REAL height (m) — the edge gate sweeps the actual AABB, not
-    /// the whole-cell head count.
     height: f32,
     stuck: u32,
     last_pos: petramond_math::world_pos::WorldPos,
-    /// Best horizontal distance to the held goal achieved so far, and the
-    /// steered ticks since it last improved — the [`GOAL_STALL_CALLS`]
-    /// liveness signal. Reset on goal change only; deliberately NOT on
-    /// repath (the tally must keep climbing across route refreshes, like
-    /// [`stuck`](Self::stuck)).
     goal_best: f32,
     goal_stall: u32,
-    /// Ticks since the current path was computed; at [`REPATH_TICKS`] the held goal is
-    /// re-pathed to refresh a route gone stale (see the constant).
     since_path: u32,
-    /// Current same-goal retry interval. Successful routes and goal changes reset this
-    /// to [`REPATH_TICKS`]; repeated partial searches double it up to the cap.
     repath_interval: u32,
-    /// What the live hazard guard refused on recent routes; persistent
-    /// refusals back off like a partial route instead of recomputing.
     refusals: hazards::Refusals,
-    /// This species' same-goal refresh cadence ([`REPATH_TICKS`] unless its
-    /// row tunes it) — the interval a reachable route refreshes at and the
-    /// base of the unreachable backoff.
     repath_ticks: u32,
-    /// A route search the tick's budget could not finish, continuing next
-    /// tick while the current route is still followed.
     pending: Option<plan::PendingSearch>,
     #[cfg(test)]
     recomputes: u32,
@@ -169,21 +106,15 @@ impl Navigator {
         }
     }
 
-    /// This navigator for a species that tolerates the hazardous `blocks`.
     pub fn tolerating(mut self, blocks: &'static [Block]) -> Self {
         self.params = self.params.tolerating(blocks);
         self
     }
 
-    /// No active path — the mob has arrived, given up, or was never tasked. The
-    /// brain reads this (via `AiCtx::nav_idle`) to know it may pick a new goal.
-    /// A mob whose route search is still running is NOT idle, even with no
-    /// route to walk yet — it has a destination, just not the way there.
     pub fn is_idle(&self) -> bool {
         self.goal.is_none() || (self.index >= self.path.len() && self.pending.is_none())
     }
 
-    /// The current path (foothold cells, start→goal), for tests to observe re-pathing.
     #[cfg(test)]
     pub(super) fn path(&self) -> &[IVec3] {
         &self.path
@@ -208,17 +139,6 @@ impl Navigator {
         self.pending = None;
     }
 
-    /// [`follow`](Self::follow) plus collision-aware steering: the raw wish aims
-    /// straight at the waypoint centre from wherever the body ACTUALLY is, but a
-    /// mob standing offset from the planned line (it wandered flush against a
-    /// trough; it was shoved) would then press its body diagonally into a shape
-    /// the plan itself avoids. Before emitting the wish, the real body AABB is
-    /// swept a short lookahead along it; a blocked axis has its component
-    /// dropped, so the mob walks cleanly ALONG the obstacle's face — facing its
-    /// true travel direction — instead of grinding into it until physics happens
-    /// to free it. The deflection never fires on the final approach (the probe
-    /// is capped at the remaining distance) nor when the plan wants a step-up
-    /// jump (the ledge face ahead IS the route).
     pub fn follow_steered(
         &mut self,
         pos: petramond_math::world_pos::WorldPos,
@@ -230,8 +150,6 @@ impl Navigator {
             return (wish, jump);
         }
         let wp = self.path[self.index];
-        // A step-up approach must keep pressing toward the ledge face so the
-        // jump trigger and the climb keep working exactly as before.
         if f64::from(wp.y) > pos.y + 0.5 {
             return (wish, jump);
         }
@@ -272,7 +190,6 @@ impl Navigator {
     /// descent, a fall, a knockback flight — because a ballistic arc passes
     /// waypoints between steered ticks.
     pub fn advance_cursor(&mut self, pos: petramond_math::world_pos::WorldPos) {
-        // Passing: scan the lookahead window; the farthest passed wins.
         let end = self
             .path
             .len()
@@ -284,12 +201,10 @@ impl Navigator {
                 continue;
             }
             let level_ok = |cell: IVec3| ((pos.y - f64::from(cell.y)) as f32).abs() <= ARRIVE_Y;
-            // Overrun of the incoming segment: projection beyond its far end.
             let (t_in, lat_in, len_in) = project_horizontal(pos, self.path[j - 1], self.path[j]);
             let over_in = t_in > len_in + PASS_EPS
                 && lat_in <= PASS_CORRIDOR
                 && (level_ok(self.path[j - 1]) || level_ok(self.path[j]));
-            // Progress along the outgoing segment (when one exists).
             let over_out = j + 1 < self.path.len() && {
                 let (t_out, lat_out, _) = project_horizontal(pos, self.path[j], self.path[j + 1]);
                 t_out > PASS_EPS
@@ -303,7 +218,6 @@ impl Navigator {
         if let Some(j) = passed {
             self.index = self.index.max(j + 1);
         }
-        // Arrival cascade on the (possibly advanced) current target.
         let arrive_xz = self.arrive_xz();
         while self.index < self.path.len() {
             let wp = self.path[self.index];
@@ -318,9 +232,6 @@ impl Navigator {
         }
     }
 
-    /// This tick's locomotion: a unit horizontal `wish` direction toward the current
-    /// waypoint, and whether to jump. Consumes waypoints as they're reached and
-    /// abandons the path if the mob stalls.
     pub fn follow(
         &mut self,
         pos: petramond_math::world_pos::WorldPos,
@@ -332,7 +243,6 @@ impl Navigator {
             let (dx, dz) = cell_centre_offset(wp, pos);
             let horiz = (dx * dx + dz * dz).sqrt();
 
-            // Progress / stuck tracking.
             let progress = pos - self.last_pos;
             let (progress_dx, progress_dz) = (progress.x, progress.z);
             if progress_dx * progress_dx + progress_dz * progress_dz < STUCK_EPS_SQ {
@@ -345,9 +255,6 @@ impl Navigator {
                 self.clear();
                 return (Vec3::ZERO, false);
             }
-            // Goal-progress liveness (see GOAL_STALL_CALLS): moving a lot is
-            // not going somewhere — abandon a route whose best-achieved
-            // distance to the goal has stopped improving.
             if let Some(goal) = self.goal {
                 let (gx, gz) = cell_centre_offset(goal, pos);
                 let goal_dist = (gx * gx + gz * gz).sqrt();
@@ -368,16 +275,11 @@ impl Navigator {
             } else {
                 Vec3::ZERO
             };
-            // Jump when the next waypoint is a step up and we're grounded + close to
-            // the edge, so forward speed carries the mob onto the higher block.
             let step_up = f64::from(wp.y) > pos.y + 0.5;
             let jump = on_ground && step_up && horiz <= self.half_width + JUMP_TRIGGER_FRONT_XZ;
             return (dir, jump);
         }
 
-        // Path exhausted. A route that reached the goal has arrived and resets the
-        // navigator. A partial route stays associated with the same goal so held-goal
-        // retries obey the unreachable-goal backoff instead of immediately recomputing.
         if self.path_reaches_goal {
             self.clear();
         } else {
@@ -387,11 +289,6 @@ impl Navigator {
         (Vec3::ZERO, false)
     }
 
-    /// The route cell a falling body is over and dropping into: one of the
-    /// waypoints around the cursor, at or below the feet, whose centre the
-    /// body has reached along its drift `vel`. A fall keeps the sideways
-    /// speed the ledge was left with, and carried on it lands a cell late —
-    /// which on a flight of steps down is the next drop, and the one after.
     pub fn landing_under(
         &self,
         pos: petramond_math::world_pos::WorldPos,
@@ -412,8 +309,6 @@ impl Navigator {
     }
 }
 
-/// The horizontal offset from `pos` to the centre of `cell`, taken in double
-/// precision before it narrows to the local frame.
 fn cell_centre_offset(cell: IVec3, pos: petramond_math::world_pos::WorldPos) -> (f32, f32) {
     (
         (f64::from(cell.x) + 0.5 - pos.x) as f32,
@@ -421,10 +316,6 @@ fn cell_centre_offset(cell: IVec3, pos: petramond_math::world_pos::WorldPos) -> 
     )
 }
 
-/// Horizontal projection of `pos` onto the route segment between cell centres
-/// `a` and `b`: (signed distance along the segment direction from `a` in
-/// metres — may be negative or beyond the length — the perpendicular distance
-/// from the segment's line, and the segment's length).
 fn project_horizontal(
     pos: petramond_math::world_pos::WorldPos,
     a: IVec3,
@@ -441,18 +332,8 @@ fn project_horizontal(
     (px * ux + pz * uz, (px * uz - pz * ux).abs(), len)
 }
 
-/// How far ahead (m) the steering probe sweeps the body along the wish. About
-/// half a body: far enough to react a couple of ticks before contact, short
-/// enough that unrelated geometry beyond the current move never deflects.
 const STEER_LOOKAHEAD: f32 = 0.4;
 
-/// Collision-aware wish adjustment (see [`Navigator::follow_steered`]): sweep
-/// the body along `wish` up to `remaining` (never past the waypoint — the
-/// final approach must stay allowed to close in on a face-adjacent centre);
-/// when travel is cut short, drop the blocked axis component and keep the open
-/// one, re-normalised. Both blocked (a true head-on, which a valid plan
-/// doesn't produce from a centred pose) keeps the original wish — the shared
-/// resolver still slides, and the stuck tally + repath remain the backstop.
 fn deflect_wish(
     pos: petramond_math::world_pos::WorldPos,
     half_width: f32,
@@ -466,13 +347,9 @@ fn deflect_wish(
         return wish;
     }
     let hw = f64::from(half_width.max(0.0));
-    // A hair above the feet so the floor being rested on never reads as a
-    // cross-axis overlap under float noise.
     let min = [pos.x - hw, pos.y + 1e-3, pos.z - hw];
     let max = [pos.x + hw, pos.y + f64::from(height.max(0.5)), pos.z + hw];
     let (dx, dz) = (wish.x * lookahead, wish.z * lookahead);
-    // The same step allowance walking uses: something the body would simply
-    // step onto is not an obstacle worth deflecting around.
     let (_, hit_x, hit_z) =
         collision::step_horizontal(min, max, dx, dz, collision::STEP_HEIGHT, boxes);
     if !hit_x && !hit_z {
@@ -499,30 +376,17 @@ const UNSTICK_ANGLE: f32 = std::f32::consts::FRAC_PI_3;
 /// Contacts are recorded from the PREVIOUS tick's overlap, so a successful
 /// veer erases its own trigger one tick later; without this hold the veer
 /// flip-flops — veer, straight, re-press, veer — and the wish (which the
-/// body FACES) wags ±60° at a few hertz: the crowd-jitter bug. Committing to
+/// body FACES) wags ±60° at a few hertz. Committing to
 /// the side briefly walks a small clean arc around the peer instead.
 const UNSTICK_HOLD_TICKS: u8 = 8;
 
-/// The crowd veer with its side COMMITMENT (2026-07-20; the stateless
-/// version jittered). While a touching entity blocks the wish, the wish is
-/// rotated [`UNSTICK_ANGLE`] to the side away from the contact (a dead-ahead
-/// tie breaks on the stable id) so two mobs pushing each other slide past
-/// instead of cancelling out; the chosen side then HOLDS — against contact
-/// flicker and against the cross-product changing its mind mid-manoeuvre —
-/// until the contact has stayed gone for [`UNSTICK_HOLD_TICKS`]. Transient
-/// per-instance steering state; never persisted.
 #[derive(Default)]
 pub(super) struct Unstick {
-    /// The committed veer side (+1 / −1); meaningful while `hold > 0`.
     side: f32,
-    /// Ticks of commitment left once the blocking contact stops registering.
     hold: u8,
 }
 
 impl Unstick {
-    /// Veer `wish` around a touching entity it drives into. The brain's
-    /// current TARGET never deflects — a hunter means to reach its prey.
-    /// Deterministic: the same scene and latch state always veer the same way.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn steer(
         &mut self,
@@ -536,15 +400,11 @@ impl Unstick {
         players: &[PlayerAnchor],
     ) -> Vec3 {
         if wish == Vec3::ZERO {
-            // Standing: let any leftover commitment expire so it can't bend
-            // the first step of the next walk half a second later.
             self.hold = self.hold.saturating_sub(1);
             return wish;
         }
         match blocking_bearing(wish, pos, half_width, contacts, target, mobs, players) {
             Some(d) => {
-                // A live block refreshes the commitment; the side is only
-                // (re)chosen when no commitment is running.
                 if self.hold == 0 {
                     self.side = veer_side(wish, d, self_id);
                 }
@@ -552,9 +412,6 @@ impl Unstick {
                 veer(wish, self.side)
             }
             None if self.hold > 0 => {
-                // The contact cleared — keep rounding the peer on the same
-                // side while the commitment runs down, instead of snapping
-                // straight and pressing right back into it.
                 self.hold -= 1;
                 veer(wish, self.side)
             }
@@ -563,9 +420,6 @@ impl Unstick {
     }
 }
 
-/// The bearing of the nearest touching entity that blocks `wish` (touching
-/// bodies only — far bodies are the soft route costs' business), or `None`
-/// when nothing ahead is pressed against.
 fn blocking_bearing(
     wish: Vec3,
     pos: petramond_math::world_pos::WorldPos,
@@ -610,13 +464,9 @@ fn blocking_bearing(
     } else {
         1.0
     };
-    // A contact behind the travel direction is not ours to dodge.
     (facing > 0.0).then_some(d)
 }
 
-/// The side to veer AWAY from a contact at bearing `d`; a dead-ahead contact
-/// (cross ≈ 0) picks a side by the mob's stable id, so a head-on pair stops
-/// being anti-parallel and the pushes gain a lateral component.
 fn veer_side(wish: Vec3, d: Vec3, self_id: u64) -> f32 {
     let cross = wish.x * d.z - wish.z * d.x;
     if cross.abs() < 1e-3 {
@@ -639,16 +489,10 @@ fn veer(wish: Vec3, side: f32) -> Vec3 {
     )
 }
 
-/// How a cell's real collision reads for navigation.
 #[derive(Copy, Clone, PartialEq)]
 enum CellShape {
-    /// No collision boxes: freely passable, bears nothing.
     Empty,
-    /// One box filling the whole cell: a body can never be inside it.
     Full,
-    /// Any other box set (a ladder panel, a pane, a chest, a slab, a door, a
-    /// model block's legs): routable in principle — whether a specific body
-    /// fits a specific move is [`navigation_step_gate`]'s call.
     Partial,
 }
 
@@ -662,24 +506,10 @@ fn classify_boxes(boxes: &[Aabb]) -> CellShape {
     }
 }
 
-/// The coarse `solid` probe for cell navigation: only FULL cells block a cell
-/// outright. Partial shapes are the edge gate's business — treating them as
-/// solid walls off routes a body actually fits through (a ladder corridor),
-/// while treating them as air walks mobs into their boxes forever.
-/// The one BY-DESIGN exception is a shape that DECLARES itself nav-solid through
-/// its [`ShapeSim::nav_reads_solid`](petramond_world::block::ShapeSim) facet — the fence
-/// family, and any custom shape with `nav_solid` set. Such a cell always
-/// reads solid, so no route steps through it and the one-block jump from the
-/// ground is no foothold jump either (see [`nav_support_fn`] for the step-up
-/// caveat) — a lone fence/hedge is a wall here or no pen would hold.
 pub(super) fn nav_solid_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
 ) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
     move |c: IVec3| {
-        // ONE cell read serves both questions: the nav-solid declaration and
-        // the box classification are per-id facts for every shape whose
-        // collision is state-free, and the rest resolve from the block we
-        // already hold.
         let block = cur.physics_block(c);
         if block.nav_reads_solid() {
             return true;
@@ -688,17 +518,12 @@ pub(super) fn nav_solid_fn<'c, 'w>(
     }
 }
 
-/// The `fluid` probe every navigation search shares.
 pub(super) fn nav_fluid_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
 ) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
     move |c: IVec3| cur.fluid_cell(c)
 }
 
-/// The fluid a body at `pos` stands in or rests on, by cell: its feet cell or
-/// the one below. This is navigation footing, deliberately wider than physical
-/// immersion — a swimmer bobbing clear of its probe still routes from the
-/// fluid surface.
 pub(super) fn fluid_footing(
     cur: &SectionCursor<'_>,
     pos: petramond_math::world_pos::WorldPos,
@@ -709,24 +534,12 @@ pub(super) fn fluid_footing(
         .or_else(|| cur.physics_block(feet - IVec3::Y).fluid())
 }
 
-/// The streaming-finality probe cell searches gate on.
 pub(super) fn nav_loaded_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
 ) -> impl Fn(IVec3) -> bool + use<'c, 'w> {
     move |c: IVec3| cur.cell_final(c)
 }
 
-/// The `support` probe: can this cell bear the feet of a body CENTRED in its
-/// column? A full cube always can; a partial shape only when one of its boxes
-/// horizontally overlaps the centred footprint — a slab, a bed, or a chest
-/// does, while a door's or a ladder's thin EDGE panel does not (a body cannot
-/// rest its feet on a 1/16 sliver it doesn't even cover). Without the overlap
-/// test, routes confidently "stand" on top of closed doors. Pairs with
-/// [`nav_solid_fn`] through the `*_with` probes in [`path`].
-/// A fence top DOES support (the post overlaps the centre): a lone fence stays
-/// uncrossable because its cell is `solid` and the edge gate refuses the
-/// one-block sweep from the ground — while a step placed beside the fence
-/// opens the honest flat route over its top, as it physically should.
 pub(super) fn nav_support_fn<'c, 'w>(
     cur: &'c SectionCursor<'w>,
     half_width: f32,

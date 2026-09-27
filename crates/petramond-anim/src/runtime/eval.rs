@@ -1,6 +1,3 @@
-//! Node evaluation: each node writes its pose over the ground it is handed,
-//! advancing its own clocks as it goes.
-
 use glam::Vec3;
 
 use super::{Animator, FiredMarker, MARKER_WEIGHT};
@@ -16,7 +13,6 @@ use petramond_world::bbmodel::Channel;
 pub(super) struct MachineRt {
     started: bool,
     current: usize,
-    /// Oldest first; each entry fades in over everything beneath it.
     stack: Vec<Fade>,
     inertia: Inertia,
 }
@@ -40,8 +36,6 @@ impl Fade {
 }
 
 impl Animator {
-    /// Write node `id`'s pose into `out`, which holds `ground` on entry.
-    /// `weight` is the node's share of the final pose, which gates markers.
     pub(super) fn eval(
         &mut self,
         g: &Graph,
@@ -85,8 +79,6 @@ impl Animator {
                     }
                     return;
                 };
-                // One phase for every gait: each clip sits at the same fraction
-                // of its own length, advancing at the weighted mean length.
                 let rate = self.expr(g, rate);
                 let clip_len = |node: NodeId| match &g.nodes[node.0 as usize] {
                     Node::Clip(c) => g.clips.get(c.clip).length,
@@ -230,9 +222,6 @@ impl Animator {
                 self.reset_node(g, m.states[t.to].1);
             }
             if t.inertial || t.fade <= 0.0 || live {
-                // A state still fading out cannot fade in a second time without
-                // running its clocks twice, so re-entry collapses the stack and
-                // inertialization carries the difference instead.
                 rt.stack.clear();
                 rt.stack.push(Fade {
                     state: t.to,
@@ -303,7 +292,6 @@ impl Animator {
         out.set_clip_at_looping(anim, sample_time(to * len, len, true), true);
     }
 
-    /// Back to the start: clocks to zero, machines to their initial state.
     fn reset_node(&mut self, g: &Graph, node: NodeId) {
         match &g.nodes[node.0 as usize] {
             Node::Clip(c) => self.clocks[c.clock] = 0.0,
@@ -324,8 +312,6 @@ impl Animator {
         }
     }
 
-    /// How far through a node is, for `state.progress`: a clip's played
-    /// length in clip lengths (past 1 once a one-shot has finished).
     fn progress(&self, g: &Graph, node: NodeId) -> f32 {
         match &g.nodes[node.0 as usize] {
             Node::Clip(c) => {
@@ -365,7 +351,6 @@ impl Animator {
         old
     }
 
-    /// Record every marker of `clip` in `[from, to)` on the unwrapped timeline.
     pub(super) fn cross(
         &mut self,
         g: &Graph,
@@ -421,7 +406,6 @@ fn sample_time(t: f32, len: f32, looping: bool) -> f32 {
     }
 }
 
-/// The two points `x` falls between and how far from the first.
 fn locate(points: &[(f32, NodeId)], x: f32) -> (NodeId, NodeId, f32) {
     let (first, last) = (points[0], points[points.len() - 1]);
     if !x.is_finite() || x <= first.0 {

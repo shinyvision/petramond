@@ -1,9 +1,3 @@
-//! Title screen controller: Start Game → world select; Connect to Server →
-//! the connect screen; Content → the content browser; the corner icon
-//! → the Petramond account; Quit. The launcher dock holds one icon button per
-//! pack that declares a `pack.json` launch entry. One notice line under the
-//! menu says what the content library is doing.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -14,14 +8,12 @@ use crate::app::{AppScreen, ExitKind};
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 
 const LAUNCHERS: &str = "launchers";
-/// Each dock row's button; its click carries the row's item index.
 const LAUNCHER: &str = "launcher";
 
 fn icon_name(pack_id: &str) -> String {
     format!("launch_icon:{pack_id}")
 }
 
-/// The launch entries' icons, for the document's bound images.
 pub(super) fn prepare(ctx: &mut ScreenCtx) -> bool {
     let icons: Vec<(String, PathBuf)> = launch_entries()
         .map(|(id, entry)| (icon_name(id), entry.icon.clone()))
@@ -60,9 +52,6 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     );
 }
 
-/// The notice line and its full text. First wins: what the last start could
-/// not apply, an apply another window held off, downloads running, changes
-/// waiting to be applied.
 pub(in crate::app) fn notice(
     report: &petramond::content::ApplyReport,
     content: &ContentSession,

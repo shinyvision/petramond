@@ -30,47 +30,34 @@ use crate::{
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Sets a world can hold: the terrain vertex spends four bits on the set id.
 pub const MAX_SETS: usize = 16;
-/// Materials per set: local ids are four bits, and zero means "no donor".
 pub const MAX_MATERIALS_PER_SET: usize = 15;
-/// The displacement mask is a square grid of ordinary atlas cells.
 pub const MASK_SIDE: usize = 4;
-/// Half a tile: a wider band would let a texel border two opposite edges.
 pub const MAX_WIDTH_TEXELS: u8 = 8;
 
-/// A material's original albedo composition on one cube-face class.
 #[derive(Clone, Copy, Debug)]
 pub struct FaceMaterial {
     pub base: Tile,
     pub overlay: Option<Tile>,
 }
 
-/// One block's appearance inside a set. Local id = index + 1, in block-name
-/// order, so ids never depend on registry or pack load order.
 #[derive(Debug)]
 pub struct Material {
     pub block: Block,
-    /// Top, bottom, side, matching a block row's tile vocabulary.
     pub faces: [FaceMaterial; 3],
 }
 
-/// One edge style: a mask, a width, the materials that use it, and which of
-/// them may bleed into which.
 #[derive(Debug)]
 pub struct Set {
     pub name: String,
     pub mask: Tile,
     pub width_texels: u8,
-    /// Every tinted tile of every member shares this class (load-checked).
     pub tint: Option<TileTint>,
     pub materials: Vec<Material>,
-    /// Bit `b` of entry `a`: local materials `a` and `b` transition.
     pairs: [u16; MAX_MATERIALS_PER_SET + 1],
 }
 
 impl Set {
-    /// Pairs are symmetric; membership alone never implies a relationship.
     pub fn allows(&self, a: u8, b: u8) -> bool {
         a != 0
             && b != 0
@@ -79,7 +66,6 @@ impl Set {
     }
 }
 
-/// A block's place in one set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Membership {
     pub set: u8,
@@ -93,18 +79,14 @@ struct BlockEntry {
     tinted: bool,
 }
 
-/// Immutable policy, shared by mesh workers and shader construction.
 #[derive(Debug)]
 pub struct Rules {
-    /// Name-ordered; a set's index is its id in the vertex payload.
     pub sets: Vec<Set>,
     memberships: Vec<Membership>,
     by_block: Box<[BlockEntry]>,
 }
 
 impl Rules {
-    /// Every set `block` is a material of, in set order. Empty for a block
-    /// outside the pair list — the per-cell test hot loops rely on.
     #[inline]
     pub fn memberships(&self, block: u16) -> &[Membership] {
         match self.by_block.get(block as usize) {
@@ -120,13 +102,11 @@ impl Rules {
             .is_some_and(|e| e.count != 0)
     }
 
-    /// Whether any set `block` belongs to carries a biome tint class.
     #[inline]
     pub fn is_tinted_material(&self, block: u16) -> bool {
         self.by_block.get(block as usize).is_some_and(|e| e.tinted)
     }
 
-    /// `block`'s local id inside `set`, or zero when it is not a member.
     #[inline]
     pub fn local(&self, set: u8, block: u16) -> u8 {
         self.memberships(block)
@@ -135,14 +115,11 @@ impl Rules {
             .map_or(0, |m| m.local)
     }
 
-    /// Compile a catalog from its JSON layers (base first, packs after).
     pub fn from_layers(texts: &[&str]) -> Result<Rules, String> {
         compile(parse_layers(texts)?)
     }
 }
 
-/// The transition catalog stage of every content registry, after the block
-/// and tile catalogs it composes.
 pub(crate) static RULES: crate::content::Slot<Rules> = crate::content::Slot::new(
     crate::content::stage::TEXTURE_TRANSITIONS,
     &[crate::content::stage::BLOCKS, crate::content::stage::TILES],
@@ -153,7 +130,6 @@ fn load(reg: &crate::content::ContentRegistry) -> Result<Rules, String> {
     crate::registry::read_catalog(reg.packs(), FILE, "texture transition", Rules::from_layers)
 }
 
-/// The current registry's transition rules.
 pub fn rules() -> &'static Rules {
     RULES.current()
 }
@@ -183,9 +159,6 @@ struct Merged {
     pairs: Vec<RawPair>,
 }
 
-/// Parse every layer once and merge both row arrays by key: a later layer's
-/// row replaces an earlier one, patch rows collect for the enabled gate, and
-/// retired pairs leave the catalog before compilation.
 fn parse_layers(texts: &[&str]) -> Result<Merged, String> {
     fn merge<R>(rows: &mut Vec<R>, row: R, key: impl Fn(&R) -> &str) {
         match rows.iter().position(|r| key(r) == key(&row)) {
@@ -200,7 +173,6 @@ fn parse_layers(texts: &[&str]) -> Result<Merged, String> {
         let layer = || format!("layer #{li}");
         let file: serde_json::Value =
             serde_json::from_str(text).map_err(|e| format!("{}: invalid JSON: {e}", layer()))?;
-        // A layer states only the arrays it contributes to.
         if file.get("sets").is_some() {
             for set in crate::registry::parse_rows_of::<RawSet>(&file, "sets", "set")
                 .map_err(|e| format!("{}: {e}", layer()))?
@@ -256,7 +228,6 @@ fn block_named(name: &str) -> Result<Block, String> {
         .ok_or_else(|| format!("unknown transition block '{name}'"))
 }
 
-/// A material's face composition, or why the block cannot be one.
 fn faces_of(block: Block, name: &str) -> Result<[FaceMaterial; 3], String> {
     if !block.is_opaque()
         || block.is_fluid()
@@ -297,8 +268,6 @@ fn compile(raw: Merged) -> Result<Rules, String> {
             raw.sets.len()
         ));
     }
-    // Name order everywhere: set ids and local material ids must not depend
-    // on registry ids, row order, or which packs are enabled.
     let mut set_rows: Vec<RawSet> = raw.sets;
     set_rows.sort_by(|a, b| a.set.cmp(&b.set));
     let set_index = |name: &str| set_rows.iter().position(|s| s.set == name);

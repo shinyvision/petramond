@@ -1,5 +1,3 @@
-//! Texture-region appearance, resolved once when model templates are baked.
-
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -11,8 +9,6 @@ pub struct FrameStrip {
     pub interpolate: bool,
 }
 
-/// A region in the model's combined texture sheet, using normalized UVs.
-/// Animated faces address the first frame; the region includes the entire strip.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SurfaceMaterial {
@@ -66,7 +62,6 @@ pub(super) fn validate(rows: &[SurfaceMaterial]) -> Result<(), String> {
     Ok(())
 }
 
-/// An atlas-space flipbook. Slot zero is the static identity.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextureAnimation {
     pub stride: f32,
@@ -86,7 +81,6 @@ impl Default for TextureAnimation {
     }
 }
 
-/// Static albedo and the atlas's animation slot; neither changes mesh geometry.
 #[derive(Clone, Copy, Debug)]
 pub struct FaceAppearance {
     pub tint: [u8; 3],
@@ -122,7 +116,6 @@ impl FaceAppearance {
             }
     }
 
-    /// RGB multiply with an optional per-cell tint, packed below the animation byte.
     pub fn packed(self, cell_tint: Option<u32>) -> u32 {
         let color = self.tint.map(u32::from);
         let [r, g, b] = match cell_tint {

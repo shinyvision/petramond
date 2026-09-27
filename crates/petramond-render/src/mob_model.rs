@@ -32,16 +32,9 @@ use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::{clips, euler_quat, face_corners, Animation, Model};
 
-/// White: mobs are textured directly (no foliage tint), so the shader's
-/// `tex.rgb * shade * tint` reduces to `tex.rgb * shade`.
 const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
-/// The multiply tint a fully-hurt mob flashes — dims green/blue toward red (a multiply
-/// can't brighten, so this reads as a red cast rather than an additive glow).
 const HURT_RED: [f32; 3] = [1.0, 0.25, 0.25];
 
-/// The vertex tint for a mob flashing `hurt` (0..1): white at rest, fading toward
-/// [`HURT_RED`] at full intensity. Shared with the third-person player body so
-/// taking damage flashes the player exactly like a hurt mob.
 pub(super) fn hurt_tint(hurt: f32) -> [f32; 3] {
     let h = hurt.clamp(0.0, 1.0);
     [
@@ -51,10 +44,6 @@ pub(super) fn hurt_tint(hurt: f32) -> [f32; 3] {
     ]
 }
 
-/// A body's lit tint: the hurt flash times its emitter tint, lit by the
-/// sampled light mixed toward full bright by its emitter self-lighting. The
-/// first-person arms bake it into their vertices; skinned bodies carry the
-/// same inputs per instance and `skinned.wgsl` computes the same value.
 pub(super) fn body_tint(
     hurt: f32,
     emitter_tint: [f32; 3],
@@ -65,8 +54,6 @@ pub(super) fn body_tint(
     fold_tint_self_lit(mul3(hurt_tint(hurt), emitter_tint), light, env, self_lit)
 }
 
-/// Where one posed mob holds one item: the hand's grip and the light to draw
-/// the item in. Collected while the mobs bake and drawn with the held items.
 pub(crate) struct MobHeld {
     pub grip: crate::player_model::Grip,
     pub item: petramond_world::item::ItemType,
@@ -74,20 +61,14 @@ pub(crate) struct MobHeld {
     pub light: DynLight,
 }
 
-/// What a species' model resolves to once, so the per-instance pose compares
-/// no names: its hand bones, its coat cubes, and its rest-pose self-AO.
 pub(crate) struct MobRig {
-    /// Main and off hand: the bone index and the grip point in its rest pose.
     hands: [Option<(usize, Vec3)>; 2],
     hand_roll: f32,
-    /// Per cube: part of the shearable coat.
     coat: Vec<bool>,
-    /// Rest-pose self-AO per cube face corner, at the species' strength.
     self_ao: Option<Vec<[[f32; 4]; 6]>>,
 }
 
 impl MobRig {
-    /// `coat` names the species' shearable-coat cubes, when it has a coat.
     pub(crate) fn resolve(
         model: &Model,
         hands: Option<petramond::mob::MobHands>,
@@ -110,8 +91,6 @@ impl MobRig {
         }
     }
 
-    /// Add the rest-pose self-AO table at `strength`. A coat casts nothing:
-    /// shorn, the body it covered must not stay dark.
     pub(crate) fn with_self_ao(mut self, model: &Model, scale: f32, strength: f32) -> Self {
         let world_px = 1.0 / (16.0 * scale.max(1e-6));
         let mut table = model.rest_self_ao(world_px, |cube| !self.coat[cube]);
@@ -122,9 +101,6 @@ impl MobRig {
         self
     }
 
-    /// The species' static skinned mesh at render `scale`: every cube face in
-    /// bind space, the coat's cubes in [`PART_COAT`] so a shorn instance can
-    /// hide them, the self-AO folded into the shade.
     pub(crate) fn mesh(&self, model: &Model, scale: f32) -> SkinMesh {
         SkinMesh::build(model, scale, self.self_ao.as_deref(), |cube| {
             if self.coat.get(cube).copied().unwrap_or(false) {
@@ -136,27 +112,18 @@ impl MobRig {
     }
 }
 
-/// The frame's mob arena rows and the session's animation-name table, as the
-/// pose reads them: every [`MobRenderInstance`] addresses its fading gaits,
-/// named layers and ragdoll bones by range into `arena`.
 #[derive(Copy, Clone)]
 pub(crate) struct MobLayers<'a> {
     pub arena: &'a crate::MobArena,
     pub names: &'a crate::AnimNames,
 }
 
-/// One species' animation ids resolved to its model's clips. An id resolves
-/// by name once; after that a lookup is an index plus a pointer compare
-/// against the table's name (a new session's table names ids afresh, which
-/// the compare catches), so no frame hashes or compares a clip name.
 #[derive(Default)]
 pub(crate) struct AnimClips<'m> {
     slots: Vec<Option<(Arc<str>, Option<&'m Animation>)>>,
 }
 
 impl<'m> AnimClips<'m> {
-    /// `id`'s clip in `model`, or `None` when the model has no such clip (or
-    /// the id is not in `names`).
     pub(crate) fn resolve(
         &mut self,
         model: &'m Model,
@@ -179,15 +146,12 @@ impl<'m> AnimClips<'m> {
     }
 }
 
-/// What posing one species keeps between frames: its resolved clips, and the
-/// per-instance layer list's storage.
 #[derive(Default)]
 pub(crate) struct MobPoseCache<'m> {
     clips: AnimClips<'m>,
     layers: Vec<(&'m Animation, f32, f32)>,
 }
 
-/// The model and reusable pose state for one species draw run.
 pub(crate) struct MobPoseSpecies<'m, 'c> {
     pub model: &'m Model,
     pub scale: f32,
@@ -195,13 +159,6 @@ pub(crate) struct MobPoseSpecies<'m, 'c> {
     pub cache: &'c mut MobPoseCache<'m>,
 }
 
-/// Pose every instance of ONE species (`model` at `scale`) into `batch` —
-/// one palette run and one instance row each, contiguous — and answer the
-/// instance range the species draws. Each instance selects its own animation
-/// — walk while moving, an `idle_*` if one is playing, else the neutral rest
-/// pose — and (when the model has a `head` bone and the active animation isn't
-/// already moving it) the AI head-look is applied to the head. The caller
-/// groups instances by species and frustum-culls them first.
 pub(crate) fn pose_mob_instances<'i, 'm>(
     species: MobPoseSpecies<'m, '_>,
     instances: impl IntoIterator<Item = &'i MobRenderInstance>,
@@ -221,16 +178,11 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
     let head_bone = model.head_bone();
     let walk = model.animation(clips::WALK);
     let hurt_clip = model.animation(clips::HURT);
-    // Animation layers for the instance being posed (base + active named
-    // anims), reused across instances and frames.
     let MobPoseCache {
         clips: anim_clips,
         layers,
     } = cache;
     for inst in instances {
-        // Pose each bone. A dying mob uses a physics delta over the authored rest pose,
-        // so static Blockbench group rotations are still present as it goes limp. A live
-        // mob uses its animation (walk, a playing idle_*, else rest) plus AI head-look.
         let pose: Vec<Mat4> = if let Some(bones) = inst.ragdoll {
             let bones = bones.of(&frame.arena.ragdoll);
             let rest = model.rest_pose();
@@ -251,10 +203,6 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
                 })
                 .collect()
         } else {
-            // Base animation (walk while moving, a playing idle_*, else none)
-            // plus every active NAMED animation at its replicated self-clocked
-            // phase. Names the model lacks are skipped, like disabled pack
-            // content.
             let base: Option<&Animation> = if inst.moving {
                 walk
             } else if let Some(i) = inst.idle_anim {
@@ -287,8 +235,6 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
                             .map(|a| (a, layer.phase, layer.weight))
                     }),
             );
-            // Clips that move the head own it by their WEIGHT: a walk easing
-            // in hands the head over gradually, never in one frame.
             let looking_head = head_bone.map(|hb| {
                 let owned: f32 = layers
                     .iter()
@@ -311,7 +257,6 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
             } else {
                 model.pose_layers(layers)
             };
-            // Hurt is additive to the gaze; authored actions still own the head.
             if let Some((hb, free)) = looking_head.filter(|(_, free)| *free > 0.001) {
                 let parent = model.bones[hb]
                     .parent
@@ -374,12 +319,6 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
     first..batch.next_instance()
 }
 
-/// Emit every cube of the posed model under `global`, tinted by `tint`, skipping
-/// cubes whose INDEX `skip` returns true for (per-instance part hiding like a
-/// shorn sheep's coat; pass `|_| false` for none). Per cube the transform is
-/// `global · pose[bone] · S_cube` (see the module doc). The first-person rig's
-/// CPU bake ([`super::first_person`]), and the reference [`SkinMesh`] is
-/// tested against.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn bake_model_cubes(
     model: &Model,
@@ -411,9 +350,6 @@ pub(super) fn bake_model_cubes(
     }
 }
 
-/// Append one textured cube face (4 verts / 6 indices) transformed by `m`. Skips
-/// degenerate (zero-area) faces — flat sub-cubes (legs/tail) have only one pair of
-/// faces with area, and the rest collapse to lines.
 #[allow(clippy::too_many_arguments)]
 fn push_face(
     verts: &mut Vec<ItemVertex>,
@@ -438,8 +374,6 @@ fn push_face(
     }
 
     let shade = SHADES[face.shade_idx() as usize];
-    // Corner UVs in `quad_box` order (p0 bottom-left, p1 bottom-right, p2
-    // top-right, p3 top-left), per-face rotation applied.
     let corner_uv = uv.corner_uv();
 
     let start = verts.len() as u32;

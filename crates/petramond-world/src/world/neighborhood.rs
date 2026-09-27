@@ -1,12 +1,3 @@
-//! The sim world's implementation of the primitive shape seam.
-//!
-//! `World` (the server's authoritative world AND the client replica — they are
-//! one type) is the sim-side [`ShapeNeighborhood`]: every `ShapeSim` /
-//! `ShapeRender` facet resolves through it here, and through the mesher's
-//! padded snapshot on the worker thread, with ONE family implementation
-//! serving both. Both adapters are a single unified-store read — the seam
-//! ships opaque bytes and NEVER interprets them.
-
 use crate::block::{
     Aabb, Block, CellPart, ShapeBox, ShapeNeighborhood, ShapeRenderBox, ShapeState,
 };
@@ -16,13 +7,6 @@ use crate::mathh::IVec3;
 use super::data::WorldData;
 
 impl WorldData {
-    /// This cell's RESOLVED drawn boxes, for a consumer outside the chunk
-    /// mesher. Routes through the one box producer (`ShapeRender::boxes`), so
-    /// a decal traced over these cannot disagree with the meshed form.
-    ///
-    /// Empty for a family whose form is not a box set (a full cube, a plant, a
-    /// torch, a bbmodel): those draw through their own path and the caller
-    /// falls back to the cell's selection box.
     pub fn shape_draw_boxes(&self, pos: IVec3, out: &mut Vec<ShapeBox>) {
         out.clear();
         let block = self.block(pos);
@@ -30,7 +14,6 @@ impl WorldData {
             return;
         }
         let k = block.shape_kind_def();
-        // A decal takes its own tile everywhere, so no world tint is resolved.
         let tint_for = |_: crate::tile::Tile| [1.0f32; 3];
         k.render.boxes(
             &crate::block::ShapeCtx {
@@ -45,20 +28,12 @@ impl WorldData {
         );
     }
 
-    /// The sub-cell parts the cell at `pos` is composed of, each with the
-    /// block it is made of — the family's own answer (see `ShapeSim::parts`).
-    /// `None` means the cell is one whole part of its own block, which is
-    /// every family but a stacking slab.
     pub fn cell_parts(&self, pos: IVec3) -> Option<Vec<(CellPart, Block)>> {
         let block = self.physics_block(pos.x, pos.y, pos.z);
         let k = block.shape_kind_def();
         k.sim.parts(&k.params, self, pos, block)
     }
 
-    /// The tint the cell at `pos` presents for a break burst: the first part
-    /// carrying one, in part order. A single-part cell is just its bare
-    /// `petramond:tint`; a two-tone slab cell bursts in whichever layer is
-    /// dyed rather than in nothing at all.
     pub fn cell_burst_tint(&self, pos: IVec3) -> Option<[u8; 3]> {
         let read = |part: CellPart| {
             self.cell_kv_get(
@@ -78,15 +53,10 @@ impl WorldData {
 
 impl ShapeNeighborhood for WorldData {
     fn block(&self, pos: IVec3) -> Block {
-        // The sim's authoritative read: an unloaded cell answers the section
-        // summary's virtual block (never a panic), exactly what the per-family
-        // world accessors read before the seam unified them.
         self.physics_block(pos.x, pos.y, pos.z)
     }
 
     fn shape_state(&self, pos: IVec3) -> ShapeState {
-        // ONE read of the unified store — the seam ships the bytes verbatim;
-        // only the family/behavior owning the cell's block decodes them.
         match self.chunk_at_world(pos.x, pos.y, pos.z) {
             Some((c, lx, ly, lz)) => c.cell_state(lx, ly, lz),
             None => ShapeState::NONE,

@@ -1,14 +1,7 @@
-//! World-event broadcast on the batch: the initiator echo strips for own
-//! place/break, the client suppress belt, and multi-batch accumulation.
-
 use super::common::{filled_inventory, game};
 use crate::game::tick::TICK_DT;
 use petramond_math::world_pos::WorldPos;
 
-/// An UNPREDICTED placement (oriented model, replace-in-place, slab stack,
-/// frozen ledger) never presented client-side, so the initiator's own
-/// `BlockPlaced` must FLOW — stripping it (the pre-flag behavior) left the
-/// place with no hand jab and no sound for the placer.
 #[test]
 fn unpredicted_placement_keeps_the_initiators_world_event() {
     use petramond::net::protocol::WorldEventMsg;
@@ -30,7 +23,7 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
         .pending_use_click
         .as_mut()
         .expect("click queued")
-        .predicted = false; // e.g. a model-block click
+        .predicted = false;
 
     let mut inbox = Vec::new();
     let out = game.sim_mut().pump(TICK_DT, &mut inbox);
@@ -58,10 +51,9 @@ fn unpredicted_placement_keeps_the_initiators_world_event() {
     );
 }
 
-/// Player block placement and (mined) breaks broadcast position-carrying
-/// `WorldEventMsg`s. The initiator's own batch omits their PREDICTED place
-/// presentation (echo rule), while a hold-path break they never presented
-/// still reaches them; a second session receives both either way.
+/// Placing and mining blocks broadcasts `WorldEventMsg`s with positions. You don't get your own
+/// predicted place echoed back, but you do get a hold-path break you never showed. A second session
+/// gets both.
 #[test]
 fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     use petramond::net::protocol::WorldEventMsg;
@@ -73,7 +65,7 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     let floor = IVec3::new(3, 63, 3);
     game.server_world_mut()
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone);
-    game.server_player_mut().inventory = filled_inventory(); // Dirt in slot 0
+    game.server_player_mut().inventory = filled_inventory();
     let observer = game
         .sim_mut()
         .add_session_for_test(petramond::player::Player::new(WorldPos::new(
@@ -84,7 +76,6 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     game.sim_mut()
         .mark_section_sent_for_test(observer, floor + IVec3::Y);
 
-    // Place: a latched use click against the floor's top face.
     game.session_mut().input_mut().look = Some(super::common::hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
     let mut inbox = Vec::new();
@@ -138,12 +129,10 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
         observer_batch.events().map(Vec::as_slice).unwrap_or(&[])
     );
 
-    // Break: a PURE hold-path finish — no BreakFinished was ever sent, so the
-    // client never presented (its timer reset on a sub-tick target flicker,
-    // or the break delta cancelled its mining). The initiator MUST receive
-    // BlockBroken; stripping it here was the silent-break bug. A predicted
-    // finish merely in flight presents once regardless: the client's own
-    // suppress belt (`PredictionLedger::mark_presented`) drops the wire copy.
+    // Break: a pure hold-path finish. No `BreakFinished` was sent, so the client never presented
+    // it. The initiator must still receive `BlockBroken`. A predicted finish
+    // in flight presents once anyway, since
+    // `PredictionLedger::mark_presented` drops the wire copy.
     game.session_mut().input_mut().look = Some(super::common::hit(placed_at, IVec3::Y));
     game.session_mut().input_mut().intent_gameplay = true;
     game.session_mut().input_mut().intent_break_held = true;
@@ -214,12 +203,9 @@ fn placement_and_mined_breaks_broadcast_world_events_with_positions() {
     );
 }
 
-/// The client-side suppress belt (`PredictionLedger::mark_presented`): with the
-/// hold-path no longer stripping on assumption (a never-presented break must
-/// flow — the test above), this belt is what keeps a predicted finish whose
-/// request is still IN FLIGHT from presenting twice. A wire `BlockBroken`
-/// for a cell this client already presented is dropped until its request
-/// resolves; any other cell's event assembles normally.
+/// Hold-path breaks always flow now (see the test above), so `PredictionLedger::mark_presented` is
+/// what stops an in-flight predicted finish from presenting twice. A wire `BlockBroken` for a cell
+/// we already presented is dropped until its request resolves. Other cells are unaffected.
 #[test]
 fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() {
     use petramond::net::protocol::{ServerToClient, TickUpdate, WorldEventMsg};
@@ -267,10 +253,6 @@ fn wire_break_for_a_presented_cell_is_suppressed_while_its_request_is_pending() 
     );
 }
 
-/// The self-clocked server thread can outpace a slow frame, so several
-/// `TickUpdate`s may drain in ONE client frame. The buffered `ClientEvents`
-/// must ACCUMULATE across them — one-shot booleans OR, event queues append in
-/// order — never keep only the last batch.
 #[test]
 fn multiple_tick_updates_in_one_frame_accumulate_not_overwrite() {
     use petramond::net::protocol::{TickUpdate, WorldEventMsg};

@@ -1,9 +1,3 @@
-//! The storage a table draws from: supply blocks touching the table, and
-//! supply blocks touching those, as one chain.
-//!
-//! Which blocks count is row data (`builder:supply`), so any pack's storage
-//! joins by patching its row. The table's own blueprint slot never counts.
-
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -17,37 +11,27 @@ use crate::geometry::FACES;
 use crate::keys::SUPPLY_DATA;
 use crate::survey::{key_of, ItemKey};
 
-/// The most containers one chain reaches.
 pub const MAX_CONTAINERS: usize = 32;
 
-/// A table's stock and the tick it was read.
 type ReadStock = (u64, Rc<Stock>);
 
 pub struct Supplies {
     kinds: HashSet<BlockId>,
-    /// Chains already walked, until a cell they looked at changes.
     chains: RefCell<HashMap<[i32; 3], Chain>>,
-    /// What each table's chain held, and the tick it was read.
     stocks: RefCell<HashMap<[i32; 3], ReadStock>>,
 }
 
 struct Chain {
     containers: Vec<[i32; 3]>,
-    /// Every cell the walk asked about: a change to any of them is a change
-    /// to the chain.
     probed: HashSet<[i32; 3]>,
-    /// Asked for since the last sweep.
     used: bool,
 }
 
-/// One chain's contents, read once.
 #[derive(Default)]
 pub struct Stock {
     pub containers: Vec<[i32; 3]>,
     pub slots: Vec<Vec<Option<ItemStackData>>>,
     pub totals: BTreeMap<ItemKey, u32>,
-    /// Whether every container answered. One out of the loaded world reads as
-    /// empty, and empty chests are not the same as chests nobody can see.
     pub read: bool,
 }
 
@@ -69,8 +53,6 @@ impl Supplies {
         }
     }
 
-    /// Every supply container chained to `table`, nearest first. Cells that
-    /// are not stream-final end the chain there, like air.
     pub fn chain(&self, table: [i32; 3]) -> Vec<[i32; 3]> {
         if let Some(chain) = self.chains.borrow_mut().get_mut(&table) {
             chain.used = true;
@@ -78,8 +60,6 @@ impl Supplies {
         }
         let (chain, settled) = self.walk(table);
         let containers = chain.containers.clone();
-        // A walk that met ground still streaming in is no answer to keep:
-        // streaming is no change, so nothing would ever correct it.
         if settled {
             self.chains.borrow_mut().insert(table, chain);
         }
@@ -121,8 +101,6 @@ impl Supplies {
         (chain, settled)
     }
 
-    /// Take in the cells the world's change log names (`lost`: some are
-    /// unknown): chains that looked at one of them are walked again.
     pub fn changed(&self, cells: &[[i32; 3]], lost: bool) {
         let mut chains = self.chains.borrow_mut();
         if lost {
@@ -132,7 +110,6 @@ impl Supplies {
         }
     }
 
-    /// Let go of chains and stock nobody asked for since the last sweep.
     pub fn sweep(&self, now: u64) {
         self.chains
             .borrow_mut()
@@ -140,7 +117,6 @@ impl Supplies {
         self.stocks.borrow_mut().retain(|_, (at, _)| *at == now);
     }
 
-    /// The chain's contents as they are right now.
     pub fn stock(&self, table: [i32; 3]) -> Stock {
         let containers = self.chain(table);
         let answered = container_get_many(
@@ -166,9 +142,6 @@ impl Supplies {
         }
     }
 
-    /// The chain's contents, read at most once a tick per table: for the
-    /// panels and admission, which ask about the same table many times over
-    /// and move nothing themselves.
     pub fn stock_at(&self, table: [i32; 3], now: u64) -> Rc<Stock> {
         if let Some((at, stock)) = self.stocks.borrow().get(&table) {
             if *at == now {
@@ -183,16 +156,12 @@ impl Supplies {
     }
 }
 
-/// How every rendered shortfall begins: a count follows.
 pub const MISSING: &str = "Missing ";
 
-/// What a bill wants beyond what there is: the worst of it. Kept as data in
-/// a project's note and put in words only when shown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Shortfall {
     pub count: u32,
     pub name: String,
-    /// Other items are short too.
     pub more: bool,
 }
 
@@ -224,7 +193,6 @@ pub fn add_totals(into: &mut BTreeMap<ItemKey, u32>, slots: &[Option<ItemStackDa
     }
 }
 
-/// The largest gap of a [`shortfall`], named for the owner.
 pub fn worst(short: &[(ItemKey, u32)], caches: &mut crate::caches::Caches) -> Option<Shortfall> {
     let ((item, _), count) = short.first()?;
     Some(Shortfall {

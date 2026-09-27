@@ -1,20 +1,3 @@
-//! The GUI-document registry: runtime-loaded `*.gui.json` documents from
-//! `assets/ui/documents/`, pack-overlayable by file name.
-//!
-//! Load rules: a namespaced document kind must ship from the pack that owns
-//! the namespace; engine kinds may ship from anywhere (re-skin packs).
-//! Documents validate against the engine's per-kind
-//! [`SlotContract`], the theme's style set, and the server-owned slot
-//! contract table ([`crate::menu::slots`]) — a bad document is skipped
-//! loudly, never trusted to route clicks. Every rule lives in
-//! [`petramond_ui::contract`], shared with the gui-builder.
-//!
-//! Documents are PRESENTATION: what a container's slots admit is decided by
-//! the slot contract table, built once and never reloaded. In debug builds
-//! this registry re-reads changed files (~1s poll), so editing a document
-//! (or re-exporting from the gui-builder) shows up without a restart — a
-//! layout change, never a rules change.
-
 use super::GuiKind;
 use crate::menu::slots::{doc_container_specs, ItemTags, DOCUMENTS_DIR};
 use petramond_ui::contract::{self, image_refs, validate_for_engine, EngineCheck};
@@ -27,9 +10,6 @@ use std::time::{Duration, Instant, SystemTime};
 pub struct DocEntry {
     pub kind: GuiKind,
     pub doc: Arc<Document>,
-    /// Every image the document references (resolved beside the document, in
-    /// first-reference order): the index is the `TexId::DocImage` id both
-    /// layout (natural sizes) and the renderer (bind groups) use.
     pub images: Arc<Vec<DocImageRef>>,
 }
 
@@ -40,7 +20,6 @@ pub struct DocImageRef {
     pub size: (u32, u32),
 }
 
-/// A cheap handle to one loaded document.
 #[derive(Clone)]
 pub struct DocRef {
     pub doc: Arc<Document>,
@@ -49,29 +28,18 @@ pub struct DocRef {
 
 struct Registry {
     entries: Vec<DocEntry>,
-    /// Every file that fed the registry, with its mtime (debug reload).
     sources: Vec<(PathBuf, Option<SystemTime>)>,
     last_check: Instant,
 }
 
 static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
 
-/// Rebuild the document set after packs are installed or removed.
 pub fn reload() {
     *REGISTRY.lock().unwrap() = None;
 }
 
-/// The document for `kind`, if one is loaded. A CRAFTING STATION kind
-/// without its own document — a pack workbench, or the engine's furniture
-/// workbench — is backed by the crafting table's: a station runs the
-/// ordinary crafting session, so its screen is the ordinary crafting screen
-/// unless a dedicated document ships.
 pub fn doc_for(kind: GuiKind) -> Option<DocRef> {
     doc_entry_for(kind).or_else(|| {
-        // Only stations WITHOUT a document of their own fall back — the
-        // inventory and table own their browser screens, and a validation
-        // failure there must stay a loud missing-document failure, not a
-        // silent swap to the other's layout.
         use petramond_world::crafting::CraftingStation;
         CraftingStation::of_kind(kind)
             .is_some_and(|s| s != CraftingStation::Inventory && s != CraftingStation::CraftingTable)
@@ -104,13 +72,6 @@ fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
         })
 }
 
-/// Every LOADED document's kind key with the number of `container` slots the
-/// slot contract table gives its kind — the developer-tool view of "was this
-/// pack's document accepted?".
-///
-/// A rejected document is the one failure in this area with no symptom: the
-/// kind still opens, the specs come back empty, and the pack machine silently
-/// becomes plain storage. Nothing else surfaces it without launching the game.
 pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     let mut guard = REGISTRY.lock().expect("gui document registry");
     let registry = guard.get_or_insert_with(load);
@@ -128,9 +89,6 @@ pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     out
 }
 
-// The GUI-facing statement of the engine's limits lives in
-// `petramond_ui::contract` (shared with the gui-builder); these pin it to the
-// engine's own constants so the two can never drift.
 const _: () = {
     use petramond_ui::contract as ui;
     use petramond_world::inventory::{HOTBAR_LEN, TOTAL_SLOTS};
@@ -144,9 +102,6 @@ const _: () = {
     assert!(ui::IMAGE_MAX_FRAMES == mod_api::GUI_IMAGE_MAX_FRAMES);
 };
 
-/// The engine's slot expectations per kind, from the shared engine kind
-/// table. Mod kinds derive their contract from their own document; shell
-/// kinds carry no role slots.
 pub fn contract_for(kind: GuiKind) -> SlotContract {
     super::kind_key(kind)
         .and_then(contract::engine_kind)
@@ -162,11 +117,6 @@ fn image_size_beside(dir: &std::path::Path, name: &str) -> Option<(u32, u32)> {
     image::image_dimensions(dir.join(name)).ok()
 }
 
-/// Every image a document statically names (the shared [`image_refs`]
-/// walk), resolved beside the document in first-reference order. `Err`
-/// rejects the document: a statically named image whose file is missing, or
-/// a framed sheet its grid does not fit, would otherwise draw wrong with no
-/// symptom until someone opened the screen.
 fn collect_doc_images(doc: &Document, dir: &std::path::Path) -> Result<Vec<DocImageRef>, String> {
     let refs = image_refs(doc);
     let mut images = Vec::with_capacity(refs.len());
@@ -185,15 +135,7 @@ fn collect_doc_images(doc: &Document, dir: &std::path::Path) -> Result<Vec<DocIm
     Ok(images)
 }
 
-/// The standard slot-tooltip chrome every CONTAINER document carries: hovering
-/// a filled slot floats the stack's item name (plus the item's optional `info`
-/// line) at the pointer, fed by the `item_tip_*` keys the host populates for
-/// every menu kind. Injected at load so every GUI that shows slots — engine
-/// containers and pack machine panels alike — has it without shipping the
-/// node by hand: one definition, never per-document drift. A document that
-/// binds `show_item_tip` itself keeps its own chrome instead.
 fn inject_item_tooltip(doc: &mut Document) {
-    /// Keep in sync with the `item_tip_*` keys in `assets/ui/bindings.json`.
     const STANDARD: &str = r#"{
         "type": "tooltip",
         "style": "panel.inset",
@@ -229,30 +171,13 @@ fn inject_item_tooltip(doc: &mut Document) {
     doc.root.children.push(node);
 }
 
-/// Width cap (logical px) of the injected item tooltip. A floating node has
-/// nothing to constrain its natural width, so one long bound string (a pack's
-/// recipe name) would make a panel as wide as the screen; under the cap the
-/// wrapped labels break at it instead. 200 keeps the panel beside the pointer
-/// at the tightest 320 px viewport — the ceiling the documents overflow test
-/// holds every floating panel to.
 pub const ITEM_TIP_MAX_W: i32 = 200;
 
-/// The injected slot tooltip's cap. Its lines are two palette-coloured spans
-/// side by side ("Great  Diamond Tip") at secondary size, which need the extra
-/// width over the item tip before the second span starts ellipsizing; still
-/// well inside the 320 px viewport with the pointer offset.
 pub const SLOT_TIP_MAX_W: i32 = 240;
 
-/// How many LINES the injected slot tooltip shows, and how many coloured
-/// SPANS each line carries. THE statement of the tooltip's shape: the node is
-/// generated from these and the host publishes exactly the keys
-/// [`slot_tip_keys`] names, so widening the tooltip is these numbers alone.
 pub const SLOT_TIP_LINES: usize = 3;
 pub const SLOT_TIP_SPANS: usize = 2;
 
-/// The `(text, palette)` state keys one span of the injected slot tooltip
-/// binds — the naming authority for the injected node and for the host that
-/// populates it alike.
 pub fn slot_tip_keys(line: usize, span: usize) -> (String, String) {
     (
         format!("slot_tip_l{line}s{span}"),
@@ -260,21 +185,8 @@ pub fn slot_tip_keys(line: usize, span: usize) -> (String, String) {
     )
 }
 
-/// The key whose `Bool` reveals the injected slot tooltip. Named here with
-/// the span keys because the host that sets it lives in another crate — a
-/// literal on each side is a rename that silently stops the tip appearing.
 pub const SHOW_SLOT_TIP: &str = "show_slot_tip";
 
-/// The BOUND slot tooltip: a machine may publish per-slot tooltip LINES
-/// under the gui-state key `slot{index}:tip` — lines separated by newline,
-/// each line up to [`SLOT_TIP_SPANS`] SPANS separated by tab, each span a
-/// `palette|text` pair (the palette half naming a theme palette entry) — and
-/// hovering that slot while it holds NO stack floats them at the pointer (the
-/// item tip owns a hovered stack, so the two never show together). Spans are
-/// what colour one WORD of a line without painting the rest (Rachel,
-/// 2026-08-10: "Great" green, "Diamond Tip" plain). Injected like the item
-/// tip: one definition for every container document; binding
-/// [`SHOW_SLOT_TIP`] itself keeps a document's own chrome.
 fn inject_slot_tooltip(doc: &mut Document) {
     const CHROME: &str = r#"{
         "type": "tooltip",
@@ -295,7 +207,6 @@ fn inject_slot_tooltip(doc: &mut Document) {
     tip.children = (0..SLOT_TIP_LINES)
         .map(|line| {
             let mut row = Node::leaf(NodeKind::Row);
-            // A line with no first span has nothing to show.
             row.bind.visible = Some(slot_tip_keys(line, 0).0);
             row.children = (0..SLOT_TIP_SPANS)
                 .map(|span| slot_tip_span(line, span))
@@ -306,8 +217,6 @@ fn inject_slot_tooltip(doc: &mut Document) {
     doc.root.children.push(tip);
 }
 
-/// One span of one slot-tooltip line: secondary-sized text whose colour is
-/// state (`bind.palette`).
 fn slot_tip_span(line: usize, span: usize) -> Node {
     let (text, palette) = slot_tip_keys(line, span);
     let mut label = Node::leaf(NodeKind::Label {
@@ -328,8 +237,6 @@ fn load() -> Registry {
         dir: PathBuf,
         pack_id: Option<String>,
     }
-    // Overlay by file name: base roots first, packs after — the last copy of
-    // a name wins, so packs shadow base documents.
     let mut manifests: Vec<(String, Found)> = Vec::new();
     let mut sources: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
     for (dir, pack_id) in petramond_world::assets::layer_dirs_with_ids(DOCUMENTS_DIR) {
@@ -371,7 +278,6 @@ fn load() -> Registry {
     }
 }
 
-/// Parse, validate and resolve one document file as the registry loads it.
 fn load_entry(
     json: &std::path::Path,
     dir: &std::path::Path,
@@ -379,9 +285,6 @@ fn load_entry(
     theme: &petramond_ui::Theme,
 ) -> Result<DocEntry, String> {
     let (kind, doc, images) = read_document(json, dir, pack_id, theme)?;
-    // Presentation must match the rules: a document whose container slots
-    // disagree with the kind's contract would draw slots the server does not
-    // have (or hide ones it does).
     let declared = doc_container_specs(&doc)?.len();
     let contracted = crate::menu::slot_specs_for_kind(kind).len();
     if declared != 0 && declared != contracted {
@@ -396,10 +299,6 @@ fn load_entry(
     })
 }
 
-/// The half of [`load_entry`] that needs no slot contract table: the shared
-/// engine rules — the same function the gui-builder runs, so a document it
-/// calls valid is one this loader accepts — and every image the document
-/// names resolved beside it with its pixel size for layout naturals.
 fn read_document(
     json: &std::path::Path,
     dir: &std::path::Path,
@@ -425,8 +324,6 @@ fn read_document(
         let issues: Vec<String> = issues.iter().map(ToString::to_string).collect();
         return Err(issues.join("; "));
     }
-    // The art was validated above; a file that vanished since still rejects
-    // the document.
     let images = collect_doc_images(&doc, dir)?;
     Ok((kind, doc, images))
 }

@@ -1,13 +1,3 @@
-//! The client session's side of capture: it keeps the presented world's
-//! MOMENT current (a handful of `Arc`s, each swapped only when it changes,
-//! stamping its key in the world's revisions), and hands every presented
-//! frame to the events logs while any runs.
-//!
-//! The tee sits on the one ordered ingest: [`Game::pump_network`] shows it
-//! what it drained before the apply consumes it, and again after, when the
-//! replica holds its effects. Predictions the stream never carries — the
-//! predicted place/break events, the dig cell — arrive from their own seams.
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -30,10 +20,8 @@ use petramond_math::math::IVec3;
 use super::tick::WorldEvent;
 use super::Game;
 
-/// What a capture says about the session it was taken in.
 #[derive(Clone, Debug, Default)]
 pub struct SessionIdentity {
-    /// The name this client's player was admitted under.
     pub player_name: String,
     pub mods: Vec<petramond::modding::modset::ModSetEntry>,
 }
@@ -41,27 +29,17 @@ pub struct SessionIdentity {
 pub(super) struct WorldCapture {
     identity: SessionIdentity,
     moment: Option<Moment>,
-    /// An events log takes this frame: what it applies is collected.
     logging: bool,
-    /// This frame's world messages, copied before the apply took them.
     drained: Vec<ServerToClient>,
-    /// This frame's applied messages, as its record states them.
     applied: Vec<Applied>,
     cues: Option<CapturedCues>,
     dig: Option<IVec3>,
-    /// Loops the stream started and has not stopped.
     loops: LiveSpatialLoops,
-    /// The entities the stream says this client tracks.
     tracked: Tracked,
-    /// The roster changed (or was never stated).
     roster_dirty: bool,
-    /// The newest batch this drain carried.
     batch: Option<Batch>,
 }
 
-/// The entity rows this client tracks, moved on by every drained batch's
-/// lanes exactly as its stores are: the moment's rows are every entity
-/// present, not one batch's changes.
 #[derive(Default)]
 struct Tracked {
     mobs: BTreeMap<u64, MobStateRow>,
@@ -71,7 +49,6 @@ struct Tracked {
 }
 
 impl Tracked {
-    /// Adopt `t`'s lanes; a kind a batch says nothing about keeps its rows.
     fn apply(&mut self, t: &TickUpdate) {
         if let Some(lane) = t.mobs().filter(|lane| !lane.is_empty()) {
             lane.apply_to(&mut self.mobs);
@@ -88,7 +65,6 @@ impl Tracked {
     }
 }
 
-/// What the moment takes from a batch.
 struct Batch {
     tick: u64,
     clock: u64,
@@ -98,14 +74,10 @@ struct Batch {
 }
 
 impl Game {
-    /// The name the local player was admitted under, when known.
     pub(super) fn capture_player_name(&self) -> Option<&str> {
         Some(self.world_capture.identity.player_name.as_str()).filter(|n| !n.is_empty())
     }
 
-    /// The presented moment starts over on an empty entity store (an apply
-    /// landed): the rows the tee tracks start over with it, and the
-    /// restatement's lanes fill both.
     pub(super) fn capture_entities_reset(&mut self) {
         self.world_capture.tracked = Tracked::default();
     }
@@ -129,8 +101,6 @@ impl WorldCapture {
     }
 }
 
-/// The world's part of a drained message, as a capture states it: the
-/// client's own chrome and the connection's lifecycle are not the world's.
 fn world_only(msg: &ServerToClient) -> Option<ServerToClient> {
     match msg {
         ServerToClient::ColumnData(_)
@@ -140,7 +110,6 @@ fn world_only(msg: &ServerToClient) -> Option<ServerToClient> {
         | ServerToClient::PlayerJoined { .. }
         | ServerToClient::PlayerLeft { .. }
         | ServerToClient::Tick(_) => Some(msg.clone()),
-        // What this client parked in its own section cache is its own.
         ServerToClient::SectionUnload { pos, .. } => Some(ServerToClient::SectionUnload {
             pos: *pos,
             cache_hash: None,
@@ -158,7 +127,6 @@ fn world_only(msg: &ServerToClient) -> Option<ServerToClient> {
         | ServerToClient::StreamBatchEnd { .. }
         | ServerToClient::ChatLine(_)
         | ServerToClient::RecipesUnlocked { .. }
-        // Which of this client's own mod instances the server stood down.
         | ServerToClient::ModsDisabled { .. }
         | ServerToClient::ServerClosing
         | ServerToClient::KeepAlive
@@ -167,7 +135,6 @@ fn world_only(msg: &ServerToClient) -> Option<ServerToClient> {
 }
 
 impl Game {
-    /// The tee's first half: see what was drained before the apply takes it.
     pub(super) fn capture_drained(&mut self, msgs: &[ServerToClient]) {
         let tee = &mut self.world_capture;
         for msg in msgs {
@@ -196,9 +163,6 @@ impl Game {
         }
     }
 
-    /// The tee's second half: the replica holds the drain now. What arrived
-    /// in full is read back as the replica holds it (a section re-promoted
-    /// from the client's own cache included), and the moment moves.
     pub(super) fn capture_applied(&mut self) {
         let batch = self.world_capture.batch.take();
         if batch.is_some() || self.world_capture.moment.is_none() || self.world_capture.roster_dirty
@@ -224,8 +188,6 @@ impl Game {
         }
     }
 
-    /// Present a world event this client predicted. The server strips the
-    /// initiator's copy, so only this frame's cues carry it.
     pub(super) fn present_predicted_world_event(&mut self, event: WorldEvent) {
         if self.world_capture.logging {
             let wire = match event {
@@ -261,8 +223,6 @@ impl Game {
         self.replica.events.world.push(event);
     }
 
-    /// The dig loop plays while the break button holds a dig in progress;
-    /// each change of the cell it plays for is a cue, and the moment's.
     pub(super) fn record_dig(&mut self, break_held: bool) {
         let cell = self
             .replica
@@ -286,14 +246,10 @@ impl Game {
         self.update_moment(None);
     }
 
-    /// Whether this frame's first-person view goes into the events logs.
     pub fn capture_wants_view(&self) -> bool {
         self.world_capture.logging
     }
 
-    /// The frame's world drive begins, after the client mods' dispatch: a
-    /// log begun in that dispatch takes what this frame applies. Idempotent
-    /// within a frame.
     pub(super) fn capture_frame_begin(&mut self) {
         let desk = self.client_mods.presented().lock().capture.clone();
         let logging = desk.lock().begin_frame();
@@ -301,8 +257,6 @@ impl Game {
         self.replica.world.changes_mut().set_collecting(logging);
     }
 
-    /// The frame is presented: end its revision, and hand it to the events
-    /// logs with the view it presented.
     pub fn capture_frame_end(&mut self, view: Option<ViewCue>) {
         self.capture_frame_begin();
         let changes = self.replica.world.changes_mut().end_frame();
@@ -366,8 +320,6 @@ impl Game {
         }
     }
 
-    /// The players present and their names, the local player under the
-    /// name it was admitted by.
     fn capture_roster(&self) -> Vec<ClientRosterEntry> {
         let self_id = self.replica.entities.self_id();
         let mut roster: Vec<ClientRosterEntry> = self
@@ -391,7 +343,6 @@ impl Game {
         roster
     }
 
-    /// Swap whichever moment parts changed, stamping their keys, and publish.
     fn update_moment(&mut self, batch: Option<Batch>) {
         let session = || ClientCapturedSession {
             seed: self.replica.world.data().seed,

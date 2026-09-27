@@ -1,9 +1,3 @@
-//! Bit-exact goldens. Saved worlds depend on the exact values these fields
-//! produce, so a change that moves any sample by one ulp must fail here: every
-//! expectation is an `f64::to_bits` pattern, never a tolerance. The samples
-//! cover lattice ties, cell-boundary straddles, negative coordinates and
-//! coordinates far from the origin.
-
 use super::*;
 
 #[track_caller]
@@ -17,7 +11,6 @@ fn assert_bits(got: f64, want: u64, what: &str) {
     );
 }
 
-/// `([x, y, z], simplex2(x, z) bits, simplex3([x, y, z]) bits)`.
 const SIMPLEX: [([f64; 3], u64, u64); 10] = [
     ([0.0, 0.0, 0.0], 0x0000000000000000, 0x0000000000000000),
     ([1.25, -3.5, 8.75], 0x3fd32e80b4a8415c, 0xbfcf324b5ea9531f),
@@ -142,7 +135,6 @@ fn scaled_simplex_matches_bit_exact_goldens() {
 
 #[test]
 fn cellular2_matches_bit_exact_goldens() {
-    // (seed, point, jitter, centre bits, distance bits, hash)
     type CellularCase = (u32, [f64; 2], f64, [u64; 2], u64, i32);
     let cases: [CellularCase; 6] = [
         (

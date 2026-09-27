@@ -38,11 +38,6 @@ fn both_remap_hints_fit_the_fixed_hint_box() {
     }
 }
 
-/// Every ENGINE action label is authored copy that reaches the row through
-/// a bind — so the shrink rule treats it as data and ellipsizes it, and no
-/// document guard can see it. The binding button's column is fixed, so the
-/// label column is whatever is left; a label that outgrows it reads as
-/// "Previous Ho...". Widen the panel or shorten the wording.
 #[test]
 fn every_engine_action_label_fits_the_controls_row() {
     use petramond_input::controls::BindableAction;

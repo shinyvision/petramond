@@ -1,111 +1,53 @@
-//! Minecart motion: one tick of a cart constrained to the rails.
-//!
-//! A cart's state is its pose plus one SIGNED speed along its own facing
-//! (negative = rolling backwards — a cart never turns around, it rolls back
-//! the way it came). Each tick the cart is projected onto the rail under it,
-//! the forces act on the speed measured along the path (grade, booster,
-//! rider push, drag), and the cart advances that far along the path, crossing
-//! into whichever cell the rail's exit links to. The pose it ends at is what
-//! the mod hands the engine as the tick's kinematic placement.
-//!
-//! Everything here is pure over a [`RailMap`] and an obstacle probe (does
-//! any collision box overlap a world-space box), so the rules are testable
-//! without a world; the mod supplies both from batched block reads and the
-//! registry's per-block collision.
-
 use std::collections::BTreeMap;
 
 use crate::rail::{add, link, Dir, Rail, RailMap};
 use crate::track::{dot2, grade, xz, yaw_facing, Path, RAIL_TOP};
 
-/// A world-space axis-aligned box as `(min, max)` corners.
 pub type Aabb = ([f64; 3], [f64; 3]);
 
-/// Whether two boxes overlap with positive volume.
 pub fn overlaps(a: Aabb, b: Aabb) -> bool {
     (0..3).all(|i| a.0[i] < b.1[i] && b.0[i] < a.1[i])
 }
 
-/// The whole box of a cell.
 pub fn cell_box(cell: [i32; 3]) -> Aabb {
     let min = [cell[0] as f64, cell[1] as f64, cell[2] as f64];
     (min, [min[0] + 1.0, min[1] + 1.0, min[2] + 1.0])
 }
 
-/// The engine's fixed tick.
 pub const DT: f32 = 1.0 / 20.0;
 
-/// Top speed on rails (m/s) — twelve blocks a second, half again the classic
-/// cart pace (Rachel's call after the first ride).
 pub const MAX_SPEED: f32 = 12.0;
-/// Acceleration along the track on a slope (m/s²): a gentle roll, not free
-/// fall — a cart released at the top of a ten-block drop reaches top speed
-/// near the bottom.
 pub const SLOPE_ACCEL: f32 = 3.5;
-/// Per-tick retention of speed on plain rails: nearly frictionless, so a
-/// cart coasts a long way.
 pub const DRAG_PER_TICK: f32 = 0.997;
-/// Rolling resistance on plain rails (m/s²) — what finally parks a coasting
-/// cart instead of leaving it creeping forever.
 pub const ROLL_RESIST: f32 = 0.25;
-/// Below this a cart with nothing pushing it on level track is parked.
 pub const STOP_SPEED: f32 = 0.05;
-/// Booster rail acceleration along the direction of travel (m/s²).
 pub const BOOST_ACCEL: f32 = 14.0;
-/// A cart standing on a booster launches at this speed: away from a solid
-/// block at one end of a level booster, uphill on a sloped one.
 pub const BOOST_LAUNCH: f32 = 1.5;
-/// A booster considers a cart below this speed to be standing.
 pub const BOOST_IDLE: f32 = 0.1;
-/// A rider's push (m/s²) and the fastest a rider alone can drive a cart —
-/// enough to start off and creep along the flat, well short of what
-/// boosters and gravity give.
 pub const RIDER_ACCEL: f32 = 3.0;
 pub const RIDER_MAX: f32 = 4.5;
-/// How fast the body's pitch follows the track's grade (rad/s): the nose
-/// dips into a slope over a few frames instead of snapping.
 pub const PITCH_RATE: f32 = 9.0;
-/// Carts closer than this along the ground shove each other apart.
 pub const CART_LENGTH: f32 = 1.0;
-/// Shove strength between overlapping carts: speed per second per block of
-/// overlap, applied along each cart's own facing — a moving cart hands its
-/// momentum to a parked one over a few ticks instead of passing through it.
 pub const NUDGE_ACCEL: f32 = 12.0;
-/// Speed a punch gives a cart (m/s), away from the puncher.
 pub const PUNCH_SPEED: f32 = 2.5;
-/// Ground friction per tick for a derailed cart skidding on its wheels.
 pub const SKID_RETENTION: f32 = 0.85;
-/// The rolling sound: silent below `ROLL_SOUND_START` (a parked cart being
-/// nudged makes no noise), full volume at `MAX_SPEED`, and the curve
-/// between — below 1 so a rider's own creep along the flat is clearly
-/// audible while a booster run still rises above it.
 pub const ROLL_SOUND_START: f32 = 0.15;
 pub const ROLL_SOUND_CURVE: f32 = 0.7;
-/// Furthest a single tick may carry a cart along the rails, in cells: a
-/// bound on the cell chain, well above what `MAX_SPEED` needs.
 const MAX_CELLS_PER_TICK: usize = 6;
 
-/// A cart's authoritative state: feet pose plus its signed speed.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Cart {
     pub pos: [f64; 3],
-    /// Mob convention: yaw 0 faces `-Z`.
     pub yaw: f32,
-    /// Body tilt, positive nose-up.
     pub pitch: f32,
-    /// Speed along the facing (m/s); negative rolls backwards.
     pub speed: f32,
 }
 
-/// What acts on the cart this tick besides the track.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Controls {
-    /// The rider's push along the cart's facing, `-1..1`.
     pub push: f32,
 }
 
-/// The cart's body, as the engine's row declares it: what the wall test
-/// sweeps against the terrain's collision.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Body {
     pub half_width: f32,
@@ -113,10 +55,6 @@ pub struct Body {
 }
 
 impl Body {
-    /// The box of the body's UPPER half at `pos`: what a wall must meet. The
-    /// upper half, because on a slope the cart leans into the hill: its
-    /// lower front corner is legitimately inside the block that carries the
-    /// next rail, while anything meeting the body above its axle is a wall.
     pub fn upper_half(self, pos: [f64; 3]) -> Aabb {
         let (hw, height) = (f64::from(self.half_width), f64::from(self.height));
         (
@@ -126,28 +64,18 @@ impl Body {
     }
 }
 
-/// One tick's outcome.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
-    /// Still on the rails, at this pose.
     Railed(Cart),
-    /// Ran off the end of the track this tick: the pose to hand the engine
-    /// (carried on past the end at rail speed, so the implied velocity is the
-    /// cart's) before it takes over with its own physics.
     Derailed(Cart),
-    /// No rail under the cart — it is the engine's body until it lands on one.
     Off,
 }
 
-/// The facing direction of a mob yaw in the horizontal plane.
 pub fn facing_xz(yaw: f32) -> [f32; 2] {
     let (s, c) = yaw.sin_cos();
     [-s, -c]
 }
 
-/// The rail cell a cart at `pos` rides: the cell its feet are in, or the one
-/// below — a cart topping a slope is a hair into the cell above, and a
-/// derailed cart standing on the block under a rail is in the rail's cell.
 pub fn rail_cell(map: &impl RailMap, pos: [f64; 3]) -> Option<([i32; 3], Rail)> {
     let x = pos[0].floor() as i32;
     let z = pos[2].floor() as i32;
@@ -161,8 +89,6 @@ fn approach(from: f32, to: f32, max_step: f32) -> f32 {
     from + (to - from).clamp(-max_step, max_step)
 }
 
-/// Advance `cart` one tick along the rails. `blocked` answers whether any
-/// terrain collision overlaps a world-space box.
 pub fn step(
     map: &impl RailMap,
     cart: Cart,
@@ -179,18 +105,14 @@ pub fn step(
         (cart.pos[2] - cell[2] as f64) as f32,
     ]);
 
-    // Which way along the path the cart FACES: +1 when its nose points
-    // toward increasing `s`. A cart dropped crosswise onto a rail picks +1.
     let facing = facing_xz(cart.yaw);
     let mut faces_forward: f32 = if dot2(facing, xz(path.tangent(s))) >= 0.0 {
         1.0
     } else {
         -1.0
     };
-    // Velocity along increasing `s`.
     let mut v = cart.speed * faces_forward;
 
-    // --- Forces, on the along-path velocity. ---
     let g = grade(&path, s);
     if g != 0.0 {
         v -= SLOPE_ACCEL * g.signum() * DT;
@@ -215,7 +137,6 @@ pub fn step(
     }
     v = v.clamp(-MAX_SPEED, MAX_SPEED);
 
-    // --- Advance along the path, chaining through linked cells. ---
     let mut remaining = v.abs() * DT;
     let mut dir = v.signum();
     let mut derailed = false;
@@ -240,9 +161,6 @@ pub fn step(
                 cell = l.cell;
                 path = next_path;
                 let new_dir = if enters_at_start { 1.0 } else { -1.0 };
-                // `s` may run the other way through the next cell: the
-                // along-path velocity and the nose both re-sign with it, so
-                // the cart keeps moving — and facing — the way it was.
                 let flip = dir * new_dir;
                 faces_forward *= flip;
                 v *= flip;
@@ -253,7 +171,6 @@ pub fn step(
                 s = if dir > 0.0 { path.len() } else { 0.0 };
                 let beyond = add(cell, exit.dir.offset());
                 if map.rail(beyond).is_some() || map.rail(add(beyond, [0, -1, 0])).is_some() {
-                    // A rail that does not join ours is a bumper: stop dead at it.
                     v = 0.0;
                 } else {
                     derailed = true;
@@ -271,8 +188,6 @@ pub fn step(
         cell[2] as f64 + f64::from(p[2]),
     ];
     if derailed {
-        // Carry the unspent motion past the end of the track, level, so the
-        // engine inherits exactly the speed the cart left the rails with.
         pos[0] += f64::from(t[0] * dir * remaining);
         pos[2] += f64::from(t[2] * dir * remaining);
     }
@@ -285,9 +200,6 @@ pub fn step(
     let climb = t[1] * faces_forward;
     let pitch_target = climb.atan2((t[0] * t[0] + t[2] * t[2]).sqrt());
     let pitch = approach(cart.pitch, pitch_target, PITCH_RATE * DT);
-    // A rail may run straight into a wall: the track constrains the wheels,
-    // the wall still stops the body. Moving into terrain parks the cart
-    // where it was, dead.
     if pos != cart.pos && blocked(body.upper_half(pos)) {
         return Step::Railed(Cart {
             pos: cart.pos,
@@ -309,9 +221,6 @@ pub fn step(
     }
 }
 
-/// The speed a booster gives a standing cart: uphill on a slope; on level
-/// track away from a block butted against one end (a station bumper),
-/// nothing when both or neither end is blocked.
 fn booster_launch(path: &Path, cell: [i32; 3], blocked: &dyn Fn(Aabb) -> bool) -> f32 {
     let [a, b] = path.exits();
     if b.up {
@@ -325,22 +234,12 @@ fn booster_launch(path: &Path, cell: [i32; 3], blocked: &dyn Fn(Aabb) -> bool) -
     }
 }
 
-/// What one other cart in contact does to this cart's speed this tick.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Contact {
-    /// The other cart is approaching: an elastic hit between equal masses
-    /// hands this cart the other's along-track speed (the mover stops dead,
-    /// the cart it hit rolls on; a chain shunts down the line one cart at a
-    /// time). `closing` is how hard, for ranking several hits.
     Exchange { speed: f32, closing: f32 },
-    /// The two merely rest in overlap: a shove apart along this cart's own
-    /// facing, harder the deeper, as a speed delta.
     Shove(f32),
 }
 
-/// Carts within a cart length of each other on the same level are in
-/// contact; `None` otherwise. Decided from both carts' PRE-tick states so
-/// the pair agrees on the exchange whichever steps first.
 pub fn collide(cart: &Cart, other: &Cart) -> Option<Contact> {
     if (cart.pos[1] - other.pos[1]).abs() > 1.0 {
         return None;
@@ -369,10 +268,6 @@ pub fn collide(cart: &Cart, other: &Cart) -> Option<Contact> {
     Some(Contact::Shove(dot2(away, f) * overlap * NUDGE_ACCEL * DT))
 }
 
-/// This cart's speed after every contact it has this tick: the hardest hit
-/// (the largest closing speed) decides an exchange outright — one elastic
-/// hit is one exchange, never a sum — and failing any hit, the resting
-/// shoves add up.
 pub fn resolve_contacts<'a>(cart: &Cart, others: impl Iterator<Item = &'a Cart>) -> f32 {
     let mut hardest: Option<(f32, f32)> = None;
     let mut shove = 0.0;
@@ -392,10 +287,6 @@ pub fn resolve_contacts<'a>(cart: &Cart, others: impl Iterator<Item = &'a Cart>)
     }
 }
 
-/// The carts bucketed by the [`CART_LENGTH`]-sized ground cell their feet
-/// stand in, so a contact scan visits only the 3×3 cells around a cart
-/// instead of every other cart on the network: two carts in contact are less
-/// than a cart length apart on both ground axes, hence at most one cell.
 pub struct ContactGrid {
     cells: BTreeMap<(i64, i64), Vec<usize>>,
 }
@@ -417,9 +308,6 @@ impl ContactGrid {
         )
     }
 
-    /// The indices of every cart that may touch `carts[i]`, excluding it, in
-    /// ASCENDING order — the order a scan of the whole list visits them, so
-    /// [`resolve_contacts`] sums the same shoves in the same order.
     pub fn neighbours(&self, carts: &[Cart], i: usize) -> Vec<usize> {
         let (cx, cz) = Self::cell(&carts[i]);
         let mut near: Vec<usize> = (cx - 1..=cx + 1)
@@ -434,8 +322,6 @@ impl ContactGrid {
     }
 }
 
-/// The signed speed a punch from `origin` gives the cart: away from the
-/// puncher, along the facing.
 pub fn punch(cart: &Cart, origin: [f64; 3]) -> f32 {
     let d = [
         (cart.pos[0] - origin[0]) as f32,
@@ -448,14 +334,10 @@ pub fn punch(cart: &Cart, origin: [f64; 3]) -> f32 {
     }
 }
 
-/// Playback rate of the wheels' `roll` clip (one revolution per second of
-/// clip) for a speed, given the authored wheel diameter in blocks.
 pub fn wheel_roll_rate(speed: f32, wheel_diameter: f32) -> f32 {
     speed / (std::f32::consts::PI * wheel_diameter)
 }
 
-/// Volume of the rolling loop for a speed: `0` = silent (stop the loop),
-/// rising monotonically to `1` at top speed.
 pub fn roll_volume(speed: f32) -> f32 {
     let t = (speed.abs() - ROLL_SOUND_START) / (MAX_SPEED - ROLL_SOUND_START);
     if t <= 0.0 {
@@ -504,7 +386,6 @@ mod tests {
     const EW: Form = Form::Straight(Axis::EW);
     const OPEN: &dyn Fn(Aabb) -> bool = &|_| false;
 
-    /// A full block in one cell and nothing else.
     fn block_at(cell: [i32; 3]) -> impl Fn(Aabb) -> bool {
         move |probe| overlaps(probe, cell_box(cell))
     }
@@ -539,7 +420,6 @@ mod tests {
     #[test]
     fn a_cart_coasts_along_a_run_and_parks_from_rolling_resistance() {
         let map = Map::new(&(0..40).map(|z| ([0, 0, z], NS)).collect::<Vec<_>>());
-        // Facing south (yaw π), rolling forward.
         let cart = at(0.5, 0.0, 0.5, std::f32::consts::PI, 4.0);
         let later = run(&map, cart, 20, Controls::default());
         assert!(later.pos[2] > 4.0, "moved south: {:?}", later.pos);
@@ -556,7 +436,6 @@ mod tests {
 
     #[test]
     fn a_cart_rolls_down_a_slope_and_a_rider_can_push_it_back_up() {
-        // A slope at z=1 climbing north to a straight at (0,1,0); flat run south of it.
         let map = Map::new(&[
             ([0, 1, -3], NS),
             ([0, 1, -2], NS),
@@ -567,7 +446,6 @@ mod tests {
             ([0, 0, 3], NS),
             ([0, 0, 4], NS),
         ]);
-        // Parked halfway up, facing north (uphill).
         let start = Cart {
             pos: [0.5, 0.5 + f64::from(RAIL_TOP), 1.5],
             yaw: 0.0,
@@ -589,14 +467,12 @@ mod tests {
             c.pos
         );
         assert!((c.pitch).abs() < 0.05, "levelled out: {}", c.pitch);
-        // Push forward (uphill) from the flat: it climbs.
         let pushed = run(&map, c, 60, Controls { push: 1.0 });
         assert!(pushed.speed > 0.0 && pushed.pos[2] < c.pos[2], "{pushed:?}");
     }
 
     #[test]
     fn a_cart_rounds_a_corner_keeping_its_nose_ahead_and_speed_sign() {
-        // North-south run into a curve turning east, then an east-west run.
         let map = Map::new(&[
             ([0, 0, 3], NS),
             ([0, 0, 2], NS),
@@ -606,7 +482,6 @@ mod tests {
             ([2, 0, 0], EW),
             ([3, 0, 0], EW),
         ]);
-        // Facing north at top speed.
         let cart = at(0.5, 0.0, 3.5, 0.0, 8.0);
         let mut c = cart;
         let mut turned = false;
@@ -622,7 +497,6 @@ mod tests {
         assert!(f[0] > 0.99, "nose points east now: {f:?}");
         assert!(c.speed > 7.0, "speed is still forward: {}", c.speed);
 
-        // The same corner taken BACKWARDS: nose stays behind, speed stays negative.
         let back = at(0.5, 0.0, 3.5, std::f32::consts::PI, -8.0);
         let mut c = back;
         for _ in 0..40 {
@@ -713,14 +587,10 @@ mod tests {
             mover_after.abs() < 1e-4,
             "mover stops dead at {mover_after}"
         );
-        // Head-on: two carts facing each other, each rolling forward — each
-        // takes the other's velocity, i.e. bounces back at the other's pace.
         let north_bound = at(0.5, 0.0, 4.5, 0.0, 2.0);
         let south_bound = at(0.5, 0.0, 3.8, south, 5.0);
         assert!((after(&north_bound, &[south_bound]) + 5.0).abs() < 1e-4);
         assert!((after(&south_bound, &[north_bound]) + 2.0).abs() < 1e-4);
-        // Parting or resting carts do not re-trade; a resting overlap shoves
-        // apart along each cart's own facing.
         let leaving = at(0.5, 0.0, 4.5, south, 6.0);
         let stopped = at(0.5, 0.0, 3.8, south, 0.0);
         assert!(
@@ -735,9 +605,6 @@ mod tests {
             collide(&stopped, &at(0.5, 0.0, 6.0, south, 0.0)).is_none(),
             "out of reach"
         );
-        // Hit from both sides at once, the HARDER hit alone decides the
-        // exchange: a parked cart between a 6 m/s mover behind it and a
-        // 2 m/s mover ahead takes the 6, not a sum or whichever came last.
         let fast_behind = at(0.5, 0.0, 3.8, south, 6.0);
         let slow_ahead = at(0.5, 0.0, 5.2, 0.0, 2.0);
         let hit = after(&parked, &[slow_ahead, fast_behind]);
@@ -747,7 +614,6 @@ mod tests {
             after(&parked, &[fast_behind, slow_ahead]),
             "in any order"
         );
-        // Resting in overlap with two neighbours, the shoves add up.
         let between = at(0.5, 0.0, 4.5, south, 0.0);
         let left = at(0.5, 0.0, 3.9, south, 0.0);
         let right = at(0.5, 0.0, 5.1, south, 0.0);
@@ -768,17 +634,12 @@ mod tests {
     #[test]
     fn a_wall_across_the_track_stops_the_cart_but_a_slopes_own_hill_does_not() {
         let map = Map::new(&[([0, 0, 0], NS), ([0, 0, 1], NS), ([0, 0, 2], NS)]);
-        // Rolling south into a wall cell at z=3 (the track ends there too):
-        // the wall wins before the derail.
         let wall = block_at([0, 0, 3]);
         let cart = at(0.5, 0.0, 2.3, std::f32::consts::PI, 8.0);
         let c = railed(step(&map, cart, BODY, Controls::default(), &wall));
         assert_eq!(c.speed, 0.0, "parked at the wall");
         assert_eq!(c.pos, cart.pos, "did not enter it");
 
-        // Climbing north: the block under the upper rail is level with the
-        // slope cell, and the leaning body's lower half overlaps it — that
-        // is not a wall.
         let map = Map::new(&[
             ([0, 0, 1], Form::Slope(Dir::N)),
             ([0, 1, 0], NS),
@@ -798,7 +659,6 @@ mod tests {
             c.pos[1] > 1.0 && c.pos[2] < 0.5,
             "climbed onto the upper run: {c:?}"
         );
-        // A wall at the upper run's level, ahead of the cart, does stop it.
         let overhang = block_at([0, 1, -1]);
         let c2 = railed(step(&map, c, BODY, Controls { push: 1.0 }, &overhang));
         assert_eq!(c2.speed, 0.0, "{c2:?}");
@@ -806,8 +666,6 @@ mod tests {
 
     #[test]
     fn the_contact_grid_resolves_exactly_like_scanning_every_cart() {
-        // A yard of carts: trains in contact across cell borders, a stacked
-        // pair a level apart, loners far off — deterministic scatter.
         let mut carts = Vec::new();
         for i in 0..60u32 {
             let h = i.wrapping_mul(0x9E37_79B9);

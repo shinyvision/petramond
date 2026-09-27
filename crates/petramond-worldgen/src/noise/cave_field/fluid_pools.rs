@@ -24,12 +24,8 @@ use crate::rng::FeatureRng;
 
 pub(super) type PoolKey = (crate::cache::GenContext, u16, [i32; 3]);
 
-/// The cave model over one pool cell, as the floor search, the descent and
-/// the flood read it. A flood spans a dozen cells its neighbours' floods
-/// cross too, so the cells are shared rather than built per pool.
 pub(super) type TileKey = (crate::cache::GenContext, [i32; 3]);
 
-/// One pool's filled cells, as a bitset over its own bounding box.
 pub(super) struct Pool {
     fluid: u16,
     lo: [i32; 3],
@@ -54,7 +50,6 @@ impl Pool {
     }
 }
 
-/// The pools any cell of one box can belong to, in row priority order.
 #[derive(Default)]
 pub(super) struct Pools {
     near: Vec<Arc<Pool>>,
@@ -62,21 +57,14 @@ pub(super) struct Pools {
 }
 
 impl Pools {
-    /// Every pool holding a cell of the inclusive box `lo..=hi` or of the
-    /// cells beside it: a fluid cell on the box edge reads its neighbours'
-    /// fill to decide whether an aquifer barrier seals it.
     pub(super) fn around(field: &CaveField, lo: [i32; 3], hi: [i32; 3]) -> Self {
         Self::gather(field, lo.map(|v| v - 1), hi.map(|v| v + 1))
     }
 
-    /// Every pool reaching the inclusive box `lo..=hi`.
     pub(super) fn gather(field: &CaveField, lo: [i32; 3], hi: [i32; 3]) -> Self {
         Self::gather_rows(field, field.underground.pools.len(), lo, hi)
     }
 
-    /// [`Self::gather`] over the first `rows` rows only. Seeding cells are
-    /// enumerated by how far a pool of theirs could reach, so a box never
-    /// misses one that spills into it from the cell next door.
     fn gather_rows(field: &CaveField, rows: usize, lo: [i32; 3], hi: [i32; 3]) -> Self {
         let mut near = Vec::new();
         for (row, def) in field.underground.pools[..rows].iter().enumerate() {
@@ -85,7 +73,6 @@ impl Pools {
                 continue;
             }
             let cell = |v: i32| v.div_euclid(POOL_CELL);
-            // A cell over the row's cap or under the carve holds nothing.
             let g0 = [
                 cell(lo[0] - up[0]),
                 cell(lo[1] - up[1]).max(cell(CAVE_MIN_Y)),
@@ -112,7 +99,6 @@ impl Pools {
         Self { near, index }
     }
 
-    /// The fluid an open cell at `pos` holds: air outside every pool.
     #[inline]
     pub(super) fn fluid_at(&self, pos: [i32; 3]) -> u16 {
         let air = Block::Air.id();
@@ -130,8 +116,6 @@ impl Pools {
     }
 }
 
-/// The pools reaching each 8×8 column of a gathered box, as index runs into
-/// its pool list in priority order, so an open cell tests only its own.
 #[derive(Default)]
 struct ColumnIndex {
     lo: [i32; 2],
@@ -152,7 +136,6 @@ impl ColumnIndex {
             ((hi[0] - lo[0]) / Self::COLUMN + 1) as usize,
             ((hi[2] - lo[1]) / Self::COLUMN + 1) as usize,
         ];
-        // The columns of the index a pool's footprint covers.
         let covered = |pool: &Pool| -> Vec<usize> {
             let range = |axis: usize, lane: usize| {
                 let first = (pool.lo[axis] - lo[lane]).max(0) / Self::COLUMN;
@@ -188,7 +171,6 @@ impl ColumnIndex {
         }
     }
 
-    /// The pools reaching `pos`'s column, or `None` outside the indexed box.
     #[inline]
     fn at(&self, pos: [i32; 3]) -> Option<&[u32]> {
         let (dx, dz) = (pos[0] - self.lo[0], pos[2] - self.lo[1]);
@@ -204,8 +186,6 @@ impl ColumnIndex {
     }
 }
 
-/// The cell's pool of `row`. Most cells roll none, and those never touch the
-/// memo.
 fn pool_at(field: &CaveField, row: usize, g: [i32; 3]) -> Option<Arc<Pool>> {
     let def = &field.underground.pools[row];
     let mut rng = FeatureRng::positional(field.seed, def.salt, g[0], g[1], g[2]);
@@ -220,12 +200,10 @@ fn pool_at(field: &CaveField, row: usize, g: [i32; 3]) -> Option<Arc<Pool>> {
         .get_or_insert(key, move || derive(field, row, g, rng))
 }
 
-/// The flood behind one rolled lattice cell's pool of `row`.
 fn derive(field: &CaveField, row: usize, g: [i32; 3], mut rng: FeatureRng) -> Option<Arc<Pool>> {
     let def = &field.underground.pools[row];
     let origin: [i32; 3] = g.map(|v| v * POOL_CELL);
     let ceiling = roof(field, origin, POOL_CELL + def.reach, def.surface_clearance).min(def.max_y);
-    // Earlier rows claim first: their cells are not this row's to fill.
     let reach = POOL_CELL + def.reach;
     let claimed = Pools::gather_rows(
         field,
@@ -249,16 +227,12 @@ fn derive(field: &CaveField, row: usize, g: [i32; 3], mut rng: FeatureRng) -> Op
         (floor[1] + def.max_depth).min(ceiling),
         floor[2] + def.reach,
     ];
-    // A water table over the same rock would meet the pool, so a pool keeps
-    // out of any box an aquifer row can reach.
     if aquifer_possible(field, lo, hi) {
         return None;
     }
     flood(field, def, &claimed, &mut tiles, floor, lo, hi).map(Arc::new)
 }
 
-/// Whether any habitat with an aquifer can own a cell of the box or of the
-/// cells beside it.
 fn aquifer_possible(field: &CaveField, lo: [i32; 3], hi: [i32; 3]) -> bool {
     field.underground.aquifer_y_span.is_some()
         && field
@@ -268,10 +242,6 @@ fn aquifer_possible(field: &CaveField, lo: [i32; 3], hi: [i32; 3]) -> bool {
             .any(|&id| field.underground.aquifer(id).is_some())
 }
 
-/// The lowest base height over the square of `reach` around `at`, sampled on
-/// the pool cell grid, less the clearance: how deep under the landform pools
-/// keep. Tuning only — no seal rests on it, because the probe reads the
-/// terrain fill's real surface wherever a surface could stand.
 fn roof(field: &CaveField, at: [i32; 3], reach: i32, clearance: i32) -> i32 {
     let mut base = i32::MAX;
     for z in (at[2] - reach..=at[2] + reach).step_by(POOL_CELL as usize) {
@@ -282,8 +252,6 @@ fn roof(field: &CaveField, at: [i32; 3], reach: i32, clearance: i32) -> i32 {
     base - clearance
 }
 
-/// The cave model as the flood reads it. No climate: only the SHELL width
-/// reads the habitat, and a shell is rock either way.
 const FLOOD_FIELDS: Fields = Fields {
     carve: true,
     interior: true,
@@ -293,9 +261,6 @@ const FLOOD_FIELDS: Fields = Fields {
     fluids: false,
 };
 
-/// A floor for this cell's pool: one open cell of the cell's own
-/// lattice-spaced grid, then the rock under it. A passage too narrow for the
-/// grid to catch is too narrow to be worth a pool.
 fn floor_in_cell(
     field: &CaveField,
     def: &FluidPool,
@@ -319,7 +284,6 @@ fn floor_in_cell(
             for y in (lo..=hi).step_by(LATTICE_STEP as usize) {
                 if probe(field, claimed, &mut cursor, y) == Probe::Open {
                     open += 1;
-                    // Reservoir choice: the same odds for every open grid cell.
                     if rng.next_i32(1, open) == 1 {
                         chosen = Some([x, y, z]);
                     }
@@ -328,21 +292,17 @@ fn floor_in_cell(
         }
     }
     let mut at = chosen?;
-    // A drop longer than this is a shaft; its floor belongs to another cell.
     for _ in 0..def.max_drop {
         let below = [at[0], at[1] - 1, at[2]];
         match tiles.probe(field, claimed, below) {
             Probe::Open => at = below,
             Probe::Rock => return Some(at),
-            // The level stays under a cell the pool may not fill, so a floor
-            // standing on one holds nothing.
             Probe::Blocked => return None,
         }
     }
     None
 }
 
-/// The pool tiles one derivation walks, with the last one kept at hand.
 #[derive(Default)]
 struct Tiles {
     last: Option<([i32; 3], Arc<CaveLattice>)>,
@@ -389,16 +349,9 @@ impl Tiles {
 enum Probe {
     Open,
     Rock,
-    /// Not the cave's to fill: a positioned field, an earlier row's pool, or
-    /// the sky or sea the terrain fill leaves over its surface. The pool's
-    /// level stays below it.
     Blocked,
 }
 
-/// What the cave leaves at a cell. Both carve gates are forced ON, so under
-/// the terrain's surface the answer is a SUPERSET of the carve's open cells:
-/// treating a cell as open where the carve leaves rock only loses that cell;
-/// the reverse would leak.
 fn probe(field: &CaveField, claimed: &Pools, c: &mut Col, y: i32) -> Probe {
     if y < CAVE_MIN_Y {
         return Probe::Rock;
@@ -418,12 +371,6 @@ fn probe(field: &CaveField, claimed: &Pools, c: &mut Col, y: i32) -> Probe {
     Probe::Open
 }
 
-/// Raise the fill from `floor` and keep the last level whose whole set fits
-/// inside the box and the budget.
-///
-/// The queue pops the lowest cell, so the level a cell joins at is the
-/// running maximum of its path, and one pass answers every level: the set of
-/// a level is a prefix of the pass.
 fn flood(
     field: &CaveField,
     def: &FluidPool,
@@ -450,7 +397,6 @@ fn flood(
         }
         taken.push((cell, level));
         if taken.len() > def.budget {
-            // Too big to be a hollow: the fill is running through the cave.
             limit = level - 1;
             break;
         }
@@ -470,9 +416,6 @@ fn flood(
                     Probe::Open => false,
                 };
             if escapes {
-                // The fill meets the box edge or a cell that is not this
-                // pool's to fill: from the level that neighbour would join
-                // at, the pool is a river or a breach.
                 limit = limit.min(level.max(next[1]) - 1);
                 continue;
             }
@@ -494,7 +437,6 @@ fn flood(
     )
 }
 
-/// A pool over the tight box of the cells it holds.
 fn build(fluid: u16, cells: impl Iterator<Item = [i32; 3]> + Clone) -> Option<Pool> {
     let mut lo = [i32::MAX; 3];
     let mut hi = [i32::MIN; 3];

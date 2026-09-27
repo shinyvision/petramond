@@ -1,27 +1,3 @@
-//! Natural mob spawning: the slow passive backfill trickle.
-//!
-//! The game runs [`attempt`] once per player every [`PASSIVE_SPAWN_INTERVAL_TICKS`]
-//! (the initial animal stock comes from [`super::populate`] instead, so this
-//! trickle only refills genuinely decimated areas — up to the population caps).
-//! An attempt picks a random column in the
-//! loaded area, picks a species that still has population room, and tests the site
-//! against the universal "definitely no" rules -- too near the player, no footing,
-//! no room for the body -- and then the species' own [`SpawnRule`](super::SpawnRule)
-//! (biome + the block it stands on). If everything passes it returns the [`Spawn`]s
-//! for the manager to apply; otherwise the tick simply spawns nothing.
-//!
-//! An attempt waits only for the mob census within nine chunks of the player it is
-//! spawning around. Mobs saved in still-streaming nearby section records aren't in
-//! the live list yet, so the cap would otherwise refill on every world join; unrelated
-//! far-edge streaming must not stop local spawning.
-//!
-//! The population caps live elsewhere as data: per-species on the [`MobDef`] row, and
-//! per-category on [`MobCategory`]. This module only enforces them, and only the
-//! site/arithmetic logic that's worth pinning is factored out pure and tested below.
-//!
-//! [`MobDef`]: super::MobDef
-//! [`MobCategory`]: super::MobCategory
-
 use mod_api::HostileSpawnCandidate;
 use rustc_hash::FxHashSet;
 
@@ -37,46 +13,27 @@ use petramond_world::chunk::{
 use super::path::{body_clear, is_foothold};
 use super::{def, defs, Instance, Mob, MobCategory, MobRng};
 
-/// Closest a natural spawn may appear to the player (blocks). Inside this, no spawn.
 const MIN_PLAYER_DIST: f32 = 50.0;
-/// Farthest any natural spawn may appear from its player anchor. The nine-chunk
-/// census margin encloses this range even when the player stands at a chunk edge.
 const MAX_PLAYER_DIST: f32 = 128.0;
 
-/// Passive natural spawning is a slow backfill trickle: one attempt per player
-/// every this many game ticks (20 s at 20 TPS — the reference game's creature
-/// cycle cadence). The initial animal stock comes from the one-time worldgen
-/// herds (`super::populate`); a fast cadence here would turn killing animals
-/// into a respawn faucet, which is exactly what the trickle exists to avoid.
 pub const PASSIVE_SPAWN_INTERVAL_TICKS: u64 = 400;
 
-/// How many times to resample a column offset to land one inside the loaded disc
-/// before giving up for this tick (a near-degenerate disc could miss every time).
 const COLUMN_TRIES: u32 = 8;
-/// Radius around the first valid site where herd/pack members may be placed.
 const GROUP_RADIUS: i32 = 4;
-/// Attempts per extra group member to find another nearby site satisfying the same
-/// species spawn rule.
 const GROUP_MEMBER_TRIES: u32 = 24;
 pub const HOSTILE_SPAWN_ATTEMPTS: u32 = 32;
 const HOSTILE_SPAWN_CHUNK_RADIUS: i32 = 8;
-/// One chunk beyond the 128-block hostile spawn/despawn range. This margin makes the
-/// local live list trustworthy before applying population caps without waiting for
-/// the entire render-distance disc.
 const MOB_CENSUS_CHUNK_RADIUS: i32 = HOSTILE_SPAWN_CHUNK_RADIUS + 1;
 const HOSTILE_SPAWN_CHUNKS_PER_PLAYER: u32 = 289;
 const HOSTILE_MIN_SPAWN_DIST: f32 = 24.0;
 const HOSTILE_SPAWN_SALT: u64 = 0xA11C_0DE5_5A55_0001;
 
-/// A spawn the manager should perform: a species at a feet position, facing `yaw`.
 pub(super) struct Spawn {
     pub kind: Mob,
     pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
 }
 
-/// A core-selected hostile spawn candidate plus the spawn transform core will use
-/// if a registered hostile spawner admits it.
 pub struct HostileSpawnSite {
     pub candidate: HostileSpawnCandidate,
     pub pos: petramond_math::world_pos::WorldPos,
@@ -98,9 +55,6 @@ impl HostileSpawnAnchor {
     }
 }
 
-/// Per-tick hostile spawn-cap data
-/// a global cap scaled by the union of each player's 17x17 spawnable chunks,
-/// plus a per-player local cap that gates each candidate chunk.
 pub struct HostileSpawnPlan {
     anchors: Vec<HostileSpawnAnchor>,
     spawnable_chunks: Vec<ChunkPos>,
@@ -110,28 +64,18 @@ pub struct HostileSpawnPlan {
     hostile_cap: u32,
 }
 
-/// Run one natural-spawn attempt. `room_for(kind)` reports how many more individuals
-/// fit under a species' population caps (the manager supplies it from the live set).
-/// Returns the spawns to perform, or `None` if this tick's site/species didn't qualify.
 pub(super) fn attempt(
     world: &ServerWorld,
     player_pos: WorldPos,
     rng: &mut MobRng,
     room_for: impl Fn(Mob) -> u32,
 ) -> Option<Vec<Spawn>> {
-    // The caps compare against the live mob list, which undercounts while saved
-    // mobs are still streaming in with their section records. Spawning through
-    // that window refills the caps on top of the mobs about to be restored —
-    // a per-session population ratchet.
     if !mob_census_ready(world, player_pos) {
         return None;
     }
     let (cx, cz, render_dist) = world.data().loaded_area()?;
-    // Inset by a chunk so the column (and the neighbours a footing/biome read may
-    // touch) are loaded — unloaded reads would just fail the attempt anyway.
     let r = (render_dist - 1).clamp(0, HOSTILE_SPAWN_CHUNK_RADIUS);
 
-    // Pick a species that still has room; the site is then judged for *that* species.
     let kind = choose_kind(rng, &room_for, world.data().disabled_mods())?;
     let d = def(kind);
     let want = d.spawn_group.roll(rng).min(room_for(kind));
@@ -141,9 +85,6 @@ pub(super) fn attempt(
         spawn_site(world, player_pos, kind, wx, wz)
     };
     let first = spawn_with(world, kind, wx, wz, rng, &site)?;
-    // Climate rarity: the species' per-biome spawn chance gates the WHOLE
-    // attempt with one roll — never per group member, so rarity thins spawn
-    // events, not group size.
     if !biome_chance_passes(world, kind, wx, wz, rng) {
         return None;
     }
@@ -158,9 +99,6 @@ pub(super) fn attempt(
     Some(spawns)
 }
 
-/// Judge a site with `site` and roll the spawn's facing — the shared "one member"
-/// step for natural spawning and worldgen population, which differ only in the
-/// site rule (the player-distance band).
 pub(super) fn spawn_with(
     world: &ServerWorld,
     kind: Mob,
@@ -190,8 +128,6 @@ fn spawn_site(
     wz: i32,
 ) -> Option<WorldPos> {
     let feet_pos = site_for(world, kind, wx, wz)?;
-    // Natural spawns keep a distance band around the player; worldgen population
-    // (`super::populate`) deliberately doesn't — its herds are "already there".
     if too_close(player_pos, feet_pos, MIN_PLAYER_DIST)
         || !too_close(player_pos, feet_pos, MAX_PLAYER_DIST)
     {
@@ -200,24 +136,18 @@ fn spawn_site(
     Some(feet_pos)
 }
 
-/// The player-independent site judgment: surface footing, body clearance (dry),
-/// then the species' own [`SpawnRule`](super::SpawnRule) (biome + ground block).
 pub(super) fn site_for(world: &ServerWorld, kind: Mob, wx: i32, wz: i32) -> Option<WorldPos> {
     if let Some(band) = def(kind).spawn.y {
         return volume_site::find(world, kind, &def(kind).spawn, wx, wz, band);
     }
-    // The surface to stand on, and the feet cell resting on top of it.
     let ground_y = world.data().surface_collision_y(wx, wz)?;
     let feet = IVec3::new(wx, ground_y + 1, wz);
     let feet_pos = WorldPos::block_min(feet) + Vec3::new(0.5, 0.0, 0.5);
 
-    // The ground must have collision AND the body must fit (clearance above the
-    // feet) — exactly what a foothold test asserts.
     if !body_fits_at(world, kind, feet) {
         return None;
     }
 
-    // --- Species rule: biome + the block it would stand on. ---
     let biome = Biome::from_id(world.data().column_biome(wx, wz)?);
     let ground = Block::from_id(world.data().chunk_block(wx, ground_y, wz));
     if !def(kind).spawn.admits(biome, ground) {
@@ -229,11 +159,6 @@ pub(super) fn site_for(world: &ServerWorld, kind: Mob, wx: i32, wz: i32) -> Opti
 
 mod volume_site;
 
-/// Roll the species' per-biome spawn chance for the column's biome — the
-/// climate-rarity gate shared by the trickle attempt and the worldgen herds,
-/// drawn ONCE per attempt/herd (see [`super::SpawnRule::chances`]). A
-/// full-chance biome draws NOTHING, so rows without the field leave every
-/// existing RNG stream exactly as it was.
 pub(super) fn biome_chance_passes(
     world: &ServerWorld,
     kind: Mob,
@@ -247,14 +172,10 @@ pub(super) fn biome_chance_passes(
     chance_gate(def(kind).spawn.chance_in(biome), || rng.next_f32())
 }
 
-/// Pure chance gate: certain at full chance (no roll consumed), else decided
-/// by the lazily-drawn roll in `[0, 1)`.
 fn chance_gate(chance: f32, roll: impl FnOnce() -> f32) -> bool {
     chance >= 1.0 || roll() < chance
 }
 
-/// Whether `kind` can physically stand with its feet in `feet`, dry and clear
-/// of every hazard its species does not tolerate.
 pub fn body_fits_at(world: &ServerWorld, kind: Mob, feet: IVec3) -> bool {
     let params = def(kind).path_params();
     let solid = |c: IVec3| world.data().blocks_movement_at(c.x, c.y, c.z);
@@ -266,20 +187,9 @@ pub fn body_fits_at(world: &ServerWorld, kind: Mob, feet: IVec3) -> bool {
         && !super::nav::foothold_in_hazard(&world.cursor(), feet, params)
 }
 
-/// The terrain half of [`hostile_spawn_plan`], memoized.
-///
-/// The census gate walks a 19x19 chunk square per player and the spawnable set
-/// a 17x17 one — every tick, for an answer that can only change when a player
-/// crosses a chunk border or terrain streams in or out. Both are re-derived
-/// only when one of those two inputs moves.
-///
-/// Only CHUNK-GRAINED facts may be memoized under that key: the anchors
-/// themselves carry each player's exact position (their altitude picks the
-/// candidate scan band), so they are rebuilt from live positions every tick.
 #[derive(Default)]
 pub struct HostileSpawnCache {
     key: Option<(Vec<ChunkPos>, u64)>,
-    /// Per player, in `player_positions` order: did the census gate pass?
     census_ready: Vec<bool>,
     spawnable_chunks: Vec<ChunkPos>,
 }
@@ -486,7 +396,6 @@ fn hostile_candidate_at(
     {
         return None;
     }
-    // The species is not chosen yet, so every hazard refuses the site.
     if !body_cell_open(world, wx, y, wz)
         || !body_cell_open(world, wx, y + 1, wz)
         || !world.data().block_is_full_spawn_support(wx, y - 1, wz)
@@ -646,7 +555,6 @@ fn too_near_existing(kind: Mob, pos: WorldPos, existing: &[Spawn]) -> bool {
     })
 }
 
-/// How many more individuals of `kind` fit under both its caps, given the live set.
 pub(super) fn room_for(list: &[Instance], kind: Mob) -> u32 {
     let d = def(kind);
     let species = list.iter().filter(|m| m.kind == kind).count() as u32;
@@ -657,22 +565,16 @@ pub(super) fn room_for(list: &[Instance], kind: Mob) -> u32 {
     cap_room(species, d.cap, category, d.category.cap())
 }
 
-/// Pure cap arithmetic: the remaining spawn room is constrained by both the
-/// per-species and per-category limits. Factored out so the rule is tested without
-/// pinning any species' actual cap numbers.
 fn cap_room(species: u32, species_cap: u32, category: u32, category_cap: u32) -> u32 {
     species_cap
         .saturating_sub(species)
         .min(category_cap.saturating_sub(category))
 }
 
-/// Whether `feet` is within `min_dist` of the player (3-D), so a spawn is forbidden.
 fn too_close(player: WorldPos, feet: WorldPos, min_dist: f32) -> bool {
     player.distance_squared(feet) < f64::from(min_dist) * f64::from(min_dist)
 }
 
-/// A random world column `(wx, wz)` inside the loaded disc of chunk-radius `r` around
-/// `(cx, cz)`, or `None` if no offset landed in the disc within a few tries.
 fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32)> {
     for _ in 0..COLUMN_TRIES {
         let dx = rng.next_range(-r, r);
@@ -689,20 +591,10 @@ fn random_column(rng: &mut MobRng, cx: i32, cz: i32, r: i32) -> Option<(i32, i32
     None
 }
 
-/// Whether a species may enter the world by spawning at all: its mod is not
-/// disabled for this world (per-world `settings.json`). Shared by the natural
-/// picker and worldgen population.
 pub(super) fn species_enabled(kind: Mob, disabled: &std::collections::BTreeSet<String>) -> bool {
     !petramond_world::registry::namespace(def(kind).name).is_some_and(|ns| disabled.contains(ns))
 }
 
-/// Pick one species uniformly among those with population room, or `None` if none
-/// has room. Reservoir sampling — uniform without allocating a candidate list.
-/// A species whose spawn rule can't admit any site (empty biome/ground list — a
-/// programmatic-spawn-only mob, e.g. a mod's own night spawner) is never a
-/// candidate, so it can't eat the tick's single attempt. Species namespaced to
-/// a mod the world disabled (`disabled` — per-world `settings.json`) are never
-/// candidates either: no new disabled-mod content enters the world.
 fn choose_kind(
     rng: &mut MobRng,
     room_for: &impl Fn(Mob) -> u32,
@@ -718,8 +610,6 @@ fn choose_kind(
             continue;
         }
         seen += 1;
-        // Replace the held pick with probability 1/seen → every eligible kind ends up
-        // equally likely.
         if rng.next_range(0, seen - 1) == 0 {
             chosen = Some(m);
         }
@@ -764,21 +654,15 @@ mod tests {
 
     #[test]
     fn cap_room_needs_room_in_both() {
-        // Room in both -> fits, limited by the tighter cap.
         assert_eq!(cap_room(0, 8, 0, 25), 8);
         assert_eq!(cap_room(7, 8, 20, 25), 1);
-        // Species full -> no, even with category room.
         assert_eq!(cap_room(8, 8, 0, 25), 0);
-        // Category full -> no, even with species room.
         assert_eq!(cap_room(0, 8, 25, 25), 0);
-        // Both full -> no.
         assert_eq!(cap_room(8, 8, 25, 25), 0);
     }
 
     #[test]
     fn the_chance_gate_is_certain_at_full_chance_and_rolls_below_it() {
-        // Full chance draws NOTHING — existing rows must leave every RNG
-        // stream exactly as it was before per-biome chances existed.
         assert!(chance_gate(1.0, || unreachable!(
             "full chance draws no roll"
         )));
@@ -789,11 +673,8 @@ mod tests {
     #[test]
     fn too_close_is_a_sphere_around_the_player() {
         let player = WorldPos::new(0.0, 0.0, 0.0);
-        // Just inside 50 blocks → forbidden.
         assert!(too_close(player, WorldPos::new(49.0, 0.0, 0.0), 50.0));
-        // Just outside → allowed.
         assert!(!too_close(player, WorldPos::new(51.0, 0.0, 0.0), 50.0));
-        // Distance is 3-D: 50 up is also too close.
         assert!(too_close(player, WorldPos::new(0.0, 49.0, 0.0), 50.0));
     }
 

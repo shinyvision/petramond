@@ -1,25 +1,7 @@
-//! Far-chunk leaf level-of-detail selection. A DIFFERENT concern from section
-//! culling (which decides *whether* a section is drawn): this decides *which mesh
-//! variant* (full vs leaf-decimated "far" mesh) a distant chunk draws, with a
-//! per-chunk staggered fade so the swap doesn't pop across a hard distance ring.
-
-/// Distance (world units) at which the far-leaf LOD fade begins. Closer than
-/// this a chunk always draws its full mesh.
 const FAR_LEAF_LOD_FADE_START: f32 = 128.0;
-/// Distance (world units) at which every chunk with a far mesh has switched to it.
 const FAR_LEAF_LOD_FADE_END: f32 = 192.0;
-/// Smoothstep-space margin around each chunk's transition threshold. Inactive
-/// sections must cross above `threshold + margin`; active sections stay far-LOD
-/// until they fall below `threshold - margin`.
 const FAR_LEAF_LOD_HYSTERESIS: f32 = 0.08;
 
-/// Should this chunk draw its decimated "far leaf" opaque mesh this frame?
-///
-/// `false` (full mesh) when the chunk has no far mesh, or is nearer than the fade
-/// start; `true` (far mesh) beyond the fade end. In the fade band the smoothstep
-/// of the normalized distance is compared against a per-chunk threshold
-/// ([`chunk_lod_threshold`]) so chunks cross over at staggered distances rather
-/// than all snapping at one ring.
 pub(super) fn far_leaf_lod_active(
     dist_sq: f32,
     origin: (i32, i32),
@@ -48,8 +30,6 @@ pub(super) fn far_leaf_lod_active(
     }
 }
 
-/// A stable per-chunk threshold in `[0, 1)` (hashed from the chunk origin) that
-/// staggers the LOD crossover so neighbours don't pop together.
 fn chunk_lod_threshold(origin: (i32, i32)) -> f32 {
     let mut h =
         (origin.0 as u32).wrapping_mul(0x9E37_79B1) ^ (origin.1 as u32).wrapping_mul(0x85EB_CA77);

@@ -1,11 +1,3 @@
-//! Complete-cell snapshots and the one applicator that installs them.
-//!
-//! A [`CellEdit`] is validated whole, then written in budgeted slices so an
-//! edit of any size spreads over ticks while staying ONE edit: one receipt,
-//! one set of overwritten cells. Compound blocks (doors, multi-cell models)
-//! never straddle a slice — a slice pulls in every member of each compound it
-//! touches, both the ones it writes and the ones it overwrites.
-
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::{
@@ -16,9 +8,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::cell_change::{CellChange, ChangeKind};
 
-/// A live cell's complete contents — block, per-cell state, fluid level, mod
-/// KV and block entities: what an edit snapshots before overwriting a cell
-/// and what the applicator installs. Schematics capture and paste this type.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedCell {
     pub block: Block,
@@ -33,36 +22,23 @@ pub type Cells = Vec<(IVec3, ResolvedCell)>;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CellPolicy {
-    /// Keep the overwritten cells for the receipt.
     pub record: bool,
-    /// Once the edit completes, every non-air block inside these inclusive
-    /// bounds re-runs its block update: cells the edit skipped still lose
-    /// support to the ones it wrote.
     pub update_bounds: Option<[IVec3; 2]>,
 }
 
-/// What a slice did to the block population, keyed at each block's anchor so
-/// a multi-cell block is announced once.
 pub struct CellHooks<'a> {
     pub removed: &'a [(IVec3, Block)],
     pub placed: &'a [(IVec3, Block)],
 }
 
-/// The outcome of an edit, complete or interrupted.
 pub struct EditReceipt {
-    /// The requested cells, in the caller's order.
     pub target: Cells,
-    /// How many `target` cells were written (all of them unless interrupted).
     pub written: usize,
-    /// Air written over the rest of each overwritten compound block.
     pub cleared: Cells,
-    /// The overwritten cells, when the policy records them.
     pub before: Cells,
-    /// Inclusive bounds of `target`.
     pub bounds: [IVec3; 2],
 }
 
-/// An edit in progress. Dropping it abandons the unwritten remainder.
 pub struct CellEdit {
     target: Cells,
     index: HashMap<IVec3, u32>,
@@ -93,8 +69,6 @@ impl CellEdit {
         self.written == self.target.len()
     }
 
-    /// Close the edit. An interrupted edit moves its unwritten cells to the
-    /// tail so `target[..written]` is exactly what reached the world.
     pub fn finish(mut self) -> EditReceipt {
         if !self.is_complete() {
             let mut kept = Vec::with_capacity(self.written);
@@ -129,7 +103,6 @@ const AIR: ResolvedCell = ResolvedCell {
 };
 
 impl ServerWorld {
-    /// Snapshot one stream-final cell, including every persistent block-owned store.
     pub fn snapshot_cell(&self, pos: IVec3) -> Result<ResolvedCell, String> {
         self.cell_readable(pos)?;
         let mut data = ResolvedCell {
@@ -150,7 +123,6 @@ impl ServerWorld {
         Ok(data)
     }
 
-    /// Whether the cell already holds exactly `data`, without copying it out.
     fn cell_holds(&self, pos: IVec3, data: &ResolvedCell) -> bool {
         if Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z)) != data.block {
             return false;
@@ -195,8 +167,6 @@ impl ServerWorld {
         Ok(())
     }
 
-    /// Validate the complete edit before anything is written. A refusal hands
-    /// the cells back untouched.
     pub fn begin_cells(
         &self,
         target: Cells,
@@ -235,11 +205,6 @@ impl ServerWorld {
         }
     }
 
-    /// Write the next slice of at most roughly `budget` cells (a compound is
-    /// never split, so a slice may run slightly over). `hooks` runs between
-    /// the write and the final seating of instance state, so a listener that
-    /// treats every placement as a fresh one cannot reinitialise a copied
-    /// machine. Returns whether the edit is complete.
     pub fn step_cells(
         &mut self,
         edit: &mut CellEdit,
@@ -312,15 +277,12 @@ impl ServerWorld {
         Ok(true)
     }
 
-    /// Apply a whole edit at once, with no listeners.
     pub fn apply_cells(&mut self, cells: Cells, policy: CellPolicy) -> Result<EditReceipt, String> {
         let mut edit = self.begin_cells(cells, policy).map_err(|(_, e)| e)?;
         self.step_cells(&mut edit, usize::MAX, &mut |_, _| {})?;
         Ok(edit.finish())
     }
 
-    /// The next unwritten target cells, closed over compound membership, plus
-    /// the cells outside the target that overwritten compounds leave behind.
     fn next_slice(
         &self,
         edit: &mut CellEdit,
@@ -378,7 +340,6 @@ impl ServerWorld {
             .collect()
     }
 
-    /// Install raw records. Callers have validated and materialized the cells.
     fn install_cells(&mut self, cells: &[(IVec3, &ResolvedCell)]) {
         let mut changes = Vec::with_capacity(cells.len());
         for (p, data) in cells {
@@ -402,8 +363,6 @@ impl ServerWorld {
             s.modified = true;
         }
         self.apply_cell_changes(&changes);
-        // Neighbours see the completed edit; the copied cells retain their
-        // authored connection/corner state until a later world edit changes it.
         for (p, data) in cells {
             let (s, x, y, z) = self
                 .data
@@ -417,17 +376,11 @@ impl ServerWorld {
     }
 }
 
-/// Every cell of the compound block `data` belongs to at `pos`; `None` for a
-/// single-cell block.
 fn compound_members(pos: IVec3, data: &ResolvedCell) -> Option<Vec<IVec3>> {
     let members = data.block.compound_members(pos, data.state)?;
     Some(members.into_iter().map(|(cell, _)| cell).collect())
 }
 
-/// Every compound block in the edit must be whole and self-consistent: each
-/// member present, of the same block, and naming the same member list from
-/// its own state (a model's offsets agree on one base, a door's halves on one
-/// facing and open bit).
 fn validate_compounds(cells: &Cells, index: &HashMap<IVec3, u32>) -> Result<(), String> {
     let at = |p: &IVec3| index.get(p).map(|&i| &cells[i as usize].1);
     for (pos, data) in cells {

@@ -1,27 +1,4 @@
 // model_break: the destroy crack over a bbmodel block.
-//
-// Draws the SAME `ModelVertex` stream the model pass drew (vs_world_model's
-// geometry, vertex for vertex), so the decal's depth is the model's own — there
-// is no second, approximate crack shell to misalign. group(0) and group(1) are
-// the model pipeline's (frame uniforms; the model atlas). group(2) is this
-// pass's own: the frame's crack masks plus the BLOCK atlas, where the destroy
-// tiles live.
-//
-// A fragment is cracked only if it is BOTH claimed by a cracked model's world
-// outline box and on a texel the model actually draws — cutout texels discard,
-// so no crack floats in a model's empty air. The destroy tile is projected
-// across the whole outline box (one tile per model), so a workbench wears one
-// continuous crack pattern instead of a complete crack per cube.
-//
-// CLAIMING IS SIDED, not a plain point-in-box test. Two models placed against
-// each other share a boundary plane exactly, and a tight outline box can even
-// round a ULP past it, so a point test claims the NEIGHBOUR's faces on that
-// plane as readily as the cracked model's own (2026-09-22: the plank of the
-// chiseling station south of a cracked one changed colour with every stage).
-// The surface itself disambiguates them: a face belongs to the solid its
-// outward normal points AWAY from, so the test nudges the fragment a hair back
-// along its own normal and asks whether THAT point is in the box. The cracked
-// model's own boundary faces move inside it; a neighbour's move away from it.
 
 struct ModelCrack {
     // xyz = the model's world outline min / max, relative to the render origin.

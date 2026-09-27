@@ -34,31 +34,23 @@ impl HusbandryDef {
     }
 }
 
-/// The `farming:husbandry` entry a mob row carries — the schema other packs
-/// write to make their own species graze, restore and breed.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Profile {
-    /// Meals one bite restores, 1..=10.
     restore: i32,
-    /// The species a bred pair produces; absent = a wild, unkept species.
     #[serde(default)]
     offspring: Option<String>,
-    /// 1..=16 food groups.
     food: Vec<FoodSpec>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FoodSpec {
-    /// 1..=32 block rows the species eats.
     blocks: Vec<String>,
-    /// What eating does to the block.
     eaten: Eaten,
 }
 
 impl Profile {
-    /// The shape rules serde cannot state: the ranges.
     fn check(&self) -> Result<(), String> {
         if !(1..=10).contains(&self.restore) {
             return Err(format!("restore {} is outside 1..=10", self.restore));
@@ -98,7 +90,6 @@ pub fn resolve() -> Vec<HusbandryDef> {
         .collect()
 }
 
-/// Resolve a checked profile's names into a species definition.
 fn build(kind: MobId, key: &str, profile: Profile) -> Result<HusbandryDef, String> {
     profile.check()?;
     let offspring = match profile.offspring {
@@ -133,8 +124,6 @@ fn build(kind: MobId, key: &str, profile: Profile) -> Result<HusbandryDef, Strin
 mod tests {
     use super::*;
 
-    /// Every husbandry entry this pack ships matches the schema and its
-    /// ranges — the check a foreign pack's rows get at load.
     #[test]
     fn every_shipped_profile_matches_the_schema() {
         let rows = pack_rows_with_data(include_str!("../../pack/mobs.json"), "mobs", KEY);

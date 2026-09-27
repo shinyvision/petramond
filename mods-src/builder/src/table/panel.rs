@@ -1,6 +1,3 @@
-//! The table panel: every key its document binds, and what they say for the
-//! project the table speaks for.
-
 use crate::host::prelude::*;
 
 use crate::jobs::Builder;
@@ -9,7 +6,6 @@ use crate::project::{Hold, Phase, Project};
 use crate::table::{blueprint_at, may_edit, project_at};
 use crate::ui::Tone;
 
-/// A table with no project shows nothing but its words: the default.
 #[derive(Default)]
 pub struct TablePanel {
     pub title: String,
@@ -49,7 +45,6 @@ impl PanelState for TablePanel {
     }
 }
 
-/// What `player` sees on the table at `anchor`.
 pub fn describe(builder: &mut Builder, player: PlayerId, anchor: [i32; 3], now: u64) -> TablePanel {
     let blueprint = blueprint_at(anchor);
     let project = project_at(builder, anchor).and_then(|id| builder.projects.get(id).cloned());
@@ -73,8 +68,6 @@ pub fn describe(builder: &mut Builder, player: PlayerId, anchor: [i32; 3], now: 
             ..TablePanel::default()
         },
     };
-    // A refused press keeps the status line for a moment: the next publish
-    // would otherwise wipe it before it could be read.
     match builder.tables.refused.get(&(player, anchor)) {
         Some((reason, until)) if now < *until => {
             panel.status = reason.to_string();
@@ -97,20 +90,14 @@ fn of_project(
     let brief = project.brief();
     let active = brief.phase.active();
     let lost = brief.lost_worker();
-    // A started job that ended is taken up again from the table its
-    // blueprint now lies in.
     let tabled = blueprint.is_some_and(|b| builder.projects.bound(b) == Some(project.id));
     let resumable = brief.resumable() && tabled;
     let show_start = brief.phase == Phase::Draft || lost || resumable;
-    // Asked only where the answer shows: on Start, and on a settled draft's
-    // status line.
     let admission = (show_start && brief.anchored.is_some()).then(|| {
         let from = if resumable { brief.at(anchor) } else { brief };
         builder.admission(&from, now)
     });
     let (status, tone) = status(builder, project, admission.as_ref());
-    // A blueprint that has been started once is that build for good; one
-    // whose project ended unstarted is blank paper again.
     let draft = brief.open_to_change() || (brief.phase.finished() && !brief.started);
     TablePanel {
         title: if project.title.is_empty() {
@@ -136,8 +123,6 @@ fn of_project(
     }
 }
 
-/// The status line. Why work stands still is the golem's to say: it wears a
-/// mark and answers when used. The table speaks only where no golem can.
 fn status(
     builder: &Builder,
     project: &Project,

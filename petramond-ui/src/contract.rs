@@ -1,17 +1,3 @@
-//! The engine's document contract: which kinds exist, which slot roles each
-//! one pins, and every load-time rule the game applies before it trusts a
-//! document to route clicks.
-//!
-//! This is the one place in the crate that knows about engine kinds. It is
-//! pure data plus pure checks — registry lookups the game owns (item tags)
-//! come in through [`EngineCatalog`], image files through a size callback —
-//! so the game's loader and the gui-builder run literally the same rules,
-//! and a document the builder calls valid is one the game will load.
-//!
-//! The numeric limits below are the GUI-facing statement of engine
-//! constants; the game asserts at compile time that its own constants agree,
-//! so neither side can drift silently.
-
 mod fit;
 
 pub use fit::{overflows, viewport_overflow, Overflow, SMALLEST_VIEWPORT};
@@ -20,32 +6,19 @@ use crate::doc::DocClass::{Container, Hud, Screen};
 use crate::doc::{Accept, DocClass, Document, Node, NodeKind};
 use crate::validate::{DocIssue, SlotContract, StyleLookup};
 
-/// The crate version the rules come from, for "valid for the engine at …"
-/// labels in tools.
 pub const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// The namespace engine kinds live in; a mod may never claim it.
 pub const ENGINE_NAMESPACE: &str = "petramond";
 
-/// The player's main inventory grid (everything but the hotbar).
 pub const MAIN_GRID_SLOTS: usize = 27;
-/// The hotbar row.
 pub const HOTBAR_SLOTS: usize = 9;
-/// A chest's storage.
 pub const CHEST_SLOTS: usize = 27;
-/// A furnace's input, fuel and output cells.
 pub const FURNACE_SLOTS: usize = 3;
-/// Cap on a mod document's `container` role slots (engine-backed storage).
 pub const MAX_CONTAINER_SLOTS: usize = 54;
-/// Cap on one slot's `accepts` filters: the runtime mask spends one bit each.
 pub const MAX_SLOT_FILTERS: usize = u32::BITS as usize;
-/// Largest side of a framed GUI sheet (the client image side cap).
 pub const IMAGE_MAX_SIDE: u32 = 640;
-/// Most frames one GUI sheet may declare.
 pub const IMAGE_MAX_FRAMES: u32 = 64;
 
-/// One engine document kind: its key, the class its document is authored
-/// as, and the slot roles (with exact counts) its screen routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EngineKind {
     pub key: &'static str,
@@ -67,8 +40,6 @@ const fn kind(
     EngineKind { key, class, slots }
 }
 
-/// Every engine kind, in the game's frozen kind-id order (the game's tests
-/// pin the order against its registry). Append-only.
 pub const ENGINE_KINDS: &[EngineKind] = &[
     kind(
         "petramond:chest",
@@ -98,7 +69,6 @@ pub const ENGINE_KINDS: &[EngineKind] = &[
             ("craft_result", 1),
         ],
     ),
-    // Input, fuel, output — the in-role index IS the container index.
     kind(
         "petramond:furnace",
         Container,
@@ -138,13 +108,10 @@ pub const ENGINE_KINDS: &[EngineKind] = &[
     kind("petramond:content", Screen, &[]),
 ];
 
-/// The engine kind named `key`, if it is one.
 pub fn engine_kind(key: &str) -> Option<&'static EngineKind> {
     ENGINE_KINDS.iter().find(|k| k.key == key)
 }
 
-/// The namespace of `key` (`"wheel:wheel"` → `Some("wheel")`), or `None`
-/// for bare and degenerate forms.
 pub fn namespace(key: &str) -> Option<&str> {
     match key.split_once(':') {
         Some((ns, name)) if !ns.is_empty() && !name.is_empty() => Some(ns),
@@ -152,18 +119,12 @@ pub fn namespace(key: &str) -> Option<&str> {
     }
 }
 
-/// How the engine classifies a document's kind key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KindClass {
-    /// An engine kind with its fixed contract.
     Engine(&'static EngineKind),
-    /// A pack-registered `mod_id:name` kind.
     Mod,
 }
 
-/// Classify `key` the way the game's kind registry does: engine keys map to
-/// their table row; a namespaced key outside the engine namespace is a mod
-/// kind; anything else (a bare name, an unknown `petramond:*`) is refused.
 pub fn classify_kind(key: &str) -> Result<KindClass, String> {
     if let Some(kind) = engine_kind(key) {
         return Ok(KindClass::Engine(kind));
@@ -177,9 +138,6 @@ pub fn classify_kind(key: &str) -> Result<KindClass, String> {
     }
 }
 
-/// The mod-kind ownership rule: a namespaced document kind must ship from
-/// the pack owning the namespace. Engine kinds may ship from anywhere
-/// (re-skin packs).
 pub fn kind_permitted(key: &str, pack_id: Option<&str>) -> Result<(), String> {
     if !matches!(classify_kind(key), Ok(KindClass::Mod)) {
         return Ok(());
@@ -197,11 +155,6 @@ pub fn kind_permitted(key: &str, pack_id: Option<&str>) -> Result<(), String> {
     }
 }
 
-/// The slot contract a MOD document earns from its own declarations: mod
-/// kinds may declare generic `container` slots (engine-backed mod-owned
-/// storage, capped), plus the standard `player_inv`/`hotbar`/`off_hand`
-/// grids with the engine counts. Any other role is refused — a mod document
-/// can never name an engine block-entity's roles.
 pub fn mod_document_contract(doc: &Document) -> Result<SlotContract, String> {
     let mut roles: Vec<(String, usize)> = Vec::new();
     for (role, count) in doc.role_slots() {
@@ -233,8 +186,6 @@ pub fn mod_document_contract(doc: &Document) -> Result<SlotContract, String> {
     Ok(SlotContract { roles })
 }
 
-/// The contract a document is validated against: its engine kind's
-/// fixed table row, or the contract a mod document earns from its own slots.
 pub fn contract_for_document(doc: &Document) -> Result<SlotContract, String> {
     match classify_kind(&doc.kind)? {
         KindClass::Engine(kind) => Ok(kind.contract()),
@@ -242,32 +193,17 @@ pub fn contract_for_document(doc: &Document) -> Result<SlotContract, String> {
     }
 }
 
-/// The registry lookups load-time validation needs from the host.
 pub trait EngineCatalog {
-    /// Whether an item tag named `name` is registered — a QUERY, never an
-    /// interning resolve (which would register a typo as a fresh empty tag
-    /// and make the check unreachable).
     fn item_tag_exists(&self, name: &str) -> bool;
 }
 
-/// Everything [`validate_for_engine`] checks a document against.
 pub struct EngineCheck<'a> {
-    /// The theme's style set (`None` skips style checks, e.g. while art is
-    /// work in progress).
     pub styles: Option<&'a dyn StyleLookup>,
-    /// The id of the pack the document ships in (`None`: base assets or no
-    /// pack at all).
     pub pack_id: Option<&'a str>,
     pub catalog: &'a dyn EngineCatalog,
-    /// Pixel size of a statically named image resolved beside the document,
-    /// or `None` when the file is missing.
     pub image_size: &'a dyn Fn(&str) -> Option<(u32, u32)>,
 }
 
-/// Every reason the game would refuse `doc` at load (empty = it loads):
-/// kind classification and namespace ownership, the per-kind slot contract,
-/// structural and style rules, slot `accepts` semantics, and the art the
-/// document names.
 pub fn validate_for_engine(doc: &Document, check: &EngineCheck<'_>) -> Vec<DocIssue> {
     let document_issue = |message: String| DocIssue {
         path: "document".into(),
@@ -294,12 +230,6 @@ pub fn validate_for_engine(doc: &Document, check: &EngineCheck<'_>) -> Vec<DocIs
     issues
 }
 
-/// The slot `accepts`/`take_only` rules: semantics apply only to
-/// `container` slots, one slot carries at most [`MAX_SLOT_FILTERS`]
-/// filters, a TAG must be registered, and a DATA key must be namespaced.
-/// Data keys have no declaration anywhere (a row states one by carrying
-/// it), so "no row carries it yet" is a pack shipping its slot before its
-/// rows, not an error.
 pub fn slot_semantics_issues(doc: &Document, catalog: &dyn EngineCatalog) -> Vec<String> {
     let mut issues = Vec::new();
     for cell in doc.slot_semantics() {
@@ -335,24 +265,13 @@ pub fn slot_semantics_issues(doc: &Document, catalog: &dyn EngineCatalog) -> Vec
     issues
 }
 
-/// One image a document statically names, with the first frames grid seen
-/// for it and the node an issue about it is anchored to (the first
-/// reference, or the node whose grid was kept).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImageRef {
     pub name: String,
     pub frames: Option<[u32; 2]>,
-    /// Node path in the validator's `root/2/0(image)` form.
     pub path: String,
 }
 
-/// Every image a document statically names — on `image`, `rotimage`,
-/// image-backed `button` nodes and `.png` button/toggle icons alike — in
-/// first-reference order (the order
-/// that feeds `TexId::DocImage`). The first SEEN frames grid is kept, so an
-/// unframed reference cannot hide a framed one from the sheet check. An
-/// empty name is the runtime-bound pattern (`bind.image` supplies the art)
-/// and names no file.
 pub fn image_refs(doc: &Document) -> Vec<ImageRef> {
     fn walk(node: &Node, path: &str, refs: &mut Vec<ImageRef>) {
         let named = match &node.kind {
@@ -397,8 +316,6 @@ pub fn image_refs(doc: &Document) -> Vec<ImageRef> {
     refs
 }
 
-/// A node's issue path: its structural path plus `(type#id)`, the form
-/// [`Document::validate`] anchors issues with.
 pub(crate) fn node_label(path: &str, node: &Node) -> String {
     match &node.id {
         Some(id) => format!("{path}({}#{id})", node.kind.type_name()),
@@ -406,8 +323,6 @@ pub(crate) fn node_label(path: &str, node: &Node) -> String {
     }
 }
 
-/// Art the document names that the game would refuse: a missing file, or a
-/// framed sheet whose grid does not fit (see [`check_frame_sheet`]).
 pub fn image_issues(
     doc: &Document,
     image_size: &dyn Fn(&str) -> Option<(u32, u32)>,
@@ -429,9 +344,6 @@ pub fn image_issues(
     issues
 }
 
-/// A framed sheet is uploaded whole and ONE frame is drawn per node, so the
-/// grid must divide the image exactly and both must stay inside the shared
-/// GUI image bounds — a bad grid mis-slices every frame of the sheet.
 pub fn check_frame_sheet(name: &str, size: (u32, u32), frames: [u32; 2]) -> Result<(), String> {
     let [cols, rows] = frames;
     let (w, h) = size;

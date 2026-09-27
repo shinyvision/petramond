@@ -1,14 +1,4 @@
-//! Shared plane primitives for sub-cell shapes: the cell-local UV mapping
-//! that matches a full cube face, and the per-plane four-corner light field
-//! (`PlaneLight`) the unified box-set emitter (`super::boxset`) samples
-//! bilinearly so coplanar quads stay seam-free.
-
 use super::face::Face;
-/// The tile-local UV of a point inside a block cell, per face, matching the
-/// orientation a full cube face gets from the shader's `corner_local` (corner
-/// 0 -> (0,1), 1 -> (1,1), 2 -> (1,0), 3 -> (0,0) in `Face::quad_box` corner
-/// order). Shared by the chunk mesher and the item cube so a cut shape
-/// textures identically to the full block it is cut from, everywhere drawn.
 #[inline]
 pub fn cell_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
     match face {
@@ -21,17 +11,10 @@ pub fn cell_uv(face: Face, p: [f32; 3]) -> [f32; 2] {
     }
 }
 
-/// Where the carve UV `(u, v)` of a point on `face` of the cell-local box
-/// `[min, max]` falls as a FRACTION `(s, t)` of the box's whole face — what
-/// an authored tile rect (`ShapeFace::uv_rect`) is stretched by. Shared by
-/// the chunk mesher and the item cube, so a subtraction remainder in the
-/// world and the whole face in the hand map the same part of the rect.
 pub fn face_fraction(face: Face, min: [f32; 3], max: [f32; 3], uv: (f32, f32)) -> (f32, f32) {
     FaceUvSpan::of(face, min, max).fraction(uv)
 }
 
-/// A box face's carve-UV extent: [`face_fraction`] split so an emitter
-/// sampling many points of one face measures the face once.
 #[derive(Clone, Copy)]
 pub(super) struct FaceUvSpan {
     u0: f32,
@@ -67,10 +50,6 @@ impl FaceUvSpan {
     }
 }
 
-/// One plane's four face-corner lighting samples, in `Face::quad_box` corner
-/// order (so corner `i` sits at UV `corner_local(i)`), bilinearly sampled at
-/// sub-quad corners. Interpolated integer channels round half-up; coincident
-/// corners of coplanar quads sample identical values, so shading is seamless.
 pub(super) struct PlaneLight {
     pub(super) ao: [u32; 4],
     pub(super) sky: [u32; 4],
@@ -79,18 +58,12 @@ pub(super) struct PlaneLight {
 
 impl PlaneLight {
     pub(super) fn sample(&self, u: f32, v: f32) -> (u32, u32, petramond_world::light::BlockLight6) {
-        // Corner UVs: 0=(0,1) 1=(1,1) 2=(1,0) 3=(0,0).
         let w = [(1.0 - u) * v, u * v, u * (1.0 - v), (1.0 - u) * (1.0 - v)];
-        // Spelled out: the iterator form of this sum stayed an out-of-line
-        // call per channel, and this runs for every box-set vertex.
         let blend = |c: [u32; 4]| -> u32 {
             let f =
                 c[0] as f32 * w[0] + c[1] as f32 * w[1] + c[2] as f32 * w[2] + c[3] as f32 * w[3];
             (f + 0.5) as u32
         };
-        // Block light interpolates PER CHANNEL, in the linear light space —
-        // interpolating a hue between two differently-coloured corners is
-        // meaningless, and the shader's per-channel curve wants linear input.
         let b = &self.block;
         let ch = [
             b[0].channels(),
@@ -112,10 +85,6 @@ mod tests {
     use super::super::face::FACES;
     use super::*;
 
-    /// The cell-local UV mapping must agree with the plain cube face: a
-    /// full-cell cut-shape quad textures exactly like a full block. Corner `i`
-    /// of `Face::quad_box` over the unit cell carries the shader's
-    /// `corner_local` UV (0 -> (0,1), 1 -> (1,1), 2 -> (1,0), 3 -> (0,0)).
     #[test]
     fn cell_uv_matches_full_cube_face_orientation() {
         const CORNER_LOCAL: [[f32; 2]; 4] = [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
@@ -143,23 +112,15 @@ mod tests {
     fn the_uv_turn_undoes_the_shape_turn_on_every_face() {
         use petramond_world::block::{face_uv_turns, ShapeFace, FACE_BEFORE_TURN};
 
-        // Which authored face ends up at canonical index `i` after `turns`.
         let face_before_turns =
             |i: usize, turns: u8| (0..turns).fold(i, |f, _| FACE_BEFORE_TURN[f]);
-        // A cell-local point off-centre on every axis, so no symmetry can hide
-        // a mistake.
         let authored = [3.0 / 16.0, 5.0 / 16.0, 6.0 / 16.0];
         for turns in 0..4u8 {
-            // The same material point after `turns` quarter turns: the turn the
-            // box extents get, (x, z) -> (1 - z, x).
             let mut p = authored;
             for _ in 0..turns {
                 p = [1.0 - p[2], p[1], p[0]];
             }
             for (i, face) in FACES.into_iter().enumerate() {
-                // Face `i` of the turned box is authored face `a`; sampling the
-                // turned face at the turned point must land where the authored
-                // face sampled the authored point.
                 let want = cell_uv(FACES[face_before_turns(i, turns)], authored);
                 let [u, v] = cell_uv(face, p);
                 let got = ShapeFace::turn_uv(face_uv_turns(i, turns), u, v);

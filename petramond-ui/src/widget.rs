@@ -1,24 +1,13 @@
-//! Shared widget geometry: the same math feeds hit-testing (interact) and
-//! drawing (paint), so a thumb can never render where it doesn't grab.
-//!
-//! Everything here is logical px and pure.
-
 use crate::doc::{ScrollAxis, TabSpec};
 use crate::layout::RectI;
 use crate::text::Font;
 use crate::theme::{FaceState, Theme};
 use crate::tree::Inst;
 
-/// Whether a pointer press can target this instance directly (used by the
-/// topmost-hit scan). The per-kind answer is exhaustive in
-/// [`crate::widget_policy::pointer_target`], so a new interactive widget
-/// cannot silently become unclickable.
 pub(crate) fn pointer_target(inst: &Inst<'_>) -> bool {
     crate::widget_policy::pointer_target(&inst.node.kind)
 }
 
-/// Per-tab widths of a tab bar: icon + label centred with button padding,
-/// like leaf buttons. The same widths feed hit-testing and paint.
 pub(crate) fn tab_widths(theme: &Theme, tabs: &[TabSpec]) -> Vec<i32> {
     let pad = theme.metrics.button_pad;
     tabs.iter()
@@ -36,7 +25,6 @@ pub(crate) fn tab_widths(theme: &Theme, tabs: &[TabSpec]) -> Vec<i32> {
         .collect()
 }
 
-/// The i-th tab cell of a bar arranged from `rect`'s top-left.
 pub(crate) fn tab_cell(rect: RectI, widths: &[i32], gap: i32, i: usize) -> RectI {
     let x = rect.x + widths[..i].iter().map(|w| w + gap).sum::<i32>();
     RectI {
@@ -47,22 +35,15 @@ pub(crate) fn tab_cell(rect: RectI, widths: &[i32], gap: i32, i: usize) -> RectI
     }
 }
 
-/// The tab index under `(x, y)`, if any.
 pub(crate) fn tab_hit(rect: RectI, widths: &[i32], gap: i32, x: f32, y: f32) -> Option<u32> {
     (0..widths.len())
         .find_map(|i| contains_f(tab_cell(rect, widths, gap, i), x, y).then_some(i as u32))
 }
 
-/// Float point-in-rect over a logical rect (half-open, like `RectI`).
 pub(crate) fn contains_f(r: RectI, x: f32, y: f32) -> bool {
     x >= r.x as f32 && x < (r.x + r.w) as f32 && y >= r.y as f32 && y < (r.y + r.h) as f32
 }
 
-/// The vertical scrollbar geometry of a scroll node, or `None` when the
-/// content fits (no bar). `view` is the CHROME rect the bar may occupy (the
-/// node rect inset by its styled border, so the bar never covers a frame);
-/// `viewport_len` is the node's full scroll-axis length — offsets stay in
-/// node space.
 pub(crate) fn scrollbar(
     view: RectI,
     viewport_len: i32,
@@ -96,8 +77,6 @@ pub(crate) fn scrollbar(
     Some((track, thumb))
 }
 
-/// Map a thumb-drag pointer y (logical, minus grab offset) back to a scroll
-/// offset.
 pub(crate) fn scroll_offset_for_thumb_y(
     view: RectI,
     viewport_len: i32,
@@ -111,18 +90,14 @@ pub(crate) fn scroll_offset_for_thumb_y(
     (frac * max_off as f32).round() as i32
 }
 
-/// The chrome rect scrollbars occupy: the node rect inset by its styled
-/// border so the bar sits inside a framed scroll region.
 pub(crate) fn scroll_view_rect(theme: &Theme, node: &crate::doc::Node, rect: RectI) -> RectI {
     rect.inset(theme.container_insets(node))
 }
 
-/// Clamp a scroll offset against solved content.
 pub(crate) fn clamp_scroll(offset: i32, viewport: i32, content: i32) -> i32 {
     offset.clamp(0, (content - viewport).max(0))
 }
 
-/// The scroll axis length of a scroll node's viewport/content pair.
 pub(crate) fn scroll_lengths(axis: ScrollAxis, rect: RectI, content: (i32, i32)) -> (i32, i32) {
     match axis {
         ScrollAxis::Vertical => (rect.h, content.1),
@@ -130,7 +105,6 @@ pub(crate) fn scroll_lengths(axis: ScrollAxis, rect: RectI, content: (i32, i32))
     }
 }
 
-/// Slider handle rect for a value in `min..=max` over the track `rect`.
 pub(crate) fn slider_handle(rect: RectI, theme: &Theme, min: f32, max: f32, value: f32) -> RectI {
     let (hw, hh) = theme
         .part("slider.handle")
@@ -150,7 +124,6 @@ pub(crate) fn slider_handle(rect: RectI, theme: &Theme, min: f32, max: f32, valu
     }
 }
 
-/// Slider value for a pointer x over the track `rect`, quantized to `step`.
 pub(crate) fn slider_value_at(rect: RectI, x: f32, min: f32, max: f32, step: Option<f32>) -> f32 {
     let frac = ((x - rect.x as f32) / rect.w.max(1) as f32).clamp(0.0, 1.0);
     let mut v = min + frac * (max - min);
@@ -160,12 +133,6 @@ pub(crate) fn slider_value_at(rect: RectI, x: f32, min: f32, max: f32, step: Opt
     v.clamp(min, max)
 }
 
-/// Which face a (possibly list-stamped) button paints.
-///
-/// A selected row falls back to the PRESSED face — a compound button has no
-/// resting "selected" look — but a part that authors a real `selected` face
-/// means it: selection is not the same state as being held down. Styling a
-/// grid cell as an item slot is exactly that case.
 pub(crate) fn button_face_state(
     enabled: bool,
     selected: bool,
@@ -186,16 +153,6 @@ pub(crate) fn button_face_state(
     }
 }
 
-/// The face preference chain a checkbox/toggle paints, most specific first:
-/// try each with `face_if`, then fall back to the last (a plain state, which
-/// every such part authors).
-///
-/// A part that only draws `off`/`on`/`disabled` is unaffected — the qualified
-/// names simply miss. The point is controls whose press or hover cannot be a
-/// tint of the resting picture: a handle that sits in a different PLACE in
-/// each position needs `off.hover` and `on.hover` as different drawings, while
-/// a part whose press looks the same either way (a control caught mid-throw)
-/// authors one shared `pressed` and both directions find it.
 pub(crate) fn toggle_face_chain(
     enabled: bool,
     on: bool,
@@ -230,13 +187,6 @@ pub(crate) fn toggle_face_chain(
     }
 }
 
-/// How many characters an input `inner_w` logical px wide can show.
-///
-/// Derived from the WIDEST advance, never from the text currently in the
-/// box: the editor scrolls by character count, so a window measured against
-/// the current content collapses as you type — the box would show one glyph
-/// and re-scroll on every keystroke. The widest advance is the only bound
-/// that cannot overflow (and is exact for a monospace face).
 pub(crate) fn input_visible_chars(font: &Font, inner_w: i32) -> usize {
     if inner_w <= 0 {
         return 0;
@@ -244,7 +194,6 @@ pub(crate) fn input_visible_chars(font: &Font, inner_w: i32) -> usize {
     (inner_w / font.max_advance().max(1)).max(1) as usize
 }
 
-/// The text interior of an input rect (theme-metric horizontal inset).
 pub(crate) fn input_text_rect(rect: RectI, pad: i32) -> RectI {
     RectI {
         x: rect.x + pad,
@@ -258,10 +207,6 @@ pub(crate) fn input_text_rect(rect: RectI, pad: i32) -> RectI {
 mod tests {
     use super::*;
 
-    /// The crafting grid styles its cells as item SLOTS, whose part has a
-    /// real `selected` face. Without this preference a selected cell asks for
-    /// `pressed`, the slot part has none, and it falls back to `default` —
-    /// the selection becomes invisible.
     #[test]
     fn an_authored_selected_face_wins_over_the_pressed_fallback() {
         let with =
@@ -270,7 +215,6 @@ mod tests {
             |selected, pressed, hovered| button_face_state(true, selected, pressed, hovered, false);
         assert_eq!(with(true, false, false), FaceState::Selected);
         assert_eq!(without(true, false, false), FaceState::Pressed);
-        // Everything else is unchanged by the preference.
         assert_eq!(with(false, true, false), FaceState::Pressed);
         assert_eq!(with(false, false, true), FaceState::Hover);
         assert_eq!(with(false, false, false), FaceState::Default);
@@ -280,9 +224,6 @@ mod tests {
         );
     }
 
-    /// A part with only `off`/`on`/`disabled` (the base kit's checkbox and
-    /// toggle) must resolve exactly as it did before the chain existed — the
-    /// qualified names are an opt-in for parts that draw them.
     #[test]
     fn the_toggle_chain_always_ends_on_a_plain_state_name() {
         for (enabled, on, pressed, hovered) in [
@@ -329,7 +270,6 @@ mod tests {
             let back = scroll_offset_for_thumb_y(r, r.h, content, thumb.y as f32);
             assert!((back - off).abs() <= 2, "offset {off} → thumb → {back}");
         }
-        // Extremes map exactly.
         let (_, top) = scrollbar(r, r.h, content, 0, 8).unwrap();
         assert_eq!(top.y, 0);
         let (_, bottom) = scrollbar(r, r.h, content, 80, 8).unwrap();
@@ -338,8 +278,6 @@ mod tests {
 
     #[test]
     fn framed_scroll_keeps_the_bar_inside_its_border() {
-        // A 3px-bordered view: the track hugs the view's inner right edge
-        // while offsets still span the node-space viewport/content.
         let node = RectI {
             x: 0,
             y: 0,
@@ -380,8 +318,6 @@ mod tests {
             1,
             "a sliver still shows the caret glyph"
         );
-        // The window depends only on the box, so it cannot shrink as the
-        // text changes — that is what stranded the caret on the last glyph.
         let six = font.max_advance() * 6;
         assert_eq!(input_visible_chars(&font, six), 6);
         assert_eq!(input_visible_chars(&font, six - 1), 5);

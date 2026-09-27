@@ -12,18 +12,12 @@ use super::Game;
 pub struct GameEnvironment {
     pub fog: [f32; 3],
     pub time: f32,
-    /// The fluid the camera eye is inside, if any: its medium row drives the
-    /// fog band, the tints and the clear colour.
     pub eye_fluid: Option<Block>,
-    /// Named visual shader parameters, written by mods on the tick and mapped
-    /// to fixed GPU slots by the active shader pack.
     pub shader_params: Arc<ShaderParamMap>,
 }
 
 impl Game {
     pub(super) fn environment(&self, now: f64) -> GameEnvironment {
-        // Fog/murk follow the RENDERED camera: a third-person boom dipping into
-        // a fluid must show its murk even while the player's eye is dry.
         let eye = self.render_camera().pos;
         let (fog, eye_fluid) = camera_fog(&self.replica.world, eye, |wx, wz| {
             if let Some(id) = self.replica.world.data().column_biome(wx, wz) {
@@ -48,11 +42,6 @@ impl Game {
     }
 }
 
-/// Fog colour and the eye's fluid for an eye at `eye` in `world` — the two
-/// environment inputs a renderer driver hands to `update_uniforms`. `biome_at`
-/// is a parameter because the game reads its replica (falling back to the
-/// generator for columns it has not received), while a driver holding a plain
-/// world reads that world directly.
 pub fn camera_fog(
     world: &ReplicaWorld,
     eye: petramond_math::world_pos::WorldPos,
@@ -66,7 +55,6 @@ pub fn camera_fog(
     (fog, eye_fluid)
 }
 
-/// The fluid the camera eye is inside, judged by its medium's `eye_margin`.
 fn camera_eye_fluid(
     world: &ReplicaWorld,
     eye: petramond_math::world_pos::WorldPos,
@@ -77,9 +65,6 @@ fn camera_eye_fluid(
     eye_inside(world, eye, fluid, margin).then_some(fluid)
 }
 
-/// Whether an eye in a cell of `fluid` counts as inside it. With a `margin`
-/// only an eye that far below the open surface does, so a barely-clipping eye
-/// (a shallow flowing film) stays dry; without one, any eye in the cell does.
 fn eye_inside(
     world: &ReplicaWorld,
     eye: petramond_math::world_pos::WorldPos,
@@ -90,7 +75,6 @@ fn eye_inside(
         return true;
     };
     let cell = eye.block();
-    // The same fluid above means an interior volume, not the open surface.
     if Block::from_id(world.data().chunk_block(cell.x, cell.y + 1, cell.z)).fluid() == Some(fluid) {
         return true;
     }
@@ -104,8 +88,6 @@ fn surface_y_at(world: &ReplicaWorld, cell: IVec3, eye_in_cell: Vec3, fluid: Blo
 
     let mut h = [[1.0f32; 2]; 2];
 
-    // Match the fluid mesher's corner-height rule: each top vertex averages the
-    // same-fluid cells meeting that corner, so a flow forms one sloped sheet.
     for cx in 0..2i32 {
         for cz in 0..2i32 {
             let mut sum = 0.0;
@@ -163,8 +145,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::ChunkPos;
 
-    /// A synthetic eye margin: the mechanism under test is that the eye test
-    /// honours whatever margin a medium declares, not any row's value.
     const MARGIN: f32 = 0.1;
     const FALLING_META: u8 = 0x80;
 
@@ -175,8 +155,6 @@ mod tests {
             1,
             1,
         );
-        // The environment reads the REPLICA (what the camera sees); a full
-        // empty column (every section present) so a fluid write at any Y lands.
         game.replica.world.clear_world();
         game.replica
             .world
@@ -208,7 +186,7 @@ mod tests {
     fn the_eye_follows_a_flowing_surface_height() {
         let mut game = game();
         let p = IVec3::new(4, 64, 4);
-        set_fluid(&mut game, p, 7); // the flow's leading edge: the thinnest film
+        set_fluid(&mut game, p, 7);
         let surface =
             p.y as f32 + petramond::world::fluid::fluid_height(7, Block::Air, Block::Water);
         assert!(!inside(&game, p, p.y as f32 + 0.5));

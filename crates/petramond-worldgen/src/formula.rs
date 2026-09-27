@@ -1,37 +1,25 @@
-//! Bounded arithmetic recipes compiled once into registers.
-
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 const MAX_NODES: usize = 512;
 
-/// Heights a table of height-only nodes covers: the world's, with room for
-/// the padding a batch or tile asks about beyond it.
 const TABLE_Y0: i32 = -128;
 const TABLE_LEN: usize = 640;
 
-/// The values of every node that reads nothing but the height, over every
-/// height a scan can ask about, for one seed. A geology pattern is mostly a
-/// chain of height bands; per column only the nodes touching the column's
-/// own inputs are left to evaluate.
 #[derive(Debug)]
 pub struct HeightTable {
-    /// Per height-only node (in its `slot`), `TABLE_LEN` values.
     values: Box<[f64]>,
-    /// Per node, its row in `values`, or `u16::MAX` for nodes not tabulated.
     slot: Box<[u16]>,
 }
 
 impl HeightTable {
-    /// The row index of height `y`, when it is an integer the table covers.
     #[inline]
     fn index(y: f64) -> Option<usize> {
         let k = y - f64::from(TABLE_Y0);
         (k >= 0.0 && k < TABLE_LEN as f64 && k.fract() == 0.0).then_some(k as usize)
     }
 
-    /// The node's values over the table's heights, if tabulated.
     #[inline]
     fn row(&self, node: usize) -> Option<&[f64]> {
         let slot = self.slot[node];
@@ -50,7 +38,6 @@ pub use scan::Scan;
 
 type Noises = Vec<std::sync::Arc<crate::density::noise::ReferenceDoublePerlin>>;
 
-/// Parameters supplied by a positioned field or a surface-rule caller.
 #[derive(Clone, Copy, Debug)]
 pub struct Inputs(pub [f64; 10]);
 
@@ -58,7 +45,6 @@ const INPUTS: [&str; 10] = [
     "x", "y", "z", "center_x", "center_y", "center_z", "radius", "height", "surface", "sea",
 ];
 
-/// Expressions use numbers, previously declared names, or `[operator, operands…]`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Expression {
@@ -101,8 +87,6 @@ enum Op {
 }
 
 impl Op {
-    /// Sampling operators cost far more than arithmetic, and a scan often
-    /// asks them the same question on consecutive cells.
     #[inline]
     fn samples(self) -> bool {
         matches!(
@@ -121,7 +105,6 @@ struct Node {
     arity: usize,
 }
 
-/// A validated acyclic expression graph, independent of any habitat or block.
 #[derive(Clone, Debug)]
 pub struct Formula {
     nodes: Box<[Node]>,
@@ -129,15 +112,8 @@ pub struct Formula {
     outputs: Box<[usize]>,
     column_ops: Box<[usize]>,
     vertical_ops: Box<[usize]>,
-    /// Per node, whether a height-dependent node reads it: only those
-    /// height-independent values are laid out per lane in a scan.
     broadcast: Box<[bool]>,
-    /// Whether any height-dependent node reads only the height (and
-    /// constants): those are tabulated per seed instead of evaluated.
     tabulated: bool,
-    /// Per node: tabulated, and read by something that is not — an output
-    /// or a node touching the column. The tabulated nodes under it are
-    /// never materialised: the table already holds what they fed.
     frontier: Box<[bool]>,
     tables: Arc<Mutex<BTreeMap<u32, Arc<HeightTable>>>>,
 }
@@ -231,7 +207,6 @@ impl Formula {
         })
     }
 
-    /// The height-only nodes' table for `seed`, built on first use.
     fn height_table(&self, seed: u32, noises: &Noises) -> Option<Arc<HeightTable>> {
         if !self.tabulated {
             return None;
@@ -256,7 +231,6 @@ impl Formula {
         let mut values = vec![0.0; rows.len() * TABLE_LEN];
         let mut registers = [0.0; MAX_NODES];
         let mut inputs = Inputs([0.0; 10]);
-        // A height-only node can read constants and other height-only nodes.
         for &i in &self.column_ops {
             if self.nodes[i].dependencies == 0 {
                 registers[i] = evaluate(&self.nodes[i], &registers, inputs, seed, noises);
@@ -277,7 +251,6 @@ impl Formula {
         Some(table)
     }
 
-    /// Cache everything that is constant along this vertical column.
     pub fn column(&self, inputs: Inputs) -> Evaluation<'_> {
         self.column_seeded(0, inputs)
     }
@@ -290,8 +263,6 @@ impl Formula {
         self.outputs.len()
     }
 
-    /// Whether a height-dependent node steps, rounds or selects — a recipe
-    /// whose value jumps along a column rather than varying smoothly.
     pub fn discontinuous_in_height(&self) -> bool {
         self.vertical_ops.iter().any(|&i| {
             matches!(
@@ -301,8 +272,6 @@ impl Formula {
         })
     }
 
-    /// The lane holding node `i`'s value for lane `lane`: height-independent
-    /// values no scan lays out per lane live in lane 0 only.
     #[inline]
     fn lane_of(&self, i: usize, lane: usize) -> usize {
         if self.nodes[i].y_dependent || self.broadcast[i] {
@@ -317,7 +286,6 @@ impl Formula {
     }
 }
 
-/// Mutable scratch belongs to a query, while the compiled recipe is shared.
 pub struct Evaluation<'a> {
     formula: &'a Formula,
     inputs: Inputs,
@@ -328,8 +296,6 @@ pub struct Evaluation<'a> {
 }
 
 impl Evaluation<'_> {
-    /// Move the evaluation to another column: the height-independent work is
-    /// redone in place, without a new register file or noise lookup.
     pub fn rebind(&mut self, inputs: Inputs) {
         self.inputs = inputs;
         for &i in &self.formula.column_ops {
@@ -510,9 +476,6 @@ fn evaluate(
     }
 }
 
-/// One operator over its operand values. Every evaluation path — a point, a
-/// column, a lane scan — reaches the same arithmetic through here, so they
-/// cannot disagree on a cell.
 #[inline]
 fn apply(
     op: Op,

@@ -5,27 +5,16 @@ use crate::column::Column;
 
 use super::NBHD_AREA;
 
-/// How a section's skylight resolves, decided cheaply from the 3x3 column
-/// direct-sky cover maps.
 pub enum SkyPlan {
-    /// Every cell sits above all surrounding cover: full daylight, no flood.
     Full,
-    /// Every cell sits deeper than skylight can seep below the lowest cover: dark, no flood.
     Dark,
-    /// The section straddles the surface band and needs a neighbourhood flood.
     Flood { surface: Box<[i32]> },
 }
 
-/// How far skylight reaches from an open-sky cell before it is fully dark.
 const SKY_SEEP_REACH: i32 = (SKY_FULL / 2) as i32;
 
-/// Heightmap stand-in for an unloaded neighbour column: fully covered, so it seeds
-/// no phantom skylight into the centre.
 const COVERED: i32 = i32::MAX;
 
-/// Whether changing cover between these two vertical endpoints can alter this
-/// section's skylight. Above the higher endpoint both states are direct sky;
-/// below the lower endpoint's seep reach both are dark.
 pub fn cover_change_affects_section(pos: SectionPos, min_cover: i32, max_cover: i32) -> bool {
     let affected_min = min_cover.saturating_add(1).saturating_sub(SKY_SEEP_REACH);
     let oy = pos.origin_world().1;
@@ -33,8 +22,6 @@ pub fn cover_change_affects_section(pos: SectionPos, min_cover: i32, max_cover: 
     top >= affected_min && oy <= max_cover
 }
 
-/// [`SkyPlan`] without the flood's gathered surface payload — how a section's
-/// skylight resolves, classified from the 3x3 column sky-cover maps alone.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum SkyClass {
     Full,
@@ -42,7 +29,6 @@ pub enum SkyClass {
     Flood,
 }
 
-/// Decide how `pos`'s skylight resolves from the 3x3 column sky-cover maps alone.
 pub fn classify(
     pos: SectionPos,
     columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
@@ -100,9 +86,6 @@ fn gather_surface(
     surface
 }
 
-/// Gather a `span`×`span` column window of sky cover, `base` at the low corner,
-/// into a `(span*16)`² map. Absent columns read as fully covered so they seed no
-/// phantom skylight.
 pub fn gather_surface_span(
     base: ChunkPos,
     span: usize,
@@ -149,10 +132,6 @@ mod tests {
             }
         }
 
-        // A glass block at y=64 remains the visible top, but the solid cover in
-        // this one-cell shaft is down at y=0. Section cy=2 sits far enough below
-        // the surrounding terrain that the visible surface map used to classify
-        // the entire section as dark at its y=48 boundary.
         std::sync::Arc::make_mut(columns.get_mut(&ChunkPos::new(0, 0)).unwrap())
             .set_sky_cover_y(8, 8, 0);
 

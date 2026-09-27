@@ -1,10 +1,3 @@
-//! Mod GUI calls: the per-session state map plus queued open/close requests.
-//!
-//! Every map belongs to ONE session (the GUI it has open). The implicit calls
-//! (`GuiStateSet`/`GuiStateGet`/`GuiOpen`/`GuiClose`) address the dispatch's
-//! actor and refuse an actor-less dispatch; their `...For` twins name the
-//! session — a machine's gauges belong to whoever is looking at it.
-
 use mod_api::{GuiCall, HostRet};
 
 use crate::events::{DeferredAction, SimCtx};
@@ -12,9 +5,6 @@ use crate::player::PlayerId;
 
 use super::guards::{actor_for, sim_mutate, sim_query};
 
-/// Queue opening the mod GUI `kind_key` (anchored at `at`) for `player`.
-/// `false` = unknown or non-mod kind, an anchor no longer present, or no
-/// such session.
 fn open_gui(
     ctx: &mut SimCtx<'_>,
     mod_id: &str,
@@ -22,8 +12,6 @@ fn open_gui(
     kind_key: &str,
     at: Option<mod_api::ContainerAddress>,
 ) -> bool {
-    // Resolve WITHOUT registering: opening a kind nothing declared is a mod
-    // bug, reported forgivingly (like an unknown sound key).
     let Some(kind) =
         petramond_world::gui_state::resolve_kind(kind_key).filter(|k| k.is_registered())
     else {
@@ -45,7 +33,6 @@ fn open_gui(
     true
 }
 
-/// Queue closing `player`'s open mod GUI. `false` = no such session.
 fn close_gui(ctx: &mut SimCtx<'_>, player: PlayerId) -> bool {
     if ctx.session_index(player).is_none() {
         return false;
@@ -54,7 +41,6 @@ fn close_gui(ctx: &mut SimCtx<'_>, player: PlayerId) -> bool {
     true
 }
 
-/// `player`'s GUI state value under `key`. `None` = unset or no such session.
 fn state_get(ctx: &mut SimCtx<'_>, player: PlayerId, key: &str) -> Option<mod_api::GuiValue> {
     ctx.with_gui_state(player, |map| {
         map.get(key).map(crate::modding::convert::gui_value_out)
@@ -62,9 +48,6 @@ fn state_get(ctx: &mut SimCtx<'_>, player: PlayerId, key: &str) -> Option<mod_ap
     .flatten()
 }
 
-/// Mod-GUI calls (session state map plus open/close).
-/// State keys are mod-local: the map belongs to one GUI session (cleared
-/// on open/close), so unlike the persistent KV no prefix is enforced.
 pub(super) fn handle_gui_call(mod_id: &str, call: GuiCall) -> HostRet {
     match call {
         GuiCall::GuiStateSet { key, value } => sim_mutate(|ctx| {
@@ -75,8 +58,6 @@ pub(super) fn handle_gui_call(mod_id: &str, call: GuiCall) -> HostRet {
             });
             Ok(())
         }),
-        // The per-SESSION write: a machine's gauges reach the session that is
-        // looking at it, however many players stand at machines.
         GuiCall::GuiStateSetFor {
             player_id,
             key,
@@ -96,8 +77,6 @@ pub(super) fn handle_gui_call(mod_id: &str, call: GuiCall) -> HostRet {
                 ctx.gui_viewers()
                     .into_iter()
                     .filter_map(|(id, open)| {
-                        // Mod kinds only: an engine chest is nobody's machine
-                        // and its key is not this vocabulary.
                         let kind = open
                             .kind
                             .is_registered()
@@ -160,10 +139,6 @@ mod tests {
     use petramond_math::math::IVec3;
     use petramond_math::world_pos::WorldPos;
 
-    /// TWO sessions with panels open at TWO machines, which is the whole
-    /// point: a mod runs once for the server, and a tick system acts for
-    /// nobody, so an implicit `GuiStateSet` has no map to write — it refuses
-    /// — while the per-session write reaches each viewer's own panel.
     #[test]
     fn gauges_reach_the_session_that_is_looking_and_implicit_writes_refuse() {
         let mut world = ServerWorld::new(1, 1);
@@ -207,8 +182,6 @@ mod tests {
         scope::enter(&mut ctx, || {
             let mut data = ModStoreData::new("doctest", 1);
 
-            // Who is looking, and at what: the machine's anchor, so matching
-            // a viewer to a placed machine is an equality test.
             let HostRet::GuiViewers(viewers) =
                 handle_host_call(&mut data, HostCall::from(calls::GuiViewers))
             else {
@@ -227,7 +200,6 @@ mod tests {
             );
             assert!(viewers.iter().all(|v| v.kind == "doctest:machine"));
 
-            // No actor, no implicit map: the host session is nobody special.
             assert!(matches!(
                 handle_host_call(
                     &mut data,
@@ -239,9 +211,6 @@ mod tests {
                 HostRet::Err(_)
             ));
 
-            // One reading per viewer, under the SAME flat key — which is
-            // exactly what a flat key space costs nothing when the map is per
-            // session, because a session has one GUI open.
             for (v, level) in viewers.iter().zip([0.25f32, 0.75]) {
                 assert_eq!(
                     handle_host_call(
@@ -265,7 +234,6 @@ mod tests {
                 ),
                 HostRet::GuiValue(Some(GuiValue::F32(0.75)))
             );
-            // An unknown session is a refusal, not a write into someone.
             assert_eq!(
                 handle_host_call(
                     &mut data,

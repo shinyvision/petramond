@@ -1,17 +1,3 @@
-//! The two shape facet traits — the composable seam a shape family implements
-//! so consumers dispatch through it instead of matching a closed enum.
-//!
-//! The split is by AUDIENCE: [`ShapeSim`] is
-//! authoritative and deterministic (collision, support, nav — the multiplayer
-//! tick reads it, on the server and re-evaluated against the client replica);
-//! [`ShapeRender`] is client presentation (selection outline, item form). Both
-//! read the world ONLY through the primitive [`ShapeNeighborhood`] seam — the
-//! sim `World` implements it (server and client replica alike), and so does
-//! the mesher's padded section snapshot, so ONE family implementation resolves
-//! identically wherever it runs and cannot reach past the seam. A family unit
-//! struct implements one or both; the [`ShapeKindDef`](super::ShapeKindDef)
-//! row binds the singletons.
-
 use crate::block_model::BlockModelKind;
 use crate::mathh::IVec3;
 use crate::tile::Tile;
@@ -20,47 +6,19 @@ use super::super::{Aabb, Block, CellPart, ShapeBox};
 use super::neighborhood::{ShapeNeighborhood, ShapeState};
 use super::ShapeParams;
 
-// The placement facet lives with the placement types (world::placement) but is
-// bound per family here, so re-export it on the facet path.
 pub use crate::world::placement::ShapePlacement;
 
-/// Everything a family needs to resolve ONE cell's geometry: the cell, its
-/// row parameters, the primitive world seam, and the per-tile world tint
-/// (the biome grass/water channel) it should bake into its face styles.
-///
-/// A family reads the world ONLY through `nb`, which is what lets the same
-/// implementation serve the sim thread and the off-thread chunk mesher.
 pub struct ShapeCtx<'a> {
     pub nb: &'a dyn ShapeNeighborhood,
     pub pos: crate::mathh::IVec3,
     pub block: Block,
     pub params: &'a ShapeParams,
-    /// The world tint for a tile — biome-driven, so it belongs to the caller,
-    /// not the family. A cell's `petramond:tint` is NOT applied here: that
-    /// rides the shared `ShapeBox::apply_tint` post-pass so no family can
-    /// forget it.
     pub tint_for: &'a dyn Fn(crate::tile::Tile) -> [f32; 3],
-    /// This cell's stored tint for one of its [`CellPart`]s, if any — supplied
-    /// by the caller because it comes from cell KV, which is not on the shape
-    /// seam. A family does NOT use this to colour its boxes (the post-pass
-    /// owns the multiply); it is here so a family that has SEVERAL parts can
-    /// answer questions only it can, like whether its parts agree closely
-    /// enough to mesh as one cube. Answers `None` on the geometry-only probe
-    /// paths (out-of-cell AO / occupancy), which never look at colour.
     pub part_tint: &'a dyn Fn(CellPart) -> Option<[f32; 3]>,
 }
 
-/// The `part_tint` a geometry-only [`ShapeCtx`] carries: no cell is coloured
-/// on the AO / occupancy probe paths, and reaching a neighbour section's KV
-/// through the mesh pad is not possible anyway.
 pub const NO_PART_TINT: &dyn Fn(CellPart) -> Option<[f32; 3]> = &|_| None;
 
-/// The world a shape sees when there IS no world: air everywhere, no state.
-/// Resolves a shape's position-LESS answers — the light twin of
-/// [`ShapeSim::default_boxes`], used to bake the per-block-id default aperture
-/// table at load. A stateful family reads its own default state through it (a
-/// stair answers its default facing), which is exactly the fallback a cell
-/// with no stored state should get.
 pub struct NoNeighborhood;
 
 impl ShapeNeighborhood for NoNeighborhood {
@@ -72,9 +30,6 @@ impl ShapeNeighborhood for NoNeighborhood {
     }
 }
 
-/// The half-cell octant `(ix, iy, iz)` as a cell-local AABB — the quantization
-/// unit shared by sub-cell occupancy and the light apertures, so "does my
-/// matter fill this octant" has ONE meaning.
 #[inline]
 pub fn octant_box(ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f32; 3]) {
     let lo = [ix as f32 * 0.5, iy as f32 * 0.5, iz as f32 * 0.5];
@@ -93,7 +48,7 @@ const APERTURE_PROBE: f32 = 1.0 / 32.0;
 /// face lies on.
 ///
 /// Centre, not the whole quadrant, and boundary, not the volume behind it —
-/// both halves are load-bearing, and both were learned from playtest:
+/// both halves determine whether a boundary seals:
 /// - probing the whole octant VOLUME reads farmland (15/16 tall) as sealing
 ///   its own top, which floods its cell black and drags every neighbouring
 ///   face's smooth light down with it;
@@ -123,8 +78,6 @@ fn aperture_probe(axis: usize, ix: usize, iy: usize, iz: usize) -> ([f32; 3], [f
     (lo, hi)
 }
 
-/// The aperture quadrant bit of octant `(ix, iy, iz)` on the face whose normal
-/// runs along `axis`.
 #[inline]
 fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
     let (a, b) = match axis {
@@ -135,10 +88,6 @@ fn aperture_bit(axis: usize, ix: usize, iy: usize, iz: usize) -> u8 {
     1u8 << (b * 2 + a)
 }
 
-/// The union of a box list as a selection box: `None` for an empty list (there
-/// is nothing to outline) and for an exact full unit cube (the default
-/// selection already IS the cell). The one place box lists collapse to an
-/// outline, shared by every family that outlines what it collides with.
 pub fn union_box(boxes: &[Aabb]) -> Option<([f32; 3], [f32; 3])> {
     if boxes.is_empty() {
         return None;
@@ -154,64 +103,35 @@ pub fn union_box(boxes: &[Aabb]) -> Option<([f32; 3], [f32; 3])> {
     (mn != [0.0; 3] || mx != [1.0; 3]).then_some((mn, mx))
 }
 
-/// A family's answer to [`ShapeSim::full_face`]: the face is complete, and it
-/// is (or is not) the face of a full cube. Material rules (opaque-only joins,
-/// the pane opt-out tag, a mount's opacity requirement) bind CUBE faces only —
-/// a shaped face that is geometrically complete joins by geometry alone.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FullFace {
     Cube,
     Shaped,
 }
 
-/// Which of the chunk mesher's emitters draws a cell of this shape — the draw
-/// STRATEGY, never the family. A family picks one; the mesher classifies
-/// cells by it and holds no family knowledge, so a new family that draws
-/// like an existing one needs no mesher edit.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MeshEmitter {
-    /// The cube path: per-face culling and the exposure-mask fast path.
     Cube,
-    /// The unified box-set emitter over [`ShapeRender::boxes`].
     Boxes,
-    /// Billboard planes (see [`PlantPlanes`]).
     Plant(PlantPlanes),
-    /// The upright or leaning pole posed by the cell's
-    /// [`TorchPlacement`](crate::torch::TorchPlacement).
     Pole,
-    /// The row's baked bbmodel.
     Model,
-    /// Nothing is chunk-meshed: the row is drawn by its animated block model
-    /// (see [`crate::animated_model`]).
     Nothing,
 }
 
-/// The two billboard layouts the plant emitter draws — also what a plant's
-/// selection box is trimmed to, so aiming and drawing share one answer.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PlantPlanes {
-    /// Two double-sided diagonal planes through the cell (flowers, grass).
     Cross,
-    /// The inset, dropped crop lattice (see
-    /// [`CROP_PLANE_INSET`](crate::block::CROP_PLANE_INSET)).
     Crop,
 }
 
-/// What a block row declares that its shape family may accept or refuse at
-/// load — the input of [`ShapeSim::validate_row`].
 #[derive(Copy, Clone, Debug)]
 pub struct RowFacts {
     pub flags: crate::block::BlockFlags,
-    /// The row's `"corners": true`.
     pub corners: bool,
-    /// Whether the row authored a non-empty `collision` list.
     pub authored_collision: bool,
 }
 
-/// Whether the shape at `pos` LIES FLAT on its cell floor — its matter fills
-/// every bottom octant, so the cell rests on the ground the way a cover or a
-/// plate does rather than rooting in it like a plant. Asked of the shape, so a
-/// mod block shaped like a cover behaves like one with no engine edit.
 pub fn rests_flat_on_floor(nb: &dyn ShapeNeighborhood, pos: IVec3, block: Block) -> bool {
     let k = block.shape_kind_def();
     (0..2).all(|ix| {
@@ -264,22 +184,14 @@ pub fn face_is_solid(nb: &dyn ShapeNeighborhood, pos: IVec3, dir: IVec3) -> bool
     })
 }
 
-/// Ask the family at `q` whether its face with outward normal `dir` is
-/// complete — the one dispatch every cross-family asker uses.
 pub fn full_face_at(nb: &dyn ShapeNeighborhood, q: IVec3, dir: IVec3) -> Option<FullFace> {
     let b = nb.block(q);
     let k = b.shape_kind_def();
     k.sim.full_face(&k.params, nb, q, b, dir)
 }
 
-/// Packed per-face light apertures: six 4-bit quadrant masks, face order
-/// `-x,+x,-y,+y,-z,+z` (bits `face*4 .. face*4+4`). `0` = the face blocks
-/// light entirely, `0b1111` = fully open. The ONE light-geometry currency the
-/// families produce and the flood consumes.
 pub const LIGHT_APERTURES_OPEN: u32 = 0x00FF_FFFF;
 
-/// Pack a per-direction quadrant-mask function into the aperture word (see
-/// [`LIGHT_APERTURES_OPEN`] for the layout).
 pub fn pack_light_apertures(mut mask: impl FnMut((i32, i32, i32)) -> u8) -> u32 {
     const DIRS: [(i32, i32, i32); 6] = [
         (-1, 0, 0),
@@ -296,9 +208,6 @@ pub fn pack_light_apertures(mut mask: impl FnMut((i32, i32, i32)) -> u8) -> u32 
     out
 }
 
-/// The 4-bit quadrant mask for the face with outward normal `dir`, out of a
-/// packed aperture word. The flood inlines this bit read against its fused
-/// cell word; the shape/light tests are the remaining callers.
 #[allow(dead_code)]
 #[inline]
 pub fn light_aperture_face(masks: u32, dir: (i32, i32, i32)) -> u8 {
@@ -313,10 +222,6 @@ pub fn light_aperture_face(masks: u32, dir: (i32, i32, i32)) -> u8 {
     ((masks >> (i * 4)) & 0xF) as u8
 }
 
-/// Sim-side shape behavior: authoritative, deterministic. A headless server
-/// calls every method here and never touches [`ShapeRender`].
-/// A shape's grip on a neighbouring face: the supporting cell, and the
-/// outward normal of the face being gripped. What [`ShapeSim::mount`] answers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ShapeMount {
     pub cell: IVec3,
@@ -324,17 +229,10 @@ pub struct ShapeMount {
 }
 
 pub trait ShapeSim: Send + Sync + 'static {
-    /// Rotate cell identity and state clockwise as viewed from above.
     fn rotate_y(&self, block: Block, state: ShapeState) -> crate::block::rotation::CellRotation {
         crate::block::rotation::common(block, state)
     }
 
-    /// The block's position-aware collision boxes — the resolve behind
-    /// `World::collision_boxes_at`. The default is the row's position-less
-    /// [`Block::collision_boxes`] (right for cube/cross/crop/torch/lowered);
-    /// stateful and neighbour-aware families override. Reads the world ONLY
-    /// through the primitive seam (the sim `World` implements it), so one
-    /// implementation resolves identically wherever it is asked.
     fn collision_boxes(
         &self,
         _params: &ShapeParams,
@@ -345,22 +243,10 @@ pub trait ShapeSim: Send + Sync + 'static {
         block.collision_boxes()
     }
 
-    /// The row's position-LESS box set: what this shape collides as with no
-    /// world context (the item form, a fresh placement gate, the fallback a
-    /// cell with no resolvable state uses). The default is the row's authored
-    /// `collision` boxes; a family whose canonical form is derived (a stair's
-    /// default facing, a bare no-neighbour fence post) overrides.
     fn default_boxes(&self, _params: &ShapeParams, block: Block) -> &'static [Aabb] {
         block.row_collision()
     }
 
-    /// The cell's AIMABLE geometry — what a targeting ray tests and the
-    /// selection outline traces, for a family that picks by boxes
-    /// (`ShapeRender::picks_by_boxes`). Pure geometry, deterministic, so the
-    /// server's mob aim and the client's crosshair agree. The default is the
-    /// collision boxes — for most families what you can stand on is what you
-    /// point at; a family whose drawn form has more than its collision
-    /// (a walk-through cover, a tilted plane) answers its drawn geometry.
     fn target_boxes(
         &self,
         params: &ShapeParams,
@@ -414,17 +300,13 @@ pub trait ShapeSim: Send + Sync + 'static {
         None
     }
 
-    /// The sub-cell [`CellPart`]s this cell is made of, each with the block
-    /// that part is made OF — the cross-family "what is in this cell" question
-    /// the couriers ask so they can address per-part data (a layer's tint) and
-    /// drop each part as its own material.
+    /// Which [`CellPart`]s this cell is made of, each with the block that part is made of.
+    /// Couriers use it for per-part data like a layer's tint, and to drop each part separately.
     ///
-    /// `None` — the default, and the answer of every family but the stacking
-    /// slab — means the cell is ONE whole part of its own block: the couriers
-    /// use the bare KV keys and the drop is the row's ordinary drop spec.
-    /// `Some(list)` means the cell is COMPOSED, and each part drops the item
-    /// of its own block instead. The numbering must match the family's
-    /// [`ShapeBox::part`]s and its placement writes (see [`CellPart`]).
+    /// `None` (every family except the stacking slab) means one whole part: couriers use the
+    /// bare KV keys and the drop is the row's usual spec. `Some(list)` means a composed cell,
+    /// and each part drops its own block's item. Numbering has to match the family's
+    /// [`ShapeBox::part`]s and its placement writes.
     fn parts(
         &self,
         _params: &ShapeParams,
@@ -435,10 +317,6 @@ pub trait ShapeSim: Send + Sync + 'static {
         None
     }
 
-    /// The row and state of a cell of `block` in `state` holding only the
-    /// parts in `keep`: what stands once some of a composed cell's parts are
-    /// laid and the rest are not. `None` for a family whose cells are whole,
-    /// or when `keep` names no part the state holds.
     fn keeping_parts(
         &self,
         _params: &ShapeParams,
@@ -472,11 +350,6 @@ pub trait ShapeSim: Send + Sync + 'static {
         state
     }
 
-    /// How this family participates in light propagation (called only for a
-    /// non-opaque row — the caller short-circuits opaque full cubes). `Open`
-    /// is the default; a family whose passage depends on per-cell state
-    /// answers [`Shaped`](crate::block::BlockLightShape::Shaped) and supplies
-    /// the apertures through [`light_apertures`](Self::light_apertures).
     fn light_shape(&self, _params: &ShapeParams, _block: Block) -> crate::block::BlockLightShape {
         crate::block::BlockLightShape::Open
     }
@@ -504,10 +377,6 @@ pub trait ShapeSim: Send + Sync + 'static {
         false
     }
 
-    /// Whether this cell's matter CASTS AO into the pocket `(lo, hi)`: the
-    /// mesher's shadow question. It is [`occupies_pocket`](Self::occupies_pocket)
-    /// minus matter that seals light but throws no shadow, so the light
-    /// flood and support rules keep reading the full geometry.
     fn shades_pocket(
         &self,
         params: &ShapeParams,
@@ -520,19 +389,6 @@ pub trait ShapeSim: Send + Sync + 'static {
         self.occupies_pocket(params, nb, pos, block, lo, hi)
     }
 
-    /// The cell's packed per-face light apertures — see
-    /// [`pack_light_apertures`] for the layout. Read for every `Shaped` cell,
-    /// so the flood consults family-answered bits and holds no family
-    /// knowledge. Deterministic (the server's light bake is authoritative).
-    ///
-    /// The default DERIVES them from [`occupies_pocket`](Self::occupies_pocket):
-    /// a face quadrant is open exactly when nothing sits against the boundary
-    /// in the middle of it (see `aperture_probe`). No family should override
-    /// this — "what
-    /// blocks light" is "what matter is there", and a second hand-written
-    /// answer is a second thing to keep in sync (stairs and slabs each had
-    /// one, and the stair's silently used its PLACED shape, not its refined
-    /// one).
     fn light_apertures(
         &self,
         params: &ShapeParams,
@@ -564,45 +420,18 @@ pub trait ShapeSim: Send + Sync + 'static {
         })
     }
 
-    /// Whether this family's CELL COLLISION is fully determined by the block
-    /// id — it does NOT override [`collision_boxes`](Self::collision_boxes),
-    /// so the row's position-less boxes are the whole answer. Mirrored onto
-    /// [`ShapeKindDef::collision_state_free`](super::ShapeKindDef) so the
-    /// per-id collision table is baked once and every cell probe skips the
-    /// virtual resolve.
-    ///
-    /// SAFE BY DEFAULT: a family answering `true` that later grows a per-cell
-    /// `collision_boxes` override must answer `false` again, and
-    /// `collision_state_free_kinds_resolve_identically` fails until it does.
     fn collision_state_free(&self) -> bool {
         false
     }
 
-    /// Whether this kind overrides [`refine_state`](Self::refine_state) —
-    /// mirrored onto [`ShapeKindDef::refines`](super::ShapeKindDef) so the edit
-    /// cascade's per-cell gate is a field read. Asked per KIND (the params
-    /// ride along), so a family whose rows only sometimes refine keeps the
-    /// cascade's cheap path for the rows that never do.
     fn refines(&self, _params: &ShapeParams) -> bool {
         false
     }
 
-    /// Whether navigation over a cell of this shape follows the ROW alone —
-    /// its position-less collision boxes and hazard tag — so swapping one such
-    /// row for another with the same boxes leaves every path intact (grazed
-    /// grass, crop growth, farmland hydration). A family whose boxes resolve
-    /// from per-cell or neighbour state answers `false`, which keeps the edit
-    /// conservatively nav-relevant.
     fn nav_follows_row(&self) -> bool {
         false
     }
 
-    /// Every cell of the COMPOUND object a cell of `block` in `state` at `pos`
-    /// belongs to, each with the canonical state that member holds — `None`
-    /// (the default) for a single-cell block. Pure in the cell's own state, so
-    /// a captured schematic, an edit batch and the live world all answer
-    /// alike: breaking clears every member, a capture takes them together, and
-    /// an edit is refused unless every member answers the same list.
     fn compound_members(
         &self,
         _params: &ShapeParams,
@@ -613,61 +442,32 @@ pub trait ShapeSim: Send + Sync + 'static {
         None
     }
 
-    // --- Load-time row rules ------------------------------------------------
-    //
-    // What a block row may declare depends on its shape; the family answers,
-    // so the block loader validates rows without naming any family.
-
-    /// Whether the row's `uv_rotation` map (quarter turns of its
-    /// `[top, bottom, side]` tiles) means anything for this shape — only the
-    /// tile-slot shapes draw those slots whole.
     fn accepts_row_uv_rotation(&self) -> bool {
         false
     }
 
-    /// Whether a FLUID row may take this shape (fluids mesh and flow as
-    /// whole cells).
     fn hosts_fluid(&self) -> bool {
         false
     }
 
-    /// Whether this shape's facing is ROW identity — one row per facing,
-    /// declared by `panel_facing` and linked by `facing_rows` — rather than
-    /// placement state. Both fields are refused on every other shape.
     fn faces_by_row(&self) -> bool {
         false
     }
 
-    /// Dense flags every row of this shape carries, derived rather than
-    /// row-listed (the stacking slab's `SLAB`).
     fn row_flags(&self) -> crate::block::BlockFlags {
         crate::block::BlockFlags::NONE
     }
 
-    /// The family's own checks over a row's declarations, beyond the shared
-    /// rules above. `Err` fails the load with the message.
     fn validate_row(&self, _params: &ShapeParams, _row: &RowFacts) -> Result<(), String> {
         Ok(())
     }
 
-    /// Whether navigation reads a cell of this shape as solid even though its
-    /// real collision boxes are not a full cube — true only for the fence
-    /// family (a lone fence must be a wall or no pen holds). Everything else is
-    /// classified from its boxes, so the default is `false`.
     fn nav_reads_solid(&self, _params: &ShapeParams) -> bool {
         false
     }
 }
 
-/// Render-side shape behavior: client-only presentation, no determinism
-/// requirement. Never called on a headless server.
 pub trait ShapeRender: Send + Sync + 'static {
-    /// The selection / raycast-target box (union) — the resolve behind
-    /// `World::selection_box_at`. `None` = the full-cube default. Must agree
-    /// with [`ShapeSim::collision_boxes`] so "aim inside the outline" hits the
-    /// real box — which is why it reads through the same primitive seam.
-    /// Default is the family's position-less
-    /// [`default_selection_box`](Self::default_selection_box).
     fn selection_box(
         &self,
         params: &ShapeParams,
@@ -678,16 +478,6 @@ pub trait ShapeRender: Send + Sync + 'static {
         self.default_selection_box(params, block)
     }
 
-    /// The position-LESS selection box: what this shape targets and outlines
-    /// with no world context — the render twin of
-    /// [`ShapeSim::default_boxes`], and the resolve behind
-    /// [`Block::visual_aabb`]. `None` = an ordinary full cube (which needs no
-    /// outline of its own) or a cell with nothing to aim at.
-    ///
-    /// The default is the union of the row's collision boxes, so a shape that
-    /// COLLIDES with what it draws needs nothing here. A shape whose visible
-    /// form is deliberately not its collision — a walk-through thin cover, a
-    /// no-collision bbmodel — overrides, which is what keeps it aimable.
     fn default_selection_box(
         &self,
         _params: &ShapeParams,
@@ -696,19 +486,8 @@ pub trait ShapeRender: Send + Sync + 'static {
         union_box(block.collision_boxes())
     }
 
-    /// Resolve this cell's drawn box set — THE box producer for a box-shaped
-    /// family. The chunk mesher, the neighbour-occupancy cull, and any other
-    /// consumer of a shape's real form call this and nothing else, so a family
-    /// is written once instead of once per consumer.
-    ///
-    /// Default: no boxes. A family whose form is not a box set (full cube,
-    /// plants, torch, bbmodel) leaves it alone and draws through its own path.
     fn boxes(&self, _ctx: &ShapeCtx<'_>, _out: &mut Vec<ShapeBox>) {}
 
-    /// Whether THIS cell's resolved form is exactly the material's full cube,
-    /// so it should mesh through the cube fast path (greedy merge included)
-    /// instead of the box emitter. A uniform full slab stack is the only
-    /// engine case; the merge is load-bearing for streaming perf.
     fn meshes_as_cube(&self, _ctx: &ShapeCtx<'_>) -> bool {
         false
     }
@@ -727,34 +506,14 @@ pub trait ShapeRender: Send + Sync + 'static {
         false
     }
 
-    /// Whether a targeting ray must test this shape's PRECISE form instead of
-    /// stopping on cell entry. Every box-set family needs that (hence the
-    /// default), and so does a family whose form is neither a full cube nor a
-    /// box set but still has real sub-cell geometry to aim at — a tilted torch
-    /// pole, a thin wall panel. The DDA asks only this, so a pack shape that
-    /// needs precise aiming declares it here instead of being named in the
-    /// picker.
     fn precise_pick(&self, params: &ShapeParams) -> bool {
         self.picks_by_boxes(params)
     }
 
-    /// Which chunk-mesher emitter draws this shape — see [`MeshEmitter`].
-    /// Mirrored onto [`ShapeKindDef::mesh_emitter`](super::ShapeKindDef) so
-    /// the mesher's per-block class table is a field read. The default is the
-    /// cube path.
     fn mesh_emitter(&self, _params: &ShapeParams) -> MeshEmitter {
         MeshEmitter::Cube
     }
 
-    /// The pose a row's ANIMATED block model takes at a cell of `block`
-    /// holding `state`: its facing, which of the model's variants it draws,
-    /// and whether its state says it stands open. `None` = this cell draws
-    /// nothing itself (a compound member its anchor draws).
-    ///
-    /// Pure in the cell's own state, so the live world and a captured
-    /// schematic pose it identically. The default faces the stored placement
-    /// front of a `directional_view` row and is never open by state (a
-    /// container's lid follows who is looking inside, not the cell).
     fn animated_pose(
         &self,
         _params: &ShapeParams,
@@ -792,36 +551,15 @@ pub trait ShapeRender: Send + Sync + 'static {
     ) {
     }
 
-    /// The item KIND + geometry decision for a block of this shape — the
-    /// per-shape arm folded out of `ItemType::render_kind`. Drives the inventory
-    /// icon, the dropped entity, and the in-hand form identically. The default
-    /// is a plain cube icon.
     fn item_render(&self, _params: &ShapeParams, block: Block) -> ItemRender {
         ItemRender::BlockForm(block)
     }
 }
 
-/// What an item form looks like — the shape decides once, for icon / dropped /
-/// in-hand. Folds the per-shape half of `ItemType::render_kind` together with
-/// the true-geometry choice `render::item_cube` re-derives. `ItemType` resolves
-/// [`ItemSprite`](Self::ItemSprite) against the item's own row (its `sprite`
-/// field), the one piece that is item data rather than shape data.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ItemRender {
-    /// Use the ITEM's own sprite (row `sprite`, fallback art) — the thin /
-    /// connection shapes whose item art is flat (torch, pane, door, ladder).
     ItemSprite,
-    /// A specific atlas tile as a flat sprite (a plant's top tile).
     Tile(Tile),
-    /// The item draws its BLOCK. What form that takes is not decided here:
-    /// `ShapeRender::item_boxes` answers it (a stair's steps, a slab's layers,
-    /// a fence's authored segment, a static box set's boxes), falling back to
-    /// a plain cube when the family offers none.
-    ///
-    /// This used to be two variants — `Cube` and `Geometry` — which produced
-    /// the IDENTICAL `ItemRenderKind::BlockCube` and were told apart nowhere;
-    /// the real decision had already moved to the facet.
     BlockForm(Block),
-    /// A baked bbmodel, everywhere.
     Model(BlockModelKind),
 }

@@ -1,8 +1,5 @@
 use super::builders::{color_target, cull_back, world_pipeline, DepthPreset};
 
-/// The opaque + translucent-block (ice) + transparent (fluid) terrain
-/// pipelines: quantized [`TerrainVertex`] + instance-step column origin,
-/// `vs_terrain` entry. Dynamic bakes keep the absolute-`Vertex` `opaque_pipe`.
 pub(super) fn create_terrain_pipelines(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -76,8 +73,6 @@ pub(super) fn create_terrain_pipelines(
         Some(DepthPreset::WriteLess),
         max_samples,
     );
-    // Translucent fluid TOP faces: same blend/depth as the side pass, culling
-    // OFF so one set of triangles is visible from above and from underneath.
     let transparent_two_sided_pipe = world_pipeline(
         device,
         "terrain transparent two-sided pipe",

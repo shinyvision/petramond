@@ -1,18 +1,3 @@
-//! In-world geometry for a fence: a centre post growing a pair of horizontal
-//! rails toward each connected side (see `crate::fence` for the rules).
-//!
-//! [`shape_boxes`] is the ONE geometry source: the chunk mesher wraps its
-//! boxes into the unified `super::boxset` emitter (which culls buried
-//! faces — a rail end inside the post, a post cap under a solid or a stacked
-//! fence — geometrically), and the break-crack overlay walks the same boxes
-//! through `shape_faces`. Rail end caps (the two faces perpendicular to
-//! the arm) are declared never-emitted: the cell-edge end continues into the
-//! neighbour fence's rail or hides against the connected block's face, the
-//! post end is buried — the connection RULE guarantees this, not local
-//! geometry, so it stays an explicit omission.
-//! Flat-lit at the cell's own light with directional face shade, like the
-//! pane (per-corner AO would smear on thin geometry).
-
 use crate::block::Aabb;
 use crate::fence::{rail_cross, RAIL_BOT_HI, RAIL_BOT_LO, RAIL_TOP_HI, RAIL_TOP_LO};
 use crate::pane::{EAST, NORTH, SOUTH, WEST};
@@ -21,17 +6,12 @@ use crate::tile::Tile;
 use crate::block::shape::{ShapeBox, ShapeFace};
 use crate::face::Face;
 
-/// One box of the connected fence shape.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FenceBox {
     Post,
-    /// A rail, running along X (`true`) or Z (`false`).
     Rail(bool),
 }
 
-/// Visit every box of the connected fence shape for `mask`: the post, then
-/// two rails per connected side. The SINGLE geometry source for the chunk
-/// mesher, the break-crack overlay, and neighbour-occupancy queries.
 pub fn shape_boxes(
     post_lo: f32,
     post_hi: f32,
@@ -44,10 +24,7 @@ pub fn shape_boxes(
         FenceBox::Post,
     );
 
-    // The rail cross-section tracks the post (a modded wall keeps rails on its
-    // own post), not fixed engine constants.
     let (rail_lo, rail_hi) = rail_cross(post_lo, post_hi);
-    // (side bit, arm runs along X?, arm span from cell edge to post face).
     for (bit, along_x, from, to) in [
         (NORTH, false, 0.0, post_lo),
         (SOUTH, false, post_hi, 1.0),
@@ -68,8 +45,6 @@ pub fn shape_boxes(
     }
 }
 
-/// Whether `face` is a rail's never-emitted end cap (perpendicular to the
-/// arm — see the module doc).
 #[inline]
 fn rail_end(kind: FenceBox, face: Face) -> bool {
     match kind {
@@ -82,8 +57,6 @@ fn rail_end(kind: FenceBox, face: Face) -> bool {
     }
 }
 
-/// The connected fence shape as [`ShapeBox`]es for the unified emitter:
-/// `[top, bottom, side]` tiles, rail end caps omitted.
 pub fn push_mesh_boxes(
     out: &mut Vec<ShapeBox>,
     post_lo: f32,

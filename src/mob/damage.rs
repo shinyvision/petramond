@@ -1,7 +1,3 @@
-//! Instance damage intake and the death lifecycle: row/hook-composed damage
-//! feedback, hurt flash, damage immunity, retaliation memory recording, the
-//! death state (ragdoll or bare), and the despawn queries the manager culls by.
-
 use crate::world::ServerWorld;
 use petramond_math::math::{IVec3, Vec3};
 
@@ -10,9 +6,7 @@ use super::model_meta::Skeleton;
 use super::ragdoll::Ragdoll;
 use super::{EntityRef, MobDamageFeedback, MobDamageFeedbackComponent, MobDef};
 
-/// Horizontal speed (m/s) imparted away from the attacker on a non-lethal hit.
 const KNOCKBACK_SPEED: f32 = 6.5;
-/// One-shot upward pop (m/s) on a non-lethal hit — a small hop, like a soft jump.
 const KNOCKBACK_UP: f32 = 4.2;
 
 pub(super) enum DeathState {
@@ -38,19 +32,6 @@ impl DeathState {
 }
 
 impl Instance {
-    /// Apply a damage request with row/hook-composed feedback. Returns `true` if this
-    /// hit was lethal. A dead mob ignores damage (no double-kill, no knockback on a
-    /// corpse). `petramond:ragdoll` is death-gated: it only starts the ragdoll if a
-    /// `petramond:decrease_health` component made this hit cross to zero.
-    ///
-    /// `attacker` is the entity that caused the hit, when the source names one —
-    /// recorded as this mob's retaliation memory (see the `retaliate` brain node).
-    /// Whether the species reacts is brain data; the record itself is generic.
-    ///
-    /// The i-frame window is a pipeline component (`petramond:immunity`): a
-    /// pipeline carrying it is blocked while a window is active and grants
-    /// its `ticks` on a real health decrease; a pipeline without it (DoT —
-    /// burn ticks) neither blocks nor grants.
     pub fn damage(
         &mut self,
         amount: f32,
@@ -92,7 +73,6 @@ impl Instance {
 
         for component in &feedback.components {
             match *component {
-                // Applied above with the health decrease (grant-on-hit).
                 MobDamageFeedbackComponent::Immunity { .. } => {}
                 MobDamageFeedbackComponent::DecreaseHealth => {}
                 MobDamageFeedbackComponent::Flash { duration } => {
@@ -115,17 +95,11 @@ impl Instance {
                 MobDamageFeedbackComponent::Sound { .. } => {}
                 MobDamageFeedbackComponent::Ragdoll => {
                     if lethal && matches!(self.combat.death, DeathState::Alive) {
-                        // The killing blow flings the corpse in the punched direction
-                        // (away from the attacker, horizontally); the ragdoll launches
-                        // + somersaults along it.
                         let mut away = origin
                             .filter(|_| attack)
                             .map_or(Vec3::ZERO, |from| self.pos - from);
                         away.y = 0.0;
                         let launch = away.normalize_or_zero();
-                        // Ragdoll is initialised on the next tick (which has world
-                        // access to find the floor). Seed it from this mob's RNG
-                        // stream for a distinct fling.
                         self.combat.death =
                             DeathState::Ragdoll(Ragdoll::pending(self.rng.next_u64(), launch));
                     }
@@ -147,23 +121,16 @@ impl Instance {
         false
     }
 
-    /// Is the mob dead (ragdolling or done)? A dead mob can't be targeted or hurt.
     #[inline]
     pub fn is_dead(&self) -> bool {
         self.combat.death.is_dead()
     }
 
-    /// Is the mob still reeling from a knockback — the stagger a
-    /// `petramond:knockback` component started has not run out?
     #[inline]
     pub fn staggered(&self) -> bool {
         self.combat.stagger_timer > 0.0
     }
 
-    /// Current health (`0` = dead) — the `petramond:health` tag, seeded at
-    /// spawn from the species row and persisted with the mob. A missing or
-    /// mistyped tag (a mod deleted/rewrote it) reads as the species' spawn
-    /// health, never as dead.
     #[inline]
     pub fn health(&self) -> f32 {
         self.tags()
@@ -172,7 +139,6 @@ impl Instance {
             .map_or_else(|| super::def(self.kind).spawn_health(), |h| h as f32)
     }
 
-    /// Write the health tag (see [`health`](Self::health)).
     #[inline]
     pub(super) fn set_health(&mut self, health: f32) {
         self.tags_mut().insert(
@@ -191,39 +157,25 @@ impl Instance {
         self.combat.damage_immunity.tick();
     }
 
-    /// Has the death ragdoll finished, so the corpse should be removed from the world?
     #[inline]
     pub fn is_despawned(&self) -> bool {
         self.combat.death.is_despawned()
     }
 
-    /// Has this mob moved beyond its row-level despawn radius and should be culled at
-    /// the end of this tick? Always false for species that never distance-despawn. The
-    /// manager drops such a mob from the live set without saving it — distinct from
-    /// [`is_despawned`](Self::is_despawned), which is a finished death corpse.
     #[inline]
     pub fn is_distance_despawned(&self) -> bool {
         self.distance_despawned
     }
 
-    /// Hurt-flash intensity in `[0, 1]` at `alpha` into the tick. The renderer fades the
-    /// red tint by this. Applies while dying too (the flash from the killing blow), so a
-    /// kill reads like any other hit; it decays to 0 over the start of the ragdoll.
     pub fn hurt_flash(&self, alpha: f32) -> f32 {
         hurt_flash01(self.interp.hurt, self.combat.hurt_timer, alpha)
     }
 
-    /// The remaining hurt stagger/flash timer (seconds) — the SOURCE state the
-    /// flash derives from. Replicated per tick; the client derives the flash
-    /// from consecutive values via [`hurt_flash01`].
     #[inline]
     pub fn hurt_timer(&self) -> f32 {
         self.combat.hurt_timer
     }
 
-    /// The interpolated per-bone ragdoll pose (pivot position + orientation) at `alpha`,
-    /// or `None` if the mob isn't ragdolling yet. The renderer builds each bone's pose
-    /// as `T(pos)·R(rot)·T(-pivot)`.
     pub fn ragdoll_pose(&self, alpha: f32) -> Option<Vec<(Vec3, glam::Quat)>> {
         let DeathState::Ragdoll(rag) = &self.combat.death else {
             return None;
@@ -234,10 +186,6 @@ impl Instance {
         Some(rag.pose(alpha))
     }
 
-    /// Advance the death ragdoll. On its first dead tick the ragdoll is initialised;
-    /// thereafter it steps, colliding each bone-corner against the world's blocks (so the
-    /// corpse can't pass through terrain and falls off edges). The mob's `pos`/`yaw` stay
-    /// frozen — they're the ragdoll's model→world `global` transform.
     pub(super) fn tick_ragdoll(
         &mut self,
         dt: f32,
@@ -252,8 +200,6 @@ impl Instance {
             return;
         };
         if rag.is_initialized() {
-            // The corpse simulates in a frame anchored at the cell it died in,
-            // so its corner sweeps stay exact far from the origin.
             let anchor = pos.block();
             let solid = |c: IVec3| {
                 let w = c + anchor;
@@ -307,7 +253,6 @@ mod tests {
 
     #[test]
     fn damage_reduces_health_and_dies_at_zero() {
-        // A 4-health owl: three 1-damage hits don't kill; the fourth does.
         let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         let from = WorldPos::new(5.0, 0.0, 0.5);
         for _ in 0..3 {
@@ -420,7 +365,6 @@ mod tests {
             ),
             "one big hit kills"
         );
-        // A corpse takes no more damage and reports no further lethal hits.
         assert!(!owl.damage(
             100.0,
             Some(WorldPos::new(5.0, 0.0, 0.5)),
@@ -463,7 +407,6 @@ mod tests {
         );
         assert!(owl.hurt_flash(1.0) > 0.0, "a non-lethal hit flashes red");
 
-        // The killing blow flashes red too (so it looks like any other hit).
         let mut dead = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         assert!(dead.damage(
             100.0,

@@ -1,7 +1,3 @@
-//! Server address parsing for the Connect to Server screen: a host with an
-//! optional `:port`, defaulting to [`super::DEFAULT_PORT`]. Pure and
-//! deterministic — DNS resolution happens later, on the connect worker thread.
-
 use super::DEFAULT_PORT;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,20 +17,12 @@ impl std::fmt::Display for AddressError {
     }
 }
 
-/// Split `input` into `(host, port)`.
-///
-/// Rules: trimmed; empty → error. `[v6]:port` and `[v6]` bracket forms are
-/// accepted (brackets stripped from the returned host). Two or more colons
-/// WITHOUT brackets read as a bare IPv6 host with the default port — bracket
-/// syntax is required to give an IPv6 address a port. Exactly one colon splits
-/// host:port; the port must parse to a nonzero u16. No colon → default port.
 pub fn parse_server_address(input: &str) -> Result<(String, u16), AddressError> {
     let input = input.trim();
     if input.is_empty() {
         return Err(AddressError::Empty);
     }
 
-    // [v6] or [v6]:port
     if let Some(rest) = input.strip_prefix('[') {
         let Some((host, after)) = rest.split_once(']') else {
             return Err(AddressError::EmptyHost);
@@ -60,7 +48,6 @@ pub fn parse_server_address(input: &str) -> Result<(String, u16), AddressError> 
             }
             Ok((host.to_string(), parse_port(port)?))
         }
-        // Bare IPv6 (e.g. `::1`, `fe80::…`): the whole string is the host.
         _ => Ok((input.to_string(), DEFAULT_PORT)),
     }
 }
@@ -123,7 +110,6 @@ mod tests {
             parse_server_address("[fe80::2]"),
             Ok(("fe80::2".to_string(), DEFAULT_PORT))
         );
-        // Bare multi-colon input is a whole IPv6 host on the default port.
         assert_eq!(
             parse_server_address("fe80::2:1"),
             Ok(("fe80::2:1".to_string(), DEFAULT_PORT))

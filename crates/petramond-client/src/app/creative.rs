@@ -1,6 +1,3 @@
-//! The creative inventory: the item catalog and the schematic library behind
-//! two icon tabs.
-
 mod catalog;
 
 use super::schematic_library::LibraryPage;
@@ -16,7 +13,6 @@ pub(super) enum CreativeTab {
     Schematics,
 }
 
-/// The creative menu's own form state.
 #[derive(Default)]
 pub(super) struct CreativeMenu {
     pub tab: CreativeTab,
@@ -60,8 +56,6 @@ impl App {
         );
         let page = on_library.then_some(library_form.page);
         state.set("tab", UiValue::I32(i32::from(on_library)));
-        // Each key shows one page of the document; a delete confirmation
-        // covers them all.
         for (key, shown) in [
             ("catalog_tab", None),
             ("selection_tab", Some(LibraryPage::Save)),

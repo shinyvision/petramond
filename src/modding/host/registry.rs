@@ -1,15 +1,7 @@
-//! Registry queries: name↔id resolution (blocks, items, mob species), tag
-//! membership, and item row reads. Every call here touches ONLY the
-//! process-wide registries — no simulation context, no init window — so the
-//! whole domain is legal on ANY instance (server, worldgen workers, client),
-//! any time.
-
 use mod_api::{HostRet, RegistryCall};
 
 use super::guards::batch_guard;
 
-/// The registry-query family (block + item + mob-species resolvers, tag
-/// membership, reverse name lookups, item row reads).
 pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
     match call {
         RegistryCall::BlockRecordPlans { records } => {
@@ -58,10 +50,6 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                 .id(&name)
                 .map(mod_api::ItemId),
         ),
-        // The reverse resolvers answer `None` for unregistered ids — a mod
-        // holding a stale id degrades, it is not a protocol break. Their id
-        // lists share the sim batch cap (a legitimate batch never exceeds
-        // the 256-id space anyway).
         RegistryCall::BlockNames { blocks } => match batch_guard("BlockNames id", blocks.len()) {
             Some(err) => err,
             None => HostRet::Names(
@@ -90,9 +78,6 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                     .collect(),
             ),
         },
-        // Mob species speak their `mobs.json` KEY (the string the whole mob
-        // surface already uses); the def table is id-ordered, so id → key is
-        // an index and key → id the shared O(1) hash index.
         RegistryCall::ResolveMob { key } => {
             HostRet::MobKind(crate::mob::by_key(&key).map(|m| mod_api::MobId(m.0)))
         }
@@ -133,8 +118,6 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                     .collect(),
             ),
         },
-        // Tag membership never interns: a name nothing lists is an empty
-        // set, and a query cannot grow the tag table.
         RegistryCall::BlocksByTag { tag } => {
             HostRet::BlockList(match petramond_world::block::BlockTag::lookup(&tag) {
                 Some(t) => petramond_world::block::Block::all()
@@ -155,9 +138,6 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                 None => Vec::new(),
             })
         }
-        // The row AS A STACK CARRIES IT: the instance data interns to the
-        // same variant the inventory would hold, so `ItemStack::tool` applies
-        // an augment's override exactly as mining and melee do.
         RegistryCall::ItemInfo { item, data } => {
             let variant = match super::guards::intern_abi_data("ItemInfo", &data) {
                 Ok(v) => v,
@@ -169,13 +149,9 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
                 ))
             }))
         }
-        // The shape-kind resolver: like the block/item/mob resolvers, a key→id
-        // lookup over the process-wide registry, unknown key = `None`.
         RegistryCall::ResolveShape { key } => {
             HostRet::MaybeU16(petramond_world::block::shape_kind_id_by_key(&key))
         }
-        // The row-data interop surface: opaque raw JSON a consuming system's
-        // key names — same never-interns contract as the tag queries.
         RegistryCall::ItemDataGet { item, key } => HostRet::Bytes(
             petramond_world::item::ItemType(item.0)
                 .data_value(&key)
@@ -214,11 +190,6 @@ pub(super) fn handle_registry_call(call: RegistryCall) -> HostRet {
     }
 }
 
-/// The block twin of `ItemInfo`: the row's stable harvest facts, with the
-/// engine's own material→tool derivation answered rather than re-derived
-/// mod-side (the duplicated-constants trap). `None` for an unregistered id —
-/// registration gates BEFORE any row accessor runs, so a stale id never
-/// indexes a row table.
 fn block_info_data(block: mod_api::BlockId) -> Option<mod_api::BlockInfoData> {
     petramond_world::registry::names().blocks.name(block.0)?;
     let b = petramond_world::block::Block::from_id(block.0);
@@ -250,8 +221,6 @@ fn block_info_data(block: mod_api::BlockId) -> Option<mod_api::BlockInfoData> {
     })
 }
 
-/// One item row as its ABI crossing — the stable, mod-relevant fields of the
-/// `items.json` row (presentation internals stay engine-side).
 fn item_info_data(stack: &petramond_world::item::ItemStack) -> mod_api::ItemInfoData {
     let item = stack.item;
     mod_api::ItemInfoData {
@@ -282,9 +251,6 @@ fn item_info_data(stack: &petramond_world::item::ItemStack) -> mod_api::ItemInfo
     }
 }
 
-/// The `blocks.json` `material` string a row's parsed class was declared as
-/// (the serde snake_case names, answered back verbatim). Exhaustive on
-/// purpose: a new material must pick its ABI name here.
 fn material_name(m: petramond_world::block::BlockMaterial) -> &'static str {
     use petramond_world::block::BlockMaterial;
     match m {
@@ -304,9 +270,6 @@ fn material_name(m: petramond_world::block::BlockMaterial) -> &'static str {
     }
 }
 
-/// The `items.json` `use` key a resolved handler was declared as. Wildcard
-/// field patterns keep this stable across handler-param reshapes; a NEW
-/// handler variant must pick its key here (exhaustive on purpose).
 fn item_use_key(u: petramond_world::item::ItemUse) -> &'static str {
     use petramond_world::item::ItemUse;
     match u {
@@ -346,10 +309,6 @@ mod tests {
 
     use crate::modding::host::{handle_host_call, ModStoreData};
 
-    /// The registry domain answers OUTSIDE any published SimCtx (legal on
-    /// any instance): forward resolution returns the session id, the reverse
-    /// resolvers invert it, and unknown names/ids answer `None` — never an
-    /// error.
     #[test]
     fn resolvers_answer_without_a_sim_scope_and_invert() {
         let mut store = ModStoreData::new("somemod", 1);
@@ -363,7 +322,6 @@ mod tests {
             panic!("expected a resolved id for petramond:stick, got {got:?}");
         };
         assert_eq!(id.0, petramond_world::item::ItemType::Stick.id());
-        // id → name inverts the resolution; an out-of-range id is None.
         let names = handle_host_call(
             &mut store,
             HostCall::from(calls::ItemNames {
@@ -382,7 +340,6 @@ mod tests {
         );
         assert_eq!(unknown, HostRet::Item(None));
 
-        // The block side mirrors it.
         let got = handle_host_call(
             &mut store,
             HostCall::from(calls::ResolveBlock {
@@ -410,7 +367,6 @@ mod tests {
             HostRet::Block(None)
         );
 
-        // The mob-species side mirrors it (key vocabulary).
         let got = handle_host_call(
             &mut store,
             HostCall::from(calls::ResolveMob {
@@ -441,9 +397,6 @@ mod tests {
         );
     }
 
-    /// `BlocksByTag` is registry-only membership: a tagged block is in, an
-    /// untagged one is not, and an unlisted name — bare or namespaced — is an
-    /// empty set (the query must never intern a new tag).
     #[test]
     fn blocks_by_tag_enumerates_members_and_never_registers() {
         let mut data = ModStoreData::new("alpha", 1);
@@ -471,9 +424,6 @@ mod tests {
         }
     }
 
-    /// `ItemsByTag` is registry-only membership like `BlocksByTag`: a tagged
-    /// item is in, an untagged one is not, and an unlisted name — bare or
-    /// namespaced — is an empty set (the query must never intern a new tag).
     #[test]
     fn items_by_tag_enumerates_members_and_never_registers() {
         let mut data = ModStoreData::new("alpha", 1);
@@ -507,10 +457,6 @@ mod tests {
         }
     }
 
-    /// `ItemInfo` is addressed by registry NAME and exposes the row's
-    /// mod-relevant fields (tool/food/block link/use key included), without a
-    /// sim scope. Unknown names answer `None`. (No row VALUES are pinned —
-    /// only presence/shape of fields the rows structurally guarantee.)
     #[test]
     fn item_info_reads_the_row_by_registry_name() {
         let mut data = ModStoreData::new("alpha", 1);

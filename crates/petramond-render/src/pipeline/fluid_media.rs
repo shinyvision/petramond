@@ -1,14 +1,6 @@
-//! The block shader's fluid medium table, generated from the fluid rows: a
-//! third fluid renders from its block row with no shader edit.
-//!
-//! A fluid face carries `medium index + 1` in its vertex; `fluid_face(index)`
-//! answers that medium's surface response. It is a generated `switch`, like the
-//! flipbook table, so it grows with the fluid count without a GPU array bound.
-
 use petramond_world::fluid::FluidMedium;
 use std::fmt::Write;
 
-/// The WGSL `FluidFace` row type and its lookup for `media` (position = index).
 pub(super) fn declarations(media: &[FluidMedium]) -> String {
     assert!(
         media.len() <= petramond_mesh::MAX_FLUID_MEDIA as usize,
@@ -39,7 +31,6 @@ pub(super) fn declarations(media: &[FluidMedium]) -> String {
     text
 }
 
-/// The registered fluids' media, in medium-index order.
 pub(super) fn registered() -> Vec<FluidMedium> {
     petramond_world::fluid::medium::media()
         .iter()
@@ -70,9 +61,6 @@ mod tests {
         }
     }
 
-    /// A fluid added as row data alone — here a third, acid-like medium —
-    /// reaches the block shader: the composed source validates and addresses
-    /// every medium at its own index.
     #[test]
     fn a_third_fluid_renders_from_its_row_alone() {
         let media = [
@@ -84,7 +72,6 @@ mod tests {
         let cases: Vec<&str> = table.lines().filter(|l| l.starts_with("case ")).collect();
         assert_eq!(cases.len(), media.len(), "one case per medium");
         for (index, m) in media.iter().enumerate() {
-            // The row's own case, as a table of that medium alone spells it.
             let alone = declarations(std::slice::from_ref(m));
             let own = alone
                 .lines()

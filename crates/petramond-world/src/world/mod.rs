@@ -1,7 +1,3 @@
-//! The data half of the world: [`data::WorldData`] plus the query/state
-//! modules that operate purely on it. The orchestration wrapper (`World`)
-//! lives in the engine crate and exposes [`data::WorldData`] read-only.
-
 pub mod column_heightmaps;
 pub mod cursor;
 pub mod custom_bake;

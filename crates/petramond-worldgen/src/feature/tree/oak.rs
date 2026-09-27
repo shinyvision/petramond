@@ -9,59 +9,31 @@ use crate::{
     rng::FeatureRng,
 };
 
-/// Branch tips — and so leaf-clump centres — are fenced inside this Chebyshev
-/// radius of the feature origin: a clump overhangs its centre by at most 5
-/// (part offset 2 + part half-extent 3), so `TIP_FENCE + 5 == crate::feature::MARGIN`
-/// keeps every leaf inside the seam-consistency margin.
 pub const TIP_FENCE: i32 = crate::feature::MARGIN - 5;
 
-/// Trunk heights a row may draw from, inclusive. Below the floor the base
-/// flare leaves no shaft for branch levels; the ceiling sizes the per-level
-/// stack scratch in `plan_base`.
 pub const TRUNK_HEIGHT: (i32, i32) = (7, 40);
-/// One fork level per trunk level is the most the spacing loop can place.
 pub const MAX_BRANCH_LEVELS: i32 = TRUNK_HEIGHT.1;
-/// Beyond this the root fan only re-emits cells it already wrote.
 pub const MAX_ROOTS: i32 = 40;
-/// Shortest root, and the floor a root's per-tree reach must clear.
 pub const MIN_ROOT_REACH: i32 = 2;
-/// Base leaf-clump radius: tip clumps jitter ±1 around it and the crown adds
-/// one, so the crown's radius-3 clump sits exactly at the leaf-decay support
-/// ceiling. Not a row parameter — any other value strands leaves.
+/// Base leaf-clump radius. Tip clumps jitter ±1 around it, crown adds one more, so the crown's
+/// radius-3 clump lands right at the leaf-decay support ceiling. Don't make this a row parameter;
+/// any other value strands leaves.
 pub const LEAF_RADIUS: i32 = 2;
 
-// The oak's sculpting recipe. These shape the silhouette every oak row shares;
-// what varies per row (heights, reach, lean, roots) is in `BlockyOakFeature`.
-
-/// Chance a leaf-box corner cell (on three boundary faces) is eroded away.
 const CORNER_ERODE_CHANCE: f32 = 0.72;
-/// Chance a leaf-box edge cell (on two boundary faces) is eroded away.
 const EDGE_ERODE_CHANCE: f32 = 0.28;
-/// Branches at least this long may turn a quarter turn or fork.
 const LONG_BRANCH: i32 = 6;
-/// Chance a long branch turns once along its run.
 const BRANCH_TURN_CHANCE: f32 = 0.38;
-/// Chance a long branch forks a side limb.
 const BRANCH_FORK_CHANCE: f32 = 0.62;
-/// Where along the branch path the fork leaves it.
 const BRANCH_FORK_AT: f32 = 0.62;
-/// Trunk levels below this fraction of the height may grow bark bumps.
 const BARK_BUMP_BAND: f32 = 0.72;
-/// Chance a shaft level grows a bark bump.
 const BARK_BUMP_CHANCE: f32 = 0.18;
-/// Root angles jitter this far (radians) either side of their even fan.
 const ROOT_ANGLE_JITTER: f32 = 0.18;
-/// The near fraction of a root that rises one block above the ground row.
 const ROOT_RISE_FRACTION: f32 = 0.34;
-/// The near fraction of a root widened by a side log.
 const ROOT_WIDEN_FRACTION: f32 = 0.28;
-/// Branch levels start at this fraction of the trunk height.
 const BRANCH_BAND_START: f32 = 0.43;
-/// Chance each of the four crown side clumps grows.
 const CROWN_SIDE_CLUMP_CHANCE: f32 = 0.8;
 
-/// Trunk cross-section radius by level: a wide 5×5 base flare, a 3×3 shaft,
-/// and a bare 1×1 top that the crown clump wraps.
 fn trunk_radius(level: i32, height: i32) -> i32 {
     if level < (height / 7).max(3) {
         2
@@ -72,9 +44,6 @@ fn trunk_radius(level: i32, height: i32) -> i32 {
     }
 }
 
-/// 2-D grid walk from `(x0, z0)` to `(x1, z1)`: unit steps on one axis at a
-/// time, interleaved by fractional progress, so a diagonal becomes an even
-/// right-angle zig-zag. Returns every visited cell including the start.
 fn grid_line_2d(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<(i32, i32)> {
     let (mut x, mut z) = (x0, z0);
     let mut points = vec![(x, z)];
@@ -89,7 +58,6 @@ fn grid_line_2d(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<(i32, i32)> {
     for i in 0..count_z {
         moves.push(((i as f32 + 0.5) / count_z as f32, false));
     }
-    // Stable sort: on equal progress the x move goes first, deterministically.
     moves.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
     for &(_, is_x) in &moves {
         if is_x {
@@ -102,13 +70,11 @@ fn grid_line_2d(x0: i32, z0: i32, x1: i32, z1: i32) -> Vec<(i32, i32)> {
     points
 }
 
-/// Cuboid leaf box with eroded corners: outer-shell cells on three boundary
-/// axes (corners) are dropped 72% of the time, on two (edges) 28% — the cube
-/// keeps its blocky read without being a perfect box. Decisions are drawn
-/// into a local mask first (never reading world content), then any kept
-/// corner whose three inward face-neighbours were all dropped is dropped too,
-/// so erosion never leaves a leaf only diagonally attached (it would decay).
-/// Over Air/Water only.
+/// Eroded leaf cuboid: corners drop 72% of the time, edges 28%, so it's blocky but not a perfect
+/// box. The mask is built first, with no world reads.
+/// A surviving corner with all three inward neighbours dropped gets dropped too, or it'd hang on
+/// diagonally and decay.
+/// Only overwrites Air/Water.
 fn leaf_box_eroded(
     ctx: &mut FeatureCtx,
     centre: IVec3,
@@ -122,8 +88,6 @@ fn leaf_box_eroded(
     let idx = |dx: i32, dy: i32, dz: i32| {
         ((dx + hx) as usize * sy + (dy + hy) as usize) * sz + (dz + hz) as usize
     };
-    // Stack scratch: a replayed tree erodes ~80 boxes and every chunk within
-    // MARGIN replays the tree, so per-box heap allocation is measurable.
     let mut keep = [false; 7 * 7 * 7];
     for dx in -hx..=hx {
         for dy in -hy..=hy {
@@ -167,10 +131,6 @@ fn leaf_box_eroded(
     }
 }
 
-/// Hidden support wood for one clump box: a log at the centre, plus four log
-/// "arms" two cells out on any axis whose half-extent reaches 3 — every leaf
-/// in a `(3, 2, 3)`-half box then reaches a log within the decay flood's
-/// distance (6), erosion included.
 fn clump_support(ctx: &mut FeatureCtx, centre: IVec3, half: IVec3, log: Block) {
     ctx.set_branch(centre, log);
     if half.x >= 3 {
@@ -185,9 +145,6 @@ fn clump_support(ctx: &mut FeatureCtx, centre: IVec3, half: IVec3, log: Block) {
     }
 }
 
-/// A clump of 2–4 overlapping eroded leaf boxes around `centre`: one main box
-/// of the given radius, then smaller offset part boxes, each tied back to the
-/// centre by a hidden log stub. `radius ≤ 3` (the decay-support bound).
 fn leaf_clump(
     ctx: &mut FeatureCtx,
     centre: IVec3,
@@ -218,13 +175,6 @@ fn leaf_clump(
     }
 }
 
-/// One branch: a cardinal walk with scattered 1-block rises, an optional
-/// elbow turn, a thickened first third (underside + one flank), and at most
-/// one perpendicular split partway along. Tip cells (walk end + split end)
-/// are appended to `tips` for the canopy pass. Coordinates are relative to
-/// the feature origin so the `TIP_FENCE` bound is exact; the walk simply
-/// stops at the fence (pure geometry, so a neighbour chunk replays it
-/// identically).
 #[allow(clippy::too_many_arguments)]
 fn grow_branch(
     ctx: &mut FeatureCtx,
@@ -319,41 +269,23 @@ fn grow_branch(
     }
 }
 
-/// Rooted, bending oak with rising forks and eroded cuboid leaf clusters.
-/// The trunk/root RNG prefix is shared with the anchoring check. Branch tips
-/// stay fenced inside the replay margin, and clumps carry connected support
-/// wood so the crown survives leaf decay.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockyOakFeature {
     pub log: Block,
     pub leaf: Block,
-    /// {min,max} trunk height.
     pub height: (i32, i32),
-    /// Horizontal displacement of the crown from the rooted foot.
     pub lean: (i32, i32),
-    /// Fraction of a limb's outward steps that also rise.
     pub branch_rise: (f32, f32),
-    /// Reduction of branch reach toward the crown, in 0..=1.
     pub crown_taper: f32,
-    /// {min,max} branch levels along the upper trunk.
     pub levels: (i32, i32),
-    /// Minimum reach of any single branch.
     pub reach_min: i32,
-    /// {min,max} of the per-TREE maximum branch reach; each branch draws its
-    /// length in `reach_min..=<that>`. Keep `.1 ≤ TIP_FENCE`.
     pub reach_max: (i32, i32),
-    /// {min,max} root count around the base flare.
     pub roots: (i32, i32),
-    /// {min,max} of the per-tree root reach; each root draws its length in
-    /// `max(2, reach - 3)..=reach`.
     pub root_reach: (i32, i32),
 }
 
 impl BlockyOakFeature {
-    /// Every geometry bound a row must respect: the replay margin (branch
-    /// tips), the candidate window (roots, read by the anchoring gate), the
-    /// stack scratch (trunk height) and the leaf-support ceiling.
     pub fn validate(&self) -> Result<(), String> {
         use crate::data::bounds::{ascending, unit, unit_range, within};
         ascending("height", self.height, TRUNK_HEIGHT.0..=TRUNK_HEIGHT.1)?;
@@ -366,28 +298,18 @@ impl BlockyOakFeature {
         )?;
         ascending("levels", self.levels, 1..=MAX_BRANCH_LEVELS)?;
         ascending("roots", self.roots, 1..=MAX_ROOTS)?;
-        // The crown may lean at most to where a full clump still fits inside
-        // the tip fence.
         ascending("lean", self.lean, 0..=TIP_FENCE - LEAF_RADIUS)?;
         unit_range("branch_rise", self.branch_rise)?;
         unit("crown_taper", self.crown_taper)
     }
 }
 
-/// One cell of the oak's trunk-and-roots base, in world coords.
 enum BaseCell {
-    /// Trunk core / root log — written unconditionally.
     Log(IVec3),
-    /// Bark bump — written with the branch predicate.
     Bump(IVec3),
 }
 
 impl BlockyOakFeature {
-    /// Draw the trunk-and-roots base — the shared RNG prefix of `generate`
-    /// and `is_anchored`. Every base cell goes through `emit`; returns the
-    /// trunk height and per-level trunk centres. Both callers consume the
-    /// stream identically by construction, so the anchoring dry-run and the
-    /// real placement always agree on the geometry.
     fn plan_base(
         &self,
         origin: IVec3,
@@ -448,9 +370,6 @@ impl BlockyOakFeature {
             }
         }
 
-        // Roots: evenly fanned, angle-jittered grid lines stepping down and
-        // out from the trunk base, doubled at ground level and widened near
-        // the trunk.
         let root_count = sample_height(self.roots, rng);
         let root_reach = sample_height(self.root_reach, rng);
         let (sx, sz) = centres[0];
@@ -516,9 +435,6 @@ impl Feature for BlockyOakFeature {
             BaseCell::Bump(p) => ctx.set_branch(p, self.log),
         });
 
-        // Branch levels: evenly spaced fork heights along the upper trunk,
-        // two or three shuffled-cardinal branches each (two at the lowest and
-        // highest levels).
         let low = (h as f32 * BRANCH_BAND_START).floor() as i32;
         let high = h - 3;
         let levels = sample_height(self.levels, rng);
@@ -565,10 +481,6 @@ impl Feature for BlockyOakFeature {
             }
         }
 
-        // Canopy: an eroded clump on every branch tip (radius jittered ±1), a
-        // heavier crown clump over the trunk top — its always-kept centre
-        // column is what buries the top log — and a ring of four side clumps
-        // just below it.
         for &(tx, ty, tz) in &tips {
             let jitter = [-1, 0, 0, 1][rng.next_i32(0, 3) as usize];
             let local = (LEAF_RADIUS + jitter).max(LEAF_RADIUS);
@@ -619,11 +531,10 @@ impl Feature for BlockyOakFeature {
         }
     }
 
-    /// Every ground-level cell of the base (trunk flare + root lines) must
-    /// rest on ground: the column's surface may be at the cell's level (the
-    /// log replaces the surface block) or one below (the log sits on it).
-    /// One hanging cell rejects the whole tree — no floating trees, and the
-    /// skipped `generate` is a placement-cost win on slopes.
+    /// Every ground-level cell of the base (trunk flare and root lines) has to rest on ground.
+    /// Surface can be at the cell's level (log replaces it) or one below (log sits on it). One
+    /// hanging cell and we reject the whole tree, no floating trees. Bailing early here also saves
+    /// a generate call on slopes.
     fn is_anchored(
         &self,
         surf: &mut dyn FnMut(i32, i32) -> i32,

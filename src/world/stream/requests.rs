@@ -8,27 +8,16 @@ use petramond_worldgen::ColumnGen;
 
 use crate::world::store::{LoadAnchor, LoadTarget};
 
-/// Bound column work while allowing nearer requests to replace waiting jobs
-/// when the anchors move.
 pub(super) const MAX_PENDING_COLUMN_GEN_JOBS: usize = 192;
 const MAX_COLUMN_GEN_SUBMITS_PER_TARGET: usize = 64;
 
 impl ServerWorld {
-    /// Update the streamed region around the player's SECTION `(cam_chunk_x, cam_chunk_y,
-    /// cam_chunk_z)`. The world streams a flattened cylinder: a Euclidean horizontal disc
-    /// of columns, each loaded only across a vertical window of sections around the player
-    /// (see `VERTICAL_LOAD_RADIUS`). Generation is per 16³ section, prioritised by 3D
-    /// distance — "worldgen closest to the player" — so the deep underground / high sky a
-    /// far column doesn't need is never generated until the player approaches it (room for
-    /// caves below y=0). Scans are gated to player-section / render-distance changes; call
-    /// `poll` every frame to keep ingesting worker results.
     pub fn update_load(&mut self, cam_chunk_x: i32, cam_chunk_y: i32, cam_chunk_z: i32) {
         let target = LoadTarget::new(cam_chunk_x, cam_chunk_y, cam_chunk_z, self.data.render_dist);
         self.update_load_target(target);
     }
 
     fn update_load_target(&mut self, target: LoadTarget) {
-        // The single-anchor path: any multi-anchor residue is gone.
         let anchors_changed = !self.data.extra_load_targets.is_empty();
         self.data.extra_load_targets.clear();
         if !anchors_changed && self.data.last_load_target == Some(target) {
@@ -72,16 +61,7 @@ impl ServerWorld {
         }
     }
 
-    /// N-anchor streaming for the multi-player server: request everything any
-    /// anchor wants (submission priority = the MIN key over the anchors, so a
-    /// column between two players resolves for whichever is nearer) and keep
-    /// everything inside ANY anchor's keep shape. One anchor is exactly
-    /// `update_load` including its incremental rescan optimizations; the N ≥ 2 path
-    /// trades those delta scans for a plain full scan on anchor-set change (bounded by
-    /// the anchors' discs, and it runs only on change).
     pub fn update_load_multi(&mut self, anchors: &[LoadAnchor]) {
-        // Each anchor streams at ITS connection's radius (view distance),
-        // never wider than this world's own `render_dist` budget.
         let radius = |a: &LoadAnchor| a.radius.clamp(1, self.data.render_dist);
         match anchors {
             [] => {}
@@ -151,7 +131,6 @@ impl ServerWorld {
             .expect("at least one target")
     }
 
-    /// [`request_missing_columns`] over the union of the anchors' discs.
     fn request_missing_columns_multi(&mut self, targets: &[LoadTarget]) {
         let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
             .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.side.gen.pending.len()));
@@ -180,7 +159,6 @@ impl ServerWorld {
                 }
             }
         }
-        // Same settled short-circuit as the single-anchor scan.
         self.data.missing_columns_settled = missing.len() <= submit_limit;
         missing.sort_by_key(|(priority, _)| *priority);
         for (priority, pos) in missing.into_iter().take(submit_limit) {
@@ -188,8 +166,6 @@ impl ServerWorld {
         }
     }
 
-    /// [`request_wanted_sections`] with each column's wanted window = the
-    /// union over the anchors that want it.
     fn request_wanted_sections_multi(&mut self, targets: &[LoadTarget]) {
         let underground: Vec<bool> = targets
             .iter()
@@ -231,9 +207,6 @@ impl ServerWorld {
         self.admit_section_candidates(wanted);
     }
 
-    /// Submit the (heavy, once-per-column) `ColumnGen` job for every in-radius column we
-    /// have neither loaded nor queued, NEAREST-FIRST so the player's surroundings resolve
-    /// first. Each landed column then drives its own per-section jobs (`poll`).
     pub(super) fn request_missing_columns(&mut self, target: LoadTarget) {
         let submit_limit = MAX_COLUMN_GEN_SUBMITS_PER_TARGET
             .min(MAX_PENDING_COLUMN_GEN_JOBS.saturating_sub(self.side.gen.pending.len()));
@@ -257,12 +230,6 @@ impl ServerWorld {
                 missing.push((target.column_priority_key(pos), pos));
             }
         }
-        // Everything wanted is loaded or queued after this pass: the per-pump
-        // rescan is pure waste until an eviction / failure / anchor change
-        // un-settles it (see `missing_columns_settled`). Only valid while this
-        // single target IS the whole anchor set — under multi-anchor streaming
-        // this scan cannot see the extra anchors' columns, so it must not mark
-        // the wider wanted-set settled.
         if self.data.extra_load_targets.is_empty() {
             self.data.missing_columns_settled = missing.len() <= submit_limit;
         }
@@ -272,13 +239,7 @@ impl ServerWorld {
         }
     }
 
-    /// Queue one column's gen job (or its column-gen cache read) and mark it
-    /// pending. Shared by the single- and multi-anchor request scans.
     fn submit_column_job(&mut self, priority: i64, pos: ChunkPos) {
-        // An explored column's 2D gen data loads from the column-gen cache
-        // instead of running the heavy noise job; a decode miss falls back
-        // to the worker (poll's cache drain resubmits). Both answers resolve
-        // the same `pending` entry.
         let cached = self
             .side
             .save
@@ -415,9 +376,6 @@ impl ServerWorld {
         self.admit_section_candidates(wanted);
     }
 
-    /// Submit per-section gen jobs for one freshly-loaded column's vertical window
-    /// (nearest the player's `cy` first), so a column starts filling the moment its
-    /// shared data lands without waiting for the next `update_load`.
     pub(super) fn request_sections_for_column(&mut self, pos: ChunkPos, target: LoadTarget) {
         let Some(col) = self.side.gen.column_gen.get(&pos).cloned() else {
             return;
@@ -435,8 +393,6 @@ impl ServerWorld {
             if self.skip_empty_sky_section(sp, content_top) {
                 continue;
             }
-            // The full 3D key (not just dcy²): these compete in the shared pool
-            // against other columns' sections, so the key must be globally comparable.
             wanted.push((
                 target.surface_biased_section_key(sp, band_lo, underground),
                 sp,
@@ -450,9 +406,6 @@ impl ServerWorld {
         );
     }
 
-    /// Submit every missing wanted section. The job pool runs them nearest
-    /// first by key and drops the ones a move makes unwanted, so nothing is
-    /// held back here.
     fn admit_section_candidates(&mut self, mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)>) {
         wanted.sort_unstable_by_key(|(key, sp, _)| (*key, sp.cx, sp.cz, sp.cy));
         for (key, sp, col) in wanted {
@@ -460,8 +413,6 @@ impl ServerWorld {
         }
     }
 
-    /// Re-request after a section job failed: the failed position is no
-    /// longer pending, so a rescan of the landed columns finds it again.
     pub(super) fn refill_section_requests(&mut self) {
         if !self.side.gen.section_requests_unsettled {
             return;
@@ -480,22 +431,11 @@ impl ServerWorld {
         }
     }
 
-    /// Queue one section's gen job and, paired with it, ask the save thread for that
-    /// section's saved (player-modified) record if one exists — so the disk overlay
-    /// lands after the generated base and wins (`apply_pending_overlays`).
-    ///
-    /// A section that exists on disk skips the gen job entirely: its record is a
-    /// full section that would have replaced the generated base anyway, so it
-    /// installs as the PRIMARY content when the save thread answers (`poll`), and
-    /// generation runs only as the corrupt-record fallback.
     fn submit_section_job(&mut self, key: i64, sp: SectionPos, col: Arc<ColumnGen>) {
         let disk_primary = self.data.saved_section_contains(sp);
         if disk_primary {
             self.insert_pending_section(sp);
             self.side.gen.disk_primary_sections.insert(sp);
-            // The section's true content is in flight until the save thread
-            // answers: the sim guard blocks mutation and the harvest skips
-            // persisting it meanwhile (same contract as the overlay path).
             self.side.gen.awaited_overlays.insert(sp);
             self.note_stream_nonfinal(sp);
             if let Some(save) = self.side.save.as_ref() {
@@ -516,9 +456,6 @@ impl ServerWorld {
         if let Some(save) = self.side.save.as_ref() {
             if self.data.saved.authoritative_contains(sp) {
                 save.request_load(&self.data.saved, sp, false);
-                // The section's true content is now in flight until the save thread
-                // answers (and the overlay applies): the sim guard blocks mutation
-                // and the harvest skips persisting it meanwhile.
                 self.side.gen.awaited_overlays.insert(sp);
                 self.note_stream_nonfinal(sp);
             }

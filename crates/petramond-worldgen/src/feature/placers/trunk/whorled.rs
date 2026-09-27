@@ -3,8 +3,6 @@ use crate::feature::placers::shapes::connected_line;
 
 use petramond_math::detmath;
 
-/// A tapered stem with rising side limbs distributed through a vertical band.
-/// Each limb tip and the stem top is an independent foliage attachment.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WhorledTrunk {

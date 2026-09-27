@@ -1,37 +1,18 @@
-//! The builder's host side of the game's load-time document validation.
-//!
-//! Every rule comes from `petramond_ui::contract` — the same functions the
-//! game's loader calls — so there is no builder copy of any table. This
-//! module only supplies what those rules ask the host for: the pack the
-//! document ships in (namespace ownership), the item tags every asset layer
-//! registers (slot `accepts`), and image files beside the project.
-
 use crate::assets::{self, AssetRoots};
 use petramond_ui::contract::{self, EngineCatalog, EngineCheck};
 use petramond_ui::{DocClass, DocIssue, Document, Theme, UiState};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-/// GUI scales the viewport-fit rule is judged at: the smallest, and the one
-/// where secondary-size text is proportionally largest.
 const FIT_SCALES: [i32; 2] = [1, 3];
 
-/// What the engine would know about a document at load: its shipping pack
-/// and the item tags registered by the base game plus that pack.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EngineContext {
-    /// The id from the nearest enclosing `pack.json` (`None`: base assets or
-    /// a loose project outside any pack).
     pub pack_id: Option<String>,
     item_tags: HashSet<String>,
 }
 
 impl EngineContext {
-    /// The context for a project saved in `project_dir`, seen through
-    /// `roots` (the project's layered roots — see
-    /// [`AssetRoots::for_project`]): the enclosing pack (the first ancestor
-    /// holding a `pack.json`) and the tags every layer's `items.json` rows
-    /// list.
     pub fn for_project(roots: &AssetRoots, project_dir: Option<&Path>) -> EngineContext {
         let pack_id = project_dir
             .and_then(assets::enclosing_pack)
@@ -48,10 +29,6 @@ impl EngineContext {
         EngineContext { pack_id, item_tags }
     }
 
-    /// Every reason the game would refuse `doc` at load, plus the
-    /// smallest-viewport fit rule for non-HUD documents, judged with the
-    /// preview's sample `state`. `image_path` resolves a static image name
-    /// the way the exported document will.
     pub fn validate(
         &self,
         doc: &Document,
@@ -73,7 +50,6 @@ impl EngineContext {
         if doc.class != DocClass::Hud {
             for scale in FIT_SCALES {
                 for issue in contract::viewport_overflow(doc, theme, state, scale, &|_| None) {
-                    // One finding per node: the smallest scale that fails.
                     if !issues.iter().any(|i| i.path == issue.path) {
                         issues.push(issue);
                     }
@@ -85,9 +61,6 @@ impl EngineContext {
 }
 
 impl EngineCatalog for EngineContext {
-    /// Mirrors the engine's non-interning tag query: engine tags are listed
-    /// bare on base rows and may be named `petramond:<tag>`; pack tags are
-    /// namespaced and match exactly.
     fn item_tag_exists(&self, name: &str) -> bool {
         let bare = name
             .strip_prefix(contract::ENGINE_NAMESPACE)
@@ -103,7 +76,6 @@ fn read_pack_id(pack_root: &Path) -> Option<String> {
     json.get("id")?.as_str().map(str::to_owned)
 }
 
-/// Every string listed under a `tags` key anywhere in an item catalog.
 fn collect_tags(json: &serde_json::Value, out: &mut HashSet<String>) {
     match json {
         serde_json::Value::Object(map) => {
@@ -166,9 +138,6 @@ mod tests {
         assert!(!ctx.item_tag_exists("othermod:fuel"));
     }
 
-    /// The builder reports what the game refuses: a mod kind outside its
-    /// pack, a role mod documents may not use, and an unknown tag — none of
-    /// which the structural `Document::validate` alone sees.
     #[test]
     fn builder_validation_runs_the_engine_rules() {
         let doc = Document::from_json(

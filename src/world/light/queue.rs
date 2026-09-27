@@ -12,42 +12,26 @@ pub struct LightBakeQueue {
     backend: Backend,
     pending: FxHashMap<SectionPos, PendingLightBake>,
     next_id: u64,
-    /// Events a multi-section report expanded into, handed out one per
-    /// [`try_recv`](LightBakeQueue::try_recv).
     ready: Vec<LightBakeEvent>,
 }
 
 #[derive(Clone)]
 struct PendingLightBake {
     id: u64,
-    /// The section's `light_revision` when the bake was requested — what a
-    /// failure report is judged against.
     revision: u64,
     cancel: crate::worker::JobCancel,
 }
 
-/// What the light stage reports for one requested section.
 pub enum LightBakeEvent {
     Baked(LightBakeResult),
-    /// The bake job panicked. Its pending slot is already released; the
-    /// installer decides how the section's light settles (see
-    /// `World::drain_light_bakes`).
-    Failed {
-        pos: SectionPos,
-        revision: u64,
-    },
+    Failed { pos: SectionPos, revision: u64 },
 }
 
-/// One pool job's report on the backend channel. Exactly one per job (the
-/// pool's stage contract): the baked members, or every member it was asked
-/// for as failed.
 enum BakeReport {
     Baked(Vec<LightBakeResult>),
     Failed(Vec<(SectionPos, u64)>),
 }
 
-/// One queued per-section bake: the world crate's [`SectionBakeJob`] tagged
-/// with the queue id its result must match.
 pub struct LightBakeJob {
     id: u64,
     bake: SectionBakeJob,
@@ -72,8 +56,6 @@ impl LightBakeResult {
         }
     }
 
-    /// Build a result outside the async queue (prediction batch clips).
-    /// `id` is unused by the prediction install path.
     pub fn from_batch_output(out: LightBakeOutput) -> Self {
         Self::from_output(0, out)
     }
@@ -89,7 +71,6 @@ impl LightBakeQueue {
         }
     }
 
-    /// `key` is the shared-pool distance priority (lower = sooner).
     pub fn request(
         &mut self,
         key: i64,
@@ -119,10 +100,6 @@ impl LightBakeQueue {
         );
     }
 
-    /// Request one 2×2×2 batch bake (streaming first-bakes: one shared 64³ flood,
-    /// see `light::batch`). Members already pending are skipped; every member gets
-    /// its own pending slot and cancel token, so cancelling one section only drops
-    /// that member from the batch instead of killing its siblings' bakes.
     pub fn request_batch(
         &mut self,
         key: i64,
@@ -144,8 +121,6 @@ impl LightBakeQueue {
         else {
             return;
         };
-        // Pending slots only for members the snapshot actually carries — an
-        // absent-section member would otherwise wedge a slot no result clears.
         let mut cancels: Vec<(SectionPos, u64, crate::worker::JobCancel)> = Vec::new();
         for pos in job.member_positions() {
             let id = self.next_id;
@@ -174,10 +149,6 @@ impl LightBakeQueue {
         !self.pending.is_empty()
     }
 
-    /// The next finished bake or failure for a section whose request is
-    /// still current (a cancelled or superseded request's report is
-    /// dropped). A report always releases its pending slot, so a panicking
-    /// bake can never leave the section dedup-blocked forever.
     pub fn try_recv(&mut self) -> Option<LightBakeEvent> {
         loop {
             if let Some(event) = self.ready.pop() {
@@ -202,7 +173,6 @@ impl LightBakeQueue {
                     }
                 }
             }
-            // Hand events out in report order.
             self.ready.reverse();
         }
     }
@@ -217,9 +187,6 @@ impl LightBakeQueue {
 }
 
 impl LightBakeJob {
-    /// Capture the same cheap section/column snapshot used by the ordinary
-    /// asynchronous queue. Prediction bundles call this directly so their
-    /// relight and mesh stages consume one post-edit snapshot.
     pub fn snapshot(
         id: u64,
         pos: SectionPos,
@@ -235,13 +202,10 @@ impl LightBakeJob {
     }
 }
 
-/// Run one queued bake (the world crate's [`bake_section`]) and tag the result.
 pub fn run_light_bake(job: LightBakeJob) -> LightBakeResult {
     LightBakeResult::from_output(job.id, bake_section(job.bake))
 }
 
-/// Light-stage adapter over the shared [`crate::worker::JobPool`]: `submit` queues a
-/// bake at a distance priority, `try_recv` drains finished cubes on the main thread.
 struct Backend {
     pool: std::sync::Arc<crate::worker::JobPool>,
     tx_res: std::sync::mpsc::Sender<BakeReport>,
@@ -264,9 +228,6 @@ impl Backend {
         self.submit_run(key, pos, id, move || run_light_bake(job))
     }
 
-    /// Queue one single-section bake under the stage contract: the job
-    /// reports its result, nothing when cancelled, or — if `run` panics —
-    /// [`BakeReport::Failed`] through its report slot.
     fn submit_run(
         &self,
         key: i64,
@@ -292,9 +253,6 @@ impl Backend {
         cancel
     }
 
-    /// One pool job bakes the whole batch and reports one [`LightBakeResult`]
-    /// per surviving member, so the pump's freshness/stale handling is
-    /// identical to per-section bakes. A panic fails every member.
     fn submit_batch(
         &self,
         key: i64,
@@ -371,7 +329,6 @@ mod tests {
         queue
             .backend
             .submit_run(0, pos, 5, || panic!("injected light panic"));
-        // A newer request (id 6) owns the slot now.
         queue.pending.insert(
             pos,
             PendingLightBake {

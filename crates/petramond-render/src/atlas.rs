@@ -1,13 +1,3 @@
-//! Runtime texture atlas PIXELS: composed at startup from `assets/textures/`
-//! for the tile identities `tile` assigned, plus per-tile pixel-derived data
-//! (map colours, alpha bounds, mips, UV rects). Composition is a fallible
-//! client content stage, so bad pixels fail startup with the other catalogs.
-//!
-//! Identity (names, ids, tints, frame counts) lives in [`petramond_world::tile`] and
-//! never touches a texel; this module is the client half that decodes the PNGs.
-//! Composition runs as a loader stage and reports missing or invalid pixels
-//! before a client starts rendering.
-
 use petramond_world::tile::Tile;
 use std::collections::HashMap;
 
@@ -23,8 +13,7 @@ struct AtlasData {
     map_rgb: Vec<[u8; 3]>,
     /// Lowest alpha across the tile's texels — the asset↔shader contract
     /// check: an OPAQUE block row's tiles must survive the block shader's
-    /// cutout (`block.wgsl` discards `a < 0.5`), or the block renders as a
-    /// hole (the invisible-ice bug, 2026-07-16).
+    /// cutout (`block.wgsl` discards `a < 0.5`), or the block renders as a hole.
     #[cfg_attr(not(test), allow(dead_code))]
     min_alpha: Vec<u8>,
     /// Composed atlas, `cols*TILE × 2*rows*TILE` RGBA: the declared tiles in
@@ -44,20 +33,14 @@ static ATLAS: petramond_world::content::Slot<AtlasData> = petramond_world::conte
 
 fn load_atlas(_: &petramond_world::content::ContentRegistry) -> Result<AtlasData, String> {
     let data = compose()?;
-    // Publish the pixel-derived cartography colours through the identity
-    // registry, where headless-safe consumers (minimap surface tint) read them.
     petramond_world::tile::install_map_colors(data.map_rgb.clone());
     Ok(data)
 }
 
-/// Register the atlas composer in a client loader so errors are reported
-/// during content installation, before rendering begins.
 pub fn stage() -> &'static dyn petramond_world::content::Stage {
     &ATLAS
 }
 
-/// Force atlas composition now (and with it the tile map-colour install) —
-/// for tools that read map colours without ever rendering.
 pub fn ensure_composed() {
     let _ = data();
 }
@@ -67,27 +50,18 @@ fn data() -> &'static AtlasData {
     ATLAS.current()
 }
 
-/// (col, row) of a tile in the composed atlas grid.
 #[inline]
 pub fn tile_grid(tile: Tile) -> (u32, u32) {
     let d = data();
     (tile.id() as u32 % d.cols, tile.id() as u32 / d.cols)
 }
 
-/// Lowest alpha across this tile's texels — the asset↔render-pass
-/// contract's input: an OPAQUE block row's tiles must be genuinely opaque
-/// (≥ 128), a TRANSLUCENT row's tiles must author alpha in the 0.25..0.5
-/// band (above the cutout passes' `a < 0.25` discard, below water's 0.5
-/// split in `fs_transparent`). Pinned by
-/// `block_tiles_match_their_render_pass_alpha_contract`.
 #[cfg_attr(not(test), allow(dead_code))]
 #[inline]
 pub fn tile_min_alpha(tile: Tile) -> u8 {
     data().min_alpha[tile.index()]
 }
 
-/// Decode a source PNG once, full pixels. Animated strips stay whole here;
-/// frames are cropped per cell.
 fn load_source(file: &str) -> Result<image::RgbaImage, String> {
     let rel = format!("textures/{file}");
     let (bytes, _) = petramond_world::assets::read_bytes(&rel)
@@ -97,16 +71,10 @@ fn load_source(file: &str) -> Result<image::RgbaImage, String> {
         .to_rgba8())
 }
 
-/// Compose the atlas pixels for the identity registry's cell list: each cell's
-/// source frame resampled to `TILE × TILE`, placed at its id's grid slot, with
-/// its dye-base twin one grid-half below.
 fn compose() -> Result<AtlasData, String> {
     let cells = petramond_world::tile::cells();
     let count = cells.len();
 
-    // Square-ish atlas grid, same shape rule the old build-time composer used.
-    // The composed image is DOUBLE height: declared tiles on top, their
-    // dye-base twins below (same col/row + `rows`).
     let cols = (count as f32).sqrt().ceil() as u32;
     let rows = (count as u32).div_ceil(cols);
     let atlas_w = cols * TILE;
@@ -125,9 +93,6 @@ fn compose() -> Result<AtlasData, String> {
             }
         };
         let (sw, sh) = (src.width(), src.height());
-        // A vertical strip contributes the cell's frame; a static tile with
-        // strip proportions contributes its first frame (legacy tolerance,
-        // matching the identity registry's frame assignment).
         let frame = if sw > 0 && sh > sw && sh % sw == 0 {
             image::imageops::crop_imm(src, 0, cell.frame * sw, sw, sw).to_image()
         } else {
@@ -166,10 +131,6 @@ fn compose() -> Result<AtlasData, String> {
     })
 }
 
-/// The dye-base transform: desaturate to luminance, then scale so the
-/// brightest visible texel hits 255. A tint multiply over the result can
-/// reach the full dye color (white dye reads white); the base's own hue is
-/// discarded but its texture detail survives in the luminance.
 fn dye_base_pixels(src: &image::RgbaImage) -> image::RgbaImage {
     let luma = |p: &image::Rgba<u8>| {
         0.2126 * p.0[0] as f32 + 0.7152 * p.0[1] as f32 + 0.0722 * p.0[2] as f32
@@ -207,10 +168,6 @@ fn cell_map_rgb(pixels: &image::RgbaImage) -> [u8; 3] {
     }
 }
 
-// ---------------------------------------------------------------------------------
-// Atlas pixel access + mips (unchanged consumers: render::resources, tile alpha)
-// ---------------------------------------------------------------------------------
-
 /// The composed atlas with a tile-isolated mip chain. The texture atlas uses
 /// full-tile UVs, so generating mips over the whole atlas would bleed unrelated
 /// tiles together. Tiles flagged `fill_cutout_mips` (leaves) get alpha expansion
@@ -221,25 +178,17 @@ pub fn decode_atlas_mips() -> (Vec<Vec<u8>>, u32, u32) {
     (build_atlas_mips(&d.rgba), d.cols * TILE, 2 * d.rows * TILE)
 }
 
-/// The normalized V offset from a tile's base rect ([`tile_uv`]) to its
-/// dye-base twin in the composed 2D atlas — exactly half, because the twin
-/// half doubles the height. Shaders/CPU paths add this when a
-/// `petramond:tint` multiply applies (`block.wgsl` mirrors the same rule as a
-/// layer offset on the texture array).
 pub const DYE_V_OFFSET: f32 = 0.5;
 
-/// Per-tile texture-ARRAY data for the terrain pipeline: one `TILE×TILE` layer per tile id,
-/// with a per-layer mip chain. Returned as `(levels, tile_size, layer_count)` where
-/// `levels[mip]` is layer-major packed RGBA (`layer_count × (tile>>mip)² × 4` bytes) — one
-/// `write_texture` per mip. Extracted from the same tile-isolated mips `build_atlas_mips`
-/// builds (so leaf alpha-expansion etc. carry over), but repacked per layer so the array can
-/// use real REPEAT wrapping + mips with NO cross-tile bleed — exactly what a greedy-meshed
-/// quad's tiled UVs need. Layer index == tile id, matching the `uv_rects` / mesher numbering.
+/// Per-tile texture array for terrain: one `TILE×TILE` layer per tile id, per-layer mip chain.
+/// Returns `(levels, tile_size, layer_count)`; `levels[mip]` is layer-major RGBA, one
+/// `write_texture` per mip.
+/// Uses the mips `build_atlas_mips` builds, repacked per layer so we get real REPEAT wrapping
+/// and mips with no cross-tile bleed. Greedy-meshed quads need that for tiled UVs.
+/// Layer index == tile id, same as `uv_rects` and the mesher.
 pub fn decode_atlas_array() -> (Vec<Vec<u8>>, u32, u32) {
     let d = data();
     let mips = build_atlas_mips(&d.rgba);
-    // Base layers `0..count`, then every tile's dye-base twin at
-    // `count + tile` — the layer offset `block.wgsl` adds for dyed vertices.
     let layers = 2 * d.count as u32;
     let mut levels = Vec::with_capacity(mips.len());
     for (level, mip) in mips.iter().enumerate() {
@@ -284,7 +233,6 @@ fn build_atlas_mips(base: &[u8]) -> Vec<Vec<u8>> {
         for tile in Tile::all() {
             let (tile_col, tile_row) = tile_grid(tile);
             let tile_col = tile_col as usize;
-            // The tile's base cell, then its dye-base twin one grid-half down.
             for tile_row in [tile_row as usize, tile_row as usize + d.rows as usize] {
                 for y in 0..dst_tile {
                     for x in 0..dst_tile {
@@ -370,20 +318,13 @@ fn div_round(n: u32, d: u32) -> u8 {
     ((n + d / 2) / d).min(255) as u8
 }
 
-/// The block shader's `atlas_layout` uniform: `w` is the tile count — the
-/// texture-array layer offset from a tile to its dye-base twin (`block.wgsl`
-/// adds it for dyed vertices).
 pub fn atlas_layout_uniform() -> [u32; 4] {
     [0, 0, 0, Tile::count() as u32]
 }
 
-/// Tile grid -> normalized UV rect (u0,v0,u1,v1) for a tile.
 pub fn tile_uv(tile: Tile) -> [f32; 4] {
     let d = data();
     let (col, row) = tile_grid(tile);
-    // V is normalized against the DOUBLE-height composed atlas (declared
-    // tiles on top, dye-base twins below), so every base rect lands in the
-    // top half and the dyed sample is exactly `v + 0.5` (see `DYE_V_OFFSET`).
     let u0 = col as f32 / d.cols as f32;
     let v0 = row as f32 / (2 * d.rows) as f32;
     let u1 = (col + 1) as f32 / d.cols as f32;
@@ -400,15 +341,10 @@ pub fn tile_uv(tile: Tile) -> [f32; 4] {
 mod tests {
     use super::*;
 
-    /// Asset↔shader contract, both directions. OPAQUE rows: every referenced
-    /// tile must be genuinely opaque (min alpha ≥ 128, comfortably above the
-    /// cutout passes' 0.25 discard) or the block renders as an invisible
-    /// x-ray hole — the mesher culled the faces behind it, then the shader
-    /// discarded every texel of its own (the 2026-07-16 ice bug: `ice.png` at
-    /// uniform alpha 126). TRANSLUCENT rows: tiles must sit in the 0.25..0.5
-    /// band — at or above the cutout discard so item cubes/icons/particles
-    /// still draw them solid, and below 0.5 so `fs_transparent`'s water/ice
-    /// split hands them their own authored alpha instead of water's constant.
+    /// Asset/shader alpha contract. Opaque tiles need min alpha >= 128, above the 0.25 cutout
+    /// discard, or the block renders as an invisible hole.
+    /// Translucent tiles must sit in 0.25..0.5: at/above cutout so items/particles draw solid,
+    /// below 0.5 so `fs_transparent`'s water/ice split uses their own alpha instead of water's.
     #[test]
     fn block_tiles_match_their_render_pass_alpha_contract() {
         for &b in petramond_world::block::Block::all() {
@@ -435,7 +371,6 @@ mod tests {
 
     #[test]
     fn composed_atlas_matches_the_identity_registry() {
-        // Forces the LazyLock: a bad texture set panics right here.
         let d = data();
         assert_eq!(d.count, Tile::count());
         assert_eq!(

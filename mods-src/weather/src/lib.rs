@@ -1,24 +1,19 @@
-//! weather — localized clouds, wind, rain, and snow as pure mod policy.
+//! Weather: clouds, wind, rain and snow, all as pure mod policy.
 //!
-//! One wasm serves both sides (`pack.json` points `wasm` and `client_wasm`
-//! at it); `mod_init` branches on the runtime side.
+//! One wasm serves both sides - `pack.json` points `wasm` and `client_wasm` at it, and `mod_init`
+//! branches on the runtime side.
 //!
-//! - **Server** (deterministic tick): integrates the global wind into the
-//!   field's advection offset, publishes the replicated `weather:*` shader
-//!   params (the WHOLE weather state is those few vec4s — see
-//!   `weather-core`), publishes the same field to other server mods on the
-//!   session-scoped `weather:field` event (`weather_core::feed`), and
-//!   accumulates snow layers on cold-biome surfaces while it snows there.
-//! - **Client** (presentation): reads the same params back
-//!   (`client_env_params`), evaluates the same field at the camera, and
-//!   drives the rain/snow ambient particle volumes, the rain sound bed, and
-//!   the sky-gated rainy mood grade. The pack's `clouds.wgsl` evaluates the
-//!   field per pixel from the identical params — sim, presentation, and sky
-//!   always agree.
+//! Server (deterministic tick): folds the global wind into the field's advection offset and
+//! publishes the `weather:*` shader params, which are the whole weather state (a few vec4s, see
+//! `weather-core`). Feeds the field to other server mods over `weather:field`, and piles snow on
+//! cold biomes while it's snowing there.
 //!
-//! Weather TIME is the persisted `petramond:clock` (frozen time = frozen
-//! weather); the advection offset persists in world KV, so a storm front
-//! survives a reload mid-crossing.
+//! Client: reads the same params back, evaluates the same field at the camera, and drives the
+//! rain/snow particles, the rain sound bed and the sky-gated rainy mood grade. `clouds.wgsl`
+//! evaluates the same field per pixel from the same params, so sim, presentation and sky agree.
+//!
+//! Weather time is the persisted `petramond:clock` - frozen clock, frozen weather. The advection
+//! offset lives in world KV, so a storm front survives a reload mid-crossing.
 
 mod keys;
 mod offset;
@@ -28,35 +23,21 @@ use weather_core::{coverage, field_params, rain_from_coverage, wind, FieldParams
 
 use offset::Advection;
 
-/// The one tick system: advance + publish + accumulate.
 const TICK_WEATHER: u32 = 1;
 
-/// Where earlier versions mirrored the field into the PERSISTENT world KV
-/// every tick; the row now travels on the `weather:field` session event, and
-/// init clears the leftover so saves stop carrying a frozen sky.
 const LEGACY_KV_FIELD: &str = "weather:field";
 
-/// Snow-accumulation probes per tick, round-robin over connected players.
 const SNOW_PROBES_PER_TICK: u32 = 8;
-/// Probes land within this radius of a player (blocks).
 const SNOW_RADIUS: i32 = 48;
 
-/// How often the client re-samples its column biome / roof cover (frames).
 const CLIENT_BIOME_INTERVAL: u64 = 30;
 const CLIENT_COVER_INTERVAL: u64 = 20;
-/// Audio duck factor while the camera is under cover.
 const COVER_DUCK: f32 = 0.3;
-/// Cells above the head the sky probe scans before calling the overhead mass
-/// a roof without reading it. Must comfortably exceed the tallest canopy so a
-/// giant redwood still reads "under a tree"; anything deeper overhead is a
-/// cave or megastructure.
+/// How many cells above the head before the sky probe calls it a roof.
+/// Has to clear the tallest canopy, so redwoods still count as under a tree.
+/// Go deeper than this and it's a cave or megastructure instead.
 const SKY_SCAN_MAX: i32 = 96;
 
-/// The biomes where precipitation falls as snow and settles as layers. The
-/// pack's `weather:snow` emitter row lists the same biomes (and
-/// `weather:rain` excludes them) so particles and accumulation agree; every
-/// one of them is an engine biome whose worldgen lays snow cover. Both facts
-/// are pinned by this crate's tests against the shipped JSON.
 const SNOWY_BIOMES: [u8; 5] = [
     biome::SNOWY_PLAINS,
     biome::SNOWY_TUNDRA,
@@ -90,49 +71,24 @@ fn snow_support(
 #[derive(Default)]
 struct Weather {
     side_is_client: bool,
-    /// World-seed-derived field seed (24-bit so it rides a shader param
-    /// exactly), drawn once from a deterministic RNG stream.
     seed: u32,
-    // --- server state ---------------------------------------------------
-    /// Advection offset accumulated in f64 (wrapped into [0, WRAP)), and the
-    /// clock it last followed; the params carry the offset as f32.
     advection: Advection,
     snow_layer: Option<BlockId>,
-    /// Bare-ice invariant: worldgen deliberately keeps sea/pond ice snowless
-    /// (`frozen_ponds_carry_bare_sea_ice_without_a_snow_layer`); accumulation
-    /// must too.
     ice: Option<BlockId>,
     packed_ice: Option<BlockId>,
-    /// Engine water — excluded from snow footing (composed into
-    /// [`Weather::full_solid_support`]).
     water: Option<BlockId>,
-    /// The [`keys::LEAF_TAG`] member ids, queried at init — both sides use them:
-    /// the server's snow accumulation rests layers on canopy tops, the
-    /// client's sky probe sees through them.
     leaves: Vec<BlockId>,
-    /// Round-robin cursor over players for snow probes.
     probe_cursor: u64,
-    // --- client state ---------------------------------------------------
     frame: u64,
-    /// Cached column biome under the camera (refreshed on an interval).
     cam_biome: Option<u8>,
-    /// Camera is under cover (anything overhead, canopy included) — ducks
-    /// the rain bed.
     covered: bool,
-    /// Camera has no sky access even with leaves transparent (building,
-    /// overhang, cave ceiling) — suppresses the rainy mood grade.
     roofed: bool,
-    /// Which chunk the cover cache describes, its raw cells, and the last
-    /// FULLY-KNOWN revision (echoed to skip refetching unchanged bytes).
     cover_chunk: Option<[i32; 2]>,
     cover_cells: Option<Vec<u8>>,
     cover_revision: u64,
 }
 
 impl Weather {
-    /// The weather clock: the persisted absolute day/night clock when core
-    /// publishes one (frozen time freezes weather too), else the session
-    /// tick counter.
     fn clock(&self) -> u64 {
         world_kv_get(weather_core::CLOCK_KEY)
             .and_then(|b| weather_core::decode_clock(&b))
@@ -142,16 +98,11 @@ impl Weather {
     fn server_tick(&mut self) {
         let clock = self.clock();
         let w = wind(clock, self.seed);
-        // Advance only while the clock does ("frozen time = frozen weather"),
-        // persisting whenever the deck moved: it moves up to 0.3 blocks a
-        // tick, and a reload must not visibly rewind it.
         if self.advection.step(clock, self.seed) {
             self.advection.store();
         }
         let params = field_params(self.advection.off, clock, self.seed);
 
-        // The replicated visual/param state: everything the shader and every
-        // client instance needs to evaluate the field locally.
         shader_set_param(keys::WIND_PARAM, [params.off[0], params.off[1], w[0], w[1]]);
         shader_set_param(
             keys::SKY_PARAM,
@@ -162,17 +113,11 @@ impl Weather {
                 self.seed as f32,
             ],
         );
-        // The morph lane: which epoch pair the field is blending between.
         shader_set_param(
             keys::FLUX_PARAM,
             [params.epoch as f32, params.epoch_frac, 0.0, 0.0],
         );
 
-        // Cross-mod interop (server mods cannot read shader params): the
-        // COMPLETE field in one row on the session-scoped channel, so a
-        // foreign mod evaluates weather-core locally from what it heard. A
-        // session event, not world KV: nothing persists, and a world without
-        // this mod simply hears no weather.
         weather_core::feed::publish(&weather_core::FieldRow {
             params,
             wind: w,
@@ -182,14 +127,12 @@ impl Weather {
         self.accumulate_snow(&params);
     }
 
-    /// Budgeted snow accumulation: a few hash-scattered probes around
-    /// connected players; where the field precipitates over a snowy biome,
-    /// eligible bare surfaces gain a snow layer. The per-probe positional
-    /// threshold makes onset patchy and organic instead of a sweeping fill.
-    /// Full-solid snow footing, composed from the generic collision-shape
-    /// query: exactly one full unit collision cube, not water, not leaves
-    /// (canopy is accepted separately at the call site). An unresolved shape
-    /// (`None` — unloaded / not stream-final) is never footing.
+    /// A few probes a tick, scattered near players, not a full sweep.
+    /// Snowy biome plus snowfall means bare ground grows a layer, per-probe
+    /// threshold so it's patchy, not a sweeping fill.
+    /// Footing uses the collision-shape query: full cube, no water/leaves
+    /// (canopy is checked by the caller). No shape (chunk not loaded) means no
+    /// footing.
     fn accumulate_snow(&mut self, params: &FieldParams) {
         let Some(snow_layer) = self.snow_layer else {
             return;
@@ -219,10 +162,8 @@ impl Weather {
             if !is_snowy_biome(biome) {
                 continue;
             }
-            // Positional onset threshold: a column joins the cover only once
-            // the LOCAL intensity clears its own hash — light snowfall dusts
-            // scattered patches, a storm whites everything out. The extra
-            // per-tick roll on top keeps even a storm's fill-in gradual.
+            // Snows here once local intensity beats this column's hash. Low intensity, patches;
+            // storm, full cover. Also rolled per tick so storms fill in over time.
             let cell_gate = splitmix64_mix(((x as u64) << 32) ^ (z as u64 & 0xFFFF_FFFF)) as f32
                 / u64::MAX as f32;
             let tick_gate = (roll >> 32) as f32 / u32::MAX as f32;
@@ -235,10 +176,6 @@ impl Weather {
             let Some(support) = get_block([x, surface_y, z]) else {
                 continue;
             };
-            // Snow rests on full solid cubes AND canopy tops (`surface_y_at`
-            // already lands on the treetop — leaves block movement), but
-            // never on frozen water: worldgen keeps sea/pond ice bare and
-            // its parity tests pin it.
             let shape = if self.leaves.contains(&support) {
                 None
             } else {
@@ -266,8 +203,6 @@ impl Weather {
         self.frame = self.frame.wrapping_add(1);
         let read = client_env_params(&[keys::WIND_PARAM, keys::SKY_PARAM, keys::FLUX_PARAM]);
         let (Some(wind_p), Some(sky_p)) = (read[0], read[1]) else {
-            // No weather server mod publishing (or params not landed yet):
-            // everything idles at zero and eases out on its own.
             client_ambient_set(keys::RAIN_BUNDLE, 0.0, [0.0, 0.0]);
             client_ambient_set(keys::SNOW_BUNDLE, 0.0, [0.0, 0.0]);
             client_loop_set(keys::RAIN_LOOP, 0.0);
@@ -286,8 +221,6 @@ impl Weather {
         let (x, z) = (frame.player_pos[0], frame.player_pos[2]);
         let intensity = rain_from_coverage(coverage(x, z, &params));
 
-        // floor(), not truncation: at fractional negative coords `as i32`
-        // probes the neighbouring column.
         let cell = [x.floor() as i32, z.floor() as i32];
         if self.cam_biome.is_none() || self.frame.is_multiple_of(CLIENT_BIOME_INTERVAL) {
             self.cam_biome = client_biome_at(cell);
@@ -296,16 +229,9 @@ impl Weather {
             self.refresh_cover(frame);
         }
         let snowy = self.cam_biome.is_some_and(is_snowy_biome);
-        // Superlinear density curve: drizzle stays sparse, a downpour REALLY
-        // pours (the bundle's count budget is sized for the top end).
         let poured = intensity.powf(1.4);
-        // BOTH bundles run at the same intensity: each filters itself per
-        // column through its `biomes`/`exclude_biomes` row, so a biome
-        // border shows rain and snow side by side, column-exact.
         client_ambient_set(keys::RAIN_BUNDLE, poured, wind_v);
         client_ambient_set(keys::SNOW_BUNDLE, poured, wind_v);
-        // Audio and mood follow the CAMERA's column: standing in the snowy
-        // column, the rain bed hushes.
         let rain_i = if snowy { 0.0 } else { poured };
 
         // The rainy-mood grade: a touch darker and greyer exactly where it
@@ -330,11 +256,9 @@ impl Weather {
         let wx = frame.player_pos[0].floor() as i32;
         let wz = frame.player_pos[2].floor() as i32;
         let (cx, cz) = (wx >> 4, wz >> 4);
-        // The revision only skips REFETCHING an unchanged column's bytes;
-        // the verdict is re-evaluated from the cached cells every probe, so
-        // walking out from under a roof un-ducks even when the terrain never
-        // changed. Crossing a chunk drops the cache (its bytes belong to
-        // another column).
+        // Revision only saves refetching bytes. We still recompute the roof from the cells every
+        // probe, so walking out from under a roof un-ducks even when terrain didn't change.
+        // Crossing into another chunk drops the cache.
         if self.cover_chunk != Some([cx, cz]) {
             self.cover_chunk = Some([cx, cz]);
             self.cover_cells = None;
@@ -346,10 +270,6 @@ impl Weather {
         }]);
         if let Some(Some(column)) = reply.into_iter().next() {
             if let Some(cells) = column.cells {
-                // The surface-columns contract: only echo a revision from a
-                // reply whose EVERY cell was known — else keep asking for
-                // fresh bytes (an unknown cell may finalize without a
-                // revision bump).
                 let all_known = cells
                     .chunks_exact(CLIENT_SURFACE_CELL_BYTES)
                     .all(|c| i16::from_le_bytes([c[0], c[1]]) != CLIENT_SURFACE_UNKNOWN_HEIGHT);
@@ -358,7 +278,7 @@ impl Weather {
             }
         }
         let Some(cells) = &self.cover_cells else {
-            return; // no data yet: keep the previous verdict
+            return;
         };
         let (lx, lz) = ((wx & 15) as usize, (wz & 15) as usize);
         let idx = (lz * 16 + lx) * CLIENT_SURFACE_CELL_BYTES;
@@ -366,22 +286,17 @@ impl Weather {
         self.covered =
             h != CLIENT_SURFACE_UNKNOWN_HEIGHT && f64::from(h) > frame.player_pos[1] + 2.0;
         if !self.covered {
-            // Nothing overhead at all — trivially sky access.
             self.roofed = false;
             return;
         }
         let y0 = frame.player_pos[1].floor() as i32 + 2;
         if h as i32 - y0 >= SKY_SCAN_MAX {
-            // Deeper overhead mass than any canopy reaches: a cave or
-            // megastructure, roofed without reading the cells.
             self.roofed = true;
             return;
         }
         let blocks = client_blocks_at((y0..=h as i32).map(|y| [wx, y, wz]).collect());
         for block in blocks {
             match block {
-                // Unknown cell (unloaded / streamed content not final): keep
-                // the previous verdict instead of flickering the grade.
                 None => return,
                 Some(b) if b == BlockId::AIR || self.leaves.contains(&b) => {}
                 Some(_) => {
@@ -399,17 +314,9 @@ impl Mod for Weather {
         self.side_is_client = runtime_side() == RuntimeSide::Client;
         self.leaves = blocks_by_tag(keys::LEAF_TAG);
         if self.side_is_client {
-            // The client never rolls its own seed — it reconstructs the
-            // field entirely from the replicated params.
             return;
         }
-        // Deterministic per-world field seed (24-bit: rides a shader param
-        // f32 exactly). The first draw of a named stream is a pure function
-        // of (world seed, mod id, stream) — same value every session.
         self.seed = (rng_u64("field_seed") & 0xFF_FFFF) as u32;
-        // After core day/night (priority 0 in the same window), so the clock
-        // read is this tick's. No consumer depends on running after this:
-        // the field channel carries the clock and consumers advance to theirs.
         register_tick_system(Stage::Spawning, AttachSide::After, 10, TICK_WEATHER);
         self.snow_layer = resolve_block_logged(keys::SNOW_LAYER);
         self.ice = resolve_block_logged(keys::ICE);

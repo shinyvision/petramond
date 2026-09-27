@@ -1,24 +1,5 @@
-//! The runtime GUI-kind registry.
-//!
-//! [`GuiKind`] follows the same newtype-over-registry pattern as
-//! `Block`/`ItemType`: engine kinds are frozen
-//! low ids behind consts named exactly like the old enum variants, so existing
-//! expressions and const match patterns still compile; mod packs ADD kinds by
-//! declaring a namespaced `kind: "mod_id:name"` in a GUI document (or an
-//! `open_gui` block interaction), which interns the next free id. Kind ids are
-//! session-scoped and never persisted — the stable identity is the key string
-//! (events and the ABI speak keys, never ids).
-//!
-//! Unlike blocks/items there is no bootstrap ordering constraint (nothing
-//! cross-references kinds by id), so registration is on-demand behind a mutex:
-//! the first loader to name a key assigns its id, every later resolution
-//! agrees within the process.
-
 use std::sync::Mutex;
 
-/// Which GUI a document describes / a screen draws. Engine kinds are the
-/// consts below; mod kinds are interned at load. [`GuiKind::Other`] is the
-/// not-a-container sentinel — it is never registered and owns no document.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct GuiKind(u8);
 
@@ -30,56 +11,36 @@ impl GuiKind {
     pub const Furnace: GuiKind = GuiKind(3);
     pub const Hotbar: GuiKind = GuiKind(4);
     pub const FurnitureWorkbench: GuiKind = GuiKind(5);
-    // Document-backed shell screens (the GUI-document runtime; appended, ids
-    // are session-scoped so extending the table is safe).
     pub const Title: GuiKind = GuiKind(6);
     pub const WorldSelect: GuiKind = GuiKind(7);
     pub const WorldSettings: GuiKind = GuiKind(8);
     pub const CreateWorld: GuiKind = GuiKind(9);
     pub const DeleteWorld: GuiKind = GuiKind(10);
     pub const Pause: GuiKind = GuiKind(11);
-    /// Dev-only widget-catalog demo screen.
     pub const Demo: GuiKind = GuiKind(12);
-    /// The sleep overlay (dark fade + "Leave bed"), over a live simulation.
     pub const Sleep: GuiKind = GuiKind(13);
-    /// The death screen ("You died": respawn / save-and-quit).
     pub const Death: GuiKind = GuiKind(14);
-    /// The "Connect to Server" screen.
     pub const ConnectServer: GuiKind = GuiKind(15);
-    /// The refused-join screen listing the server mods this client lacks.
     pub const ModsMissing: GuiKind = GuiKind(16);
-    /// The "Disconnected" screen (connection lost / server closed).
     pub const ConnectionLost: GuiKind = GuiKind(17);
-    /// The Options root (Sound / Controls / Graphics categories).
     pub const Options: GuiKind = GuiKind(18);
     pub const OptionsSound: GuiKind = GuiKind(19);
     pub const OptionsControls: GuiKind = GuiKind(20);
     pub const OptionsGraphics: GuiKind = GuiKind(21);
-    /// The not-a-container sentinel; compares equal to no registered kind.
     pub const Creative: GuiKind = GuiKind(22);
-    /// The schematic library a player chooses a design from outside creative.
     pub const Schematics: GuiKind = GuiKind(23);
-    /// The chiseling station: a crafting station for shaped block variants
-    /// (stairs, slabs, fences) carved from full blocks.
     pub const ChiselingStation: GuiKind = GuiKind(24);
-    /// "Account": who this client is signed in as on petramond.com.
     pub const Account: GuiKind = GuiKind(25);
-    /// The password form the Account screen opens to sign in.
     pub const AccountSignIn: GuiKind = GuiKind(26);
-    /// The content browser: installed packs and what petramond.com offers.
     pub const Content: GuiKind = GuiKind(27);
     pub const Other: GuiKind = GuiKind(u8::MAX);
 
-    /// Whether this is a pack-registered (namespaced) kind, as opposed to an
-    /// engine kind or the [`Other`](GuiKind::Other) sentinel.
     #[inline]
     pub fn is_registered(self) -> bool {
         self.0 as usize >= ENGINE_GUI_KIND_NAMES.len() && self != GuiKind::Other
     }
 }
 
-/// Engine kind keys, index == frozen id. Append-only, like every engine name
-/// table.
 const ENGINE_GUI_KIND_NAMES: [&str; 28] = [
     "petramond:chest",
     "petramond:inventory",
@@ -111,23 +72,13 @@ const ENGINE_GUI_KIND_NAMES: [&str; 28] = [
     "petramond:content",
 ];
 
-/// Registered mod kinds cap out below the `Other` sentinel; in practice a
-/// session has a handful.
 const MAX_KINDS: usize = 250;
 
-/// Interned strings shared by GUI defs and ids: registered kind keys, widget
-/// ids, and sprite (image/tag) keys — all `&'static str` so the types staying
-/// `Copy + Hash` ([`GuiKind`], `MenuSlot::Widget`, the renderer's texture
-/// keys) can carry them. Bounded: manifests load once; tests add a handful.
 static INTERNED: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 
-/// Mod kind keys in registration order for one content registry; index +
-/// engine count == id. A second world's disabled packs must not inherit ids
-/// registered by the first world.
 static REGISTERED_KINDS: crate::content::Slot<Mutex<Vec<&'static str>>> =
     crate::content::Slot::new("gui kinds", &[], |_| Ok(Mutex::new(Vec::new())));
 
-/// Deduplicate `s` into a `'static` string (see `INTERNED`).
 pub fn intern_str(s: &str) -> &'static str {
     let mut interned = INTERNED.lock().unwrap();
     if let Some(hit) = interned.iter().find(|i| **i == s) {
@@ -138,9 +89,6 @@ pub fn intern_str(s: &str) -> &'static str {
     leaked
 }
 
-/// Resolve `key` to its kind, REGISTERING a namespaced key on first sight.
-/// Engine `petramond:*` names map to their consts; a new bare name or unknown
-/// `petramond:*` key is `None`.
 pub fn intern_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
@@ -165,8 +113,6 @@ pub fn intern_kind(key: &str) -> Option<GuiKind> {
     ))
 }
 
-/// Resolve `key` WITHOUT registering (the `GuiOpen` HostCall path: opening a
-/// kind nothing declared is a mod bug, not a registration).
 pub fn resolve_kind(key: &str) -> Option<GuiKind> {
     if let Some(i) = ENGINE_GUI_KIND_NAMES.iter().position(|n| *n == key) {
         return Some(GuiKind(i as u8));
@@ -178,14 +124,10 @@ pub fn resolve_kind(key: &str) -> Option<GuiKind> {
         .map(|i| GuiKind((ENGINE_GUI_KIND_NAMES.len() + i) as u8))
 }
 
-/// Every engine kind key, index == frozen id — what the GUI document
-/// contract table is checked against.
 pub fn engine_kind_keys() -> &'static [&'static str] {
     &ENGINE_GUI_KIND_NAMES
 }
 
-/// The registered key of `kind` (`None` for [`GuiKind::Other`] / unregistered
-/// ids). Events and the ABI carry this string, never the session id.
 pub fn kind_key(kind: GuiKind) -> Option<&'static str> {
     let i = kind.0 as usize;
     if let Some(name) = ENGINE_GUI_KIND_NAMES.get(i) {
@@ -197,8 +139,6 @@ pub fn kind_key(kind: GuiKind) -> Option<&'static str> {
 
 impl std::fmt::Debug for GuiKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Engine names come from the compiled table (works mid-bootstrap, like
-        // Block's Debug); registered mod kinds print their key.
         match self.0 as usize {
             0 => write!(f, "Chest"),
             1 => write!(f, "Inventory"),
@@ -227,7 +167,6 @@ mod tests {
         assert!(!GuiKind::Furnace.is_registered());
         assert!(!GuiKind::Other.is_registered());
 
-        // A new bare name is refused; a namespaced key registers exactly once.
         assert_eq!(intern_kind("wheel"), None);
         assert_eq!(intern_kind("petramond:wheel"), None);
         let a = intern_kind("kindtest:wheel").expect("namespaced key registers");
@@ -236,7 +175,6 @@ mod tests {
         assert!(a.is_registered());
         assert_eq!(kind_key(a), Some("kindtest:wheel"));
         assert_eq!(resolve_kind("kindtest:wheel"), Some(a));
-        // resolve_kind never registers.
         assert_eq!(resolve_kind("kindtest:never_declared"), None);
         assert_eq!(kind_key(GuiKind::Other), None);
     }

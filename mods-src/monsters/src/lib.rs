@@ -1,50 +1,3 @@
-//! monsters — the hostile-monster mod (zombies + hushjaws), and a
-//! MOD-INTEROP consumer: it reads the core `petramond:time` world-KV value,
-//! the engine's split light channels and (when a weather mod publishes one)
-//! the weather field to decide when to spawn and burn.
-//!
-//! What it does, all on the deterministic tick:
-//! - **Light-based spawning**: core selects physical hostile-spawn candidates
-//!   and asks this mod which species admits each one. Both species accept only
-//!   when `max(block_light, sky_light * daylight_factor)` is dark enough.
-//!   Daylight comes from `petramond:time`, through [`daylight`] — core
-//!   day/night's own dawn/dusk curve, pinned against it by an engine test.
-//!   Dark caves can spawn monsters during the day; torch/block light blocks
-//!   the spawn.
-//! - **Spawn-proof surfaces**: a dark site is still refused when the block
-//!   under the feet carries the `monsters:spawn_proof` block tag. Membership
-//!   is pure data — any pack lists the tag on any of its `blocks.json` rows
-//!   (the mushroom caverns' moss does, so a grove stays serene until the
-//!   player breaks its floor) — and with nothing tagged anywhere this rule
-//!   costs nothing and changes nothing.
-//! - **Hushjaw spawning**: on a dark site, the hushjaw claims the spawn when
-//!   the site is deep (feet Y below −16), at least 32 blocks from the nearest
-//!   player (the candidate's own `nearest_player_dist` — multiplayer-correct),
-//!   at least 32 blocks from every live hushjaw (they hunt alone), and a
-//!   seeded 10% claim roll passes — otherwise the site falls through to the
-//!   zombie. The hushjaw's BEHAVIOR is all engine brain data on its
-//!   `mobs.json` row: `chase_sound` (hears walking, block place/break within
-//!   12 blocks, locks through walls, forgets after 40 silent ticks, rarely
-//!   hunts a heard zombie), `chase_contact` (anything that BUMPS into it —
-//!   player or any mob, sneaking or not — is locked and attacked), `retaliate`
-//!   (whoever hits it, it knows — after a 20-tick boil-over), and
-//!   `melee_attack`. No head_look: it is blind, and it never visually tracks.
-//! - **Sunburn**: direct sun applies the engine's `petramond:burning`
-//!   condition to zombies; prolonged exposure strengthens it, shade lets it
-//!   wind down and exposed rain cools it faster. Everything else about the
-//!   condition (damage, water, presentation) is engine row data.
-//! - **Sounds**: groan/hurt/death calls are data-driven by the zombie mob row.
-//!   The mod does not start audio directly; the engine presentation layer plays
-//!   those semantic mob sound hooks.
-//!
-//! # Interop inputs
-//!
-//! - reads `petramond:time` (4-byte LE f32 day fraction) and
-//!   `petramond:clock` (8-byte LE u64) — the sanctioned world-KV surface
-//!   published by core day/night.
-//! - hears the weather field on the `weather:field` session channel
-//!   (`weather_core::feed`) — OPTIONAL; nothing heard means "clear sky".
-
 mod daylight;
 mod keys;
 
@@ -54,71 +7,31 @@ use weather_core::FieldParams;
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
-/// Mod events: the weather field channel.
 const ON_MOD_EVENT: u32 = 1;
 
 const TIME_KEY: &str = "petramond:time";
 
-/// Hushjaw spawn rules — a deep-cave apex predator, deliberately never near
-/// the surface, the player, or its own kind:
-/// - only at feet Y strictly below this level;
 const HUSHJAW_BELOW_Y: i32 = -16;
-/// - never within this many blocks of the nearest player (core's hostile ring
-///   already starts at 25; this pushes the floor out further);
 const HUSHJAW_MIN_PLAYER_DIST: f32 = 32.0;
-/// - never within this many blocks of another live hushjaw (they hunt alone);
 const HUSHJAW_SPACING: f32 = 32.0;
-/// - and it claims only this % of otherwise-eligible deep dark sites, so
-///   zombies still populate the depths around it and running from one hushjaw
-///   rarely means running into another.
 const HUSHJAW_CLAIM_PER_100: u64 = 10;
 
-/// Zombie crowding rules — the population cap says how many zombies the world
-/// holds; these say they may not all hold the same cavern. A candidate site is
-/// refused while this many zombies already stand within the radius, so the
-/// spawn pressure redistributes across the whole dark volume instead of
-/// piling a horde into one room (dark caves are the only admitted surface by
-/// day, and the despawn churn kept refilling the same rooms).
-/// The radius matches the zombie's `chase_player` radius: within it, every
-/// crowd member aggros together, so it is the natural "one encounter" scale.
 const ZOMBIE_CROWD_RADIUS: f32 = 24.0;
 const ZOMBIE_CROWD_LIMIT: usize = 4;
 
-/// 6-bit effective light strictly below this value allows a spawn. The value
-/// is intentionally below ordinary torch light, while still accepting caves
-/// with little or no sky/block light.
 const SPAWN_LIGHT_THRESHOLD: f32 = 24.0;
-/// How far around EVERY connected player zombies are checked for sunburn.
 const SUNBURN_RADIUS: f32 = 160.0;
-/// Sunburn ignition requires strong direct sky light — the shared cross-mod
-/// direct-sky threshold (rain lands exactly where the naked sun reaches).
 const SUNBURN_SKY_THRESHOLD: f32 = weather_core::DIRECT_SKY_MIN as f32;
-/// The brightest raw sky light a cell can hold (6-bit channel).
 const MAX_SKY_LIGHT: f32 = 63.0;
-/// Per-TICK ignition chance for a sunlit, not-yet-burning zombie.
 const SUNBURN_CHANCE_PER_100: u64 = 5;
-/// Burn age before continued sunlight strengthens the flames.
 const LIGHT_FIRE_TICKS: u32 = 100;
-/// Consecutive DARK ticks that cool the burn one stage (great → light →
-/// out).
 const DARK_COOL_TICKS: u32 = 60;
-/// Rain cools faster than shade, scaling with how hard it pours: a
-/// rained-on tick counts as `1 + rain_intensity * this` dark ticks, so a
-/// full downpour winds a stage down in ~15 ticks where shade takes 60,
-/// while a drizzle only takes the sun away. Snow douses identically — the
-/// field is phase-agnostic here, and smothering a fire is what snow does.
 const RAIN_COOL_BOOST: f32 = 3.0;
 #[derive(Default)]
 struct Monsters {
-    /// The burning condition and its light/great stages, resolved once.
     burning: Option<Burning>,
-    /// The latest weather field heard on its channel (rain douses a burn).
     weather: FieldFeed,
-    /// Surfaces no hostile spawns on, resolved once from the tag.
     spawn_proof: SpawnProof,
-    /// This pack's species ids, resolved once. A mob snapshot names its
-    /// species by ID, never by string — a crowd query answers dozens per
-    /// tick and a heap string each would be the marshalling's whole cost.
     species: Species,
 }
 
@@ -129,7 +42,6 @@ struct Burning {
     great: u8,
 }
 
-/// The species ids this pack reasons about, resolved once at init.
 #[derive(Default, Copy, Clone)]
 struct Species {
     zombie: Option<MobId>,
@@ -138,10 +50,6 @@ struct Species {
 
 impl Mod for Monsters {
     fn init(&mut self) {
-        // After core day/night (priority 0 in the same window), so the time
-        // and clock read each tick are THIS tick's. Nothing here depends on
-        // running before or after any other mod: the weather feed advances
-        // its row to the clock read (see `weather_core::FieldRow::params_at`).
         register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
         weather_core::feed::subscribe(ON_MOD_EVENT);
@@ -152,10 +60,6 @@ impl Mod for Monsters {
                 great: info.stage("great")?,
             })
         });
-        // ONE crossing for the whole membership, at init — the house pattern
-        // for tag-driven policy. The count is logged because a tag name is a
-        // string agreed across two packs: a typo on either side is not a load
-        // error anywhere, and this number is the only place it shows up.
         self.spawn_proof = SpawnProof::new(blocks_by_tag(keys::SPAWN_PROOF_TAG));
         self.species = Species {
             zombie: resolve_mob_logged(keys::ZOMBIE),
@@ -169,16 +73,10 @@ impl Mod for Monsters {
 
     fn tick_system(&mut self, _system_id: u32) {
         self.weather.tick();
-        // Core day/night publishes this before mods run in a real Game. Absent
-        // or malformed time disables the environment-dependent systems for
-        // this tick, so the mod remains usable in host-only tests and custom
-        // harnesses that choose not to provide a clock.
         let Some(daylight) = daylight_factor_from_daynight() else {
             return;
         };
         let field = self.weather_field();
-        // Every player's range, each zombie once: a tick system has no single
-        // "the player", and overlapping ranges must not burn a zombie twice.
         let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
         let near = mobs_near_any(&anchors, SUNBURN_RADIUS);
         self.tick_fire(daylight, field.as_ref(), &near);
@@ -210,14 +108,6 @@ impl Mod for Monsters {
     }
 }
 
-/// The whole site-admission policy, as a PURE function of what the host said.
-/// The host-crossing inputs arrive as closures because the ORDER of the gates
-/// is itself policy: the light check is free, the spawn-proof floor costs at
-/// most one block read, and each crowd query walks a radius — so a lit site
-/// pays nothing, a mossy one pays one read, and only a site that could really
-/// hold a monster pays for the crowd walks. Evaluating any of them eagerly
-/// would pay for gates the site never reaches. (Being pure is also what makes
-/// it testable: host functions are `unreachable!()` off wasm.)
 fn site_species(
     candidate: &HostileSpawnCandidate,
     daylight: f32,
@@ -235,24 +125,16 @@ fn site_species(
     if spawn_proof.refuses(ground) {
         return None;
     }
-    // The hushjaw gets first claim on the deep dark; everything else that
-    // is dark enough is a zombie site (core still enforces species caps on
-    // whatever key we return).
     if hushjaw_admits(candidate, species, claim_roll, nearby) {
         return Some(keys::HUSHJAW);
     }
     zombie_admits(candidate, species, nearby).then_some(keys::ZOMBIE)
 }
 
-/// The cell a body standing at `cell` has under its feet.
 fn ground_cell(cell: [i32; 3]) -> [i32; 3] {
     [cell[0], cell[1] - 1, cell[2]]
 }
 
-/// The zombie's one site rule beyond darkness: the local crowd gate — see the
-/// `ZOMBIE_CROWD_*` constants for the policy. The (host-crossing) radius query
-/// is the whole check, so it runs only for sites that already passed the light
-/// gate and the hushjaw claim.
 fn zombie_admits(
     candidate: &HostileSpawnCandidate,
     species: Species,
@@ -265,11 +147,6 @@ fn zombie_admits(
         < ZOMBIE_CROWD_LIMIT
 }
 
-/// The hushjaw's spawn rules on a dark, core-validated candidate site — see
-/// the `HUSHJAW_*` constants for the policy. The claim roll draws only after
-/// the pure position checks pass, and the (host-crossing) spacing query runs
-/// only for claimed sites, so quiet ticks stay cheap and the RNG stream is a
-/// deterministic function of the deterministic candidate sequence.
 fn hushjaw_admits(
     candidate: &HostileSpawnCandidate,
     species: Species,
@@ -290,21 +167,9 @@ fn hushjaw_admits(
         .all(|m| Some(m.kind) != species.hushjaw)
 }
 
-/// The surfaces a hostile refuses to spawn ON — the block under the feet —
-/// as a dense per-block-id table.
-///
-/// Membership is data: ANY pack marks ANY block spawn-proof by listing
-/// [`keys::SPAWN_PROOF_TAG`] on its `blocks.json` row. No block and no pack is named
-/// here, and with nothing tagged the table is empty and this mod behaves
-/// exactly as it did before the rule existed.
-///
-/// Built once from the tag reply, with storage up to the highest marked id.
-/// A larger unmarked id can still appear as more content packs are loaded.
 #[derive(Default)]
 struct SpawnProof {
     proof: Vec<bool>,
-    /// How many surfaces are marked — logged at init as the only signal that
-    /// the tag string actually matched something.
     count: usize,
 }
 
@@ -323,15 +188,13 @@ impl SpawnProof {
         set
     }
 
-    /// Whether the floor a body would stand on refuses the spawn. Reads the
-    /// world only when some pack actually marked something.
+    /// Whether the floor a body would stand on refuses the spawn. Only reads the world if some pack
+    /// actually flagged something.
     ///
-    /// An UNREADABLE floor refuses: core admitted the site from a merely LOADED cell
-    /// while a mod's `get_block` is stream-final, so the gap is exactly the
-    /// moment a player first descends into a fresh cavern — the most visible
-    /// moment there is. A skipped spawn costs nothing (32 attempts a tick, 20
-    /// ticks a second); a monster in a cavern that promised safety is the bug
-    /// this rule exists to prevent.
+    /// An unreadable floor refuses. Core admitted the site from a merely loaded cell, but a mod's
+    /// `get_block` is stream-final, so this is exactly the gap when a player first drops into a
+    /// fresh cavern. Skipped spawns are cheap (32 attempts/tick, 20 ticks/sec). A monster in a
+    /// cavern marked safe by the ground predicate must remain free of monsters.
     fn refuses(&self, ground: &dyn Fn() -> Option<BlockId>) -> bool {
         self.count > 0
             && ground().is_none_or(|b| self.proof.get(b.0 as usize).copied().unwrap_or(false))
@@ -339,9 +202,6 @@ impl SpawnProof {
 }
 
 impl Monsters {
-    /// The weather field at this tick's clock, as heard on its channel;
-    /// `None` = clear sky (no weather mod publishing). Without a published
-    /// clock (a clockless harness) the row is taken as published.
     fn weather_field(&self) -> Option<FieldParams> {
         match world_kv_get(weather_core::CLOCK_KEY).and_then(|b| weather_core::decode_clock(&b)) {
             Some(clock) => self.weather.params_at(clock),
@@ -349,13 +209,10 @@ impl Monsters {
         }
     }
 
-    /// Sunlight supplies heat; the engine condition owns the burn itself.
     fn tick_fire(&mut self, daylight: f32, field: Option<&FieldParams>, near: &[MobSnapshot]) {
         let Some(fire) = self.burning else {
             return;
         };
-        // Full sky light is 63: below this daylight no cell is sunny enough
-        // to ignite or feed a burn, so a dry zombie's light is never read.
         let sun_can_burn = MAX_SKY_LIGHT * daylight >= SUNBURN_SKY_THRESHOLD;
         let roll = rng_u64("sunburn");
         for mob in near.iter().filter(|m| Some(m.kind) == self.species.zombie) {
@@ -365,7 +222,6 @@ impl Monsters {
             }
             let rain = rain_at(field, mob.pos);
             if rain == 0.0 && !sun_can_burn {
-                // Neither a douse nor a burn can follow: skip the light read.
                 continue;
             }
             let entity = EntityRef::Mob(mob.id);
@@ -388,13 +244,10 @@ impl Monsters {
     }
 }
 
-/// Raw sky light at the cell; `None` while the section is unloaded or its
-/// streamed content is not final (`light_at` carries the gate itself).
 fn sky_light(cell: [i32; 3]) -> Option<f32> {
     light_at(cell).map(|l| l.sky as f32)
 }
 
-/// Rain intensity of the weather field at the mob's column; 0 with no field.
 fn rain_at(field: Option<&FieldParams>, pos: [f64; 3]) -> f32 {
     field.map_or(0.0, |p| weather_core::rain(pos[0], pos[2], p))
 }
@@ -418,14 +271,9 @@ register_mod!(Monsters);
 mod tests {
     use super::*;
 
-    /// Two block ids that mean nothing to this mod beyond the tag reply — the
-    /// point of the seam is that it never learns which is which.
     const MOSS: BlockId = BlockId(200);
     const STONE: BlockId = BlockId(3);
 
-    /// A site core already validated as physically spawnable: pitch dark, far
-    /// from the player, and shallow enough that the hushjaw never claims it,
-    /// so the only thing left to vary is the floor.
     fn dark_site() -> HostileSpawnCandidate {
         HostileSpawnCandidate {
             pos: [8.5, 20.0, 8.5],
@@ -437,12 +285,10 @@ mod tests {
         }
     }
 
-    /// An empty neighbourhood: no crowd, no rival hushjaw.
     fn alone(_pos: [f64; 3], _radius: f32) -> Vec<MobSnapshot> {
         Vec::new()
     }
 
-    /// The hushjaw's claim roll, losing.
     fn no_claim() -> u64 {
         HUSHJAW_CLAIM_PER_100
     }
@@ -463,22 +309,16 @@ mod tests {
     fn a_spawn_proof_floor_refuses_a_site_that_is_otherwise_perfect() {
         let proof = SpawnProof::new(vec![MOSS]);
         assert_eq!(species_over(&proof, Some(MOSS)), None, "moss refuses");
-        // The same site with the moss broken away: this is the gameplay —
-        // mine the floor of a serene cavern and it becomes dangerous.
         assert_eq!(
             species_over(&proof, Some(STONE)),
             Some(keys::ZOMBIE),
             "the site was otherwise perfect, so the FLOOR is what refused it"
         );
-        // Stream-finality fail-safe. The most likely thing a later
-        // simplification gets backwards, and it leaks spawns exactly when a
-        // player first walks into a freshly streamed cavern.
         assert_eq!(
             species_over(&proof, None),
             None,
             "an unreadable floor refuses"
         );
-        // The pre-existing gates still fire, in front of this one.
         let lit = HostileSpawnCandidate {
             block_light: 30,
             ..dark_site()

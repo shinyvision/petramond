@@ -1,6 +1,5 @@
 use super::*;
 
-/// [`super::decode_record`] through the identity palette.
 fn decode_record(
     dir: &Path,
     pos: SectionPos,
@@ -44,10 +43,6 @@ fn decoders_publish_in_request_order_and_shutdown_drains_accepted_jobs() {
     }
 }
 
-/// A corrupt authoritative record is reported with its reason — never as
-/// absent — and its bytes are kept in quarantine before anything can
-/// replace them. Reading the same bad bytes again keeps one copy; different
-/// bad bytes for the same section get a sibling.
 #[test]
 fn a_corrupt_authoritative_record_is_quarantined_not_absent() {
     let dir = temp_world_dir("quarantine");
@@ -91,9 +86,6 @@ fn a_corrupt_authoritative_record_is_quarantined_not_absent() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A record a newer build wrote is intact data this build cannot represent:
-/// it is kept AND must not be overwritten. A read failure leaves nothing to
-/// keep, so it must not be overwritten either.
 #[test]
 fn newer_and_unreadable_records_must_not_be_overwritten() {
     let dir = temp_world_dir("newer");
@@ -117,8 +109,6 @@ fn newer_and_unreadable_records_must_not_be_overwritten() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The explored cache is rebuildable: an unreadable cache record is
-/// reported but never quarantined.
 #[test]
 fn an_unreadable_cache_record_is_not_quarantined() {
     let dir = temp_world_dir("cache");

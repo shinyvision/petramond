@@ -1,5 +1,3 @@
-//! Block registry + per-face tile mapping.
-
 use serde::{Deserialize, Serialize};
 
 mod accessors;
@@ -19,68 +17,48 @@ mod tags;
 mod tests;
 
 pub use behavior::BlockBehavior;
+pub use data::light_cells;
 pub use data::BlockTable;
 pub use data::ENGINE_BLOCK_NAMES;
 pub use data::{shape_kind_id_by_key, state_key_declared};
 pub(crate) use data::{warm_views, BlockViews};
-pub use definition::{BlockFlags, BlockMaterial};
-pub(crate) use load::{load_registry, Registry as BlockRegistry};
-pub(crate) use shape_kind::CUSTOM_SHAPES;
-// ColorRamp rides the public `ParticleEmitter::color_ramp` field; only tests
-// currently name the type, so the lib build sees the re-export as unused.
 #[allow(unused_imports)]
 pub use definition::ColorRamp;
+pub use definition::{BlockFlags, BlockMaterial};
 pub use definition::{Construction, ParticleEmitter, ParticleEmitterAnchor, RootsFace, SupportDir};
 pub use interaction::builtin_claims_click;
 pub use interaction::BlockInteraction;
 pub use load::validate_particle_emitter;
+pub(crate) use load::{load_registry, Registry as BlockRegistry};
 pub use shape::BlockLightShape;
 pub use shape::{
     posed_bounds, Aabb, BoxPose, CellPart, ItemBox, PosedBox, ShapeBox, ShapeFace, ShapeRenderBox,
     CROP_PLANE_DROP, CROP_PLANE_INSET,
 };
-/// Family identity for the state codecs each shape family's cells carry.
 pub use shape_kind::families as shape_kind_families;
 pub use shape_kind::ConnectionRule;
 pub use shape_kind::ItemRender;
+pub(crate) use shape_kind::CUSTOM_SHAPES;
 pub use shape_kind::{face_uv_turns, BlockShapeKind, ShapeFamily, ShapeKindDef, FACE_BEFORE_TURN};
 pub use shape_kind::{
     full_face_at, rests_flat_on_floor, CellCodec, CellView, FullFace, NoNeighborhood, ShapeCtx,
     ShapeNeighborhood, ShapeState, NO_PART_TINT, SHAPE_STATE_MAX,
 };
-pub use shape_kind::{MeshEmitter, PlantPlanes};
-// `pack_light_apertures` is the producer half of the aperture currency
-// (families + light tests); the lib target only consumes.
-pub use data::light_cells;
 #[allow(unused_imports)]
 pub use shape_kind::{light_aperture_face, pack_light_apertures, LIGHT_APERTURES_OPEN};
+pub use shape_kind::{MeshEmitter, PlantPlanes};
 
-/// [`light_cells`] flag: this id's per-cell state can override its apertures.
 pub const LIGHT_CELL_SHAPED: u32 = 1 << 31;
-/// [`light_cells`] flag: [`Block::transmits_direct_skylight`].
 pub const LIGHT_CELL_DIRECT_SKY: u32 = 1 << 30;
-// The shape facet traits + parameterized-shape param types are public API (the shape
-// dispatch surface / the parameterized loader's params); re-export the stable
-// `crate::block::` path even though in-crate consumers currently reach the
-// singletons through `ShapeKindDef` and name the params in `shape_kind`.
 #[allow(unused_imports)]
 pub use shape_kind::{DimensionParams, ShapeParams, ShapeRender, ShapeSim};
 pub use snow::{snow_cover_at, SNOW_BEDDING_REACH, SNOW_COVER_REACH};
 pub use sounds::BlockSoundAction;
 pub use tags::BlockTag;
 
-/// A registered block, identified by its opaque runtime id. Engine blocks own
-/// the low ids in a compiled, frozen order (the named consts below — worldgen
-/// parity and save palettes depend on those ids never moving); mod packs
-/// register additional ids at load through namespaced `blocks.json` rows (see
-/// [`crate::registry`]). Serde carries a block as its registered NAME string,
-/// so persisted data never depends on numeric ids.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct Block(pub u16);
 
-/// Engine block consts, named like the enum variants they replaced so every
-/// existing `Block::OakLog` expression and match pattern keeps compiling
-/// (the derives keep the newtype a structural-match type).
 #[allow(non_upper_case_globals)]
 impl Block {
     pub const Air: Block = Block(0);
@@ -199,10 +177,9 @@ impl Block {
     pub const PolishedMarbleStairs: Block = Block(113);
     pub const PolishedMarbleSlab: Block = Block(114);
     pub const Ladder: Block = Block(115);
-    // Sapling growth stages 1..=2 (stage 0 is the base sapling row above).
-    // Visually identical to their species' base row; the `sapling` behaviour
-    // walks the `next_stage` chain and the final row's `grows_into` names the
-    // tree — see `world::sapling`.
+    // Sapling growth stages 1 and 2; stage 0 is the base sapling row above. They look like
+    // the base row. The `sapling` behaviour walks the `next_stage` chain, and the last row's
+    // `grows_into` names the tree (see `world::sapling`).
     pub const OakSapling1: Block = Block(116);
     pub const OakSapling2: Block = Block(117);
     pub const SpruceSapling1: Block = Block(118);
@@ -213,21 +190,20 @@ impl Block {
     pub const JungleSapling2: Block = Block(123);
     pub const AcaciaSapling1: Block = Block(124);
     pub const AcaciaSapling2: Block = Block(125);
-    // The furnace's lit SKIN — the sapling-stage pattern applied to a machine:
-    // burning is a row swap (`furnace` ⇄ `furnace_lit`), so the lit face and
-    // its light emission ride ordinary block identity through save/replication.
-    // Machine counters stay in the `Furnace` block-entity; the swap preserves
-    // the sibling entity maps (see `World::tick_furnaces`). Not obtainable —
-    // no item row links it; it drops the furnace item like the unlit row.
+    // Furnace lit skin - same trick as sapling stages, applied to a machine.
+    // Burning swaps the `furnace`/`furnace_lit` rows so the lit face and light
+    // travel with block identity through save and replication.
+    // Counters sit in the `Furnace` block-entity; the swap keeps the sibling entity
+    // maps, see `World::tick_furnaces`. Not obtainable: no item row links it, and it
+    // drops the furnace item like the unlit row.
     pub const FurnaceLit: Block = Block(126);
-    // The ladder's non-default wall facings — the sapling-stage pattern
-    // applied to an oriented panel: which wall a ladder hangs on is block
-    // IDENTITY (`petramond:ladder` is the north-facing row; each row's
-    // `panel_facing` names its fixed facing and the base row's `facing_rows`
-    // maps a placement facing to its sibling), so the facing rides the
-    // ordinary block-id save/replication lanes — the ladder is not a block
-    // entity and never touches the entity-facing map. Not obtainable — no
-    // item rows link them; all four rows drop the one ladder item.
+    // Ladder's non-default wall facings, same trick as sapling stages but on
+    // an oriented panel. Which wall it's on is block identity: `petramond:ladder`
+    // is the north row, `panel_facing` gives each row's facing, and `facing_rows`
+    // maps a placement facing to its sibling. The facing rides normal block-id
+    // save/replication; the ladder isn't a block entity, so it never touches the
+    // entity-facing map. Not obtainable: no item rows link these, and all four
+    // drop the same ladder item.
     pub const LadderSouth: Block = Block(127);
     pub const LadderWest: Block = Block(128);
     pub const LadderEast: Block = Block(129);
@@ -237,9 +213,6 @@ impl Block {
     pub const JungleFence: Block = Block(133);
     pub const AcaciaFence: Block = Block(134);
     pub const RedwoodFence: Block = Block(135);
-    // Ground litter — the pre-tool gathering layer. Three pebble sizes so a
-    // scattered field does not read as one sprite stamped everywhere; the
-    // branch and the hemp stalk are the other two things a bare hand may take.
     pub const PebblesSmall: Block = Block(136);
     pub const PebblesMedium: Block = Block(137);
     pub const PebblesLarge: Block = Block(138);
@@ -247,15 +220,10 @@ impl Block {
     pub const Hemp: Block = Block(140);
     pub const FallenBranch2: Block = Block(141);
     pub const FallenBranch3: Block = Block(142);
-    /// Molten rock: the second simulated fluid. Sources sit still like
-    /// worldgen water until disturbed; flowing cells quench to stone on
-    /// contact with water.
     pub const Lava: Block = Block(143);
     pub const StoneBricks: Block = Block(144);
     pub const StoneBricksStairs: Block = Block(145);
     pub const StoneBricksSlab: Block = Block(146);
-    /// The chiseling station: a 2×2×2 model block whose menu session is the
-    /// crafting station for shaped block variants (stairs, slabs, fences).
     pub const ChiselingStation: Block = Block(147);
     pub const OakTrapdoor: Block = Block(148);
     pub const SpruceTrapdoor: Block = Block(149);
@@ -267,8 +235,6 @@ impl Block {
 
 impl std::fmt::Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Engine names come from the compiled table (never a lazy registry —
-        // Debug must work mid-bootstrap); dynamic ids print numerically.
         match ENGINE_BLOCK_NAMES.get(self.0 as usize) {
             Some(name) => write!(f, "Block({name})"),
             None => write!(f, "Block(#{})", self.0),
@@ -299,22 +265,10 @@ impl<'de> Deserialize<'de> for Block {
     }
 }
 
-/// The engine-consumed presentation KV key: a cell (via cell KV) or an item
-/// stack (via instance data) carrying this key as 3 raw bytes `[r, g, b]`
-/// renders with that multiply tint. The engine knows nothing about what the
-/// tint MEANS — a mod writes it (dye, team color, whatever); the renderer
-/// consumes it.
 pub const TINT_KV_KEY: &str = "petramond:tint";
 
-/// The separator between a cell-KV key and the [`CellPart`] it addresses.
 const PART_KEY_SEP: char = '#';
 
-/// The cell-KV key carrying `key` for sub-cell `part`.
-///
-/// Part 0 is the BARE key, so a single-part cell — every dyed cube, chair or
-/// stair — stores byte-identically to what it did before parts existed, and
-/// no save or protocol version moves. Higher parts suffix `#<n>`. Generic over
-/// the key: the suffix is a cell-KV ADDRESSING convention, not a tint one.
 pub fn part_kv_key(key: &str, part: CellPart) -> String {
     if part == 0 {
         key.to_owned()
@@ -323,11 +277,6 @@ pub fn part_kv_key(key: &str, part: CellPart) -> String {
     }
 }
 
-/// Split a stored cell-KV key back into its base key and the part it
-/// addresses. A key that does not end in a valid NON-ZERO part suffix is
-/// itself the base key at part 0 — including a literal `…#0`, which is not
-/// the canonical spelling ([`part_kv_key`] never emits it), so two different
-/// byte strings can never mean the same address.
 pub fn split_part_kv_key(stored: &str) -> (&str, CellPart) {
     match stored.rsplit_once(PART_KEY_SEP) {
         Some((base, suffix)) => match suffix.parse::<CellPart>() {
@@ -338,11 +287,6 @@ pub fn split_part_kv_key(stored: &str) -> (&str, CellPart) {
     }
 }
 
-/// Whether a cell-KV write/removal of `key` changes what the ORDINARY mesher
-/// bakes, so the touched section must re-mesh. The one place that knows which
-/// engine-consumed presentation keys feed the mesh — every KV write path
-/// (host, replica ingest) asks this instead of naming keys itself. Any PART's
-/// tint feeds the mesh, so the base key is what is compared.
 #[inline]
 pub fn kv_key_affects_mesh(key: &str) -> bool {
     let base = split_part_kv_key(key).0;

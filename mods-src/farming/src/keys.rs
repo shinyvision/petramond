@@ -1,14 +1,4 @@
-//! Every pack id this mod names, declared once and checked against the
-//! shipped pack data by the test below: this pack's rows, the engine rows
-//! the logic reads, sounds, bursts, the effect, a recipe, tags, the
-//! husbandry data key, the block hooks and the brain nodes.
-//!
-//! Keys that are not pack declarations — the per-mob husbandry/hop/follow
-//! tags written at runtime, cell-KV counters, world-KV rest keys, rng
-//! streams — stay beside the code that owns them.
-
 mod_sdk::pack_keys! {
-    // --- this pack's blocks ---------------------------------------------
     pub FARMLAND_DRY: Block = "farming:farmland_dry";
     pub FARMLAND_WET: Block = "farming:farmland_wet";
     pub FARMLAND_FERTILE_DRY: Block = "farming:farmland_fertile_dry";
@@ -41,14 +31,12 @@ mod_sdk::pack_keys! {
     pub TROUGH_WHEAT: Block = "farming:trough_wheat";
     pub GRASS_FERTILIZED: Block = "farming:grass_fertilized";
 
-    // --- engine blocks the logic reads ----------------------------------
     pub GRASS: Block = "petramond:grass";
     pub DIRT: Block = "petramond:dirt";
     pub WATER: Block = "petramond:water";
     pub SHORT_GRASS: Block = "petramond:short_grass";
     pub FERN: Block = "petramond:fern";
     pub DEAD_BUSH: Block = "petramond:dead_bush";
-    /// The engine's wild hemp stand.
     pub HEMP_WILD: Block = "petramond:hemp";
     pub OAK_SAPLING: Block = "petramond:oak_sapling";
     pub OAK_SAPLING_1: Block = "petramond:oak_sapling_1";
@@ -66,7 +54,6 @@ mod_sdk::pack_keys! {
     pub ACACIA_SAPLING_1: Block = "petramond:acacia_sapling_1";
     pub ACACIA_SAPLING_2: Block = "petramond:acacia_sapling_2";
 
-    // --- items -----------------------------------------------------------
     pub IRON_HOE: Item = "farming:iron_hoe";
     pub FERTILIZER: Item = "farming:fertilizer";
     pub WHEAT: Item = "farming:wheat";
@@ -74,10 +61,8 @@ mod_sdk::pack_keys! {
     pub CARROT: Item = "farming:carrot";
     pub POTATO: Item = "farming:potato";
     pub HEMP_SEEDS: Item = "farming:hemp_seeds";
-    /// The engine's hemp: cultivated hemp's produce.
     pub HEMP: Item = "petramond:hemp";
 
-    // --- mobs, sounds, bursts, effect, recipe ----------------------------
     pub RABBIT: Mob = "farming:rabbit";
     pub TILL_SOUND: Sound = "farming:till";
     pub HARVEST_SOUND: Sound = "farming:harvest";
@@ -90,12 +75,9 @@ mod_sdk::pack_keys! {
     pub WELL_FED: Effect = "farming:well_fed";
     pub FARMERS_WORKBENCH: Recipe = "farming:farmers_workbench";
 
-    // --- tags, data, hooks, brain nodes ----------------------------------
-    /// Any pack opts its scraps into the compost barrel with this item tag.
     pub COMPOSTABLE_TAG: Tag = "farming:compostable";
     pub SAPLING_TAG: Tag = "petramond:sapling";
     pub ROOTS_IN_SOIL_TAG: Tag = "petramond:roots_in_soil";
-    /// The species-row data a breedable animal carries.
     pub HUSBANDRY_DATA: Data = "farming:husbandry";
     pub CROP_DATA: Data = "farming:crop";
     pub WILD_PATCH_DATA: Data = "farming:wild_patch";
@@ -106,7 +88,6 @@ mod_sdk::pack_keys! {
     pub HUSBANDRY_GOAL_NODE: AiNode = "farming:husbandry_goal";
 }
 
-/// Each engine sapling species' stage rows, seedling to final.
 pub const SAPLINGS: [[&str; 3]; 5] = [
     [OAK_SAPLING, OAK_SAPLING_1, OAK_SAPLING_2],
     [SPRUCE_SAPLING, SPRUCE_SAPLING_1, SPRUCE_SAPLING_2],

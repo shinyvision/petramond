@@ -1,7 +1,3 @@
-//! Events logs: what happens in the presented world, frame by frame, into a
-//! mod file (`capture::events`). The calls begin, end and poll them; the
-//! client session feeds them every presented frame.
-
 use mod_api::{ClientCaptureCall, HostRet};
 
 use super::files::{checked_path, write_refusal};

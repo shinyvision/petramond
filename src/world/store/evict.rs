@@ -24,10 +24,6 @@ impl<S: WorldSide> World<S> {
             self.data.bump_column_payload_revision(pos.chunk_pos());
         }
         self.data.block_entity_sections.remove(&pos);
-        // Mod draw sets are per-cell presentation state: they die with the
-        // section like every other per-cell record. Without this the replica's
-        // map grows monotonically with distance travelled and keeps drawing
-        // machines the player walked away from.
         if section_removed {
             self.forget_block_draws_in_section(pos);
         }
@@ -42,11 +38,7 @@ impl<S: WorldSide> World<S> {
         self.mark_dirty_neighborhood(pos, false);
     }
 
-    /// Evict an entire column: all its loaded sections, meshes, queues, per-column data,
-    /// and any pending gen.
     pub(in crate::world) fn remove_column(&mut self, pos: ChunkPos) {
-        // An evicted column is missing again if an anchor still wants it —
-        // the settled short-circuit must not hide it from the next scan.
         self.data.missing_columns_settled = false;
         let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
         self.unstamp_column(pos, bits);
@@ -105,8 +97,6 @@ impl<S: WorldSide> World<S> {
         self.data.evict_custom_bake_column(pos);
     }
 
-    /// Drop all loaded sections, columns, meshes, and the in-flight gen set — the
-    /// regen path.
     pub fn clear_world(&mut self) {
         if let Some(replica) = self.side.replica_mut() {
             replica.terrain.clear();
@@ -149,14 +139,11 @@ impl<S: WorldSide> World<S> {
             gen.awaited_overlays.clear();
             gen.disk_primary_sections.clear();
         }
-        // Every in-flight set is empty on either side now.
         self.data.stream_nonfinal.clear();
         self.data.clear_custom_bake();
         self.bump_terrain_revision();
     }
 
-    /// Drop section `pos` from the server's pending-generation bookkeeping
-    /// (and re-derive its stream finality). A replica has none.
     fn forget_stream_section(&mut self, pos: SectionPos) {
         let Some(server) = self.side.server_mut() else {
             return;
@@ -179,8 +166,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Drop column `pos` from the server's pending-generation bookkeeping and
-    /// rebuild stream finality from what is still in flight. A replica has none.
     fn forget_stream_column(&mut self, pos: ChunkPos) {
         let Some(server) = self.side.server_mut() else {
             return;
@@ -197,8 +182,6 @@ impl<S: WorldSide> World<S> {
             .collect();
     }
 
-    /// Drop section `pos`'s mesh from the replica's presentation, marking its
-    /// packed column for a rebuild. A server never meshes.
     fn forget_section_mesh(&mut self, pos: SectionPos) {
         if let Some(replica) = self.side.replica_mut() {
             if replica.terrain.remove_mesh(pos) {

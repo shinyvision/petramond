@@ -1,16 +1,12 @@
-//! Data-driven render shader hooks loaded from mod packs.
+//! Mod pack shader hooks.
 //!
-//! Two hooks exist:
+//! `sky`: one shader, highest layer wins. Replaces our built-in sky.
 //!
-//! - one active `sky` shader, selected by pack load order (highest layer
-//!   wins) — replaces the built-in sky background;
-//! - any number of `environment` shaders, one per pack layer, COMPOSED in
-//!   pack load order — each becomes a full-screen depth-aware pass drawn
-//!   after all depth-writing world geometry (volumetrics: clouds, auroras,
-//!   fog volumes). An invalid environment row is skipped, never substituted.
+//! `environment`: one per layer, all composed in load order. Each one is a full-screen pass
+//! after depth-writing geometry that can read depth, e.g. clouds, auroras, fog volumes. We skip
+//! a bad row and don't substitute anything.
 //!
-//! Both may declare named `vec4<f32>` parameter slots; mods write those names
-//! through the tick-side shader-param host call.
+//! Either kind can declare named `vec4<f32>` slots that mods write via the shader-param host call.
 
 use std::path::PathBuf;
 
@@ -18,9 +14,6 @@ use serde::Deserialize;
 
 use super::uniforms::SHADER_PARAM_SLOTS;
 
-/// Fixed texture slots available to pack sky and environment shaders. Slot
-/// `i` binds a texture/sampler pair at group 1 bindings `i * 2` and
-/// `i * 2 + 1`.
 pub const SKY_TEXTURE_SLOTS: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,7 +25,6 @@ pub struct SkyShaderSpec {
     pub sky_light_param: Option<String>,
 }
 
-/// One full-screen composed volumetric pass supplied by a pack.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnvironmentShaderSpec {
     pub source: String,
@@ -91,9 +83,6 @@ fn active_sky_shader_from_layers(
     sky_shader_from_row(row, &catalog_path)
 }
 
-/// Every pack layer's `environment` row, in pack load order (base first).
-/// Unlike the sky, environment passes COMPOSE — each valid row becomes one
-/// full-screen pass; invalid rows are skipped with a warning.
 pub fn environment_shaders() -> Vec<EnvironmentShaderSpec> {
     environment_shaders_from_layers(petramond_world::assets::read_layers("shaders.json"))
 }
@@ -121,8 +110,6 @@ fn parse_catalog(text: &str) -> serde_json::Result<ShaderCatalog> {
     serde_json::from_str(text)
 }
 
-/// The row checks both shader kinds share: slot limits, namespaced params,
-/// and a readable UTF-8 WGSL source. Returns the source text + its path.
 fn checked_shader_source(
     kind: &str,
     shader: &str,
@@ -164,8 +151,6 @@ fn checked_shader_source(
         return None;
     };
     match String::from_utf8(bytes) {
-        // Resolve the engine imports (`#import petramond::frame`, …) here, so
-        // an unknown module rejects the row exactly like any other bad row.
         Ok(source) => match crate::pipeline::prelude::compose(&source) {
             Ok(composed) => Some((composed.into_owned(), path)),
             Err(e) => {

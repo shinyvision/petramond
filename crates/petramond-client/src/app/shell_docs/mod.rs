@@ -1,17 +1,15 @@
 //! Controllers for document-backed shell screens.
 //!
-//! Each screen is a GUI document (`assets/ui/documents/<name>.gui.json`) plus
-//! one controller module here: `populate` writes the screen's dynamic values
-//! into the [`petramond_ui::UiState`] the document binds, and `handle` maps the
-//! frame's resolved [`petramond_ui::UiEvent`]s to app actions (screen
-//! transitions, world I/O). A screen routes through here exactly when
+//! Each screen is a GUI document (`assets/ui/documents/<name>.gui.json`) plus a
+//! controller module here. `populate` fills the [`petramond_ui::UiState`] the
+//! document binds. `handle` maps resolved [`petramond_ui::UiEvent`]s to app
+//! actions (transitions, world I/O). A screen routes here only when
 //! [`App::doc_ui_kind`] maps it and its document loads.
 //!
-//! Controllers never see the `App`: each hook gets a [`ScreenCtx`] holding
-//! only the shell state, the options, the screen's document runtime and a
-//! read-only view of the session, and queues [`ShellCommand`]s for anything
-//! app-level (transitions, sessions, applying options), which the App runs
-//! after the frame. Runs from [`App::update`], never from render.
+//! Controllers never see the `App`. Each hook gets a [`ScreenCtx`] with the shell
+//! state, options, the screen's document runtime and a read-only session view.
+//! Anything app-level is queued as a [`ShellCommand`] for the App to run after
+//! the frame. Runs from [`App::update`], never from render.
 
 mod account;
 pub(in crate::app) mod account_sign_in;
@@ -45,17 +43,9 @@ use petramond_ui::{UiEvent, UiState, UiValue};
 use petramond_world::gui_state::GuiKind;
 use petramond_world::sound_registry::Sound;
 
-/// The flat dim shell menus draw over a live world.
 const MENU_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.6];
 
-/// One document-backed shell screen, named once: how to bind its state, how
-/// to dispatch its events, and what dims the world behind it. Every hook
-/// sees only the [`ScreenCtx`] — the shell's state, the options, the
-/// screen's document and a view of the session — never the App.
 struct ShellController {
-    /// Bespoke per-frame prep before binding (worker polls, extra images).
-    /// Returning false means the prep requested a screen switch — skip the
-    /// frame rather than draw the stale document.
     prepare: Option<fn(&mut ScreenCtx) -> bool>,
     populate: fn(&ScreenCtx, &mut UiState),
     handle: fn(&mut ScreenCtx, UiEvent),
@@ -83,28 +73,20 @@ impl ShellController {
     }
 }
 
-/// Options screens over a paused/running game dim like the pause menu; from
-/// the title flow the document's own backdrop shows.
 fn options_dim(ctx: &ScreenCtx) -> Option<[f32; 4]> {
     ctx.session.in_game.then_some(MENU_DIM)
 }
 
-/// Shared prepare for the screens whose Mods tab shows per-pack icons.
 fn pack_icon_prepare(ctx: &mut ScreenCtx) -> bool {
     ctx.ui
         .set_dynamic_images(crate::app::content::pack_icons().to_vec());
     true
 }
 
-/// Shared options-family chrome: the title flow shows the document's
-/// screenshot backdrop; over a live game the host dim does the work instead.
 fn populate_options_chrome(ctx: &ScreenCtx, state: &mut UiState) {
     state.set("show_backdrop", UiValue::Bool(!ctx.session.in_game));
 }
 
-/// Shared Back handling for the options CATEGORY screens (Sound / Controls /
-/// Graphics): Back returns to the Options root through the same path ESC
-/// takes. Returns true when the event was consumed.
 fn options_category_back(ctx: &mut ScreenCtx, ev: &UiEvent) -> bool {
     if matches!(ev, UiEvent::Click { id, .. } if id.as_str() == "back") {
         ctx.request(ShellCommand::Back);
@@ -113,9 +95,6 @@ fn options_category_back(ctx: &mut ScreenCtx, ev: &UiEvent) -> bool {
     false
 }
 
-/// The Connect screen's prep: consume the connect worker's outcomes BEFORE
-/// binding. A join or a mod refusal switches screens — skip the rest of this
-/// frame rather than draw the stale connect UI.
 fn connect_prepare(ctx: &mut ScreenCtx) -> bool {
     match ctx.shell.connect.poll() {
         Some(event) => {
@@ -164,7 +143,6 @@ fn controller_for(kind: GuiKind) -> ShellController {
             C::screen(options_graphics::populate, options_graphics::handle).with_dim(options_dim)
         }
         GuiKind::Pause => C::screen(pause::populate, pause::handle).with_dim(|_| Some(MENU_DIM)),
-        // The tick-driven darkening fade behind the sleep overlay.
         GuiKind::Sleep => C::screen(sleep::populate, sleep::handle).with_dim(|ctx| {
             let progress = ctx.session.sleep_progress.unwrap_or(1.0);
             Some([0.0, 0.0, 0.0, 0.25 + 0.75 * progress])
@@ -172,13 +150,10 @@ fn controller_for(kind: GuiKind) -> ShellController {
         GuiKind::Death => {
             C::screen(death::populate, death::handle).with_dim(|_| Some([0.35, 0.02, 0.02, 0.40]))
         }
-        // Unrouted kinds still run an inert frame, as before.
         _ => C::screen(|_, _| {}, |_, _| {}),
     }
 }
 
-/// Test support: the controls-list row index of an action id (category
-/// headers count), resolved through the controller's own row builder.
 #[cfg(test)]
 pub(in crate::app) fn controls_action_row_index(
     table: &petramond_input::controls::ActionTable,
@@ -189,19 +164,6 @@ pub(in crate::app) fn controls_action_row_index(
         .position(|e| matches!(e, options_controls::RowEntry::Action(id) if id == action_id))
 }
 
-/// The widget id a GAME-MENU event activates — the one lane that reaches a
-/// mod through [`crate::game::Game::menu_click`].
-///
-/// A toggle rides it beside a button click because a machine's switch IS a
-/// widget the mod acts on, and the mod owns whether it ends up on: the node's
-/// own latch is presentation, the bound value is the truth. BOTH stay
-/// primary-only, like the legacy dispatch — a right-click on a machine's lever
-/// is not a pull, and this lane is the only thing standing between a stray
-/// secondary press and a mod acting on it.
-///
-/// Pulled out of `drive_doc_menu` because everything downstream of this hop is
-/// covered (`game/tests/menu.rs`) and the hop itself needs a live App with a
-/// mod document to reach any other way.
 pub(in crate::app) fn menu_widget_activation(ev: &petramond_ui::UiEvent) -> Option<&str> {
     match ev {
         petramond_ui::UiEvent::Click {
@@ -218,16 +180,6 @@ pub(in crate::app) fn menu_widget_activation(ev: &petramond_ui::UiEvent) -> Opti
     }
 }
 
-/// A press on a control by the SECONDARY button, which the shell drops before
-/// it reaches a screen's controller.
-///
-/// Buttons and checkboxes are primary-only, the same rule the game-menu lane
-/// applies ([`menu_widget_activation`]): secondary is the cursor-stack gesture
-/// wherever it means anything, and never a press on a control. It is filtered
-/// in one place rather than per screen because "which button pressed me" is
-/// not a question each Back button and each options checkbox should answer
-/// separately — and every screen that forgot to ask flipped under a
-/// right-click.
 pub(super) fn is_secondary_activation(ev: &petramond_ui::UiEvent) -> bool {
     use petramond_ui::PointerButton::Secondary;
     matches!(
@@ -252,9 +204,6 @@ fn is_widget_activation(ev: &petramond_ui::UiEvent) -> bool {
 }
 
 impl App {
-    /// Drive one frame of the document UI for `kind`: populate bound state,
-    /// run the runtime over the queued input, then dispatch the resolved
-    /// events to the screen's controller.
     pub(super) fn drive_doc_ui(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         self.ui.ensure_active(kind);
         let ctl = controller_for(kind);
@@ -302,7 +251,6 @@ impl App {
         }
     }
 
-    /// Carry out one app-level request a shell screen queued.
     pub(super) fn run_shell_command(&mut self, command: ShellCommand) {
         match command {
             ShellCommand::Goto(screen) => self.set_screen(screen),
@@ -343,12 +291,6 @@ impl App {
         }
     }
 
-    /// Drive one frame of a document-backed GAME MENU (mod GUIs and
-    /// containers): bound values come from the tick-owned GUI state map and
-    /// the container views; slot clicks/drags/drops and widget clicks latch
-    /// to the tick as
-    /// [`petramond_world::gui_state::MenuSlot`] clicks — the same deterministic path the
-    /// legacy hit-test used. Off-panel presses throw the cursor stack.
     pub(super) fn drive_doc_menu(&mut self, kind: GuiKind, screen: (u32, u32), now: f64) {
         if kind == GuiKind::Creative {
             self.drive_creative_menu(screen, now);
@@ -367,8 +309,6 @@ impl App {
         }
         if let Some(session) = self.session.as_ref() {
             let state = self.ui.state_mut();
-            // Every gauge — an engine machine's or a pack's — arrives as an
-            // ordinary named GUI-state value; nothing here knows a furnace.
             if let Some(map) = session.game.menu_read_model().gui_state {
                 for (key, value) in map.iter() {
                     let v = crate::app::gui_value::from_world(value);

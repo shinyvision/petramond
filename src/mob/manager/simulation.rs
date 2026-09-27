@@ -11,29 +11,15 @@ use petramond_world::body::Body;
 
 use super::{lod, nearest_anchor, Mobs};
 
-/// One player's presence as the mob simulation sees it: an AI/despawn anchor
-/// plus (for non-spectators) a pushable body. The mobs target whichever anchor
-/// is NEAREST per mob, so N players share one world of mobs.
 #[derive(Copy, Clone, Debug)]
 pub struct PlayerAnchor {
     pub id: crate::player::PlayerId,
-    /// Body centre — the AI's target/despawn anchor (matches the old single
-    /// `player_pos` argument).
     pub pos: petramond_math::world_pos::WorldPos,
-    /// The pushable body; `None` for a spectator (nothing to jostle or strike).
     pub body: Option<Body>,
-    /// Whether this player is sneaking — hostile detection shrinks for a
-    /// sneaking target (`chase_player`'s `sneak_radius_penalty`).
     pub sneaking: bool,
-    /// The player's selected (held) item — the visible-to-the-world hand
-    /// fact behaviors may react to (a wheat lure). `None` for an empty hand
-    /// or a spectator (who shows nothing to the world).
     pub held: Option<petramond_world::item::ItemType>,
 }
 
-/// A neutral anchor (player 0 at the origin, bodiless, empty-handed) — the
-/// base tests override per field, so a new perception fact costs one field
-/// here instead of a struct-literal edit at every anchor site.
 impl Default for PlayerAnchor {
     fn default() -> Self {
         PlayerAnchor {
@@ -46,49 +32,29 @@ impl Default for PlayerAnchor {
     }
 }
 
-/// A melee strike a mob landed this tick. Drained from [`Mobs::tick`] by
-/// `Game`, which applies it through the target's damage pipeline: a player
-/// target runs `player_damage_pre` (a cancelled strike drops its knockback
-/// too); a mob target runs the shared mob damage pipeline (`mob_damage_pre`,
-/// feedback, loot, ragdoll).
 #[derive(Copy, Clone, Debug)]
 pub struct MobAttack {
     pub mob: Mob,
-    /// The attacker's STABLE id — carried into the mob damage pipeline so the
-    /// struck mob's retaliation memory can name the biter across ticks.
     pub mob_id: u64,
-    /// Attacker position for damage origin / presentation context.
     pub origin: petramond_math::world_pos::WorldPos,
-    /// Who the strike lands on (whatever the attacker's brain locked).
     pub target: EntityRef,
-    /// Damage in half-heart points (rounded when applied to a player).
     pub damage: f32,
-    /// Horizontal unit direction the target is knocked toward (away from the mob;
-    /// zero when the two exactly overlap — the strike still pops upward).
     pub knockback_dir: Vec3,
-    /// Horizontal knockback speed (m/s) added to a player target's velocity.
-    /// A mob target takes its own row's knockback feedback instead.
     pub knockback: f32,
 }
 
-/// A fall landing measured by a mob during its deterministic tick, addressed by the
-/// mob's stable id for `ServerGame` to apply through the mob damage pipeline.
 #[derive(Copy, Clone, Debug)]
 pub struct MobFall {
     pub mob_id: u64,
     pub distance: f32,
 }
 
-/// A mob fell into a splashing fluid this tick (its un-latched fall drop at the first wet
-/// tick). `ServerGame` throws the splash burst above the entry point.
 #[derive(Copy, Clone, Debug)]
 pub struct MobSplash {
     pub pos: petramond_math::world_pos::WorldPos,
-    /// Blocks fallen into the surface — the burst intensity.
     pub fall: f32,
 }
 
-/// Exposure damage due on one mob's own clocks. Stable ids survive earlier deaths.
 #[derive(Copy, Clone, Debug)]
 pub struct MobExposureDamage {
     pub mob_id: u64,
@@ -103,7 +69,6 @@ pub struct MobTickEvents {
     pub exposure: Vec<MobExposureDamage>,
 }
 
-/// Work retained for one mob between the manager's population phases.
 pub(super) struct Turn {
     begun: Option<Begun>,
     footing: Option<Footing>,
@@ -130,11 +95,6 @@ impl Turn {
 
 type MobMeta = SpeciesMeta;
 
-/// Every species' [`MobMeta`], derived once per content registry from the precached
-/// [`Model`](petramond_world::bbmodel::Model)s (see [`model`](super::model)) and indexed by `Mob as
-/// usize`. It's identical for every world on one registry, so computing it once keeps each
-/// `World::new` (of which the tests make dozens) from re-deriving it — and nothing here
-/// re-reads a `.bbmodel`.
 static MOB_META: petramond_world::content::Slot<Vec<MobMeta>> =
     petramond_world::content::Slot::new("mob model metadata", &["mobs.json"], derive_meta);
 
@@ -150,29 +110,23 @@ fn derive_meta(_: &petramond_world::content::ContentRegistry) -> Result<Vec<MobM
 }
 
 impl Mobs {
-    /// Advance every mob by one game tick (passing each its species' idle-animation
-    /// metadata + ragdoll skeleton) and refresh its cached skylight, then resolve soft
-    /// entity pushing and remove any mob that should leave the live world: a finished
-    /// death corpse, or a hostile mob that has distance-despawned (culled, and so not
-    /// saved). Returns gameplay events the mobs produced this tick: melee strikes for
-    /// the player damage pipeline, and landed falls for the mob damage pipeline.
+    /// One tick for every mob: species idle-anim + ragdoll skeleton, cached skylight, soft pushing,
+    /// then drop mobs that should leave (finished corpse, or a culled distance-despawned hostile -
+    /// not saved). Returns melee strikes (player damage) and landed falls (mob damage) from this
+    /// tick.
     ///
-    /// `player_pos` is the player's body centre — the AI's player anchor for head-look
-    /// and distance-despawn. `player_body` is the player's *pushable* body, present only
-    /// when the player has a physical presence (a survival body, not a noclip spectator):
-    /// when present the mobs are shoved off it (player→mob), on the tick. The reverse —
-    /// the mobs shoving the *player* — is NOT done here: that moves the player, which is
-    /// integrated per-frame for smoothness, so the caller applies it per-frame via
+    /// `player_pos` is the body centre, used by AI for head-look and despawn distance.
+    /// `player_body` is the pushable body, only set when the player has a physical presence (not
+    /// noclip) - when set, mobs get shoved off it this tick. We don't push the player back here:
+    /// that moves the player and needs per-frame smoothness, so the caller does it via
     /// [`push_on_player`](Self::push_on_player).
     ///
-    /// When `freeze_unloaded` is set (a save is attached), a mob standing over a
-    /// not-yet-loaded chunk is frozen — not simulated, and excluded from pushing — until
-    /// the unload harvests it into that chunk's record. This mirrors the dropped-item
-    /// freeze and stops a mob from falling through missing terrain at the streamed edge.
+    /// With `freeze_unloaded` on (save attached), a mob over a not-yet-loaded chunk is frozen and
+    /// skipped from pushing, until unload harvests it into that chunk's record. Same idea as the
+    /// dropped-item freeze - keeps mobs from falling through missing terrain at the streaming edge.
     ///
-    /// The [simulation distance](super::SimDistance) decides how much of each living mob's
-    /// tick runs: the full tick near a player, physics on a reduced-rate brain
-    /// farther out, and nothing but the despawn rule beyond (see `lod`).
+    /// [Sim distance](super::SimDistance) controls how much of a mob's tick runs: full near a
+    /// player, reduced-rate brain farther out, just despawn checks beyond that (see `lod`).
     pub fn tick(
         &mut self,
         dt: f32,
@@ -180,8 +134,6 @@ impl Mobs {
         anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
     ) -> MobTickEvents {
-        // The start-of-tick AI view, spatially indexed once for every
-        // neighbour query and id lookup this tick (see `mob::spatial`).
         let mut ai_mobs = std::mem::take(&mut self.ai_snapshot);
         ai_mobs.rebuild(self.list.iter().map(|m| AiMob {
             id: m.id(),
@@ -190,27 +142,15 @@ impl Mobs {
             active: !m.is_dead() && (!freeze_unloaded || terrain_under_mob_is_final(world, m)),
             tags: m.tags_shared(),
         }));
-        // Solid-collision bodies as of the start of this tick. Soft mobs use
-        // this immutable obstacle view; solid peers propose independently and
-        // meet in the relative-motion solver below.
         let solid = self.solid_obstacles();
-        // The noise batch every mob hears this tick: everything pushed since the
-        // last mob tick, snapshotted BEFORE any mob moves so hearing doesn't
-        // depend on iteration order. Mob footsteps recorded below land in
-        // `pending_noises` for the next tick.
         self.heard.take_batch(&mut self.pending_noises);
         let mut pending_noises = std::mem::take(&mut self.pending_noises);
         let mut turns = std::mem::take(&mut self.turns);
         turns.clear();
         turns.resize_with(self.list.len(), Turn::default);
-        // Moved out so instances can look up / fill shared confined regions
-        // while `self.list` is mutably borrowed. The clock feed also expires
-        // regions past their maximum age (see `confined::REGION_MAX_AGE_TICKS`).
         self.confined_regions.set_now(world.current_tick());
         let mut confined_regions = std::mem::take(&mut self.confined_regions);
 
-        // What each mob runs this tick, by its distance from the players
-        // (see `lod`).
         let now = world.current_tick();
         let mut steps = std::mem::take(&mut self.step_scratch);
         steps.clear();
@@ -219,9 +159,6 @@ impl Mobs {
                 .iter()
                 .map(|m| self.sim_distance.step(m, anchors, now)),
         );
-        // Route searches share one budget per tick; searches suspended on an
-        // earlier tick (and continuing this one) get a reserved share so they
-        // always progress.
         self.path_budget.refill(
             self.list
                 .iter()
@@ -230,7 +167,6 @@ impl Mobs {
                 .count(),
         );
 
-        // Begin every body before any brain reads this tick's population.
         for (i, mob) in self.list.iter_mut().enumerate() {
             if freeze_unloaded && !terrain_under_mob_is_final(world, mob) {
                 mob.clear_drive();
@@ -253,7 +189,6 @@ impl Mobs {
             }
         }
 
-        // Shared confinement fills and route budgets retain storage order.
         let mut supports = std::mem::take(&mut self.solid.supports);
         for (i, mob) in self.list.iter_mut().enumerate() {
             if turns[i].begun != Some(Begun::Live) {
@@ -296,8 +231,6 @@ impl Mobs {
                 Some(mob.perceive(&ctx, &mut confined_regions, steps[i] == lod::SimStep::Think));
         }
 
-        // Gather in storage order, dispatch each scripted key once, then feed
-        // each reply back to the mob and node that made the request.
         let mut requests = std::mem::take(&mut self.scripted_requests);
         requests.clear();
         for (i, mob) in self.list.iter_mut().enumerate() {
@@ -389,8 +322,6 @@ impl Mobs {
         self.solve_solids(world, solid);
         let turns = std::mem::take(&mut self.turns);
 
-        // Post-motion bookkeeping observes committed poses, never an
-        // overlapping proposal that the pair solver subsequently shortened.
         let mut out = MobTickEvents::default();
         let mut exposure = std::mem::take(&mut self.exposure_scratch);
         for (i, mob) in self.list.iter_mut().enumerate() {
@@ -402,9 +333,6 @@ impl Mobs {
                 let immersion = world.data().body_fluid(mob.pos, d.size.height, d.buoyancy);
                 mob.finish_motion(was_on_ground, immersion);
             }
-            // A walking mob of a noisy species is audible: record its
-            // footstep for next tick's batch. Silent bodies (`"step_noise":
-            // false` — a boat, a cart) never enter the batch.
             if mob.moving && def(mob.kind).step_noise {
                 pending_noises.push(Noise {
                     pos: mob.pos,
@@ -413,10 +341,6 @@ impl Mobs {
                 });
             }
             if let Some(intent) = mob.take_attack() {
-                // The knockback direction is derived here, from the live
-                // attacker→target geometry at strike time — horizontal, away
-                // from the attacker. A target that vanished mid-tick (player
-                // disconnected, mob culled) fizzles the strike whole.
                 let target_pos = match intent.target {
                     EntityRef::Player(pid) => anchors.iter().find(|a| a.id == pid).map(|a| a.pos),
                     EntityRef::Mob(id) => ai_mobs.live(id).map(|m| m.pos),
@@ -478,15 +402,6 @@ impl Mobs {
     }
 }
 
-/// Whether the terrain `mob` stands on has ARRIVED — the freeze gate shared
-/// by the tick loop and the push pass, so a mob over not-yet-generated
-/// terrain is skipped by both. Its feet cell and the cell under it must read
-/// final (a loaded section, or an absent one whose generated summary proves
-/// it uniform), and it must be above the world floor. A loaded COLUMN is not
-/// enough: the world is cubic, so a deep section can be out of the vertical
-/// window while the sections above it are loaded, and a body simulated
-/// against that absent floor reads air and falls out of the world (the same
-/// rule as `world::entities::terrain_under_drop_is_final`).
 fn terrain_under_mob_is_final(world: &ServerWorld, mob: &Instance) -> bool {
     let c = mob.pos.block();
     c.y >= petramond_world::chunk::WORLD_MIN_Y

@@ -11,7 +11,6 @@ use super::terrain_under_drop_is_final;
 mod tests;
 
 impl ServerWorld {
-    /// Nearest active item entities over terrain ready for simulation.
     pub(crate) fn nearest_item_entities(
         &self,
         pos: petramond_math::world_pos::WorldPos,
@@ -44,13 +43,11 @@ impl ServerWorld {
         candidates.into_iter().map(|(_, item)| item).collect()
     }
 
-    /// Apply additive velocity changes without changing an item's lifecycle.
     pub(crate) fn impulse_item_entities(&mut self, impulses: &[(u64, Vec3)]) -> Vec<bool> {
         if impulses.is_empty() {
             return Vec::new();
         }
         let requested: HashSet<_> = impulses.iter().map(|(id, _)| *id).collect();
-        // Scan once; only requested entities need the terrain readiness probe.
         let eligible: HashMap<_, _> = self
             .side
             .entities

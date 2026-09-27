@@ -29,19 +29,11 @@ use super::BreakOverlayView;
 use petramond_mesh::Vertex;
 use petramond_world::tile::Tile;
 
-/// The destroy tile for crack `stage` (clamped 0..=9), as a [`Tile`]. The one
-/// stage->tile answer: the model decal pass reads it too.
 #[inline]
 pub(crate) fn destroy_tile(stage: u8) -> Tile {
     petramond_world::tile::engine().destroy_stages[stage.min(9) as usize]
 }
 
-/// Build the crack overlay geometry for every view in `views` into `verts` /
-/// `indices` (cleared first, capacity reused) — ONE combined stream, since
-/// every overlay shares the break pipeline. Returns the index count. The
-/// slice is small and bounded (the local miner's own crack plus the capped
-/// nearest remotes); each entry bakes exactly as the single overlay always
-/// did, so the single-player path is geometry-identical.
 pub fn build_break_overlays(
     views: &[BreakOverlayView],
     render_origin: glam::IVec3,
@@ -51,8 +43,6 @@ pub fn build_break_overlays(
     verts.clear();
     indices.clear();
     for view in views {
-        // A model block's crack is drawn over the model's own triangles by the
-        // decal pass, so it contributes no geometry here.
         if view.model.is_none() {
             append_break_overlay(view, render_origin, verts, indices);
         }
@@ -60,9 +50,6 @@ pub fn build_break_overlays(
     indices.len() as u32
 }
 
-/// Build one crack overlay's geometry into `verts` / `indices` (cleared
-/// first). Returns the index count. See [`build_break_overlays`] for the
-/// multi-overlay frame path; this single-view form is the unit the tests pin.
 #[cfg(test)]
 pub fn build_break_overlay(
     view: &BreakOverlayView,
@@ -152,7 +139,6 @@ mod tests {
     fn destroy_tile_maps_stage_and_clamps() {
         assert_eq!(destroy_tile(0), Tile::from_name("destroy_stage_0").unwrap());
         assert_eq!(destroy_tile(9), Tile::from_name("destroy_stage_9").unwrap());
-        // Out-of-range stages clamp to the last stage.
         assert_eq!(
             destroy_tile(42),
             Tile::from_name("destroy_stage_9").unwrap()
@@ -165,7 +151,6 @@ mod tests {
         let mut i = Vec::new();
         let view = BreakOverlayView {
             block: IVec3::new(3, 64, -7),
-            // A full cube (Stone) has no special visual box, so the crack spans the cell.
             visual_box: None,
             shape_boxes: None,
             model: None,
@@ -174,14 +159,10 @@ mod tests {
         let n = build_break_overlay(&view, &mut v, &mut i);
         assert_eq!(v.len(), 24);
         assert_eq!(n, 36);
-        // Every face uses DestroyStage4 (the tile id is `packed`'s low field).
         let want = Tile::from_name("destroy_stage_4").unwrap().index() as u32;
         for vert in &v {
             assert_eq!(vert.packed & petramond_mesh::vertex::TILE_MASK, want);
         }
-        // Coincident, not inflated: the cube spans the block cell [3,4] on x
-        // *exactly*, so its faces sit on the chunk mesh's faces and the crack wins
-        // the depth tie via LessEqual instead of poking proud of the surface.
         let min_x = v
             .iter()
             .map(|vert| vert.pos[0])
@@ -194,8 +175,6 @@ mod tests {
         assert_eq!(max_x, 4.0, "cube max lands exactly on the block boundary");
     }
 
-    /// The cell-local `(u, v)` texel span, in 16ths, of each face's four
-    /// corners — what the break shader reconstructs from `packed2`.
     fn face_uv_spans(v: &[Vertex]) -> Vec<(u32, u32)> {
         v.chunks(4)
             .map(|face| {
@@ -210,24 +189,16 @@ mod tests {
 
     #[test]
     fn a_thin_panels_crack_covers_only_the_texels_that_face_is_deep() {
-        // The reported bug: a hinged panel's 3-texel-deep edge faces showed a
-        // WHOLE destroy tile squashed across them. Cell-local UVs give each
-        // face exactly the texels it spans, so an edge carves 3 of 16 and the
-        // wide faces carve all 16.
         let mut v = Vec::new();
         let mut i = Vec::new();
         let view = BreakOverlayView {
             block: IVec3::new(2, 70, 3),
-            // A closed floor trapdoor: full on X and Z, a panel thick on Y.
             visual_box: Some(([0.0, 0.0, 0.0], [1.0, 3.0 / 16.0, 1.0])),
             shape_boxes: None,
             model: None,
             stage: 3,
         };
         build_break_overlay(&view, &mut v, &mut i);
-        // Faces are emitted in `Face::ALL` order [PosX, NegX, PosY, NegY,
-        // PosZ, NegZ]; the edge faces are thin along Y, which every one of
-        // them maps to V.
         let spans = face_uv_spans(&v);
         for face in [0, 1, 4, 5] {
             assert_eq!(spans[face], (16, 3), "edge face {face} is 3 texels deep");
@@ -239,10 +210,6 @@ mod tests {
 
     #[test]
     fn the_overlay_only_speaks_a_uv_mode_its_shader_decodes() {
-        // `break_overlay.wgsl` reconstructs ONE uv mode; anything else reads
-        // as a plain stretched face there however carefully it was packed.
-        // That is exactly how the squished panel edge survived a passing test
-        // (2026-09-24): the slice mode was emitted and silently ignored.
         let mut v = Vec::new();
         let mut i = Vec::new();
         build_break_overlay(
@@ -270,8 +237,6 @@ mod tests {
         );
     }
 
-    /// Build a view whose cell resolved to `boxes` — `(min, max, faces)` in
-    /// canonical face order (`+X, -X, +Y, -Y, +Z, -Z`).
     fn boxes_view(
         block: IVec3,
         boxes: &[([f32; 3], [f32; 3], [bool; 6])],
@@ -326,9 +291,6 @@ mod tests {
                 vert.pos[1] <= 70.5 + 1e-6,
                 "crack must stay on the resolved box"
             );
-            // Side-face verts (X or Z shade groups) sit in the cell's lower
-            // half, so their cell-local v spans 8..=16 — the lower half of the
-            // tile — instead of restarting at 0 (which would stretch the decal).
             let shade = (vert.packed >> petramond_mesh::vertex::SHADE_SHIFT) & 0x3;
             if shade == 1 || shade == 2 {
                 let v16 = (vert.packed2 >> 11) & 0x1F;
@@ -340,15 +302,10 @@ mod tests {
         }
     }
 
-    /// A face the shape does not EMIT takes no destroy texture. This is what
-    /// keeps a wall-mounted panel's crack off the coplanar wall face behind it
-    /// and a fence rail's guaranteed-covered end cap clean — the emitted-face
-    /// set comes from the same producer the mesher used, so the two agree by
-    /// construction rather than by two hand-kept copies.
     #[test]
     fn crack_skips_faces_the_shape_does_not_emit() {
         let mut faces = [true; 6];
-        faces[5] = false; // NegZ — buried in the supporting wall.
+        faces[5] = false;
         let view = boxes_view(
             IVec3::new(1, 2, 3),
             &[([0.0, 0.0, 0.0], [1.0, 1.0, 0.125], faces)],
@@ -381,8 +338,6 @@ mod tests {
         };
         build_break_overlay(&view, &mut v, &mut i);
         let (cap_v, cap_i) = (v.capacity(), i.capacity());
-        // Same view -> identical vert/index count, so the cleared+refilled
-        // buffers keep their capacity: rebuilding to the same size never reallocs.
         build_break_overlay(&view, &mut v, &mut i);
         assert_eq!(v.len(), 24);
         assert_eq!(v.capacity(), cap_v, "vert buffer reused");

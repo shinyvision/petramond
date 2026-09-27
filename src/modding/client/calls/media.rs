@@ -1,8 +1,3 @@
-//! Frame captures, the stepped clock, taps on the world's sound and media
-//! files, as a client instance drives them. The calls validate here and leave
-//! the rest on the runtime's media desk, which the client carries out at its
-//! next frame.
-
 use mod_api::{
     ClientAudioInto, ClientCaptureInto, ClientCaptureStatus, ClientMediaCall, ClientStorageScope,
     HostRet,
@@ -14,7 +9,6 @@ use crate::modding::client::files::{self, FileRef, WriterKind};
 use crate::modding::client::media::{Capture, Destination, Media, MediaInput, Tap};
 use crate::modding::client::state::ClientStoreData;
 
-/// A file a capture or a tap appends to: `Err(ret)` = the answer instead.
 fn file_destination(
     client: &ClientStoreData,
     call: &str,
@@ -29,8 +23,6 @@ fn file_destination(
         .ok_or_else(|| HostRet::invalid(format!("{call}: scope World needs a world")))
 }
 
-/// A frame size inside the rendering device's own limits (only its sides'
-/// floor while no renderer has presented).
 fn checked_size(client: &ClientStoreData, size: [u32; 2]) -> Result<(), HostRet> {
     let limits = client.presented.lock().frame_limits;
     let max_side = limits.map_or(u32::MAX, |l| l.max_side);

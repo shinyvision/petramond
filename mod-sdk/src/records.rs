@@ -1,68 +1,25 @@
-//! Typed, versioned records in world KV, one per `u64` id.
-//!
-//! A mod that keeps persistent things of its own (projects, contracts,
-//! claims) keeps each as one world-KV value. [`RecordStore`] is the session's
-//! view of them: a record is read and decoded once, edits go through
-//! [`RecordStore::update`], and the world is written ONLY when an edit
-//! changed the record's bytes — so "update every tick, change rarely" costs
-//! one encode and no host call.
-//!
-//! The stored value is one version byte ([`KvRecord::VERSION`]) and then the
-//! record's own encoding. A value of an older version is lifted through
-//! [`KvRecord::upgrade`] one version at a time, then decoded; it is written
-//! back in the current version by its next [`RecordStore::update`]. A value
-//! that cannot be read — newer than this build, older than its upgrades
-//! reach, or malformed — is a [`RecordError`], never "absent": it is logged
-//! once, the store never writes over it through [`RecordStore::update`], and
-//! the world keeps its bytes for a build that can read them.
-//!
-//! The same versioning serves any single persisted value that is not one of
-//! many records — a machine's cell-KV state, one world-KV row, a client
-//! storage blob: [`encode_versioned`] / [`decode_versioned`] frame a
-//! [`KvRecord`] exactly as the store does, and [`world_kv_load`] /
-//! [`world_kv_store`] do it for one world-KV key.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::{log, world_kv_get, world_kv_set, KV_MAX_VALUE_BYTES};
 
-/// One kind of persistent record. Pick any encoding; a `serde` type can use
-/// the SDK's own wire format: `crate::encode(self).unwrap_or_default()` and
-/// `crate::decode(bytes).ok()`.
-///
-/// Changing the encoding's shape: bump [`VERSION`](Self::VERSION) and teach
-/// [`upgrade`](Self::upgrade) to rewrite the previous version's bytes, so
-/// stored records migrate instead of becoming unreadable.
 pub trait KvRecord: Sized {
-    /// The version this build writes.
     const VERSION: u8;
-    /// The oldest stored version [`upgrade`](Self::upgrade) can lift. The
-    /// default reads only [`VERSION`](Self::VERSION).
     const OLDEST_VERSION: u8 = Self::VERSION;
     fn encode(&self) -> Vec<u8>;
     fn decode(bytes: &[u8]) -> Option<Self>;
-    /// Rewrite a value stored at version `from` (`OLDEST_VERSION <= from <
-    /// VERSION`) as version `from + 1`; `None` when those bytes are
-    /// malformed. Called once per step, oldest first.
     fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
         let _ = (from, bytes);
         None
     }
 }
 
-/// Why a stored record could not be read. Never means "absent".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecordError {
-    /// An empty value: not even a version byte.
     Empty,
-    /// Written by a newer build of the mod.
     Newer { found: u8, newest: u8 },
-    /// Older than the oldest version [`KvRecord::upgrade`] lifts.
     Retired { found: u8, oldest: u8 },
-    /// The upgrade step from `from` rejected the bytes.
     Upgrade { from: u8 },
-    /// The current-version bytes did not decode.
     Corrupt,
 }
 
@@ -84,7 +41,6 @@ impl fmt::Display for RecordError {
     }
 }
 
-/// A decoded record beside the bytes the world holds for it.
 struct Held<T> {
     value: T,
     bytes: Vec<u8>,
@@ -96,7 +52,6 @@ impl<T: KvRecord> Held<T> {
         Self { value, bytes }
     }
 
-    /// Run `f`; `true` when the record's bytes changed (and were taken over).
     fn edit<R>(&mut self, f: impl FnOnce(&mut T) -> R) -> (R, bool) {
         let out = f(&mut self.value);
         let bytes = versioned(&self.value);
@@ -114,10 +69,6 @@ fn versioned<T: KvRecord>(value: &T) -> Vec<u8> {
     bytes
 }
 
-/// Write a record's bytes unless they exceed one world-KV value
-/// ([`KV_MAX_VALUE_BYTES`]): an oversized write is a host ERROR, which
-/// disables the mod, so it is logged and skipped instead. The record keeps
-/// living in memory; the world keeps its last value that fit.
 fn write_fitting(key: &str, bytes: &[u8]) {
     if bytes.len() > KV_MAX_VALUE_BYTES {
         log(&format!(
@@ -130,24 +81,14 @@ fn write_fitting(key: &str, bytes: &[u8]) {
     world_kv_set(key, bytes.to_vec());
 }
 
-/// `value` as stored: its version byte, then its own encoding.
 pub fn encode_versioned<T: KvRecord>(value: &T) -> Vec<u8> {
     versioned(value)
 }
 
-/// Decode a value stored by [`encode_versioned`], lifting an older version
-/// through [`KvRecord::upgrade`] first. An error is never "absent": the
-/// caller decides whether to keep the bytes or reset.
 pub fn decode_versioned<T: KvRecord>(bytes: &[u8]) -> Result<T, RecordError> {
     unversioned(bytes)
 }
 
-/// [`decode_versioned`] for a value earlier builds stored UNVERSIONED at a
-/// fixed length: a value of exactly `legacy_len` bytes is read as version 0,
-/// so `T::OLDEST_VERSION` must be 0 and [`KvRecord::upgrade`] lifts that
-/// layout. Every versioned encoding of `T` must therefore differ from
-/// `legacy_len` bytes (a version byte in front of the same fields already
-/// does).
 pub fn decode_versioned_or_legacy<T: KvRecord>(
     bytes: &[u8],
     legacy_len: usize,
@@ -161,21 +102,16 @@ pub fn decode_versioned_or_legacy<T: KvRecord>(
     unversioned(bytes)
 }
 
-/// Read one versioned world-KV value: `Ok(None)` when the key is absent, an
-/// error when it holds bytes this build cannot read.
 pub fn world_kv_load<T: KvRecord>(key: &str) -> Result<Option<T>, RecordError> {
     world_kv_get(key)
         .map(|bytes| unversioned(&bytes))
         .transpose()
 }
 
-/// Write one versioned world-KV value.
 pub fn world_kv_store<T: KvRecord>(key: &str, value: &T) {
     world_kv_set(key, versioned(value));
 }
 
-/// Decode a stored value, lifting an older version through the upgrade
-/// chain first.
 fn unversioned<T: KvRecord>(bytes: &[u8]) -> Result<T, RecordError> {
     let (&found, body) = bytes.split_first().ok_or(RecordError::Empty)?;
     if found > T::VERSION {
@@ -197,17 +133,11 @@ fn unversioned<T: KvRecord>(bytes: &[u8]) -> Result<T, RecordError> {
     T::decode(&body).ok_or(RecordError::Corrupt)
 }
 
-/// Every record of one kind this session has read, over world KV keys
-/// `"{prefix}{id}"`. The prefix must sit in the mod's own namespace
-/// (`"my_mod:thing/"`).
 pub struct RecordStore<T> {
     prefix: String,
     held: BTreeMap<u64, Held<T>>,
-    /// Ids the world has no record for.
     missing: BTreeSet<u64>,
-    /// Ids whose record exists but cannot be read.
     unreadable: BTreeMap<u64, RecordError>,
-    /// Ids read or edited since the last [`RecordStore::sweep`].
     touched: BTreeSet<u64>,
 }
 
@@ -222,12 +152,10 @@ impl<T: KvRecord> RecordStore<T> {
         }
     }
 
-    /// The world KV key of record `id`.
     pub fn key(&self, id: u64) -> String {
         format!("{}{id}", self.prefix)
     }
 
-    /// The id a key of this store names.
     pub fn id_of_key(&self, key: &str) -> Option<u64> {
         key.strip_prefix(&self.prefix)?.parse().ok()
     }
@@ -257,9 +185,6 @@ impl<T: KvRecord> RecordStore<T> {
         }
     }
 
-    /// The record, read from the world the first time it is asked for:
-    /// `Ok(None)` when the world has none, an error when it has one this
-    /// build cannot read.
     pub fn get(&mut self, id: u64) -> Result<Option<&T>, RecordError> {
         self.fetch(id);
         if let Some(error) = self.unreadable.get(&id) {
@@ -272,17 +197,10 @@ impl<T: KvRecord> RecordStore<T> {
         Ok(Some(&held.value))
     }
 
-    /// The record if this session already holds it; never reads the world.
     pub fn peek(&self, id: u64) -> Option<&T> {
         self.held.get(&id).map(|held| &held.value)
     }
 
-    /// Edit the record in place. The world is written only when the edit
-    /// changed the record's encoding; the flag says whether it did. `None`
-    /// when there is no readable record — an unreadable one is never
-    /// written over. A record grown past one world-KV value is logged and
-    /// not written (the host would refuse it); a later edit that fits again
-    /// writes it.
     pub fn update<R>(&mut self, id: u64, f: impl FnOnce(&mut T) -> R) -> Option<(R, bool)> {
         self.fetch(id);
         let held = self.held.get_mut(&id)?;
@@ -294,9 +212,6 @@ impl<T: KvRecord> RecordStore<T> {
         Some((out, changed))
     }
 
-    /// Store a new record (or replace one) and write it to the world. This
-    /// replaces whatever the world holds under the key, readable or not
-    /// (unless it is too large to store at all, which is logged).
     pub fn insert(&mut self, id: u64, value: T) {
         let held = Held::new(value);
         write_fitting(&self.key(id), &held.bytes);
@@ -306,16 +221,10 @@ impl<T: KvRecord> RecordStore<T> {
         self.held.insert(id, held);
     }
 
-    /// Records in memory right now, by id. Says nothing about records the
-    /// session has not asked for.
     pub fn loaded(&self) -> impl Iterator<Item = (u64, &T)> {
         self.held.iter().map(|(id, held)| (*id, &held.value))
     }
 
-    /// Drop from memory every record neither read nor edited since the last
-    /// sweep, unless `keep` wants it. The world keeps them all: a dropped
-    /// record is read again when next asked for. Call it on a slow cadence to
-    /// bound a long session's memory.
     pub fn sweep(&mut self, keep: impl Fn(u64, &T) -> bool) {
         let touched = std::mem::take(&mut self.touched);
         self.held

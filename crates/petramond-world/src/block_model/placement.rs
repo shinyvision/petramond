@@ -1,7 +1,3 @@
-//! Placement-facing transforms: how an authored model footprint maps into the world
-//! under a placed [`Facing`] — the placement yaw/transform, authored-offset ↔ world-cell
-//! mapping, and the oriented per-cell collision/selection bake.
-
 use glam::{Mat4, Vec3};
 
 use crate::block::Aabb;
@@ -10,7 +6,6 @@ use crate::mathh::IVec3;
 
 use super::{box_corners, footprint, instance, BlockModelKind, CellInstance, OrientedCellInstance};
 
-/// Yaw that rotates the authored model front (`-Z`, North) to `facing`.
 pub fn placement_yaw(facing: Facing) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     match facing {
@@ -21,18 +16,10 @@ pub fn placement_yaw(facing: Facing) -> f32 {
     }
 }
 
-/// Transform from authored FOOTPRINT space into space relative to the rotated
-/// footprint's minimum corner (its base cell) for a model placed at `facing`. The
-/// base itself stays an integer anchor: add it as a cell, never as a float
-/// translation, so a model far from the origin keeps its sub-texel detail.
 pub fn placement_transform(kind: BlockModelKind, facing: Facing) -> Mat4 {
     placement_transform_fp(footprint(kind), facing)
 }
 
-/// [`placement_transform`] with an explicit footprint instead of `footprint(kind)`. Used by
-/// `ModelInstance::build` to bake the render templates: that runs INSIDE the `INSTANCES`
-/// slot's build, so going through `footprint(kind)` (→ `instance(kind)`) would re-enter
-/// the half-built cell and deadlock. The footprint is already known locally there.
 pub fn placement_transform_fp(fp: [u8; 3], facing: Facing) -> Mat4 {
     let sx = fp[0] as f32;
     let sz = fp[2] as f32;
@@ -45,8 +32,6 @@ pub fn placement_transform_fp(fp: [u8; 3], facing: Facing) -> Mat4 {
     Mat4::from_translation(shift) * Mat4::from_rotation_y(placement_yaw(facing))
 }
 
-/// World cell occupied by authored `offset` for a model whose rotated footprint starts at
-/// `base`.
 pub fn world_cell_for_offset(
     base: IVec3,
     kind: BlockModelKind,
@@ -56,17 +41,10 @@ pub fn world_cell_for_offset(
     base + cell_rel_for_offset(footprint(kind), offset, facing)
 }
 
-/// Inverse of `world_cell_for_offset`: find the rotated-footprint base from a world
-/// cell and its stored authored offset.
 pub fn base_from_cell(cell: IVec3, kind: BlockModelKind, offset: [u8; 3], facing: Facing) -> IVec3 {
     cell - cell_rel_for_offset(footprint(kind), offset, facing)
 }
 
-/// Placement anchor used by the player: the clicked cell is the model's near-left
-/// bottom authored cell — the footprint cell nearest the placer, on their left.
-/// Which authored cell that is depends on the pose: a standard authored front
-/// (−Z) presents `[fp_x − 1, 0, 0]`; a back-to-front model meets the player with
-/// its authored +Z face, so its near-left cell is `[0, 0, fp_z − 1]`.
 pub fn base_from_front_left_anchor(anchor: IVec3, kind: BlockModelKind, facing: Facing) -> IVec3 {
     let fp = footprint(kind);
     let front_left = match super::def(kind).orientation {
@@ -76,10 +54,6 @@ pub fn base_from_front_left_anchor(anchor: IVec3, kind: BlockModelKind, facing: 
     anchor - cell_rel_for_offset(fp, front_left, facing)
 }
 
-/// Placement anchor for [`super::PlacementOrientation::Centered`] models: the clicked
-/// cell is the footprint's horizontal CENTRE cell (even sizes bias toward
-/// −X/−Z) on the TOP layer — a hanging fixture grows downward from the cell it
-/// is placed against. No facing: centered models always store the default.
 pub fn base_from_centered_anchor(anchor: IVec3, kind: BlockModelKind) -> IVec3 {
     let fp = footprint(kind);
     anchor
@@ -90,7 +64,6 @@ pub fn base_from_centered_anchor(anchor: IVec3, kind: BlockModelKind) -> IVec3 {
         )
 }
 
-/// Occupied world cells plus their authored offsets for this oriented model placement.
 pub fn oriented_footprint_cells(
     base: IVec3,
     kind: BlockModelKind,
@@ -263,11 +236,6 @@ mod tests {
         assert_eq!(far_side.z, fp[2] as f32);
     }
 
-    /// The clicked cell is the footprint's near-left bottom cell under BOTH
-    /// poses: min world Z (nearest the placer) and max world X (their left),
-    /// with the model growing away from them. Each pose uses its shipped row:
-    /// the workbench for the standard authored front, the chiseling station
-    /// for back-to-front.
     #[test]
     fn the_anchor_cell_is_the_footprints_near_left_cell_for_both_poses() {
         let anchor = IVec3::new(50, 40, 30);
@@ -288,7 +256,6 @@ mod tests {
                 (max_x, min_z),
                 "{kind:?}: anchor must be the footprint's near-left corner"
             );
-            // And the model never grows toward the player.
             assert_eq!(min_z, anchor.z, "{kind:?}: footprint behind the click");
             assert_eq!(base.y, anchor.y);
         }

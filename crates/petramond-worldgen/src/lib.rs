@@ -1,16 +1,3 @@
-//! Worldgen pipeline.
-//!
-//! One pipeline, per section: [`driver::ChunkGenerator`] computes a column's
-//! shared data once, then generates each 16³ section — the streamer's unit —
-//! in a fixed stage order. `generate_chunk(seed, cx, cz) -> Chunk` assembles a
-//! chunk column from those same sections for tooling and the parity hash.
-//!
-//! Active terrain is built from the surface density graph: climate graph biome
-//! assignment, `master_density` sign fill, sea-level water, exposed-run surface
-//! skinning, cave carving, underground scatter, ground vegetation, and tree
-//! features.
-
-// The audits back slow `#[ignore]`d tests too, so tests compile them always.
 #[cfg(any(test, feature = "tools"))]
 pub mod audit;
 pub mod biome;
@@ -37,8 +24,6 @@ mod surface;
 
 use petramond_world::chunk::Chunk;
 
-// The facade: what the engine, server and client use. Generation runs through
-// `ChunkGenerator`; positional questions go through the queries below.
 pub use density::surface::SurfaceDensitySystem;
 pub use driver::{ChunkGenerator, ColumnGen, PendingSection, SectionGen};
 pub use mod_api::TerrainSpace;
@@ -50,34 +35,16 @@ pub use queries::{
 };
 pub use rng::FeatureRng;
 
-/// Runtime feature placement outside the generation pipeline — sapling
-/// growth: resolve a configured feature by name and place it through a
-/// [`VoxelSink`](growth::VoxelSink) over the live world.
 pub mod growth {
     pub use crate::data::features::by_name as feature_by_name;
     pub use crate::feature::placement::PlacedFeature;
     pub use crate::feature::{ConfiguredFeature, FeatureCtx, VoxelSink};
 }
 
-/// Generate terrain + features for a chunk. Caller passes the world seed.
-///
-/// Terrain and feature placement both flow through the staged `ChunkGenerator`.
-/// Features are placed via world-positional RNG over the chunk plus a margin
-/// border, so trees cross chunk seams seamlessly.
-///
-/// The generator holds only immutable seed-derived state (noise samplers and
-/// worldgen subsystems), which is expensive to build, so one-shot calls share
-/// [`driver::ChunkGenerator::shared`] instead of rebuilding the pipeline per
-/// chunk. Hot worker loops hold their own generator and call
-/// [`generate_chunk_with`] directly.
 pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     generate_chunk_with(&driver::ChunkGenerator::shared(seed), cx, cz)
 }
 
-/// Generate terrain + features with an already-built generator: the chunk's
-/// sections from the one section pipeline, assembled (see
-/// [`driver::ChunkGenerator::generate_chunk`]). Hot loops hold their own
-/// generator and call this instead of [`generate_chunk`].
 pub fn generate_chunk_with(generator: &driver::ChunkGenerator, cx: i32, cz: i32) -> Chunk {
     generator.generate_chunk(cx, cz)
 }
@@ -88,22 +55,16 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ, SEA_LEVEL};
 
-    /// A generator whose shared noise cache has been warmed by neighbouring chunks
-    /// must produce byte-identical output to a generator that computes every column
-    /// fresh — proving the cache only memoizes and never affects results, whatever
-    /// order chunks are generated in (the property the worker pool relies on).
     #[test]
     fn shared_noise_cache_does_not_change_output() {
         let seed = 0x1234_5678;
         let warmed = driver::ChunkGenerator::new(seed);
-        // Warm one generator with a spread of chunks before comparing against a
-        // fresh generator. Generation state must remain immutable and pure.
         for cz in -2..=2 {
             for cx in -2..=2 {
                 let _ = generate_chunk_with(&warmed, cx, cz);
             }
         }
-        let fresh = driver::ChunkGenerator::new(seed); // independent private cache
+        let fresh = driver::ChunkGenerator::new(seed);
 
         for (cx, cz) in [(0, 0), (1, -1), (2, 2), (-2, 1), (10, -8)] {
             let warm_chunk = generate_chunk_with(&warmed, cx, cz);
@@ -170,12 +131,6 @@ mod tests {
         );
     }
 
-    /// Generating sections across a wide area must not corrupt the random-tick gate.
-    /// `fill_section` writes the block buffer in bulk, then the scatter/vegetation/tree
-    /// stages edit through the setters — so a tree trunk overwriting a random-tickable
-    /// skin block (surface grass) used to underflow the still-zero counter (panic in
-    /// debug, silent wrap in release). After generation the count must equal a
-    /// from-scratch tally of the section's random-tickable blocks.
     #[test]
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn per_section_generation_keeps_random_tick_count_exact() {
@@ -204,11 +159,6 @@ mod tests {
         }
     }
 
-    /// Frozen ponds carry bare sea ice: a snowy-biome column submerged under a
-    /// waterline ice cap must NOT grow a snow layer above the ice (the
-    /// vegetation pass never visits submerged columns). Seed 34's scanned
-    /// coast holds thousands of such columns; assert on real ones so the rule
-    /// cannot silently rot.
     #[test]
     fn frozen_ponds_carry_bare_sea_ice_without_a_snow_layer() {
         let seed = 34;

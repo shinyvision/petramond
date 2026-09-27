@@ -1,7 +1,3 @@
-//! Project file I/O: open/save `.llgui` v2 projects and export the bare
-//! document to the game's `assets/ui/documents/`. rfd dialogs live here so
-//! the app only deals in results.
-
 use crate::assets::AssetRoots;
 use crate::project::Project;
 use petramond_ui::Document;
@@ -18,10 +14,6 @@ pub fn save_project(path: &Path, project: &Project) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-/// Export the bare document as pretty `.gui.json` (what the game loads),
-/// copying every referenced image that exists beside the project (in
-/// `images_from`) next to the exported document so the game resolves them.
-/// Returns how many images were copied.
 pub fn export_document(
     path: &Path,
     doc: &Document,
@@ -45,8 +37,6 @@ pub fn export_document(
     Ok(copied)
 }
 
-/// "Choose image…" flow: pick a PNG, copy it beside the project file, return
-/// its bare file name (what the document stores).
 pub fn choose_project_image(project_dir: Option<&Path>) -> Result<Option<String>, String> {
     let Some(dir) = project_dir else {
         return Err("save the project first — images live beside the .llgui file".into());
@@ -68,10 +58,6 @@ pub fn choose_project_image(project_dir: Option<&Path>) -> Result<Option<String>
     Ok(Some(name))
 }
 
-/// Resolve a document image the way the game will after export: beside the
-/// project first, then in `ui/documents/` of the highest-priority asset layer
-/// holding it — the pack the document ships in, then the base game (where
-/// generated samples find the shipped images they reference).
 pub fn resolve_document_image_path(
     roots: &AssetRoots,
     project_dir: Option<&Path>,
@@ -89,7 +75,6 @@ pub fn resolve_document_image_path(
     roots.find(&format!("ui/documents/{name}"))
 }
 
-/// Every shipped `*.gui.json` as `(stem, path)`, sorted by stem.
 pub fn shipped_documents(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
     let Some(dir) = roots.documents_dir() else {
         return Vec::new();
@@ -97,18 +82,11 @@ pub fn shipped_documents(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
     files_with_suffix(&dir, ".gui.json")
 }
 
-/// What [`make_samples`] did, by stem.
 pub struct SamplesMade {
     pub regenerated: Vec<String>,
-    /// Samples whose document no longer ships.
     pub deleted: Vec<String>,
 }
 
-/// Regenerate `samples/<stem>.llgui` for every shipped document — the
-/// document verbatim + sample_state seeded from the bindings catalog — and
-/// delete every sample whose document no longer ships, so the sample list is
-/// exactly the shipped set. Deterministic from doc + catalog only: hand
-/// edits are NOT preserved.
 pub fn make_samples(roots: &AssetRoots) -> Result<SamplesMade, String> {
     let shipped = shipped_documents(roots);
     if shipped.is_empty() {
@@ -153,7 +131,6 @@ pub fn make_samples(roots: &AssetRoots) -> Result<SamplesMade, String> {
     })
 }
 
-/// The available sample projects as `(stem, path)`, sorted.
 pub fn list_samples(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
     roots
         .samples_dir()
@@ -161,7 +138,6 @@ pub fn list_samples(roots: &AssetRoots) -> Vec<(String, PathBuf)> {
         .unwrap_or_default()
 }
 
-/// The files in `dir` named `<stem><suffix>`, as `(stem, path)` sorted by stem.
 fn files_with_suffix(dir: &Path, suffix: &str) -> Vec<(String, PathBuf)> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -178,13 +154,10 @@ fn files_with_suffix(dir: &Path, suffix: &str) -> Vec<(String, PathBuf)> {
     out
 }
 
-/// Default export file name for a document kind (`petramond:pause` → `pause.gui.json`).
 pub fn export_file_name(doc: &Document) -> String {
     let stem = doc.kind.split(':').next_back().unwrap_or("document");
     format!("{stem}.gui.json")
 }
-
-// ---- dialogs -----------------------------------------------------------------
 
 fn dialog(dir: &Option<PathBuf>) -> rfd::FileDialog {
     let mut d = rfd::FileDialog::new();
@@ -223,8 +196,6 @@ pub fn pick_export(
 mod tests {
     use super::*;
 
-    /// The sample list is exactly the shipped document set: every shipped
-    /// document has an up-to-date sample, and no sample outlives its document.
     #[test]
     fn samples_and_shipped_documents_are_the_same_set_and_up_to_date() {
         let roots = AssetRoots::new(None, Vec::new());

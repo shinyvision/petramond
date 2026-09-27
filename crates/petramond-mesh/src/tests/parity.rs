@@ -1,9 +1,5 @@
 use super::*;
 
-/// Parallel mesh building (the mesh pool on native) must produce byte-identical
-/// meshes to a serial build: `build_section_mesh` is a pure function of
-/// (section, neighbour reads) whose only shared state is the per-thread greedy
-/// scratch, so rayon may only reorder independent work.
 mod parallel_parity_tests {
     use super::*;
     use petramond_world::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
@@ -12,10 +8,6 @@ mod parallel_parity_tests {
     use rayon::prelude::*;
     use std::collections::HashMap;
 
-    /// The skylight bake may run on worker/rayon threads in tools and tests, so
-    /// it must be deterministic: same blocks -> byte-identical band, regardless
-    /// of thread or repetition (guards the per-thread `SKY_SCRATCH` being fully
-    /// reset each call and the flood being order-independent).
     #[test]
     fn skylight_bake_is_deterministic_serial_vs_parallel() {
         let seed = 0x1234_5678u32;
@@ -30,14 +22,12 @@ mod parallel_parity_tests {
         let serial: Vec<(Box<[u8]>, i32, i32)> =
             chunks.iter().map(compute_chunk_skylight).collect();
 
-        // Same chunk baked twice back-to-back on one thread -> identical (scratch reset).
         for (c, s) in chunks.iter().zip(&serial) {
             let again = compute_chunk_skylight(c);
             assert_eq!(&again.0[..], &s.0[..]);
             assert_eq!((again.1, again.2), (s.1, s.2));
         }
 
-        // Parallel bake (mirrors World::poll) -> byte-identical to serial.
         let parallel: Vec<(Box<[u8]>, i32, i32)> =
             chunks.par_iter().map(compute_chunk_skylight).collect();
         for (p, s) in parallel.iter().zip(&serial) {
@@ -57,8 +47,6 @@ mod parallel_parity_tests {
             .flat_map(|cz| (-2..=2).map(move |cx| (cx, cz)))
             .collect();
 
-        // Generated columns + their baked skylight bands, the light source for
-        // every section meshed below.
         struct LitColumn {
             chunk: Chunk,
             band: Box<[u8]>,
@@ -94,8 +82,6 @@ mod parallel_parity_tests {
             })
             .collect();
 
-        // Split every generated column into its surface sections — the unit the
-        // live mesh pool builds.
         let sections: Vec<(SectionPos, Section)> = coords
             .iter()
             .flat_map(|&(cx, cz)| {
@@ -174,7 +160,6 @@ mod parallel_parity_tests {
     }
 }
 
-/// Every stream of two meshes, byte for byte.
 fn assert_same_mesh(a: &ChunkMesh, b: &ChunkMesh, what: &str) {
     let verts = |v: &[Vertex]| bytemuck::cast_slice::<Vertex, u8>(v).to_vec();
     assert_eq!(verts(&a.opaque), verts(&b.opaque), "{what}: opaque");
@@ -212,10 +197,6 @@ fn assert_same_mesh(a: &ChunkMesh, b: &ChunkMesh, what: &str) {
     assert_eq!(a.mesh_dirty, b.mesh_dirty, "{what}: dirty flag");
 }
 
-/// The exposure-mask fast path (buried rows skipped, cube faces culled from
-/// bitsets) and the per-face cull (every cube face asks its front cell) must
-/// mesh the showcase identically — slabs, snow seals, glass, fluids at the
-/// pad's top face, coloured light and cross-seam transitions included.
 #[test]
 fn exposure_masks_match_the_per_face_cull_on_the_showcase() {
     let (section, scene) = fixtures::showcase();
@@ -244,8 +225,6 @@ fn exposure_masks_match_the_per_face_cull_on_the_showcase() {
     assert_same_mesh(&fast, &scene.mesh_per_face(&section, pos), "showcase");
 }
 
-/// The same parity over real generated terrain: surface, water, foliage and
-/// the buried rows the masks exist to skip.
 #[test]
 fn exposure_masks_match_the_per_face_cull_on_generated_terrain() {
     for (pos, section, scene) in fixtures::generated_sections() {
@@ -257,8 +236,6 @@ fn exposure_masks_match_the_per_face_cull_on_generated_terrain() {
     }
 }
 
-/// A small deterministic generator (xorshift64*): the parity property runs
-/// the same random sections on every platform and every run.
 struct Rng(u64);
 
 impl Rng {
@@ -274,7 +251,6 @@ impl Rng {
     }
 }
 
-/// A stable per-cell hash for the random scene's neighbour shell.
 fn cell_hash(seed: u64, x: i32, y: i32, z: i32) -> u64 {
     let mixed = seed
         ^ (x as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15)
@@ -283,10 +259,6 @@ fn cell_hash(seed: u64, x: i32, y: i32, z: i32) -> u64 {
     Rng(mixed | 1).next()
 }
 
-/// One random section at the origin and the scene around it: a mix of air,
-/// plain terrain and ANY registered block (so every render family meets
-/// every other), fluids at random levels, and a neighbour shell with random
-/// blocks, skylight, coloured block light, gaps in loadedness and dyed cells.
 fn random_scene(seed: u64) -> (Section, fixtures::Scene) {
     let all: Vec<Block> = Block::all().to_vec();
     let common = [
@@ -376,8 +348,6 @@ fn random_scene(seed: u64) -> (Section, fixtures::Scene) {
     (section, scene)
 }
 
-/// Property: on random sections the fast path and the per-face cull agree
-/// byte for byte on every stream.
 #[test]
 fn exposure_masks_match_the_per_face_cull_on_random_sections() {
     let pos = SectionPos::new(0, 0, 0);
@@ -391,9 +361,6 @@ fn exposure_masks_match_the_per_face_cull_on_random_sections() {
     }
 }
 
-/// The public closure front end lowers onto the pad exactly like the live
-/// mesh pool's assembler: meshing the showcase through `build_section_mesh`
-/// equals meshing a pad assembled by hand from the same reads.
 #[test]
 fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
     const PAD: usize = SECTION_SIZE + 2;

@@ -5,174 +5,77 @@ use petramond_math::math::{IVec3, Tilt};
 
 use super::{ItemSlotWire, Transform};
 
-// Per-tick world deltas are world-owned (see `world::replication`).
 pub use crate::world::replication::{BlockDelta, BlockDrawDelta, CellKvDelta};
 
-/// One live mob's replicated state as of the batch's tick — everything the
-/// client's `MobPresentation` needs except light (client-sampled at `pos`).
-/// The client store keeps the previous batch's row per id and interpolates
-/// prev→curr, exactly as the renderer interpolates `Instance::prev_*`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MobStateRow {
-    /// Stable mob identity (`Instance::id`).
     pub id: u64,
-    /// Wire mob id (`Mob.0` on the server).
     pub kind_id: u8,
     pub pos: petramond_math::world_pos::WorldPos,
     pub yaw: f32,
-    /// Body tilt inside the yaw; level for every body the engine moves itself.
     pub tilt: Tilt,
     pub anim_time: f32,
     pub moving: bool,
     pub idle_anim: Option<u8>,
     pub head_yaw: f32,
     pub head_pitch: f32,
-    /// Hurt-flash SOURCE state (the instance's remaining hurt timer, seconds).
-    /// The presentation flash is derived from consecutive rows client-side
-    /// (`mob::hurt_flash01`), never shipped pre-derived.
     pub hurt_timer: f32,
     pub dead: bool,
     pub shorn: bool,
-    /// ATTACHED particle-emitter bundle ids (wire `particle_emitters.json`
-    /// catalog ids, up to four). The client derives the particle rows and any
-    /// body tint from its own catalog after the remap, so a few bytes
-    /// replicate the whole effect.
     pub emitters: Vec<u8>,
-    /// Active body-condition stages `(condition id, stage)` in id order, the
-    /// same shape a player row ships; the client resolves their emitters.
     pub conditions: Vec<(u8, u8)>,
-    /// ACTIVE named model animations as `(name, phase)` pairs
-    /// (`Instance::active_anims`, ≤ 4, sorted by name): each layer's phase is
-    /// SELF-CLOCKED server-side (mods drive the rate), so a paused oar's
-    /// phase simply stops advancing and the client interpolates phases
-    /// between rows like positions. Names are MODEL-LOCAL (no registry, no
-    /// numeric id) — no remap; unknown names draw nothing. Empty for every
-    /// mob without mod animations, so the common row pays one length byte.
     pub anims: Vec<(String, f32)>,
-    /// Per-bone ragdoll pose (pivot position, orientation quaternion) as of
-    /// this tick — present only while the death ragdoll plays (bounded), so
-    /// live mobs pay nothing for it.
     pub ragdoll: Option<Vec<([f32; 3], [f32; 4])>>,
-    /// The block this mob is digging and the crack stage it has reached
-    /// (`0..BREAK_STAGES`), while it digs.
     pub dig: Option<(petramond_math::math::IVec3, u8)>,
-    /// Wire item ids drawn in the mob's main and off hands (see
-    /// `MobHeldDisplay`), remapped like every item id.
     pub held: [Option<u16>; 2],
-    /// The draw set the body wears (see `SetMobDraw`); names, so no remap.
     pub draw: crate::world::draw::BodyDraw,
 }
 
-/// One dropped item entity's replicated state as of the batch's tick — the
-/// `DroppedItemPresentation` fields minus light (client-sampled at `pos`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ItemStateRow {
-    /// Stable per-spawn identity (`DroppedItem::id`).
     pub id: u64,
-    /// Wire item id.
     pub item_id: u16,
     pub count: u8,
-    /// Canonical instance-data blob (`None` = plain stack) — see
-    /// [`super::ItemSlotWire::data`].
     pub data: Option<Vec<u8>>,
     pub pos: petramond_math::world_pos::WorldPos,
     pub spin: f32,
-    /// `[yaw, pitch, speed]` of an item in flight or lodged in a block —
-    /// drawn pointing that way (a fast one trailing its path), no spin, no
-    /// bob; speed is 0 once lodged. `None` for a loose stack.
     pub flight: Option<[f32; 3]>,
 }
 
-/// One connected player's replicated state as of the batch's tick — sent for
-/// every session in the recipient's interest, which always includes the
-/// recipient itself; the client skips its OWN row for the body (the local
-/// body renders from the predicted player) but reads its mount. Light is
-/// client-sampled at `pos`, like mobs and items.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerStateRow {
-    /// Visible body-condition stages `(condition id, stage)`, independent of
-    /// status effects.
     pub conditions: Vec<(u8, u8)>,
     pub id: PlayerId,
-    /// `pos` is the feet position (the body model's `y = 0`).
     pub transform: Transform,
     pub on_ground: bool,
     pub sneaking: bool,
     pub sleeping: bool,
-    /// The lying head yaw while sleeping (base→pillow cell of the session's
-    /// bed), computed server-side against the authoritative model group so a
-    /// client without that section still poses the sleeper right.
     pub sleep_yaw: Option<f32>,
     pub alive: bool,
-    /// False hides the body entirely: spectators and the dead.
     pub visible: bool,
-    /// Selected hotbar item (wire item id); `None` for an empty hand.
     pub held_item: Option<u16>,
-    /// The held stack's canonical instance-data blob (`None` = plain) — so
-    /// observers tint the remote body's held item.
     pub held_data: Option<Vec<u8>>,
-    /// Off-hand item (wire item id); `None` for an empty off-hand. Drives the
-    /// remote body's LEFT-hand held item, exactly like `held_item` drives the
-    /// right.
     pub off_hand_item: Option<u16>,
-    /// The off-hand stack's canonical instance-data blob (`None` = plain).
     pub off_hand_data: Option<Vec<u8>>,
-    /// The in-progress mining target + crack stage (0..=9). Drives the remote
-    /// body's looping arm swing (`is_some()`) AND the remote break (crack)
-    /// overlay every observer renders. The recipient's OWN crack overlay is
-    /// client-owned (its local mining timer) and never ships back to it.
     pub mining: Option<(IVec3, u8)>,
-    /// Mid-eat — drives the remote chew pose (progress is approximated
-    /// client-side; only the blend/nibble channels pose the body).
     pub eating: bool,
-    /// The in-progress eat consumes from the OFF hand — the remote body
-    /// raises the left arm to the mouth instead of the right.
     pub eating_off_hand: bool,
-    /// The resolved held-item pose per hand: composed onto that hand's item by
-    /// every recipient, so an observer sees the same guard the wielder does.
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
-    /// What each hand DISPLAYS in place of its stack's art (`[main, off]`,
-    /// wire item ids) — a bow drawn through its pull frames on somebody
-    /// else's body. `None` = the stack's own.
     pub held_display: [Option<u16>; 2],
-    /// The resolved rig-bone offsets — what makes a raised arm visible on
-    /// somebody else's body. Empty on ordinary rows.
-    ///
-    /// Rig IDS, not names: this row ships for every tracked player every
-    /// tick, and a bone name is authoring vocabulary with no business on the
-    /// wire.
     pub bone_poses: Vec<crate::player::BonePose>,
-    /// The resolved animator claims on this body's OBSERVED rigs (params
-    /// set, slots played) — rig, graph and library ids, remapped by name at
-    /// the transport.
     pub animator: crate::player::AnimatorClaims,
-    /// The player took damage this tick window. Sessions track no hurt TIMER
-    /// (unlike `MobStateRow::hurt_timer`), so this ships the EDGE and each
-    /// client runs its own flash envelope — the same one as the local
-    /// third-person body's hurt flash.
     pub hurt_recent: bool,
-    /// This tick window TELEPORTED the player (sleep tuck, wake, respawn, mod
-    /// teleport — the same transform-drift detection that feeds
-    /// `SelfState::transform`): the client snaps interpolation instead of
-    /// lerping across the jump.
     pub snap: bool,
-    /// The mount this player is riding, or `None`. Clients GLUE a mounted body
-    /// (their own included) to the mount's seat pose instead of lerping the
-    /// row transform, so rider and mount can never visibly separate.
     pub mount: Option<PlayerMount>,
 }
 
-/// Wire form of a player's seat attachment.
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum PlayerMount {
     Mob {
         id: u64,
         seat: u8,
     },
-    /// A static pose anchor: fixed world position, body yaw (player
-    /// convention), and the named pose (`mod_api::pose`; unknown values
-    /// render the rest pose).
     Anchor {
         pos: petramond_math::world_pos::WorldPos,
         yaw: f32,
@@ -193,54 +96,28 @@ impl PlayerMount {
     }
 }
 
-/// One-shot remote-player events, broadcast alongside the state rows as
-/// `(player, kind)` pairs — the wire form of that session's lossy
-/// `PlayerTickEvents` one-shots. Every animated gesture — the engine's own
-/// swings, breaks, places, interacts and throws included — is an
-/// [`Animator`](Self::Animator) row: a graph event index on a rig, remapped
-/// by name at the transport.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerActionKind {
     Died,
     Respawned,
-    /// A graph event fired on one of this body's rigs — by the engine's
-    /// gesture table (`player::one_shot`) or a mod's
-    /// `FirePlayerAnimatorEvent`; every mirror's animator answers it. Only
-    /// OBSERVED rigs' events ride here.
     Animator {
         rig: crate::player::RigId,
         event: u16,
     },
 }
 
-/// A server-authoritative transform correction: this pump's fixed ticks moved
-/// the recipient's player (bed tuck, wake/respawn teleport, mod `Teleport`,
-/// mob-strike knockback) — the session transform no longer matches the last
-/// CLIENT-REPORTED one. Carries the full transform; the client adopts the
-/// fields that differ from what it last SENT (per-field, so its newer
-/// per-frame look/movement is not stomped by an echo of an older frame).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelfTransform {
     pub transform: Transform,
     pub on_ground: bool,
 }
 
-/// The recipient's OWN replicated player state: everything the HUD, hand, and
-/// overlays read (health/effects/inventory/mining/eating/sleeping). Sent with
-/// every `TickUpdate`; the inventory body rides only when its revision moved
-/// (and always on the first update after join).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelfState {
-    /// Active body-condition stages `(condition id, stage)`.
     pub conditions: Vec<(u8, u8)>,
-    /// Health in half-heart points.
     pub health: i32,
-    /// `PlayerMode` wire value, including creative walking and flight.
     pub mode: u8,
-    /// Active status effects as (wire effect id, remaining ticks), in
-    /// application order.
     pub effects: Vec<(u8, u32)>,
-    /// The server-side inventory mutation counter `inventory` was sampled at.
     pub inventory_revision: u64,
     /// All 36 slots in index order, then the cursor stack, then the off-hand
     /// stack LAST (the `SelfRestore` layout). `None` while the revision hasn't
@@ -251,51 +128,22 @@ pub struct SelfState {
     /// crack overlay is the local timer) — echoing them back would replay or
     /// stomp the client's own newer state.
     pub inventory: Option<Vec<Option<ItemSlotWire>>>,
-    /// The in-progress eat's progress, 0-255 over the food's eat time.
     pub eating: Option<u8>,
-    /// The in-progress eat consumes from the OFF hand — the client animates
-    /// the left hand carrying the food. Meaningless while `eating` is `None`.
     pub eating_off_hand: bool,
-    /// The in-progress sleep's fade progress, 0-255 (clamped at full).
     pub sleeping: Option<u8>,
-    /// The in-progress sleep's bed base (foot) cell — the client derives the
-    /// lying body's head yaw from it. `None` while awake.
     pub sleep_bed: Option<IVec3>,
-    /// The resolved body-level land-speed scale — adopted onto the predicted
-    /// player beside the effect list, since the same movement code reads it
-    /// every step. Mirrored, not predicted: a scalar a batch late is
-    /// imperceptible.
     pub move_scale: f32,
-    /// The resolved flight-speed scale, mirrored the same way.
     pub fly_scale: f32,
-    /// The resolved set of actions barred on this body. Rides the RECIPIENT's
-    /// own state, not the shared player rows: what a body may do is not
-    /// presentation, so no observer needs it — but the owner's client does, or
-    /// it goes on predicting actions the server will refuse.
     pub denied_actions: crate::player::DeniedActions,
-    /// The AUTHORITATIVE held-item pose for the owner's own hands, which a
-    /// client running the same rule overrides locally until it arrives.
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
-    /// The AUTHORITATIVE hand displays (`[main, off]`, wire item ids), which
-    /// a client running the same rule overrides locally.
     pub held_display: [Option<u16>; 2],
-    /// The AUTHORITATIVE rig-bone offsets for this body, as rig IDS, which a
-    /// client running the same rule overrides per bone locally.
     pub bone_poses: Vec<crate::player::BonePose>,
-    /// The resolved animator claims on EVERY rig of this body (params set,
-    /// slots played) — rig, graph and library ids, remapped by name at the
-    /// transport.
     pub animator: crate::player::AnimatorClaims,
-    /// A transform correction when the ticks moved this player (see
-    /// [`SelfTransform`]); `None` on ordinary updates.
     pub transform: Option<SelfTransform>,
 }
 
 impl SelfState {
-    /// This state over an older one of the same player, as one state: the
-    /// inventory rides only when it changed, so an absent one is the older
-    /// one's. A correction is an event, never state, so it is dropped.
     pub fn over(self, older: Option<SelfState>) -> SelfState {
         let inventory = self.inventory.or_else(|| older.and_then(|o| o.inventory));
         SelfState {
@@ -306,58 +154,42 @@ impl SelfState {
     }
 }
 
-/// One world-anchored event a tick produced, broadcast to every observer
-/// (positional presentation: break bursts, door swings, positional sounds).
-/// Registry ids (`block_id`/`kind_id`/`sound_id`) are wire ids, remapped at
-/// the transport boundary like every other id field.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum WorldEventMsg {
     BlockBroken {
         pos: IVec3,
         block_id: u16,
-        /// The mined face (directional burst spread), when known.
         normal: Option<IVec3>,
-        /// The cell's `petramond:tint` at break time (burst fleck tint).
         tint: Option<[u8; 3]>,
     },
     BlockPlaced {
         pos: IVec3,
         block_id: u16,
     },
-    /// A hinged panel toggled: the cell its swing is keyed on (a door's LOWER
-    /// half, a trapdoor's own cell) + its NEW open state.
     PanelToggled {
         anchor: IVec3,
         open: bool,
     },
-    /// A chest's viewer count crossed 0→1 (first screen opened on it).
     ChestOpened {
         pos: IVec3,
     },
-    /// A chest's viewer count crossed 1→0 (last screen closed on it).
     ChestClosed {
         pos: IVec3,
     },
-    /// A player collected at least one drop this tick, at their body centre.
     ItemPickedUp {
         pos: petramond_math::world_pos::WorldPos,
         by: PlayerId,
     },
-    /// A semantic mob sound (hurt/death); the client resolves the species hook.
     MobSound {
         mob_id: u64,
         kind_id: u8,
-        /// `MobSoundCategory` discriminant.
         category: u8,
         pos: petramond_math::world_pos::WorldPos,
     },
-    /// A one-shot sound (`EmitSound`); `pos = None` is non-spatial.
     Sound {
         sound_id: u8,
         pos: Option<petramond_math::world_pos::WorldPos>,
     },
-    /// A one-shot particle burst (a `particle_emitters.json` burst bundle by
-    /// wire catalog id) at `pos` — e.g. the water splash.
     EmitterBurst {
         emitter_id: u8,
         pos: petramond_math::world_pos::WorldPos,
@@ -365,11 +197,9 @@ pub enum WorldEventMsg {
         direction: Option<[f32; 3]>,
         texture: Option<BurstTextureMsg>,
     },
-    /// A handle-addressed spatial sound command (`SoundPlayAt`/`OnMob`/`Stop`).
     SpatialSound(SpatialSoundMsg),
 }
 
-/// [`crate::events::tick::SpatialSoundCommand`] on the wire (sound ids as wire ids).
 #[derive(Copy, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SpatialSoundMsg {
     PlayAt {
@@ -385,13 +215,11 @@ pub enum SpatialSoundMsg {
         mob_id: u64,
         volume: f32,
         pitch: f32,
-        /// The mob position at emission (fallback if it despawns client-side).
         last_pos: petramond_math::world_pos::WorldPos,
     },
     Stop {
         handle: u64,
     },
-    /// Retune a live handle in place (`SoundSet`).
     Set {
         handle: u64,
         volume: f32,
@@ -399,25 +227,18 @@ pub enum SpatialSoundMsg {
     },
 }
 
-/// Which screen the server opened for the recipient this tick (the menu
-/// session is already open server-side; the client shows the matching screen).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum OpenScreen {
-    /// A GUI session opened for the recipient — engine containers and mod
-    /// GUIs ride the one lane. `kind_key` is the registered kind's stable
-    /// string key (GuiKind ids are process-local, so the wire speaks keys);
-    /// `anchor` is the block or mob the session was opened on, if any.
     Gui {
         kind_key: String,
         anchor: Option<crate::menu::MenuAnchor>,
     },
-    /// The sleep overlay (bed interaction).
     Sleep,
 }
 
 /// The recipient's own lossy per-tick one-shots: hand jabs, hurt/death,
-/// screen opens — everything that used to ride `PlayerTickEvents` plus the
-/// session's `request_open_gui`/`request_open_sleep` outbox. `broke_block`/`placed_block` carry wire
+/// screen opens, and the session's `request_open_gui`/`request_open_sleep`
+/// outbox. `broke_block`/`placed_block` carry wire
 /// block ids (they pick the client's hand animation + sound mapping).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SelfEvents {
@@ -437,36 +258,13 @@ pub struct SelfEvents {
     pub respawned: bool,
     pub open_screen: Option<OpenScreen>,
     pub close_document_gui: bool,
-    /// The door toggle's NEW open state — only the TOGGLER gets this one-shot
-    /// (the world-anchored `PanelToggled` event reaches every observer).
     pub toggled_panel: Option<bool>,
-    /// A use click was CONSUMED server-side (mod-cancelled item use / block
-    /// interact) but the initiator's own jab verdict was silent — play the
-    /// hand jab now. See the header note on the no-echo rule.
     pub used_unpredicted: bool,
-    /// The unpredicted consumption above acted from the OFF hand (the
-    /// use-click ladder's second pass) — the jab plays on the left hand.
-    /// Meaningless while `used_unpredicted` is false.
     pub used_unpredicted_off: bool,
-    /// Graph events a SERVER mod fired on the recipient's own rigs this
-    /// window (`FirePlayerAnimatorEvent`), in emission order — the one hand
-    /// one-shot that IS echoed, because a server-only mod has no other way
-    /// to reach the local viewmodel; a client mod that fired the same event
-    /// itself drops the echo (its latch, like a predicted pose).
     pub animator_events: Vec<(crate::player::RigId, u16)>,
-    /// Cues addressed at this recipient's CLIENT instance (`EmitEventTo`), in
-    /// emission order. The one NON-lossy lane here: the booleans above are
-    /// latched states the newest overwrites, these are a queue.
-    ///
-    /// No registry ids ride here — the key is a namespaced string and the
-    /// payload is bytes only its owner reads — so this lane needs no remap.
     pub client_events: Vec<ClientEventMsg>,
 }
 
-/// One addressed event on the wire (`EmitEventTo`): a namespaced key and its
-/// opaque payload. The key carries its owner's prefix (the host guards that at
-/// the call), which is also how the receiving client routes it — so no
-/// separate owner id rides along.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientEventMsg {
     pub key: String,
@@ -474,8 +272,6 @@ pub struct ClientEventMsg {
 }
 
 impl SelfEvents {
-    /// Fold another batch's one-shots in (booleans OR, options latest-wins) —
-    /// used client-side if more than one `TickUpdate` lands in a frame.
     pub fn merge_from(&mut self, other: SelfEvents) {
         self.picked_up_item |= other.picked_up_item;
         self.bed_interacted |= other.bed_interacted;
@@ -495,17 +291,12 @@ impl SelfEvents {
     }
 }
 
-/// The server-wide sleep headcount a [`TickUpdate`] carries: player rows only
-/// reach recipients that track the player, but the overlay counts everyone.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SleepTally {
     pub sleeping: u16,
     pub connected: u16,
 }
 
-/// What a fired burst's particles are cut from. A tile travels by NAME (tiles
-/// have no wire ids, and a burst is a rare event); a block by its wire id,
-/// remapped like every block id.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BurstTextureMsg {
     Tile {

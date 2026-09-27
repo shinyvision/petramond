@@ -1,8 +1,3 @@
-//! Multi-axis climate classification for the staged surface worldgen rewrite.
-//!
-//! This module classifies a sampled climate vector from the density graph into
-//! a final game-facing [`Biome`] without shaping terrain or placing blocks.
-
 use crate::density::terrain::channels;
 use crate::graph::{SamplePoint, ScalarGraph};
 use petramond_world::biome::Biome;
@@ -15,8 +10,6 @@ pub const CLIMATE_SAMPLE_CELL_Z: i32 = 4;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ClimateAxis {
-    /// Read by the sea-ice pass (`density::surface::waterline_block`), besides
-    /// the classifier's rectangle machinery.
     Temperature,
     #[cfg(test)]
     Humidity,
@@ -99,10 +92,6 @@ impl SurfaceClimate {
         })
     }
 
-    /// Bilinear blend of four corner climates (`fx`/`fz` in `0..1` from the
-    /// `00` corner). Used to smooth per-4×4-cell climate samples up to per-column
-    /// resolution — valid because climate is low-frequency, so a 4-block span is
-    /// near-linear.
     pub fn bilerp(c00: Self, c10: Self, c01: Self, c11: Self, fx: f32, fz: f32) -> Self {
         let mut axes = [0.0f32; SURFACE_AXIS_COUNT];
         for (i, axis) in axes.iter_mut().enumerate() {
@@ -125,8 +114,6 @@ impl SurfaceClimate {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ClimateRect {
     axes: [AxisRange; SURFACE_AXIS_COUNT],
-    /// A flat additive fitness penalty (added as `offset²`) used to bias ties
-    /// toward the intended biome. Defaults to 0; rarely nonzero.
     offset: f32,
 }
 
@@ -149,7 +136,6 @@ impl ClimateRect {
         self
     }
 
-    /// The five axis ranges, in [`SurfaceClimate`] axis order.
     pub const fn axis_ranges(self) -> [AxisRange; SURFACE_AXIS_COUNT] {
         self.axes
     }
@@ -183,25 +169,18 @@ pub struct BiomeClimateEntry<'a> {
     pub rectangles: &'a [ClimateRect],
 }
 
-/// Bin count for the per-axis containment buckets (power of two; the axes are
-/// normalized to roughly `[-1, 1]`, and the end bins absorb out-of-range values).
 const AXIS_BIN_COUNT: usize = 64;
 
 #[derive(Clone, Debug)]
 pub struct BiomeClimateIndex {
     rects: Vec<IndexedRect>,
-    /// Per row, the bounds its containment test reads (parallel to `rects`).
     containment: Vec<Containment>,
-    /// Ordered row indices whose VARIANCE range intersects each bin of the
-    /// normalized `[-1, 1]` variance axis. A containing rect must contain the
-    /// query's variance value, so it provably appears in the query's bin — the
-    /// containment scan walks only that bin's rows (in table order) instead of
-    /// the whole table. The surface table is organized as variance slices, so
-    /// this axis discriminates best.
+    /// Row indices per bin of the normalized `[-1, 1]` variance axis - a rect matching the query
+    /// always sits in the query's bin, so we skip scanning the rest. Table is split on variance
+    /// since that axis discriminates best.
     variance_bins: Vec<Vec<u32>>,
 }
 
-/// The variance-axis bin holding `value` (end bins absorb out-of-range).
 fn axis_bin(value: f32) -> usize {
     let t = (f64::from(value) + 1.0) / 2.0 * AXIS_BIN_COUNT as f64;
     (t.floor().max(0.0) as usize).min(AXIS_BIN_COUNT - 1)
@@ -231,9 +210,6 @@ impl BiomeClimateIndex {
         Self::from_indexed(rects)
     }
 
-    /// Build from a flat, ordered list of `(rectangle, biome)` rows. Row order is
-    /// the only tiebreak between equal-fitness rectangles, so the caller's ordering
-    /// is preserved verbatim (unlike `Self::new`, which groups by biome first).
     pub fn from_rects(rows: &[(ClimateRect, Biome)]) -> Self {
         let rects = rows
             .iter()
@@ -254,8 +230,6 @@ impl BiomeClimateIndex {
         for (i, rect) in rects.iter().enumerate() {
             let range = rect.rect.axes[variance_axis];
             let (lo, hi) = (range.min.min(range.max), range.min.max(range.max));
-            // End bins are unbounded: a range touching an edge value lands in
-            // the same bin any out-of-range query value quantizes to.
             for (bin, rows) in variance_bins.iter_mut().enumerate() {
                 let bin_lo = -1.0 + bin as f32 * (2.0 / AXIS_BIN_COUNT as f32);
                 let bin_hi = bin_lo + 2.0 / AXIS_BIN_COUNT as f32;
@@ -278,8 +252,6 @@ impl BiomeClimateIndex {
         }
     }
 
-    /// The surface placement index loaded from `climate_table.json` (see
-    /// [`crate::data::climate_table`]).
     pub fn default_surface() -> &'static Self {
         &crate::data::climate_table::table().index
     }
@@ -289,31 +261,13 @@ impl BiomeClimateIndex {
         self.rects.is_empty()
     }
 
-    /// Nearest-rect classification: lowest fitness distance, ties broken by
-    /// stable `(entry_order, order)` — i.e. table row order.
-    ///
-    /// The scan runs the rows IN ORDER, so the first exact containment
-    /// (`distance == 0`) is the final winner and returns immediately: a later
-    /// rect can at best tie at 0, and ties prefer the earlier row. The
-    /// surface table covers the whole climate space, so nearly every query
-    /// takes this early exit — a KD-tree over the rows was measurably SLOWER
-    /// here, because the heavily overlapping rows give most nodes
-    /// distance-0 bounds (no pruning) and the spatial visit order defeats
-    /// the order-tiebreak early exit. Byte-parity with the exhaustive scan
-    /// is pinned by `index_matches_bruteforce_for_surface_queries`.
     pub fn classify_surface(&self, climate: SurfaceClimate) -> Option<Biome> {
-        // Containment pass over the query's variance bin only: any rect
-        // containing the query contains its variance value, so it is in this
-        // bin's list; the list preserves table order, making the first
-        // distance-0 hit the global tie-break winner.
         let bin = &self.variance_bins[axis_bin(climate.axes[SURFACE_AXIS_COUNT - 1])];
         for &i in bin {
             if self.containment[i as usize].contains(&climate.axes) {
                 return Some(self.rects[i as usize].biome);
             }
         }
-        // No containing rect anywhere: exhaustive nearest scan (rare — the
-        // surface table covers the climate space nearly everywhere).
         let mut best = Candidate::none();
         for rect in &self.rects {
             best.consider(rect, rect.rect.distance_squared(climate));
@@ -331,9 +285,6 @@ impl BiomeClimateIndex {
     }
 }
 
-/// `rect.distance_squared(climate) == 0.0` without the distance: every axis
-/// holds the value (a NaN value counts as held, as the distance reads it) and
-/// the row carries no offset penalty.
 #[derive(Copy, Clone, Debug)]
 struct Containment {
     lo: [f32; SURFACE_AXIS_COUNT],
@@ -382,9 +333,6 @@ impl Candidate {
         }
     }
 
-    // The `offset` penalty lives inside `distance` (added as offset²), so the
-    // fitness total already encodes any biome bias; equal totals break by stable
-    // insertion order only.
     fn consider(&mut self, rect: &IndexedRect, distance: f64) {
         if distance < self.distance
             || (distance == self.distance
@@ -406,7 +354,6 @@ pub struct ClimateSampleCell {
 }
 
 impl ClimateSampleCell {
-    /// Raw cell coordinates, for world-anchored memo keys.
     pub fn coords(self) -> (i32, i32, i32) {
         (self.x, self.y, self.z)
     }
@@ -419,8 +366,6 @@ impl ClimateSampleCell {
         }
     }
 
-    /// A surface cell from its grid indices directly (the inverse of dividing a
-    /// world coordinate by the cell size). Used to address interpolation corners.
     pub const fn at_surface_indices(x: i32, z: i32) -> Self {
         Self { x, y: 0, z }
     }
@@ -619,8 +564,6 @@ mod tests {
         ]);
         let climate = SurfaceClimate::new(0.0, 0.0, 0.0, 0.0, 0.0);
 
-        // Both rectangles contain the sample (zero range-distance), but BROAD carries
-        // an `offset` penalty, so the unpenalized biome wins.
         assert_eq!(index.classify_surface(climate), Some(Biome::MEADOW));
         assert_eq!(
             index.classify_surface_bruteforce(climate),

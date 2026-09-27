@@ -11,11 +11,8 @@ struct SkyScratch {
 }
 
 thread_local! {
-    /// Reusable skylight scratch (the medium buffer, sky-reached flags, and the
-    /// Dijkstra step costs/queues), kept per worker thread so the per-chunk
-    /// flood-fill doesn't churn the allocator across thousands of streaming mesh
-    /// builds. Cleared each use; the result buffer (`light2`) is allocated fresh
-    /// since it outlives the solve.
+    /// Skylight scratch, one per worker thread, so thousands of streamed mesh builds don't keep
+    /// reallocating it. `light2` isn't in here because it outlives the solve.
     static SKY_SCRATCH: RefCell<SkyScratch> = const {
         RefCell::new(SkyScratch {
             medium: Vec::new(),
@@ -52,36 +49,20 @@ thread_local! {
 // The neighbor-aware solve keeps the cached output local, but lets secondary
 // bleed step through loaded neighbor blocks before the center band is copied out.
 
-/// How far below the lowest surface to keep solving, so overhang/cave-mouth spill
-/// light is captured. Anything deeper just floors to the dark minimum.
 const LIGHT_MARGIN_DOWN: i32 = 24;
 
-/// Horizontal halo used by the world bake. Normal air/water bleed costs two x2
-/// light units per block, so every possible one-level-per-block cross-border
-/// source fits inside the immediate loaded neighbor chunks.
 const LIGHT_HALO_CHUNKS: i32 = 1;
 
-// Medium codes for the flood buffer.
-const M_AIR: u8 = 0; // descent keeps the running rate; horizontal step costs 1 level
-const M_LEAF: u8 = 1; // canopy: sets descent rate >= 0.5/block; horizontal step costs 0.5
-const M_WATER: u8 = 2; // water: sets descent rate to 1/block; horizontal step costs 1
-const M_OPAQUE: u8 = 3; // full cube: blocks light, breaks sky shafts
+const M_AIR: u8 = 0;
+const M_LEAF: u8 = 1;
+const M_WATER: u8 = 2;
+const M_OPAQUE: u8 = 3;
 
-/// Compute a standalone skylight band for `chunk` from its own blocks. Returns
-/// the flat band buffer (x2 light, indexed like blocks with Y offset by `ylo`)
-/// plus the band `[ylo, yhi]`. Pure integer flood-fill, order-independent ->
-/// deterministic. Reuses per-thread scratch.
-///
-/// Test-only: live meshing uses [`compute_chunk_skylight_with_neighbors`]; this
-/// neighbour-free variant only sets up skylight in unit tests of other code.
 #[cfg(test)]
 pub fn compute_chunk_skylight(chunk: &Chunk) -> (Box<[u8]>, i32, i32) {
     compute_chunk_skylight_inner(chunk, 0, |_, _| None)
 }
 
-/// Compute the skylight band for `chunk`, allowing horizontal flood light to
-/// move through currently loaded neighbor chunks. Missing neighbors are treated
-/// as closed boundaries, so unloaded terrain cannot inject temporary cave light.
 pub fn compute_chunk_skylight_with_neighbors<'a>(
     chunk: &'a Chunk,
     neighbour_chunk: impl Fn(i32, i32) -> Option<&'a Chunk>,
@@ -112,9 +93,6 @@ fn compute_chunk_skylight_inner<'a>(
         }
     }
 
-    // Vertical band from the loaded solve area. A tall neighbor must raise the
-    // solve top, otherwise the halo could incorrectly seed light below that
-    // neighbor's unseen roof.
     let mut hmax = 0i32;
     let mut hmin = CHUNK_SY as i32 - 1;
     for c in chunk_grid.iter().flatten() {
@@ -135,9 +113,6 @@ fn compute_chunk_skylight_inner<'a>(
     let bh = (yhi - ylo + 1).max(1);
     let vol = (sx * sz * bh) as usize;
 
-    // Temporary buffers from per-thread scratch (medium, sky, and step are fully
-    // overwritten by the fill pass; buckets are cleared). The result band is
-    // allocated fresh.
     let (mut medium, mut sky, mut step, mut buckets) = SKY_SCRATCH.with(|s| {
         let mut s = s.borrow_mut();
         (
@@ -158,10 +133,6 @@ fn compute_chunk_skylight_inner<'a>(
         b.clear();
     }
     let mut light2 = vec![0u8; vol];
-    // Marks pass-1 cells whose direct vertical value is authoritative. Open sky
-    // and water-lit cells freeze here; leaf-covered cells remain fillable by pass
-    // 2 so a neighbouring skylight shaft bleeds into them like it does under an
-    // opaque roof, but at the leaf half-rate.
 
     let idx = |x: i32, ay: i32, z: i32| -> usize { ((ay * sz + z) * sx + x) as usize };
     let chunk_at = |rx: i32, rz: i32| -> Option<&Chunk> {
@@ -188,7 +159,7 @@ fn compute_chunk_skylight_inner<'a>(
             let owner = chunk_at(rx, rz);
             let mut blocked = false;
             let mut cur = SKY_FULL;
-            let mut rate = 0u8; // per-block descent attenuation, x2 (0 open / 1 leaf / 2 water)
+            let mut rate = 0u8;
             let mut wy = yhi;
             while wy >= ylo {
                 let m = match owner {
@@ -221,8 +192,6 @@ fn compute_chunk_skylight_inner<'a>(
                     if m == M_OPAQUE {
                         blocked = true;
                     } else {
-                        // Cover ratchets the rate up (water dominates leaves);
-                        // open air keeps whatever rate is already in effect.
                         rate = rate.max(match m {
                             M_WATER => 2,
                             M_LEAF => 1,
@@ -240,11 +209,9 @@ fn compute_chunk_skylight_inner<'a>(
         }
     }
 
-    // Pass 2: bucketed Dijkstra (bright -> dark) within the solved box. Normal
-    // covered neighbours cost 2, leaf-covered neighbours cost 1, and opaque
-    // cells are impassable. Frozen pass-1 cells still SOURCE light into enclosed
-    // neighbours but are never raised. Staleness check skips voxels already
-    // improved past their bucket. Final values are order-independent.
+    // Pass 2: bucketed Dijkstra, bright to dark, inside the solved box. Covered neighbours cost
+    // 2, leaf-covered ones 1, opaque is a wall. Frozen pass-1 cells still feed light into
+    // enclosed neighbours but never get raised themselves.
     let mut level = SKY_FULL as i32;
     while level >= 1 {
         while let Some(i) = buckets[level as usize].pop() {
@@ -284,7 +251,6 @@ fn compute_chunk_skylight_inner<'a>(
         level -= 1;
     }
 
-    // Hand the temporary buffers back for the next build on this thread.
     SKY_SCRATCH.with(|s| {
         let mut s = s.borrow_mut();
         s.medium = medium;

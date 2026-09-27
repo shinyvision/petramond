@@ -5,7 +5,6 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     let mut section = section_with(&[((8, 8, 8), Block::OakStairs)]);
     section.set_stair_facing(8, 8, 8, Facing::East);
 
-    // The layer below is fully sky-lit EXCEPT the cell directly under the stair.
     let m = mesh_with_sky(&section, |wx, wy, wz| {
         if wy == 7 && (wx, wz) != (8, 8) {
             SKY_FULL
@@ -26,9 +25,6 @@ fn stair_bottom_face_uses_the_dark_cell_below_not_smooth_sky_leak() {
     );
 }
 
-/// Every stair face carries cell-local UVs, and the exposed full bottom plane
-/// merges into ONE quad spanning one full tile — the underside must read as an
-/// uncut block face, not four restarted quadrants.
 #[test]
 fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
     use crate::vertex::UV_MODE_CELL_LOCAL;
@@ -66,11 +62,9 @@ fn stair_underside_is_one_full_tile_quad_with_cell_local_uvs() {
     );
 }
 
-/// The screenshot regression: a stair beside a wall must shade as one smooth
-/// gradient per plane. Same-position vertices of the same face kind must carry
-/// identical lighting and UVs (no seams inside a plane, including the L-shaped
-/// side faces), the tread top must be a single seam-free quad, and both top
-/// planes must darken toward the wall (the AO gradient survives, continuously).
+/// A stair next to a wall should shade as one smooth gradient per plane,
+/// with no seams even on the L-shaped sides. The tread top is a single quad, and both top planes
+/// still darken toward the wall.
 #[test]
 fn stair_plane_lighting_is_continuous_beside_a_wall() {
     let m = mesh_stairs(
@@ -82,12 +76,6 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         &[((8, 8, 8), Facing::South)],
     );
 
-    // Continuity: group the STAIR's own vertices (cell-local UVs — the wall's
-    // plain cube faces share exact corner positions with the stair box and are
-    // legitimately a different tile/format) by (position, face kind); every
-    // group must agree on both packed words (AO + sky light + block light +
-    // cell UV). Face kind is shade index plus the normal code, so coincident
-    // corners of differently-facing sub-quads never compare.
     let mut seen: std::collections::HashMap<([u32; 3], u32, u32), (u32, u32)> =
         std::collections::HashMap::new();
     for v in &m.opaque {
@@ -99,8 +87,6 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
             shade_idx(v),
             (v.packed2 >> 16) & 0x7,
         );
-        // Ignore the per-quad corner index (bits 8..10); everything else —
-        // tile, AO, sky light, block light, cell UV — must agree.
         let val = (v.packed & !(0x3 << crate::vertex::CORNER_SHIFT), v.packed2);
         if let Some(prev) = seen.insert(key, val) {
             assert_eq!(
@@ -122,10 +108,6 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
         "the tread top must merge into a single quad (no mid-face seam)"
     );
 
-    // Corner-for-corner at equal z (the riser crease's self-AO darkens BOTH
-    // x ends of the crease equally, so compare like corners, not plane-wide
-    // extremes): the wall side is never brighter, and strictly darker
-    // somewhere on each top plane.
     for plane_y in [8.5, 9.0] {
         let plane: Vec<_> = m
             .opaque
@@ -151,9 +133,6 @@ fn stair_plane_lighting_is_continuous_beside_a_wall() {
     }
 }
 
-/// A stair is a full block with a chunk cut out: a face plane the cut does not
-/// touch (the underside) must shade corner-for-corner like the same face of a
-/// full cube in an identical neighbourhood.
 #[test]
 fn stair_underside_shades_like_a_full_block_bottom() {
     let m = mesh_stairs(
@@ -214,28 +193,22 @@ fn stair_mesh_uses_resolved_outside_corner_shape() {
     );
 }
 
-/// A see-through neighbour cannot seal a DIFFERENT block's flush face: a
-/// cutout ladder panel mounted flat against a stair's side used to subtract
-/// that whole side away, showing a hole through the rungs. The stair's side
-/// profile is L-shaped, so its tread-edge corner at y = x.5 exists only on
-/// the stair's own emitted face (the ladder panel's corners are integral) —
-/// its presence proves the face survived. Same-block contact still culls
-/// (the glass/translucent convention), pinned by the existing pane/chain
-/// cull tests.
+/// A see-through neighbour can't seal a different block's flush face. A cutout ladder against a
+/// stair's side must leave that side visible through the rungs. The stair's
+/// L-shaped side has a tread-edge corner at y = x.5 that only its own face emits, so finding it
+/// proves the face survived. Same-block contact still culls.
 #[test]
 fn cutout_ladder_does_not_cull_the_stair_face_behind_it() {
     let m = mesh_stairs(
         &[
             ((8, 8, 8), Block::OakStairs),
-            // Panel hugs its own -X wall: flush against the stair's +X face.
             ((9, 8, 8), Block::LadderEast),
         ],
         &[((8, 8, 8), Facing::North)],
     );
-    // Only the stair owns +X-facing geometry on the x = 9 plane: the ladder's
-    // front face sits at x = 9 + thickness and its wall-side face is a `None`
-    // style (never emitted). Position filters alone are ambiguous here — the
-    // stair's own Z-face corners lie on this plane too.
+    // Only the stair faces +X on the x = 9 plane. The ladder's front sits at x = 9 + thickness,
+    // and its wall side has a `None` style, so it's never drawn. Position alone won't do here:
+    // the stair's own Z-face corners sit on this plane too.
     assert!(
         m.opaque
             .iter()

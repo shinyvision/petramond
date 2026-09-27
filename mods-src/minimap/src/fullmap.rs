@@ -1,14 +1,10 @@
-//! The `M` full-map modal canvas: a retained 6×6 slot grid of reusable
-//! 160×160 tile images, pan via the two-float view offset, mouse-wheel zoom,
-//! dirty-rect tile invalidation with blit-based partial updates, the
-//! native-resolution player sprite, and the pointer flow.
+//! Full-map modal: 6x6 grid, reusable 160x160 tiles, panned by float offset. Wheel zooms, dirty
+//! tiles blit-update, player sprite drawn native res.
 //!
-//! Zoom levels −2..=+2 render 0.5 / 1 / 2 (default) / 4 / 8 canvas pixels per
-//! block. Every level rasterizes explored cells natively — never by scaling a
-//! finished image. Tile images keep a fixed pixel size; their BLOCK coverage
-//! scales with zoom, so tile coordinates are zoom-scoped and a zoom change
-//! invalidates every cached slot. At the outermost level one pixel covers a
-//! 2×2-block cell whose color is the HSL average of its known blocks.
+//! Zoom levels -2..=+2 are 0.5/1/2(default)/4/8 canvas px per block, and every one rasterizes
+//! natively instead of scaling a finished image. Tile images stay fixed pixel size, so tile coords
+//! are per-zoom and switching zoom dumps the whole cache. At max zoom out a pixel is a 2x2 block
+//! cell, HSL-averaged.
 
 use crate::*;
 
@@ -23,8 +19,6 @@ const FULL_TILE_TEXT_RUN_MAX: usize = 256;
 pub(crate) const ZOOM_MIN: i8 = -2;
 pub(crate) const ZOOM_MAX: i8 = 2;
 
-/// Blocks per raster cell edge: 2 at the outermost zoom (one canvas pixel
-/// covers a 2×2-block cell), 1 everywhere else.
 pub(crate) fn cell_blocks(zoom: i8) -> i32 {
     if zoom <= -2 {
         2
@@ -33,7 +27,6 @@ pub(crate) fn cell_blocks(zoom: i8) -> i32 {
     }
 }
 
-/// Canvas pixels per raster cell edge.
 pub(crate) fn cell_px(zoom: i8) -> i32 {
     match zoom {
         i8::MIN..=-1 => 1,
@@ -47,21 +40,14 @@ pub(crate) fn blocks_per_pixel(zoom: i8) -> f32 {
     cell_blocks(zoom) as f32 / cell_px(zoom) as f32
 }
 
-/// World blocks covered by one full-map tile image edge at this zoom.
 pub(crate) fn full_tile_blocks(zoom: i8) -> i32 {
     FULL_TILE_SIZE as i32 / cell_px(zoom) * cell_blocks(zoom)
 }
 
-/// Raster work budget per sync, in output pixels (~12 tile images). Every
-/// level rasters with plain copies now (the outermost renders from
-/// write-time mips); the budget paces publish bursts so a grid fill spreads
-/// over ~3 frames instead of spiking one.
 fn raster_px_budget(_zoom: i8) -> usize {
     320_000
 }
 
-/// The source store one zoom level rasters from: base tiles (one cell per
-/// block) or, at the outermost level, mip tiles (one cell per 2×2 blocks).
 pub(crate) fn source_kind(zoom: i8) -> RegionKind {
     if cell_blocks(zoom) == 2 {
         RegionKind::Mip
@@ -73,13 +59,9 @@ pub(crate) fn source_kind(zoom: i8) -> RegionKind {
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq)]
 pub(crate) struct FullTileSlot {
     pub(crate) coord: Option<(i32, i32)>,
-    /// Tile-local block rect `[x0, z0, x1, z1)` whose raster is stale, or
-    /// `None` when the cached image is current. Repainted as one blit.
     pub(crate) dirty: Option<[i32; 4]>,
 }
 
-/// Fixed slot array behind a wrapper only because `Default` does not derive
-/// for arrays this long.
 pub(crate) struct FullTileSlots([FullTileSlot; FULL_TILE_SLOTS]);
 
 impl Default for FullTileSlots {
@@ -106,8 +88,6 @@ pub(crate) struct FullSceneStamp {
     pub(crate) bounds: [i32; 4],
     pub(crate) player: [u64; 2],
     pub(crate) zoom: i8,
-    /// Which visible grid positions have a rastered tile (budgeted rasters
-    /// and progressive loads complete across frames).
     pub(crate) present: u64,
 }
 
@@ -132,9 +112,6 @@ impl Minimap {
                 let slot = full_tile_slot(coord);
                 let cached = self.full_tile_slots[slot];
                 if cached.coord != Some(coord) {
-                    // Paint once: hold a slot's first raster until every
-                    // source region under it has resolved (resident or
-                    // absent) — never raster holes just to repaint them.
                     if self.slot_source_ready(coord) {
                         full.push((coord, slot));
                     }
@@ -148,9 +125,6 @@ impl Minimap {
             let tb = full_tile_blocks(zoom);
             let cb = cell_blocks(zoom);
             let cp = cell_px(zoom);
-            // A zoom change invalidates the whole visible grid; repainting it
-            // in one frame would hitch, so raster work is budgeted and
-            // deferred slots stay pending until the next frames.
             let mut budget = raster_px_budget(zoom) as i64;
             const TILE_PX: i64 = (FULL_TILE_SIZE * FULL_TILE_SIZE) as i64;
             for (coord, slot) in full {
@@ -224,7 +198,7 @@ impl Minimap {
                     let coord = (tx, tz);
                     let slot = full_tile_slot(coord);
                     if self.full_tile_slots[slot].coord != Some(coord) {
-                        continue; // pending raster: no stale pixels on screen
+                        continue;
                     }
                     elements.push(ClientCanvasElement::Image {
                         image_key: full_tile_image_key(slot),
@@ -260,8 +234,6 @@ impl Minimap {
         }
     }
 
-    /// Step the zoom level, keeping the world point under canvas pixel
-    /// (`x`, `y`) fixed.
     pub(crate) fn zoom_step(&mut self, steps: i32, x: f32, y: f32) {
         let target = (self.zoom as i32 + steps).clamp(ZOOM_MIN as i32, ZOOM_MAX as i32) as i8;
         if target == self.zoom {
@@ -269,7 +241,6 @@ impl Minimap {
         }
         self.pan = zoomed_pan(self.pan, self.zoom, target, x, y);
         self.zoom = target;
-        // Tile coordinates are zoom-scoped: every cached slot raster is stale.
         self.full_tile_slots = FullTileSlots::default();
         self.full_scene_stamp = None;
         self.full_view_bits = None;
@@ -279,8 +250,6 @@ impl Minimap {
         self.sync_full_canvas();
     }
 
-    /// Whether every source region under one full-map tile (plus its
-    /// northwest relief apron) has resolved — resident or known-absent.
     fn slot_source_ready(&self, coord: (i32, i32)) -> bool {
         let kind = source_kind(self.zoom);
         let tb = full_tile_blocks(self.zoom);
@@ -318,14 +287,11 @@ impl Minimap {
         ]
     }
 
-    /// The ADJACENT zoom level's own viewport around the current pan — the
-    /// ground one wheel step would actually show, in the store that level
-    /// renders from (the OTHER store exactly at the −1/−2 boundary). Both the
-    /// prefetch and the trim protection use this rect: prefetching the
-    /// CURRENT viewport's span at the other store's granularity instead (the
-    /// pre-2026-08 shape) queued ~4× the visible region count at −2, starving
-    /// visible loads during pans and protecting far more base regions than
-    /// the cache cap.
+    /// The adjacent zoom level's own viewport around the current pan - what one wheel step
+    /// would show, from the store that level renders from (other store right at the -1/-2
+    /// boundary). Prefetch and trim protection both use this rect. Using the current
+    /// viewport's span at the other store's granularity instead queued ~4x the visible
+    /// region count at -2, starving visible loads during pans and over-protecting the cache.
     pub(crate) fn adjacent_zoom_world_rect(&self) -> Option<(RegionKind, [i32; 4])> {
         let (kind, other_zoom) = match self.zoom {
             -2 => (RegionKind::Base, -1i8),
@@ -338,15 +304,6 @@ impl Minimap {
         Some((kind, [px - half, pz - half, px + half, pz + half]))
     }
 
-    /// Queue async loads for every source region the visible bounds need
-    /// (base regions, or mip regions at the outermost zoom), plus two
-    /// prefetch layers: one region band beyond the edge the pan is moving
-    /// toward (data lands before it's exposed — VISIBLE tier, so it keeps
-    /// pre-warming during a continuous drag), and the ADJACENT zoom level's
-    /// own viewport (a wheel step paints instantly). Idempotent per (bounds,
-    /// zoom); arrivals repaint through the store's pump. Queued loads that
-    /// fell outside the new working set are dropped — a long pan never
-    /// accumulates a stale backlog.
     fn request_visible_regions(&mut self, bounds: [i32; 4]) {
         let stamp = (bounds, self.zoom);
         if self.full_needed_stamp == Some(stamp) {
@@ -367,7 +324,6 @@ impl Minimap {
             }
         }
 
-        // Velocity prefetch: the band one region beyond the moving edge(s).
         let velocity = match self.last_synced_pan {
             Some(last) => [self.pan[0] - last[0], self.pan[1] - last[1]],
             None => [0.0, 0.0],
@@ -395,7 +351,6 @@ impl Minimap {
             }
         }
 
-        // Adjacent-zoom prefetch: what one wheel step would show.
         let adjacent = self.adjacent_zoom_world_rect();
         if let Some((other, rect)) = adjacent {
             let other_span = region_block_rect(other, (0, 0))[2];
@@ -407,8 +362,6 @@ impl Minimap {
             }
         }
 
-        // The new working set is exactly what was requested above (padded by
-        // one region span of hysteresis); drop queued loads outside it.
         let view = self.full_view_world_rect();
         self.store.drop_queued_outside(|load_kind, region| {
             let rect = region_block_rect(load_kind, region);
@@ -449,14 +402,11 @@ impl Minimap {
             RegionKind::Base => &self.store.tiles,
             RegionKind::Mip => &self.store.mips,
         };
-        // Everything below runs in SOURCE-CELL space (cells of `cb` blocks;
-        // source tiles are 16×16 cells in both stores).
         let wc = ((rect[2] - rect[0]) / cb) as usize;
         let hc = ((rect[3] - rect[1]) / cb) as usize;
         let width_px = wc * cp;
         let mut rgba = vec![0u8; width_px * hc * cp * 4];
 
-        // Gather the region plus a one-cell northwest apron (relief input).
         let gw = wc + 1;
         let gh = hc + 1;
         let gx0 = (coord.0 * full_tile_blocks(zoom) + rect[0]) / cb - 1;
@@ -480,15 +430,12 @@ impl Minimap {
             }
         }
 
-        // Build each cell row once into a scratch line, then duplicate the
-        // whole line for the cell's remaining pixel rows — the classic
-        // integer-scaler shape, no per-pixel index math.
         let mut line = vec![0u8; width_px * 4];
         for cz in 0..hc {
             for cx in 0..wc {
                 let cell = cells[(cz + 1) * gw + cx + 1];
                 let px = if cell.height == UNKNOWN_HEIGHT {
-                    [0, 0, 0, 255] // unexplored stays black
+                    [0, 0, 0, 255]
                 } else {
                     let northwest = cells[cz * gw + cx].height;
                     let northwest = if northwest == UNKNOWN_HEIGHT {
@@ -561,9 +508,6 @@ impl Minimap {
         (rgba, text_runs)
     }
 
-    /// Rebuild the cached waypoint layouts when the waypoint set or the zoom
-    /// changed. Text measurement is a host call — it runs per waypoint edit,
-    /// never per publish.
     pub(crate) fn ensure_full_layouts(&mut self) {
         if self
             .full_layouts
@@ -614,11 +558,6 @@ impl Minimap {
         })
     }
 
-    /// Union a world-space rect of CHANGED blocks (`[x0, z0, x1, z1)`) into
-    /// the dirty rect of every currently cached full-map tile whose raster it
-    /// stales. The southeast relief fringe — and, at the outermost zoom, the
-    /// rest of a changed block's 2×2-block cell — is added here, not by
-    /// callers.
     pub(crate) fn mark_full_tiles_dirty(&mut self, rect: [i32; 4]) {
         if rect[0] >= rect[2] || rect[1] >= rect[3] {
             return;
@@ -654,8 +593,6 @@ impl Minimap {
         }
     }
 
-    /// Dirty the map area one waypoint occupies (marker + label), so edits
-    /// repaint only the tiles they touch instead of every visible tile.
     pub(crate) fn invalidate_waypoint_area(&mut self, name: &str, pos: [i32; 3], color: [u8; 3]) {
         let Some(layout) = self.build_waypoint_layout(name, pos, color) else {
             return;
@@ -718,7 +655,6 @@ impl Minimap {
                 }
                 self.dragged = false;
             }
-            // The modal map captures its drags; nothing leaves it mid-press.
             ClientPointerPhase::Leave => {}
         }
     }
@@ -738,8 +674,6 @@ fn full_tile_bounds(pan: [f64; 2], zoom: i8) -> [i32; 4] {
 }
 
 pub(crate) fn full_tile_slot((tx, tz): (i32, i32)) -> usize {
-    // A viewport intersects at most six consecutive tiles per axis, so the
-    // modulo grid is collision-free while letting the map roam without new keys.
     (tx.rem_euclid(FULL_TILE_GRID) + tz.rem_euclid(FULL_TILE_GRID) * FULL_TILE_GRID) as usize
 }
 
@@ -747,8 +681,6 @@ fn full_tile_image_key(slot: usize) -> String {
     format!("{FULL_TILE_IMAGE_PREFIX}{slot}")
 }
 
-/// Round a block rect outward to whole raster cells, so a blit lands on the
-/// tile image's pixel grid at every zoom.
 fn align_rect_to_cells(rect: [i32; 4], zoom: i8) -> [i32; 4] {
     let cb = cell_blocks(zoom);
     [
@@ -764,8 +696,6 @@ pub(crate) fn snap_to_source_pixel(value: f64, zoom: i8) -> f64 {
     (value / bpp).round() * bpp
 }
 
-/// The pan that keeps the world point under canvas pixel (`x`, `y`) fixed
-/// across a zoom change, snapped to the target zoom's source-pixel grid.
 pub(crate) fn zoomed_pan(pan: [f64; 2], from: i8, to: i8, x: f32, y: f32) -> [f64; 2] {
     let half = FULL_SIZE as f32 * 0.5;
     let shift = blocks_per_pixel(from) - blocks_per_pixel(to);
@@ -824,8 +754,6 @@ mod tests {
         }
     }
 
-    /// Deterministic cell pattern shared by both stores; `holes` exercises
-    /// the unknown paths.
     fn synthetic_cell(x: i32, z: i32) -> Cell {
         if (x + z).rem_euclid(7) == 0 {
             return Cell::default();
@@ -838,8 +766,6 @@ mod tests {
 
     fn synthetic_map() -> Minimap {
         let mut map = Minimap::default();
-        // Cover the outermost zoom's tile (0, 0) in both stores: base cells
-        // for blocks −2..320+, mip cells over the same span.
         for tz in -2..=21 {
             for tx in -2..=21 {
                 let mut tile = Tile::default();
@@ -847,8 +773,6 @@ mod tests {
                 for i in 0..256usize {
                     let (lx, lz) = ((i % 16) as i32, (i / 16) as i32);
                     tile.cells[i] = synthetic_cell(tx * 16 + lx, tz * 16 + lz);
-                    // Mip tiles live in mip-cell space (one cell per 2×2
-                    // blocks); any deterministic pattern works for parity.
                     mip.cells[i] = synthetic_cell(tx * 16 + lx + 1000, tz * 16 + lz - 1000);
                 }
                 map.store
@@ -864,8 +788,6 @@ mod tests {
 
     #[test]
     fn region_raster_matches_the_full_tile_raster_at_every_zoom() {
-        // The blit path repaints sub-rects of a tile; any drift against the
-        // whole-tile raster leaves visible seams.
         let mut map = synthetic_map();
         for zoom in ZOOM_MIN..=ZOOM_MAX {
             map.zoom = zoom;
@@ -925,8 +847,6 @@ mod tests {
             coord: Some(b),
             dirty: None,
         };
-        // A change at tile a's east edge; its southeast relief fringe crosses
-        // into b (the fringe is added by mark_full_tiles_dirty itself).
         map.mark_full_tiles_dirty([79, 10, 80, 12]);
         assert_eq!(
             map.full_tile_slots[full_tile_slot(a)].dirty,
@@ -936,7 +856,6 @@ mod tests {
             map.full_tile_slots[full_tile_slot(b)].dirty,
             Some([0, 10, 1, 13])
         );
-        // Rects union; a slot caching another coord stays untouched.
         map.mark_full_tiles_dirty([0, 0, 2, 2]);
         assert_eq!(
             map.full_tile_slots[full_tile_slot(a)].dirty,
@@ -954,7 +873,6 @@ mod tests {
     #[test]
     fn zoom_keeps_the_point_under_the_cursor_fixed() {
         let half = FULL_SIZE as f32 * 0.5;
-        // Far from the origin too: an f32 pan cannot hold a source pixel there.
         let pans = [[37.5, -1204.0], [1.0e9 + 37.5, -1.0e9 - 1204.0]];
         for (from, to) in [(0i8, 1i8), (1, 2), (0, -1), (-1, -2), (-2, 2), (2, -2)] {
             for pan in pans {
@@ -984,8 +902,6 @@ mod tests {
             let cb = cell_blocks(zoom);
             let cp = cell_px(zoom);
             let tb = full_tile_blocks(zoom);
-            // A tile edge is a whole number of cells and always maps to the
-            // fixed image size.
             assert_eq!(tb % cb, 0);
             assert_eq!((tb / cb * cp) as usize, FULL_TILE_SIZE);
             let aligned = align_rect_to_cells([1, 1, 3, 3], zoom);

@@ -1,15 +1,7 @@
-//! Every terrain vertex stream is a QUAD LIST: the renderer draws all four of
-//! them through one shared index buffer with no per-section indices, so four
-//! consecutive vertices must be exactly one quad. An emitter that pushes three
-//! or five vertices would silently reinterpret the whole rest of the stream.
-
 use super::*;
 
 #[test]
 fn every_terrain_stream_is_a_whole_number_of_quads() {
-    // One section carrying every emitter shape the mesher has: greedy-merged
-    // cubes, a per-cell cube face, a cross plant, a torch, a box-set shape, a
-    // double-sided box, water sides and a water top.
     let mut section = floor_section(Block::Stone);
     section.set_block(1, 1, 1, Block::OakLeaves);
     section.set_block(3, 1, 3, Block::ShortGrass);

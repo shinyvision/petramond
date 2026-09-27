@@ -1,14 +1,9 @@
-//! Template inspection and pure connector composition; placement policy is mod-owned.
-
 use crate::__rt::host_fn;
 use crate::{StructureInfoData, StructurePlacement};
 
 #[cfg(test)]
 mod tests;
 
-/// Expand a template's authored terrain requirements at a candidate origin.
-/// The caller batches these probes with other pieces and evaluates them before
-/// clipping writes. Invalid rotations, overflow and excessive work return None.
 pub fn structure_probes(
     placement: &StructurePlacement,
     info: &StructureInfoData,
@@ -36,7 +31,6 @@ pub fn structure_probes(
 }
 
 host_fn! {
-    /// Inspect a compiled structure once during initialization.
     pub fn structure_info(key: &str) -> Option<Box<StructureInfoData>>
         => StructureInfo { key: key.into() } => StructureInfo
 }
@@ -51,8 +45,6 @@ fn rotate([x, y, z]: [i32; 3], turn: u8) -> Option<[i32; 3]> {
     }
 }
 
-/// Mate compatible connectors face to face. The caller chooses pieces and
-/// rejects terrain or footprint collisions before returning the assembled plan.
 pub fn connect_structure(
     parent: &StructurePlacement,
     parent_info: &StructureInfoData,

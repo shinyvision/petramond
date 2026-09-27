@@ -1,22 +1,12 @@
-//! Per-thread front tables: small direct-mapped copies of the hottest shared
-//! facts, so a worker revisiting what it just read skips the shared memo's
-//! lock. Each is declared once as a [`LocalSpec`] so the cache report can
-//! bill it (entries × threads holding one) and [`clear_all`] can empty every
-//! thread's copy when a world closes.
-
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use super::MemoStats;
 
-/// Bumped by [`clear_all`]; a table whose stamp is older empties itself on
-/// its thread's next lookup.
 static EPOCH: AtomicU64 = AtomicU64::new(0);
 
-/// Lookups a thread counts locally before publishing them to its spec.
 const FLUSH_EVERY: u32 = 1024;
 
-/// One per-thread table's declaration and the live totals across threads.
 pub(crate) struct LocalSpec {
     name: &'static str,
     entries: usize,
@@ -53,22 +43,14 @@ impl LocalSpec {
     }
 }
 
-/// Cave source samples in front of the shared sample memo.
 pub(crate) static CAVE_SOURCE: LocalSpec = LocalSpec::new("cave.source.local", 16_384);
-/// Cave climate columns in front of the shared column memo.
 pub(crate) static CAVE_CLIMATE: LocalSpec = LocalSpec::new("cave.climate.local", 2048);
-/// Habitat region tiles in front of the shared tile memo.
 pub(crate) static CAVE_REGIONS: LocalSpec = LocalSpec::new("cave.regions.local", 256);
-/// Habitat territory grids in front of the shared grid memo.
 pub(crate) static CAVE_TERRITORY: LocalSpec = LocalSpec::new("cave.territory.local", 256);
-/// Point-query cave lattices (8³ tiles).
 pub(crate) static CAVE_POINTS: LocalSpec = LocalSpec::new("cave.points.local", 128);
-/// Surface climate quart-cell samples and their base classification.
 pub(crate) static SURFACE_CLIMATE: LocalSpec = LocalSpec::new("surface.climate.local", 32_768);
-/// The climate domain warp per quart cell.
 pub(crate) static CLIMATE_WARP: LocalSpec = LocalSpec::new("surface.warp.local", 1024);
 
-/// Every per-thread table, for the cache report.
 static ALL: [&LocalSpec; 7] = [
     &CAVE_SOURCE,
     &CAVE_CLIMATE,
@@ -83,14 +65,10 @@ pub(crate) fn stats() -> impl Iterator<Item = MemoStats> {
     ALL.iter().map(|spec| spec.stats())
 }
 
-/// Empty every thread's copy of every table (lazily, on its next lookup).
 pub(crate) fn clear_all() {
     EPOCH.fetch_add(1, Ordering::Relaxed);
 }
 
-/// One thread's direct-mapped table for `spec`: `thread_local!` holds it.
-/// Values must be pure functions of their key, as in the shared memos: a
-/// slot collision only evicts.
 type Slots<K, V> = RefCell<Box<[Option<(K, V)>]>>;
 
 pub(crate) struct LocalTable<K, V> {
@@ -113,9 +91,6 @@ impl<K: PartialEq, V: Clone> LocalTable<K, V> {
         }
     }
 
-    /// The value under `key`, computing and keeping it on a miss. `hash`
-    /// picks the slot (its high bits); `compute` runs with no borrow of the
-    /// table held, so it may consult this table for other keys.
     pub(crate) fn get_or_insert_with(&self, hash: u64, key: K, compute: impl FnOnce() -> V) -> V {
         let slot = self.slot(hash);
         if let Some(value) = self.lookup(slot, &key) {
@@ -126,12 +101,10 @@ impl<K: PartialEq, V: Clone> LocalTable<K, V> {
         value
     }
 
-    /// The value under `key`, if this thread holds it.
     pub(crate) fn get(&self, hash: u64, key: &K) -> Option<V> {
         self.lookup(self.slot(hash), key)
     }
 
-    /// Change the value under `key` in place, if this thread holds it.
     pub(crate) fn update(&self, hash: u64, key: &K, change: impl FnOnce(&mut V)) {
         let slot = self.slot(hash);
         if let Some((saved, value)) = &mut self.slots.borrow_mut()[slot] {
@@ -141,7 +114,6 @@ impl<K: PartialEq, V: Clone> LocalTable<K, V> {
         }
     }
 
-    /// The slot `hash` selects, after emptying a table a clear has outdated.
     fn slot(&self, hash: u64) -> usize {
         let epoch = EPOCH.load(Ordering::Relaxed);
         if self.epoch.get() != epoch {
@@ -189,7 +161,6 @@ impl<K, V> Drop for LocalTable<K, V> {
     }
 }
 
-/// The usual slot hash for a small integer key: the golden-ratio multiply.
 #[inline]
 pub(crate) fn spread(bits: u64) -> u64 {
     bits.wrapping_mul(0x9e37_79b9_7f4a_7c15)

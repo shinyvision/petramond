@@ -1,22 +1,11 @@
-//! Per-process test data dirs and per-test scratch dirs under the temp dir,
-//! reaped once their owning process is gone.
-
 use std::path::{Path, PathBuf};
 
-/// Every test-owned entry under the temp dir is `petramond-test-<kind>-<pid>…`,
-/// so one sweep can tell whose it is and reap it once that process is gone.
 const TEST_DIR_PREFIX: &str = "petramond-test-";
 
-/// The data dir a test process points `PETRAMOND_DATA_DIR` at: one per
-/// process under the temp dir, so saves, storage and the module cache never
-/// touch the real user dir. Removed when the process exits normally; a
-/// crashed process's is reaped by the next test process.
 pub fn test_process_data_dir() -> PathBuf {
     static AT_EXIT: std::sync::Once = std::sync::Once::new();
     sweep_exited_test_dirs();
     AT_EXIT.call_once(|| {
-        // SAFETY: `atexit` is the C runtime's; the callback is a plain
-        // `extern "C" fn` that never unwinds.
         unsafe { atexit(remove_test_process_data_dir) };
     });
     own_test_process_data_dir()
@@ -34,9 +23,6 @@ extern "C" fn remove_test_process_data_dir() {
     remove_test_dir(&own_test_process_data_dir());
 }
 
-/// A fresh, empty scratch dir for one test, removed on drop — which also runs
-/// when the test panics. A process that dies without unwinding leaves it to
-/// the next test process's sweep.
 pub struct TestScratchDir(PathBuf);
 
 impl TestScratchDir {
@@ -81,8 +67,6 @@ fn remove_test_dir(path: &Path) {
     }
 }
 
-/// A test that locks a dir read-only and fails before unlocking it would
-/// otherwise leave it behind for good.
 #[cfg(unix)]
 fn make_writable(path: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -107,7 +91,6 @@ fn sweep_exited_test_dirs() {
     SWEPT.call_once(|| remove_exited_test_dirs(&std::env::temp_dir()));
 }
 
-/// The pid in `petramond-test-<kind>-<pid>…`.
 fn test_dir_owner(name: &str) -> Option<u32> {
     let (_kind, rest) = name.strip_prefix(TEST_DIR_PREFIX)?.split_once('-')?;
     let end = rest

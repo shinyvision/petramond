@@ -1,5 +1,3 @@
-//! Stair shape and orientation shared by placement, collision, selection, and meshing.
-
 use crate::block::{Aabb, Block};
 use crate::block_state::{StairHalf, StairState};
 use crate::facing::Facing;
@@ -134,12 +132,6 @@ impl crate::block::CellView for StairShape {
     fn owns(block: Block) -> bool {
         is_stair(block)
     }
-    /// The REFINED corner view of a stair cell's bytes (byte 1, written by
-    /// the refine cascade). `0` is the "not yet refined" sentinel — no placed
-    /// stair resolves to an empty quadrant mask — and falls back to the
-    /// straight shape the placed facing implies, so a state written before
-    /// the cascade ran (or a bare fixture) degrades to the unjoined stair,
-    /// never garbage.
     fn from_cell(s: crate::block::ShapeState) -> Self {
         let placed = StairState::decode(s.byte(0));
         let mask = s.byte(1);
@@ -153,10 +145,6 @@ impl crate::block::CellView for StairShape {
     }
 }
 
-/// Whether the face of `shape` with outward normal `dir` is a complete
-/// surface: every half-cell on that face occupied. The stair family's answer
-/// to the cross-family `full_face` question (a fence arm against the flat
-/// back, a wall torch on it, a ladder against it).
 pub fn face_full(shape: StairShape, dir: crate::mathh::IVec3) -> bool {
     let occ = |ix, iy, iz| shape_half_cell_occupied(shape, ix, iy, iz);
     if dir.x != 0 {

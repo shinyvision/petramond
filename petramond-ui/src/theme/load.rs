@@ -1,14 +1,7 @@
-//! Theme manifests and the layered stack they load into.
-//!
-//! Every manifest struct denies unknown fields: a misspelt key in a pack's
-//! theme is an error naming the key, never a silently ignored property.
-
 use super::{palette, FaceState, ImageData, Metrics, Part, PartFace, Theme, ThemeError};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// One manifest of a theme stack, with the reader that resolves the image
-/// and font paths it names (relative to that manifest).
 #[derive(Clone, Copy)]
 pub struct ThemeLayer<'a> {
     pub json: &'a str,
@@ -21,24 +14,16 @@ struct ThemeJson {
     format: u32,
     #[serde(default)]
     palette: BTreeMap<String, String>,
-    /// This layer's atlas page; required when the layer defines parts.
     #[serde(default)]
     atlas: Option<String>,
     #[serde(default)]
     font: Option<FontJson>,
     #[serde(default)]
     parts: BTreeMap<String, PartJson>,
-    /// Merged key by key over the layers below (then checked as
-    /// [`Metrics`], so a misspelt metric is an error too).
     #[serde(default)]
     metrics: serde_json::Map<String, serde_json::Value>,
 }
 
-/// The theme's font: a real font FILE plus the pixel size it was designed
-/// for (a pixel font rasterized off its design grid loses whole stems, so the
-/// size is authored, never guessed), optionally limited to inclusive
-/// codepoint `ranges`, and followed by `fallback` faces that fill whatever
-/// the primary lacks — a pack can add a script without replacing the face.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FontJson {
@@ -67,8 +52,6 @@ struct PartFaceJson {
     slice: Option<[i32; 4]>,
 }
 
-/// A part: either one stateless face (`rect` + optional `slice`) or
-/// state-keyed `states`, plus optional label styling.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartJson {
@@ -138,16 +121,10 @@ impl PartJson {
 }
 
 impl Theme {
-    /// Parse one theme manifest; `read` resolves image paths named by the
-    /// manifest (relative to it) to file bytes.
     pub fn load(json: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<Theme, ThemeError> {
         Theme::load_stack(&[ThemeLayer { json, read }])
     }
 
-    /// Load a theme stack, base first. Each later layer adds or replaces
-    /// parts by key, palette entries by key and metrics by key; the topmost
-    /// layer that declares a font supplies it. Every layer that defines parts
-    /// brings its own atlas page. A layer error names the layer.
     pub fn load_stack(layers: &[ThemeLayer<'_>]) -> Result<Theme, ThemeError> {
         if layers.is_empty() {
             return Err(ThemeError("empty theme stack".into()));
@@ -236,7 +213,6 @@ pub(super) fn parse_hex(s: &str) -> Option<[f32; 4]> {
     ])
 }
 
-/// The manifest's face chain (primary, then fallbacks) as one font.
 fn load_font(
     font: &FontJson,
     read: &dyn Fn(&str) -> Option<Vec<u8>>,

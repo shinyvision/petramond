@@ -1,30 +1,15 @@
-//! Options → Controls controller: a category-grouped list of every
-//! remappable action — the engine's (Movement / Interacting / Other) plus
-//! whatever the session's client mods registered (one category per pack).
-//! Clicking a binding button arms remap mode — the App then CAPTURES the next
-//! raw key/mouse/scroll as the new binding (`app/options.rs`); ESC cancels,
-//! and clicking a different action's button switches the armed action.
-
 use super::ScreenCtx;
 use petramond_ui::{UiEvent, UiMap, UiState, UiValue};
 use std::sync::Arc;
 
-/// The two strings the hint line swaps between. They share one FIXED box in
-/// the document, so both have to fit it — see the test at the bottom of this
-/// file, which is the only place that knows they exist.
 pub(super) const HINT_ARMED: &str = "Press a key, button or wheel. ESC cancels.";
 pub(super) const HINT_IDLE: &str = "Click an action to rebind it.";
 
-/// One display row of the controls list: a category header or an action
-/// (identified by its stable id in the app's action table).
 pub(super) enum RowEntry {
     Header(String),
     Action(String),
 }
 
-/// The list rows in display order: table order, a header wherever the
-/// category changes. Shared by `populate` (builds the bound items) and
-/// `handle` (maps a clicked row index back to its action id).
 pub(super) fn row_entries(table: &petramond_input::controls::ActionTable) -> Vec<RowEntry> {
     let mut rows = Vec::new();
     let mut current: Option<&str> = None;
@@ -88,8 +73,6 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
         );
     }
     state.set("rows", UiValue::List(Arc::new(items)));
-    // The hint line has a FIXED slot in the document; only its text swaps, so
-    // arming a remap never reflows the buttons under the cursor.
     let hint = if remapping.is_some() {
         HINT_ARMED
     } else {
@@ -99,8 +82,6 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
 }
 
 pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
-    // Back also disarms any pending remap: leaving a category through the
-    // screen funnel cancels it (`App::back_to`).
     if super::options_category_back(ctx, &ev) {
         return;
     }
@@ -116,10 +97,8 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
             return;
         };
         if ctx.options.remap() == Some(action_id.as_str()) {
-            // Clicking the armed button again disarms it.
             ctx.options.cancel_remap();
         } else {
-            // Arms this action — and thereby cancels any other armed one.
             ctx.options.begin_remap(action_id);
         }
     }

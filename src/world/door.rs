@@ -1,14 +1,3 @@
-//! Wooden doors at the world level: the per-cell state lookup the position-aware
-//! collision/selection in `model` reads, plus 2-cell placement, the
-//! whole-door break, and the open/close toggle.
-//!
-//! A door spans two stacked cells, each holding its own [`DoorState`] in the chunk
-//! door map (the upper carries `top = true`). Placement/break/toggle all operate over
-//! the pair so the door behaves as one object — mirroring how `model` treats a
-//! bbmodel block's footprint. The door is NOT chunk-meshed (it is drawn as its
-//! animated block model), and its collision is read live from the door state, so a
-//! toggle needs no remesh — only the placement/break edits relight + remesh neighbours.
-
 use crate::world::{ServerWorld, World, WorldSide};
 use petramond_math::facing::Facing;
 use petramond_math::math::IVec3;
@@ -19,22 +8,12 @@ use petramond_world::world::query::door_support;
 
 use super::cell_change::{CellChange, ChangeKind};
 
-/// Cell offset from a door's lower cell to its upper cell.
 const UP: IVec3 = IVec3::new(0, 1, 0);
 
-/// Break behaviour for doors: a block update that takes away the floor under the
-/// door's LOWER cell resolves the whole door's break at the update itself — no timer,
-/// no reschedule. It re-checks (the floor may have returned, or the cell may now hold
-/// something else) and, only if it is still an unsupported door, shatters the pair —
-/// dropping ONE door item and bursting, exactly as a hand-break would. Mirrors
-/// [`Fragile`](super::fragile), but resolves over the 2-cell door so the upper half
-/// (which rests on the lower, not on an opaque block) is never mistaken for unsupported.
 pub struct Door;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Door {
     fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
-        // The cell may have changed after its update was queued (mined, replaced);
-        // only break a door that is still there and still unsupported.
         if world.door_state_at(pos.x, pos.y, pos.z).is_none() || world.door_supported(pos) {
             return;
         }
@@ -42,14 +21,9 @@ impl crate::world::engine_behavior::EngineBlockBehavior for Door {
     }
 }
 
-/// The door singleton a row points at (`behavior: &behavior::DOOR`).
 pub static DOOR: Door = Door;
 
 impl<S: WorldSide> World<S> {
-    /// The door state (facing + open + which-half) at world `pos`, or `None` when no
-    /// door is recorded there or the cell is unloaded. Read by the position-aware
-    /// collision/selection (see `collision_boxes_at`) and
-    /// the dynamic door renderer.
     #[inline]
     pub fn door_state_at(&self, wx: i32, wy: i32, wz: i32) -> Option<DoorState> {
         let (c, lx, ly, lz) = self.data.chunk_at_world(wx, wy, wz)?;
@@ -63,11 +37,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Whether the door `pos` belongs to still has a valid floor under its LOWER cell
-    /// (a full opaque block, per [`door_support`]). The upper half's "floor" is the
-    /// lower door cell, which is never opaque, so we always resolve to the lower cell
-    /// first — both halves share the one support test. `false` when `pos` isn't a door
-    /// (the break resolves that at the update).
     fn door_supported(&self, pos: IVec3) -> bool {
         let Some((lower, _)) = self.door_cells(pos) else {
             return false;
@@ -76,10 +45,6 @@ impl<S: WorldSide> World<S> {
         door_support(floor)
     }
 
-    /// Break the door `pos` belongs to the way the sim breaks an undermined fragile
-    /// block: record ONE natural break (burst + a single door drop) at its lower cell,
-    /// then remove both halves. `Game` drains the break to play the burst and roll the
-    /// drop (see [`World::take_natural_breaks`]).
     fn break_door_naturally(&mut self, pos: IVec3) {
         let Some((lower, _)) = self.door_cells(pos) else {
             return;
@@ -89,18 +54,11 @@ impl<S: WorldSide> World<S> {
         self.remove_compound(pos);
     }
 
-    /// Place a 2-tall `block` door with its lower cell at `base`, on `facing`'s edge.
-    /// Writes the door id + per-cell [`DoorState`] (lower `top = false`, upper `top =
-    /// true`) to both cells, then relights + remeshes the region (the door isn't
-    /// chunk-meshed, but its neighbours are). Assumes the footprint was gated clear.
-    /// Returns false if `block` isn't a door or a cell is unloaded.
     pub fn place_door(&mut self, base: IVec3, block: Block, facing: Facing) -> bool {
         if !DoorState::owns(block) {
             return false;
         }
         let upper = base + UP;
-        // Materialize the (possibly all-air, hence absent) sections the door occupies so
-        // the writes land; bail only if a cell is outside the world's vertical range.
         if !self.materialize_section_at(base) || !self.materialize_section_at(upper) {
             return false;
         }
@@ -112,7 +70,6 @@ impl<S: WorldSide> World<S> {
                     c.block(lx, ly, lz),
                     ChangeKind::Place,
                 ));
-                // `set_block` clears any stale door entry; then record this cell's state.
                 c.set_block(lx, ly, lz, block);
                 c.set_door_state(
                     lx,
@@ -131,17 +88,12 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// The LOWER cell of the door at world `pos` (the cell itself if it is the bottom
-    /// half, else the cell below). `None` if `pos` isn't a door. The animation keys on
-    /// the lower cell, so the toggle path resolves it before flipping the state.
     #[inline]
     pub fn door_lower_cell(&self, wx: i32, wy: i32, wz: i32) -> Option<IVec3> {
         self.door_cells(IVec3::new(wx, wy, wz))
             .map(|(lower, _)| lower)
     }
 
-    /// The (lower, upper) cells of the door `pos` belongs to, found via the recorded
-    /// `top` bit. `None` if `pos` isn't a door cell.
     pub fn door_cells(&self, pos: IVec3) -> Option<(IVec3, IVec3)> {
         let state = self.door_state_at(pos.x, pos.y, pos.z)?;
         Some(if state.top {
@@ -151,11 +103,6 @@ impl<S: WorldSide> World<S> {
         })
     }
 
-    /// Toggle a door open/closed: flip `open` on BOTH cells. Collision follows the
-    /// logical state (read live from [`door_state_at`](Self::door_state_at)), so the
-    /// player can walk through the instant it opens; the visual swing is eased
-    /// separately by the renderer. No remesh — the door isn't chunk-meshed. Returns the
-    /// lower cell (to key the animation), or `None` if `pos` isn't a door.
     pub fn toggle_door(&mut self, pos: IVec3) -> Option<IVec3> {
         let (lower, upper) = self.door_cells(pos)?;
         for c in [lower, upper] {
@@ -163,12 +110,6 @@ impl<S: WorldSide> World<S> {
                 state.open = !state.open;
                 self.set_door_state_world(c, state);
             }
-            // A toggle flips the door map with NO block-id write, so it never
-            // passes the announce choke point — log its delta explicitly
-            // (`state: Some(Door(..))` carries the new open bit to replicas)
-            // and feed the confinement invalidation the same way: an opened
-            // door frees a pen NOW, not when the region cache ages out. The
-            // recorder logs only on a capturing server.
             self.record_block_delta(c.x, c.y, c.z);
             self.push_nav_change(c);
         }
@@ -189,7 +130,6 @@ mod tests {
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
-        // A solid floor so the door has something to stand on.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Stone);
         (w, base)
     }
@@ -228,12 +168,9 @@ mod tests {
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
-        // No floor below: a door can't float.
         assert!(!w.data.door_footprint_clear(base));
-        // Add a floor — now clear.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Stone);
         assert!(w.data.door_footprint_clear(base));
-        // Block the upper cell — the 2-tall footprint is no longer clear.
         w.set_block_world(base.x, base.y + 1, base.z, Block::Stone);
         assert!(!w.data.door_footprint_clear(base));
     }
@@ -244,11 +181,8 @@ mod tests {
         w.clear_world();
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
         let base = IVec3::new(5, 64, 5);
-        // A full opaque block holds a door up.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Stone);
         assert!(w.data.door_footprint_clear(base));
-        // Chests, the furniture workbench and cactuses are SOLID but NOT opaque (partial
-        // models), so a door refuses to stand on them.
         for floor in [Block::Chest, Block::FurnitureWorkbench, Block::Cactus] {
             w.set_block_world(base.x, base.y - 1, base.z, floor);
             assert!(
@@ -263,14 +197,12 @@ mod tests {
         let (mut w, base) = world_with_floor();
         let upper = base + UP;
         w.place_door(base, DOOR, Facing::South);
-        run_ticks(&mut w, 2); // settle: supported, nothing happens
+        run_ticks(&mut w, 2);
         assert_eq!(
             Block::from_id(w.data.chunk_block(base.x, base.y, base.z)),
             DOOR
         );
 
-        // Dig the floor out from under it: the door breaks at the undermining
-        // update, in the first tick's dispatch.
         w.set_block_world(base.x, base.y - 1, base.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
@@ -283,7 +215,6 @@ mod tests {
             Block::Air,
             "and its upper half goes with it (the pair breaks as one)",
         );
-        // It was handed to the presentation layer as ONE natural break at the lower cell.
         let breaks = w.take_natural_breaks();
         assert!(
             breaks.iter().any(|&(p, b)| p == base && b == DOOR),
@@ -297,7 +228,6 @@ mod tests {
         let (mut w, base) = world_with_floor();
         w.place_door(base, DOOR, Facing::South);
         run_ticks(&mut w, 2);
-        // A block placed/removed beside the door (its floor untouched) must not break it.
         w.set_block_world(base.x + 1, base.y, base.z, Block::Stone);
         w.set_block_world(base.x + 1, base.y, base.z, Block::Air);
         run_ticks(&mut w, 3);
@@ -314,11 +244,9 @@ mod tests {
         w.place_door(base, DOOR, Facing::South);
         let upper = base + UP;
 
-        // Closed: the slab is thin on Z (sits on the south edge).
         let closed = w.data.collision_boxes_at(base.x, base.y, base.z)[0];
         assert!(closed.max[2] - closed.min[2] < 0.5);
 
-        // Toggle from the UPPER cell flips BOTH halves to open (thin on X now).
         assert_eq!(w.toggle_door(upper), Some(base));
         for cell in [base, upper] {
             let open = w.data.collision_boxes_at(cell.x, cell.y, cell.z)[0];
@@ -329,7 +257,6 @@ mod tests {
             assert!(w.door_state_at(cell.x, cell.y, cell.z).unwrap().open);
         }
 
-        // Breaking either cell clears the whole door.
         let removed = w.remove_compound(base).unwrap();
         assert_eq!(removed.len(), 2);
         for c in removed {

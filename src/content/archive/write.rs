@@ -1,29 +1,17 @@
-//! The one archive writer: a pack folder as the zip `make addons` ships.
-//!
-//! Identical files always make identical bytes: entries sorted by name, one
-//! fixed timestamp, one compression level, no directory entries and no extra
-//! fields. It writes nothing the reader in the parent module would refuse
-//! for its shape (no links, no Zip64, no encryption), so `check` judges only
-//! the content.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::{CENTRAL_HEADER, END_HEADER, LOCAL_HEADER};
 use super::{MANIFEST, MAX_ENTRIES, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
 
-/// 1980-01-01 00:00, the earliest time a zip can say.
 const DOS_DATE: u16 = (1 << 5) | 1;
 const DOS_TIME: u16 = 0;
 const VERSION: u16 = 20;
-/// Made on unix, so the external attributes carry a plain file's mode.
 const MADE_BY: u16 = (3 << 8) | VERSION;
 const FILE_MODE: u32 = 0o100_644;
 const UTF8_NAMES: u16 = 1 << 11;
 const DEFLATE: u16 = 8;
 
-/// Zip the pack folder `dir` (its CONTENTS, `pack.json` at the root), with
-/// `wasm`, when given, as its `mod.wasm`.
 pub fn pack(dir: &Path, wasm: Option<&Path>) -> Result<Vec<u8>, String> {
     let mut files = Vec::new();
     collect(dir, "", &mut files)?;
@@ -108,8 +96,6 @@ pub fn pack(dir: &Path, wasm: Option<&Path>) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// Every file under `dir` as `(archive name, path)`. A link is refused, not
-/// followed: the archive must hold the pack's real files.
 fn collect(dir: &Path, prefix: &str, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
     let entries =
         std::fs::read_dir(dir).map_err(|e| format!("could not read {}: {e}", dir.display()))?;

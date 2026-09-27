@@ -1,8 +1,3 @@
-//! Two underground habitats: the mushroom cavern and its cave flora, and the
-//! dripstone caves and their spikes.
-
-// The file-length audit cannot see a monolithic function inside a short
-// file; worldgen algorithms here stay split into named stages instead.
 #![warn(clippy::too_many_lines)]
 
 use mod_sdk::*;
@@ -20,26 +15,16 @@ mod spores;
 use content::Content;
 use dripstone::Dripstone;
 
-/// Feature ids echoed back to [`Mod::gen_feature`].
 const GEN_CAVERN: u32 = 1;
 const GEN_DRIPSTONE: u32 = 2;
-/// Block-behaviour callback for both spike rows.
 const HOOK_DRIPSTONE: u32 = 1;
-/// Event handlers.
 const HANDLER_PROJECTILE: u32 = 1;
 const HANDLER_PLAYER_DAMAGE: u32 = 2;
 const HANDLER_MOB_DAMAGE: u32 = 3;
 const HANDLER_PLACED: u32 = 4;
 
-/// The underground biome this pack registers in `underground_biomes.json`.
-/// Placement asks the engine for the biome id at a position and compares — the
-/// mod never re-implements the engine's selection noise.
 pub(crate) use keys::MUSHROOM_CAVERN as BIOME_KEY;
 
-/// Top of the depth band the mushroom_cavern row declares (`"y": [-64, 96]`).
-/// Nothing this pack places can be rooted above it, so worldgen derives its
-/// altitude gate from here; `keys::tests` pins it to the row, so retuning the
-/// band in data fails that test until this value follows.
 pub const BIOME_TOP_Y: i32 = 96;
 
 #[derive(Default)]
@@ -55,8 +40,6 @@ impl Mod for Exploration {
             self.spores.init();
             return;
         }
-        // After Trees — the end of the pipeline. Both habitats decorate
-        // carved cave volume, so they must see final terrain.
         let fluids = fluids::Fluids::resolve();
         match Content::resolve(fluids.clone()) {
             Some(content) => {

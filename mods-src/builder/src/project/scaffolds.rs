@@ -30,9 +30,6 @@ fn count_key(id: ProjectId) -> String {
     format!("{PREFIX}/{id}/shards")
 }
 
-/// The stored list, or `None` when this project's scaffolds were never
-/// stored here (a new project, or one saved before they moved out of its
-/// record).
 pub(super) fn load(id: ProjectId) -> Option<Vec<[i32; 3]>> {
     let shards = world_kv_get(&count_key(id))?;
     let shards = u32::from_le_bytes(shards.try_into().ok()?) as usize;
@@ -53,9 +50,6 @@ pub(super) fn load(id: ProjectId) -> Option<Vec<[i32; 3]>> {
     Some(cells)
 }
 
-/// Store `after` over a stored `before`, writing only the shards that
-/// changed. `fresh` = nothing is stored yet, so the count is written even
-/// when it does not change.
 pub(super) fn save(id: ProjectId, before: &[[i32; 3]], after: &[[i32; 3]], fresh: bool) {
     if before == after && !fresh {
         return;
@@ -96,13 +90,11 @@ mod tests {
         save(3, &[], &cells, true);
         assert_eq!(load(3).as_deref(), Some(&cells[..]));
 
-        // A removal near the front shifts everything after it.
         let mut fewer = cells.clone();
         fewer.remove(1);
         save(3, &cells, &fewer, false);
         assert_eq!(load(3).as_deref(), Some(&fewer[..]));
 
-        // Emptied, it is stored as empty, not as never stored.
         save(3, &fewer, &[], false);
         assert_eq!(load(3), Some(Vec::new()));
         assert_eq!(world_kv_get(&shard_key(3, 0)), None, "no shard left behind");

@@ -1,15 +1,3 @@
-//! Golden digests of whole-section meshes built through the production pad
-//! path, for a few representative sections: generated terrain (surface,
-//! water, foliage, caves), the hand-built showcase scene, and a catalog
-//! section per slice of the block registry (so every render family — cubes,
-//! box shapes, plants, torches, models, fluids — has geometry pinned).
-//!
-//! A refactor of the mesher must leave every digest untouched. The digests
-//! live in `snapshots/mesh_digests.txt`; a missing file (or
-//! `PETRAMOND_BLESS_MESH=1`) writes the current output as the new golden, so
-//! an intended geometry change is re-blessed deliberately and shows up in the
-//! diff.
-
 use super::*;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -20,15 +8,12 @@ const SNAPSHOT_FILE: &str = concat!(
 );
 const BLESS_VAR: &str = "PETRAMOND_BLESS_MESH";
 
-/// FNV-1a over a byte stream: stable across platforms and toolchains, which
-/// `std`'s hasher is not.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
 
-/// One line per stream: `case stream len digest`.
 fn digest_lines(case: &str, mesh: &ChunkMesh, out: &mut BTreeMap<String, String>) {
     let mut put = |stream: &str, len: usize, bytes: &[u8]| {
         out.insert(
@@ -80,7 +65,6 @@ fn digest_lines(case: &str, mesh: &ChunkMesh, out: &mut BTreeMap<String, String>
     );
 }
 
-/// Every snapshot case: `(name, mesh)`.
 fn cases() -> Vec<(String, ChunkMesh)> {
     let mut out = Vec::new();
     let (section, scene) = fixtures::showcase();
@@ -128,9 +112,6 @@ fn parse(text: &str) -> BTreeMap<String, String> {
 
 #[test]
 fn representative_section_meshes_match_their_golden_digests() {
-    // The golden records the engine catalog. The canonical test suite stages
-    // bundled packs, while a direct mesh-crate test may have no packs at all;
-    // pin the same base-only registry for both runs.
     let packs = petramond_world::assets::PackSet::discover(
         &petramond_world::assets::PackRoots::with_mods(Vec::new()),
     );

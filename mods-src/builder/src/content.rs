@@ -1,27 +1,18 @@
-//! The pack's registry names, resolved once per session.
-
 use crate::host::logged;
 use crate::host::prelude::*;
 
-/// The golem, its blueprint and its burst, re-exported for the worker's
-/// modules; every pack id is declared once, in [`crate::keys`].
 pub use crate::keys::{BLUEPRINT, EARTH_BURST, GOLEM};
 use crate::keys::{RAW_COPPER, SCAFFOLDING_DATA, TABLE_BLOCK};
 
-/// The golem row's `size.half_width` (pack `mobs.json`): its footprint.
 pub const GOLEM_HALF_WIDTH: f32 = 0.3;
-/// Instance data a bound blueprint carries: the world nonce and project id.
 pub const PROJECT_DATA: &str = "builder:project";
 pub const INFO_DATA: &str = "petramond:info";
 
 pub struct Content {
     pub table: BlockId,
-    /// The blocks a golem may stand its scaffolding up from.
     pub scaffolding: Vec<ScaffoldKind>,
     pub golem: MobId,
     pub blueprint: ItemId,
-    /// Raw copper hints at the golem core's block long before nine ingots
-    /// would.
     pub raw_copper: Option<ItemId>,
 }
 
@@ -37,13 +28,10 @@ impl Content {
     }
 }
 
-/// One block scaffolding may be made of: an ordinary block, paid for from
-/// what the golem carries and dug back out when the work above is done.
 #[derive(Clone, Debug)]
 pub struct ScaffoldKind {
     pub block: BlockId,
     pub name: String,
-    /// The item that places it and that digging it gives back.
     pub item: String,
     pub hardness: f32,
     pub tool: Option<String>,

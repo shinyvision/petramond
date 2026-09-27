@@ -1,21 +1,20 @@
 //! Client-side REPLICATED entity/self stores.
 //!
-//! The client renders mobs, dropped items, and its own HUD state from these
-//! stores, fed by the per-tick [`TickUpdate`] batches the server emits — the
-//! sim itself is unreachable (it lives on its own thread). Locally the
-//! batches are plain values over channels; over TCP the identical messages
+//! The client renders mobs, dropped items and its own HUD state from these stores, fed by the
+//! per-tick [`TickUpdate`] batches the server emits. The sim itself runs on its own thread and is
+//! unreachable. Locally the batches are plain values over channels; over TCP the same messages
 //! arrive remapped, so nothing here changes.
 //!
-//! Each store keeps the PREVIOUS and CURRENT batch row per stable id — the
-//! interpolation-ready pair `collect_mobs`/`collect_item_entities` blend at
-//! `tick_alpha`, exactly as the renderer used to blend `Instance::prev_*`.
-//! The server replicates only the entities in this client's interest, as
-//! per-kind [`EntityLane`](petramond::net::protocol::EntityLane)s: an entity lives in its store from its spawn to
-//! its despawn — which is how leaving view differs from absence in one batch
-//! — and dying is presented from its rows (`dead`, ragdoll) while it is
-//! still tracked.
-//! Light is deliberately absent from the rows: the client samples it at the
-//! entity position from its REPLICA world.
+//! Each store keeps the PREVIOUS and CURRENT row per stable id. `collect_mobs` and
+//! `collect_item_entities` blend them at `tick_alpha`.
+//!
+//! The server replicates only the entities in this client's interest, via per-kind
+//! [`EntityLane`](petramond::net::protocol::EntityLane)s. An entity stays in its store from spawn
+//! to despawn, which is how leaving view differs from absence in one batch. Dying is shown from
+//! its rows (`dead`, ragdoll) while it is still tracked.
+//!
+//! Light is left out of the rows on purpose. The client samples it at the entity position from
+//! its REPLICA world.
 
 use std::sync::Arc;
 
@@ -46,9 +45,7 @@ mod entity_store;
 pub use entity_replica::{Committed, EntityReplica};
 pub(crate) use entity_store::{Adopt, AssignFrom, EntityStore, Replica};
 
-/// One tick window's entity lanes and player actions.
 pub struct EntityWindow {
-    /// The replicated tick these rows describe.
     pub tick: u64,
     // Shared straight off the batch: each lane selects rows out of tables
     // the server builds once per tick window, and the FIFO holds up to four
@@ -67,13 +64,7 @@ pub struct EntityWindow {
 /// free of arrival-jitter rubber-banding.
 pub struct StagedRows {
     window: EntityWindow,
-    /// Newer windows an overflow folded into this entry, oldest first. The
-    /// fold keeps each window's shared lanes instead of merging their rows,
-    /// so collapsing a backlog copies no row: the commit replays the windows
-    /// in order, which composes exactly like the lanes do.
     folded: Vec<EntityWindow>,
-    /// An overflow folded older pending windows into this one. Its boundary
-    /// commit must seed prev == curr rather than lerp over the dropped gap.
     resync: bool,
 }
 
@@ -86,15 +77,11 @@ impl StagedRows {
         }
     }
 
-    /// Every window this entry commits, oldest first.
     pub fn windows(&self) -> impl Iterator<Item = &EntityWindow> {
         std::iter::once(&self.window).chain(&self.folded)
     }
 }
 
-/// The lane a FULL-snapshot sender would ship for `rows` against a store
-/// holding `held`: every held id missing from the snapshot despawns, every
-/// row is an update. How tests drive the stores with plain row lists.
 #[cfg(test)]
 pub(super) fn snapshot_lane<R: petramond::net::protocol::EntityRow>(
     held: impl Iterator<Item = R::Id>,
@@ -109,47 +96,21 @@ pub(super) fn snapshot_lane<R: petramond::net::protocol::EntityRow>(
     }
 }
 
-/// Normal scheduling jitter needs only a few pending ticks. If a stalled
-/// client exceeds this depth, staging collapses deterministically into one
-/// resync entry committed at the next boundary, instead of either queueing
-/// one segment per window or mutating the committed interpolation pair
-/// mid-segment.
 pub const MAX_STAGED_ROW_BATCHES: usize = 4;
 
-/// How fast a named mob animation blends in/out (weight per second): ~0.17 s
-/// to full — an oar picks up and settles instead of snapping between poses.
 const ANIM_BLEND_PER_SEC: f32 = 6.0;
 
-/// One replicated mob: the previous and current batch rows, keyed by the
-/// mob's stable id in [`ReplicatedMobs`].
 pub struct ReplicatedMob {
     pub prev: MobStateRow,
     pub curr: MobStateRow,
-    /// `prev.anims` / `curr.anims` with each name interned into the store's
-    /// session [`AnimInterner`], in row order — interned when a row's set
-    /// changes, so no frame clones or compares a name.
     prev_anims: Vec<(AnimId, f32)>,
     curr_anims: Vec<(AnimId, f32)>,
-    /// CLIENT-side blend state over the replicated named animations
-    /// (`curr_anims` are the target set): `(anim, weight, phase)` — the
-    /// weight eases per frame toward 1 for active layers and 0 for dropped
-    /// ones (layers fade instead of snapping), and `phase` holds the last
-    /// replicated phase so a fading-OUT layer keeps its pose. Presentation
-    /// state only, advanced by [`ReplicatedMobs::advance_anim_blends`].
     pub anim_blend: Vec<(AnimId, f32, f32)>,
-    /// The same blend over the BASE gait the row's locomotion selects (walk,
-    /// an idle, or none = rest): `(clip, weight, phase)`. A body eases into
-    /// and out of its gait like any layer, however briefly it steps.
     pub gait_blend: Vec<(GaitClip, f32, f32)>,
-    /// `curr.draw` resolved for the renderer, rebuilt only when the row's
-    /// set changes.
     pub draw: Option<petramond::world::draw::BlockDraw>,
-    /// `curr`'s body emitters and the tint and self-light they compose,
-    /// re-derived only when its attached bundles or conditions change.
     emitters: BodyEmitters,
 }
 
-/// A row's draw set resolved for the renderer (`None` = draws nothing).
 fn resolve_draw(row: &MobStateRow) -> Option<petramond::world::draw::BlockDraw> {
     (!row.draw.prims.is_empty()).then(|| {
         std::sync::Arc::new(petramond::world::draw::BlockDrawSet::new(
@@ -158,17 +119,10 @@ fn resolve_draw(row: &MobStateRow) -> Option<petramond::world::draw::BlockDraw> 
     })
 }
 
-/// Whether two rows wear the same draw set. In process the server's shared
-/// prims arrive by refcount, so an unchanged set is the SAME allocation and
-/// this is a pointer compare; only a set decoded afresh off the wire falls
-/// back to comparing its (handful of) prims, which never allocates.
 fn same_draw(a: &petramond::world::draw::DrawPrims, b: &petramond::world::draw::DrawPrims) -> bool {
     Arc::ptr_eq(&a.0, &b.0) || (a.is_empty() && b.is_empty()) || a == b
 }
 
-/// `anims` with each name interned, into `out`. A name the previous row had
-/// at the same index reuses that row's id, so a steady layer set never
-/// touches the interner; any other name interns.
 fn intern_anims(
     anims: &[(String, f32)],
     prev_names: &[(String, f32)],
@@ -186,7 +140,6 @@ fn intern_anims(
     }));
 }
 
-/// The gait a replicated row is in, or `None` at rest.
 pub fn gait_of(row: &MobStateRow) -> Option<GaitClip> {
     if row.moving {
         Some(GaitClip::Walk)
@@ -198,8 +151,6 @@ pub fn gait_of(row: &MobStateRow) -> Option<GaitClip> {
 impl Replica<MobStateRow> for ReplicatedMob {
     type Ctx = AnimInterner;
 
-    /// A freshly tracked mob: prev == curr, and its animations start at FULL
-    /// weight (a mob streamed in mid-row must not fade in from rest).
     fn spawn(row: &MobStateRow, interner: &mut AnimInterner) -> Self {
         let mut mob = ReplicatedMob {
             prev: row.clone(),
@@ -218,15 +169,10 @@ impl Replica<MobStateRow> for ReplicatedMob {
         mob
     }
 
-    /// Adopt the next row: curr→prev in place (the retired prev row takes the
-    /// new one's contents), keeping the blend state (it eases toward the new
-    /// target set) and the resolved draw set while unchanged.
     fn advance(&mut self, row: &MobStateRow, interner: &mut AnimInterner) {
         if !same_draw(&self.curr.draw.prims, &row.draw.prims) {
             self.draw = resolve_draw(row);
         }
-        // `prev_anims` takes the outgoing ids, which still pair with
-        // `curr.anims`' names until the rows swap below.
         std::mem::swap(&mut self.prev_anims, &mut self.curr_anims);
         intern_anims(
             &row.anims,
@@ -240,15 +186,12 @@ impl Replica<MobStateRow> for ReplicatedMob {
         self.emitters.refresh(&row.emitters, &row.conditions);
     }
 
-    /// A fresh seed in place: prev == curr == `row`, animations at full
-    /// weight, like a spawn but reusing this entry's buffers.
     fn reseed(&mut self, row: &MobStateRow, interner: &mut AnimInterner) {
         self.advance(row, interner);
         self.hold();
         self.settle_blends();
     }
 
-    /// An unchanged window: the pair collapses onto the current row.
     fn hold(&mut self) {
         self.prev.assign_from(&self.curr);
         self.prev_anims.clone_from(&self.curr_anims);
@@ -256,7 +199,6 @@ impl Replica<MobStateRow> for ReplicatedMob {
 }
 
 impl ReplicatedMob {
-    /// Every current layer and the current gait at full weight.
     fn settle_blends(&mut self) {
         self.anim_blend.clear();
         self.anim_blend
@@ -266,25 +208,18 @@ impl ReplicatedMob {
             .extend(gait_of(&self.curr).map(|clip| (clip, 1.0, self.curr.anim_time)));
     }
 
-    /// `prev.anims` with interned names, in row order.
     pub fn prev_anims(&self) -> &[(AnimId, f32)] {
         &self.prev_anims
     }
 
-    /// `curr.anims` with interned names, in row order.
     pub fn curr_anims(&self) -> &[(AnimId, f32)] {
         &self.curr_anims
     }
 
-    /// `curr`'s body emitters, as derived when the row last changed them.
     pub fn emitters(&self) -> &BodyEmitters {
         &self.emitters
     }
 
-    /// The feet pose this replicated row presents at `alpha`. Picking,
-    /// collision, seats, and rendering all speak this same prev→curr blend;
-    /// keeping the shortest-arc yaw rule here prevents interaction geometry
-    /// from drifting onto the future tick while the model is still between.
     pub fn interpolated_pose(&self, alpha: f32) -> (petramond_math::world_pos::WorldPos, f32) {
         (
             self.prev.pos.lerp(self.curr.pos, alpha),
@@ -292,17 +227,11 @@ impl ReplicatedMob {
         )
     }
 
-    /// The body tilt this row presents at `alpha`, blended like the pose.
     pub fn interpolated_tilt(&self, alpha: f32) -> Tilt {
         self.prev.tilt.lerp(self.curr.tilt, alpha)
     }
 }
 
-/// A rider's frame on its mount this frame: where the seat is, the BODY yaw
-/// the rider sits square to (PLAYER convention: `0` faces `+Z`), and the tilt
-/// the seated body leans with. Local slaving and remote presentation share
-/// this one lookup, so row pairing, yaw convention, seat projection and lean
-/// cannot drift apart between the two.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct MountPose {
     pub seat: petramond_math::world_pos::WorldPos,
@@ -310,8 +239,6 @@ pub struct MountPose {
     pub tilt: Tilt,
 }
 
-/// The client's replicated mob set, and the session's animation-name
-/// interner its rows' layer names intern into.
 #[derive(Default)]
 pub struct ReplicatedMobs {
     rows: EntityStore<u64, ReplicatedMob>,
@@ -319,39 +246,26 @@ pub struct ReplicatedMobs {
 }
 
 impl ReplicatedMobs {
-    /// Apply one lane (see [`EntityStore::apply`]): a spawn starts with
-    /// prev == curr (no interpolation from nowhere), an update shifts
-    /// curr→prev and adopts the new row in place, and a despawn — out of
-    /// view, or gone from the world — drops the id.
     pub fn apply(&mut self, lane: &MobLane) {
         self.rows
             .apply(lane, Adopt::Advance, &mut self.anim_names, |_| true);
     }
 
-    /// [`apply`](Self::apply) a full row snapshot (see [`snapshot_lane`]).
     #[cfg(test)]
     pub fn apply_snapshot(&mut self, rows: &[MobStateRow]) {
         let lane = snapshot_lane(self.rows.keys(), rows);
         self.apply(&lane);
     }
 
-    /// Replace a discontinuous backlog with one fresh interpolation seed:
-    /// every row the lane carries starts over as a spawn would.
     fn resync(&mut self, lane: &MobLane) {
         self.rows
             .apply(lane, Adopt::Reseed, &mut self.anim_names, |_| true);
     }
 
-    /// The session's interned animation names, which every entry's
-    /// [`AnimId`]s index.
     pub fn anim_names(&self) -> &AnimNames {
         self.anim_names.names()
     }
 
-    /// Ease every entry's animation blend weights toward its replicated
-    /// target set (in → 1, out → 0, dropped at 0), refreshing each active
-    /// layer's held phase from the row (a fading-out layer keeps its last
-    /// pose). Runs once per frame.
     pub fn advance_anim_blends(&mut self, dt: f32) {
         let step = ANIM_BLEND_PER_SEC * dt;
         for entry in self.rows.iter_mut() {
@@ -393,17 +307,10 @@ impl ReplicatedMobs {
         self.rows.iter()
     }
 
-    /// The replicated mob with stable id `id`, if present this batch — how
-    /// rider glue finds its mount.
     pub fn get(&self, id: u64) -> Option<&ReplicatedMob> {
         self.rows.get(&id)
     }
 
-    /// The rider's frame on `mount` at `alpha`, or `None` while a mob mount's
-    /// rows are not available yet — the caller keeps its current transform
-    /// and waits for the rows to agree. A pose anchor is static world state:
-    /// the wire pos IS the seat, its yaw is already player convention, and it
-    /// is level.
     pub fn mount_pose(&self, mount: PlayerMount, alpha: f32) -> Option<MountPose> {
         match mount {
             PlayerMount::Mob { id, seat } => {
@@ -414,8 +321,6 @@ impl ReplicatedMobs {
                 let tilt = entry.interpolated_tilt(alpha);
                 Some(MountPose {
                     seat: petramond::mob::riding::seat_world_pos(pos, yaw, tilt, offset),
-                    // Mob yaw is mount convention (`0` faces `-Z`), π from
-                    // player body yaw.
                     body_yaw: petramond_math::math::wrap_angle(yaw + std::f32::consts::PI),
                     tilt,
                 })
@@ -439,14 +344,11 @@ impl ReplicatedMobs {
     }
 }
 
-/// One replicated dropped item (prev/current batch rows).
 pub struct ReplicatedItem {
     pub prev: ItemStateRow,
     pub curr: ItemStateRow,
 }
 
-/// The client's replicated dropped-item set — same contract as
-/// [`ReplicatedMobs`].
 #[derive(Default)]
 pub struct ReplicatedItems {
     rows: EntityStore<u64, ReplicatedItem>,
@@ -482,7 +384,6 @@ impl ReplicatedItems {
         self.rows.apply(lane, Adopt::Advance, &mut (), |_| true);
     }
 
-    /// Replace a discontinuous backlog with one fresh interpolation seed.
     fn resync(&mut self, lane: &ItemLane) {
         self.rows.apply(lane, Adopt::Reseed, &mut (), |_| true);
     }
@@ -492,67 +393,29 @@ impl ReplicatedItems {
     }
 }
 
-/// The client-side mirror of the local player's [`SelfState`]: everything the
-/// HUD, hand, and overlays read. Seeded from the session at join (the wire
-/// path seeds it from `SelfRestore`), then overwritten by every batch.
 pub struct SelfView {
-    /// Active body-condition stages `(condition id, stage)`.
     pub conditions: Vec<(u8, u8)>,
-    /// Health in half-heart points.
     pub health: i32,
     pub mode: PlayerMode,
-    /// Active effects (id, remaining ticks) in application order. Wire effect
-    /// ids arrive already remapped to local ids, so they are stored directly.
     pub effects: Vec<(petramond_world::effect::Effect, u32)>,
-    /// A real `Inventory` value reconstructed from the wire slots — the menu
-    /// renders slots + cursor from it. Contents refresh only when the server
-    /// shipped them (revision moved); the active slot refreshes every batch.
     pub inventory: Inventory,
-    /// Server-side content revision. Reconstructing `Inventory` from a wire
-    /// snapshot resets its own local counter, so cache users retain this one.
     pub inventory_revision: u64,
-    /// The in-progress mining target + crack stage (0..=9).
     pub mining: Option<(IVec3, u8)>,
-    /// The in-progress eat's progress in `[0, 1)`.
     pub eating: Option<f32>,
-    /// The in-progress eat consumes from the OFF hand — the left hand carries
-    /// the food. Meaningless while `eating` is `None`.
     pub eating_off_hand: bool,
-    /// The in-progress sleep's fade progress in `[0, 1]`.
     pub sleeping: Option<f32>,
-    /// The in-progress sleep's bed base (foot) cell.
     pub sleep_bed: Option<IVec3>,
-    /// The body-level land-speed scale the movement code reads every step
-    /// (adopted onto the predicted player beside the effect list).
     pub move_scale: f32,
     pub fly_scale: f32,
-    /// The actions mods denied on this body
-    /// adopted onto the predicted player with the speed scale — the local
-    /// mining timer and the attack click read it, so the button goes dead here
-    /// at the same moment it does on the authority.
     pub denied_actions: petramond::player::DeniedActions,
-    /// Per-hand held poses — the AUTHORITATIVE answer
-    /// for this player's hands, which a client mod predicting the same rule
-    /// overrides locally (see `ClientModRuntime::local_held_poses`).
     pub held_pose_main: Option<mod_api::HeldPose>,
     pub held_pose_off: Option<mod_api::HeldPose>,
-    /// What each hand displays in place of its stack (`[main, off]`) — the
-    /// authoritative answer, overridden locally by a client mod dressing the
-    /// same hand (see `ClientModRuntime::local_held_displays`).
     pub held_display: [Option<ItemType>; 2],
-    /// claimed rig-bone offsets — the authoritative
-    /// answer, overridden locally by a client mod predicting the same rule.
     pub bone_poses: Vec<petramond::player::BonePose>,
-    /// The body's resolved animator claims — the authoritative answer,
-    /// overridden per key by a client mod claiming it (see
-    /// `ClientModRuntime::local_animator`).
     pub animator: petramond::player::AnimatorClaims,
 }
 
 impl SelfView {
-    /// Seed from the freshly-restored session player at world open — the
-    /// in-process stand-in for the join handshake's `SelfRestore`, so the HUD
-    /// is right on the very first frame (before any tick has run).
     pub fn seed_from(player: &Player) -> Self {
         Self {
             health: player.health(),
@@ -593,8 +456,6 @@ impl SelfView {
         }
     }
 
-    /// Nobody's view: no inventory, no hearts. What a HUD reads before a
-    /// recorded player's own state has arrived.
     pub fn nobody() -> Self {
         Self::seed_from(&Player::new(petramond_math::world_pos::WorldPos::ZERO))
             .with_mode(PlayerMode::Spectator)
@@ -605,8 +466,6 @@ impl SelfView {
         self
     }
 
-    /// This view as the state batch that would have produced it, inventory
-    /// whole: what a state capture's Viewer piece holds.
     pub fn to_wire(&self) -> SelfState {
         let inv = &self.inventory;
         SelfState {
@@ -644,7 +503,6 @@ impl SelfView {
         }
     }
 
-    /// The hearts this view shows, `None` outside survival.
     pub fn health_view(&self) -> Option<petramond_world::gui_state::HealthView> {
         (self.mode == PlayerMode::Survival).then_some(petramond_world::gui_state::HealthView {
             current: self.health,
@@ -652,7 +510,6 @@ impl SelfView {
         })
     }
 
-    /// The effect icon row, in application order; empty outside survival.
     pub fn effect_icons(&self) -> Vec<petramond_world::effect::Effect> {
         if self.mode != PlayerMode::Survival {
             return Vec::new();
@@ -660,10 +517,6 @@ impl SelfView {
         self.effects.iter().map(|&(e, _)| e).collect()
     }
 
-    /// Adopt one batch's self state. `adopt_inventory` is false when the
-    /// batch's inventory snapshot is stale against a pending prediction (see
-    /// `apply_tick_update`): contents and revision then keep the predicted
-    /// view — the pending request's own outcome batch carries the truth.
     pub fn apply(&mut self, state: &SelfState, adopt_inventory: bool) {
         self.health = state.health;
         self.conditions.clone_from(&state.conditions);
@@ -673,10 +526,6 @@ impl SelfView {
             .iter()
             .map(|&(id, remaining)| (petramond_world::effect::Effect(id), remaining))
             .collect();
-        // The active hotbar INDEX is client-owned (it rides `PlayerUpdate`):
-        // a full-body ship keeps the CURRENT local selection, never a server
-        // echo that would yank a fast scroll back. `mining` is likewise
-        // untouched — the own crack overlay is the local timer's.
         if adopt_inventory {
             if let Some(slots) = &state.inventory {
                 let active = self.inventory.active_slot();
@@ -698,21 +547,11 @@ impl SelfView {
         self.animator.clone_from(&state.animator);
     }
 }
-/// The client's MENU-session mirror, fed by [`MenuSyncMsg`]s (sent on-change
-/// only) and temporarily mutated by rollback-backed P1 menu predictions — the
-/// exclusive source `Game::menu_read_model` renders from. Wire ids arrive
-/// already remapped to local ids.
 #[derive(Clone, Debug, Default)]
 pub struct MenuView {
-    /// The real output produced by the last accepted CRAFT request.
     pub craft_output: Option<ItemStack>,
-    /// The open mod GUI's container slots.
     pub container: Option<ContainerView>,
-    /// The open mod GUI's kind — resolves the document's slot semantics
-    /// (take-only outputs) for click prediction against `container`.
     pub container_kind: Option<petramond_world::gui_state::GuiKind>,
-    /// The open mod GUI's state map. Only replaced when a sync carries one
-    /// (the server ships it on `Arc` change only).
     pub gui_state: Option<Arc<GuiStateMap>>,
 }
 
@@ -721,8 +560,6 @@ fn stack_from_wire(slot: &Option<ItemSlotWire>) -> Option<ItemStack> {
 }
 
 impl MenuView {
-    /// Adopt one on-change sync: the target view is replaced whole; the mod
-    /// GUI state map is kept unless the sync carries a fresh one.
     pub fn apply(&mut self, msg: MenuSyncMsg) {
         self.craft_output = None;
         self.container = None;
@@ -753,19 +590,12 @@ impl MenuView {
                             .collect(),
                     ));
                 } else if self.gui_state.is_none() {
-                    // First sight of this session without a map yet: render
-                    // from the shared empty map until a change ships one.
                     self.gui_state = Some(petramond_world::gui_state::empty_gui_state());
                 }
             }
         }
     }
 
-    /// Adopt ONLY the sync's mod GUI state map, keeping the slot views as
-    /// they are. Used when the sync's slot state is stale against a pending
-    /// menu prediction: gauges keep flowing (predictions never touch them,
-    /// and a skipped map would be lost until its next change), while slot
-    /// truth arrives with the pending request's own forced outcome batch.
     pub fn adopt_gui_state(&mut self, msg: MenuSyncMsg) {
         if let MenuTargetWire::Container {
             gui_state: Some(entries),
@@ -782,9 +612,6 @@ impl MenuView {
     }
 }
 
-/// Rebuild a real [`Inventory`] from the wire layout (36 slots, then the
-/// cursor, then the off-hand LAST — the `SelfRestore`/`SelfState` layout).
-/// Short/absent tails read empty. Also rebuilds the remote join's player.
 pub fn inventory_from_wire(
     slots: &[Option<petramond::net::protocol::ItemSlotWire>],
     active: u8,
@@ -805,10 +632,6 @@ pub fn inventory_from_wire(
     Inventory::from_parts(grid, cursor, off_hand, active)
 }
 
-/// Interpolate a replicated ragdoll pose between two batches: positions lerp,
-/// orientations slerp per bone. A fresh/mismatched previous pose (the ragdoll
-/// just started, or a bone-count change) snaps to the current one. The bones
-/// append to `out`, the frame's arena.
 pub fn lerp_ragdoll(
     prev: Option<&[([f32; 3], [f32; 4])]>,
     curr: &[([f32; 3], [f32; 4])],
@@ -829,9 +652,6 @@ pub fn lerp_ragdoll(
 }
 
 impl Game {
-    /// Apply one pump's ordered server→client messages: terrain payloads into
-    /// the REPLICA world, then the tick batch. A remote client applies the
-    /// identical messages off the wire (remapped at its transport boundary).
     pub fn apply_server_messages(
         &mut self,
         msgs: &mut Vec<petramond::net::protocol::ServerToClient>,
@@ -844,9 +664,6 @@ impl Game {
                     self.replica.world.install_remote_column(column)
                 }
                 ServerToClient::SectionData(section) => {
-                    // A full payload supersedes any parked copy: the server
-                    // only re-streams a claimed section when its content
-                    // moved (or after a SectionCacheMiss dropped the belief).
                     self.replica.section_cache.discard(section.pos);
                     if let Some(pos) = self.replica.world.install_remote_section_deferred(*section)
                     {
@@ -873,21 +690,12 @@ impl Game {
                             let pos = self.replica.world.install_cached_section(pos, section);
                             self.replica.section_installs.push(pos);
                         }
-                        // Like the batch ack, a miss reports through the
-                        // handle right away (never the frame outbox): until
-                        // the server re-streams the full payload this pos is
-                        // a hole in the world.
                         None => self.net.send_now(
                             petramond::net::protocol::ClientToServer::SectionCacheMiss { pos },
                         ),
                     }
                 }
                 ServerToClient::Tick(update) => self.apply_tick_update(update),
-                // Roster changes (broadcast to every connection, local
-                // included). The remote-player STORE keys off the per-tick
-                // rows; the roster carries names (and survives even if a row
-                // beats its PlayerJoined — the store refreshes names per
-                // batch).
                 ServerToClient::PlayerJoined { id, name } => {
                     self.replica.entities.player_joined(id, name);
                 }
@@ -897,9 +705,6 @@ impl Game {
                 ServerToClient::ChatLine(line) => {
                     self.replica.chat_lines.push(line);
                 }
-                // The server is the only writer of the unlocked set; the
-                // client mirrors it so its browser lists exactly what the
-                // server would accept a CRAFT for.
                 ServerToClient::RecipesUnlocked { recipes } => {
                     for recipe in recipes {
                         self.local.player.progression.unlock(&recipe);
@@ -908,10 +713,6 @@ impl Game {
                 ServerToClient::ModsDisabled { mods } => {
                     self.client_mods.disable_from_server(&mods);
                 }
-                // Streaming flow control: Start opens the timing window, End
-                // closes it into a measured apply rate and an immediate ack
-                // (both markers apply in THIS same drain loop, so the elapsed
-                // time is the real cost of installing the batch's messages).
                 ServerToClient::StreamBatchStart => self.net.stream_batch_started(),
                 ServerToClient::StreamBatchEnd { count } => {
                     self.replica
@@ -928,7 +729,6 @@ impl Game {
                     self.net
                         .note_lost_because(&format!("disconnected: {reason}"));
                 }
-                // Handshake messages never reach a joined session.
                 other => {
                     debug_assert!(false, "unexpected post-join message: {other:?}");
                 }
@@ -990,14 +790,7 @@ impl Game {
         }
     }
 
-    /// Turn the interpolation window when render time crossed the current
-    /// segment: commit queued rows FIFO, one crossed segment per batch (see
-    /// [`EntityReplica::commit_next_due`]); a commit that dismounted the local
-    /// body lands it beside the hull. Runs each frame right after the batches
-    /// drained (`tick_receive`), before presentation samples `tick_alpha`.
     pub fn advance_interp_window(&mut self) {
-        // A presentation's window follows its position exactly: the pair
-        // around it committed, alpha its fraction — never a clock of its own.
         if let Some(at) = self.presentation_position() {
             while let Some(committed) = self.replica.entities.commit_presented(at) {
                 self.after_commit(committed);
@@ -1015,8 +808,6 @@ impl Game {
         }
     }
 
-    /// Test-only: advance render time one full tick and turn the window —
-    /// how row-assertion tests step the staged interpolation deterministically.
     #[cfg(test)]
     pub fn commit_replication_window_for_test(&mut self) {
         self.replica
@@ -1025,10 +816,7 @@ impl Game {
         self.advance_interp_window();
     }
 
-    /// Adopt one replication batch: block deltas and client read models apply
-    /// immediately, entity rows enter the interpolation FIFO, and this
-    /// window's events translate to LOCAL types and buffer for `GameEvents`.
-    #[allow(clippy::boxed_local)] // The network message already owns a boxed tick payload.
+    #[allow(clippy::boxed_local)]
     pub fn apply_tick_update(&mut self, update: Box<TickUpdate>) {
         let TickUpdate {
             tick,
@@ -1098,10 +886,6 @@ impl Game {
         self.apply_authority(&outcomes, self_state, menu_sync, &delta_cells, world_events);
     }
 
-    /// The prediction-coupled half of a batch: adopt the authoritative self
-    /// state and menu view, reconcile the prediction ledger against the
-    /// batch's outcomes (rolling back what the server denied), then buffer
-    /// the world events with this client's own presented cells suppressed.
     fn apply_authority(
         &mut self,
         outcomes: &[petramond::net::protocol::ActionOutcome],
@@ -1127,10 +911,6 @@ impl Game {
             if self.local.player.mode() != self.replica.self_view.mode {
                 self.local.player.set_mode(self.replica.self_view.mode);
             }
-            // The predicted body runs the same movement code as the server,
-            // and that code reads the effect list (a speed effect scales land
-            // speed). An unsynced predicted player would walk at the wrong
-            // speed for the whole duration and rubber-band every batch.
             self.local.player.set_effects(
                 self.replica
                     .self_view
@@ -1144,24 +924,15 @@ impl Game {
                     )
                     .collect(),
             );
-            // Same rule for the resolved mod body — the speed scale the
-            // movement code reads every step, and the actions this body is
-            // barred from. Both are authority, so the predicted body adopts
-            // them with the effects.
             self.local.player.adopt_resolved_body(
                 self.replica.self_view.move_scale,
                 self.replica.self_view.fly_scale,
                 self.replica.self_view.denied_actions,
             );
-            // Tick-side transform mutations (teleports, knockback) win over
-            // the local prediction — per-field against what we last sent.
             if let Some(t) = &state.transform {
                 self.adopt_authoritative_transform(t);
             }
         }
-        // Snapshot predicted cells BEFORE reconcile so accept/deny this batch
-        // still suppress matching wire presentation events (the ledger entry
-        // is about to drop).
         let suppress: rustc_hash::FxHashSet<IVec3> = self.prediction.suppressed_cells().collect();
         // Authoritative inventory / block deltas win; then apply deny rollbacks
         // for any predicted mutations the server rejected. Snapshots come back
@@ -1173,8 +944,6 @@ impl Game {
             match snap {
                 crate::game::prediction::PredictionSnapshot::None => {}
                 crate::game::prediction::PredictionSnapshot::Inventory(inv) => {
-                    // Only restore if we did not adopt a fresh authoritative
-                    // body this batch (adopted SelfState inventory wins).
                     if !adopted_inventory {
                         self.replica.self_view.inventory = inv;
                     }
@@ -1193,8 +962,6 @@ impl Game {
                             self.replica.self_view.inventory = inv;
                         }
                     }
-                    // Silent restore: no world events. A same-batch
-                    // authoritative delta at a cell wins over the rollback.
                     let mut restored = Vec::with_capacity(cells.len());
                     for (pos, prev_block_id) in cells {
                         if delta_cells.contains(&pos) {
@@ -1209,8 +976,6 @@ impl Game {
                         );
                         restored.push((pos, before));
                     }
-                    // A rollback is a local edit too: its restored geometry
-                    // and light publish under the same prediction fence.
                     self.replica.world.reconcile_predicted_edit(&restored);
                 }
             }
@@ -1227,13 +992,6 @@ impl Game {
         }
     }
 
-    /// Translate one wire world event to local types into the frame buffer.
-    /// Ids arrived remapped (identity in-process), so constructors are direct.
-    ///
-    /// Own predicted place/break presentation is NEVER replayed: `suppress`
-    /// holds every cell this client already presented (or still has pending).
-    /// Observers' / natural breaks still present. Server-side strip is the
-    /// primary filter; this is the belt for races.
     pub(super) fn buffer_world_event(
         &mut self,
         msg: WorldEventMsg,
@@ -1306,8 +1064,6 @@ impl Game {
                         block: petramond_world::block::Block::from_id(block_id),
                         kv_tint: tint,
                     },
-                    // A tile this client's packs do not know: the row's own
-                    // look, not nothing.
                     Some(BurstTextureMsg::Tile { tile, slice, tint }) => {
                         petramond_world::particle_emitters::TextureSlice::named(&tile, slice)
                             .map_or(BurstLook::Row, |slice| BurstLook::Texture {

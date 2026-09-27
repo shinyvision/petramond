@@ -1,11 +1,3 @@
-//! The positional queries: what generation WILL produce at a position,
-//! answered without generating or loading the section — heights, blocks,
-//! terrain occupancy and surface / underground biomes. The engine side of the
-//! mod ABI's positional host calls, and what spawn and pack checks ask.
-//!
-//! Every answer reads the same memos the section pipeline fills, so a query
-//! can never drift from the blocks a section actually receives.
-
 use mod_api::TerrainSpace;
 
 use crate::{cache, density, driver, feature, noise, section_memo};
@@ -13,10 +5,6 @@ use crate::{cache, density, driver, feature, noise, section_memo};
 mod terrain;
 pub use terrain::{blocks_at, heights_at, section_blocks};
 
-/// The underground biome owning each world position for `seed` — the same
-/// climate partition used by cave lining and habitat decoration, so it answers
-/// before any section exists. Purely positional: no loaded world, no order
-/// dependence. This is the engine side of the mod ABI's `UndergroundBiomeAt`.
 pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
     let generator = driver::ChunkGenerator::shared(seed);
     let (_, field) = generator.sources();
@@ -26,18 +14,9 @@ pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
     out
 }
 
-/// The key of a memoized [`underground_biomes_in_box`] answer: the cave
-/// field's context and the normalized box.
 pub(crate) type UndergroundBoxKey = (cache::GenContext, [i32; 3], [i32; 3]);
 
-/// The conservative set of underground biome ids that can own a cell inside the
-/// inclusive world box — the engine side of the mod ABI's
-/// `UndergroundBiomesInBox`. An id it omits provably does not occur in the box,
-/// so a mod whose content belongs to one biome can reject a whole dispatch on
-/// it instead of asking cell by cell.
 pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
-    // Every section of a column asks about the same box, and neighbouring
-    // columns about the same few.
     let (lo, hi) = (clamp_query(lo), clamp_query(hi));
     let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
     let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
@@ -57,25 +36,6 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
         .to_vec()
 }
 
-/// Is the generated terrain solid at each world position for `seed`? The
-/// engine side of the mod ABI's `TerrainSolidAt`.
-///
-/// Solid means what the fill+carve stages leave behind: at or below the
-/// column's density surface, and not cut away by a carver. Air and fluids are
-/// both `false`; features (scatter, vegetation, trees, mod writes) are not
-/// included, because they are not positional — they depend on a stage having
-/// run.
-///
-/// This exists so a cross-section structure can make ONE acceptance decision
-/// that every section agrees on, the way an engine feature's `is_anchored`
-/// gate reads only the surface model and never chunk content. Reading the
-/// dispatching section's own snapshot cannot do that: cells outside it are
-/// unknown, so each section would answer differently for the same origin.
-///
-/// Surfaces come from the shared feature-window tile memo — the SAME values
-/// the carve stage reads — so the answer cannot drift from the blocks a
-/// section actually receives. Queries arrive in columns, so one tile is kept
-/// hot rather than re-fetched per cell.
 pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
     terrain_samples(seed, positions)
         .into_iter()
@@ -83,9 +43,6 @@ pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
         .collect()
 }
 
-/// [`terrain_solid_at`] telling air from fluid, without loading neighbouring
-/// sections: a cell holding the sea, an aquifer, a pool or a fall is neither
-/// ground to stand on nor room to grow into.
 pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> {
     terrain_samples(seed, positions)
         .into_iter()
@@ -93,14 +50,12 @@ pub fn terrain_space_at(seed: u32, positions: &[[i32; 3]]) -> Vec<TerrainSpace> 
         .collect()
 }
 
-/// Each position's `(clamped position, column surface, terrain occupancy)`.
 fn terrain_samples(seed: u32, positions: &[[i32; 3]]) -> Vec<([i32; 3], i32, TerrainSpace)> {
     let generator = driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
     terrain_samples_in(caves, surface, positions)
 }
 
-/// [`terrain_samples`] over explicit generation sources.
 fn terrain_samples_in(
     caves: &noise::cave_field::CaveField,
     surface: &density::surface::SurfaceDensitySystem,
@@ -108,21 +63,10 @@ fn terrain_samples_in(
 ) -> Vec<([i32; 3], i32, TerrainSpace)> {
     use petramond_world::chunk::{SectionPos, SECTION_SIZE};
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
-    /// Positions inside one section from which filling and carving the whole
-    /// section once — kept for its generation and every later probe — beats
-    /// sampling them on their own lattice.
     const SECTION_MASK_MIN: usize = 128;
     let mut tile: Option<(i32, i32, Vec<i32>)> = None;
-    // Pair each position with its column surface first (one tile fetch per
-    // 16×16 run). Dense groups then read the memoized section terrain, and
-    // the rest answer the carve question as one batch — one lattice per
-    // spatial bucket instead of one per position.
     let mut queries: Vec<([i32; 3], i32)> = Vec::with_capacity(positions.len());
-    // Positions the carve question cannot even apply to (above the column
-    // surface, or below the carve floor).
     let mut no_carve = vec![false; positions.len()];
-    // Probes arrive column by column, so a position's section is nearly always
-    // the previous one's, and a call spans a few dozen sections at most.
     let mut groups: Vec<([i32; 3], Vec<u32>)> = Vec::new();
     let mut last = usize::MAX;
     for (i, p) in positions.iter().enumerate() {
@@ -192,8 +136,6 @@ fn terrain_samples_in(
             let (p, surf_y) = queries[i as usize];
             space[i as usize] = match caves.field_space_at(p) {
                 Some(field) => field,
-                // Above the column's surface the terrain fill, not the carve,
-                // decides: open sky, or the ocean standing in it.
                 None if p[1] > surf_y => {
                     if p[1] <= petramond_world::chunk::SEA_LEVEL {
                         TerrainSpace::Fluid
@@ -208,8 +150,6 @@ fn terrain_samples_in(
                 },
             };
         }
-        // The falls the section stamp and the memoized mask apply, from the
-        // same per-chunk claims, so a sparse answer matches a cached one.
         if let Some(top) = caves.falls_top() {
             let mut chunk = None;
             for &i in &sparse_idx {
@@ -231,25 +171,10 @@ fn terrain_samples_in(
         .collect()
 }
 
-/// The final surface biome id at each world column for `seed` — the engine
-/// side of the mod ABI's `SurfaceBiomeAt`.
-///
-/// The day-surface twin of [`terrain_solid_at`], and it exists for the same
-/// reason: a worldgen hook's own column map covers only the dispatching
-/// section, so it can neither carry a cross-section acceptance decision nor
-/// answer anything about a NEIGHBOURING column. "Is there a river within N
-/// blocks" — what tells a river bank apart from ordinary plains — is exactly
-/// the second kind, and no column knows it about itself.
-///
-/// Read off the SAME world-anchored feature tile the feature stage reads, so
-/// the answer cannot drift from the biome a section is actually dressed with.
 pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
     let generator = driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
-    // Answered TILE BY TILE rather than in the caller's order: a batch of
-    // neighbour probes around one column straddles a tile edge and would
-    // otherwise re-take the memo lock on every other query.
     let mut order: Vec<u32> = (0..columns.len() as u32).collect();
     let key = |i: &u32| {
         let [x, _, z] = clamp_query([columns[*i as usize][0], 0, columns[*i as usize][1]]);
@@ -271,12 +196,7 @@ pub fn surface_biome_at(seed: u32, columns: &[[i32; 2]]) -> Vec<u8> {
     out
 }
 
-/// Guest-supplied coordinates are clamped before any positional query: the
-/// cave lattice scales them by its step, so a position near the integer limits
-/// would overflow that multiply, and no host call may be steered into
-/// arithmetic UB by a mod. Y is clamped to the world column.
 fn clamp_query(p: [i32; 3]) -> [i32; 3] {
-    /// Leaves room for the lattice's `(cell + 1) * LATTICE_STEP` scaling.
     const HORIZONTAL_LIMIT: i32 = i32::MAX / 8;
     [
         p[0].clamp(-HORIZONTAL_LIMIT, HORIZONTAL_LIMIT),
@@ -308,8 +228,6 @@ mod tests {
         use petramond_world::chunk::SectionPos;
         use petramond_world::chunk::SECTION_SIZE;
 
-        // The synthetic table is a context of its own: every memo key names
-        // its content, so it shares no entry with the shipped table's worlds.
         let seed = 0x0E58_1001;
         const ALWAYS: &str = r#"{"fluid_falls":[{"fluid_fall":"test:always","fluid":"petramond:lava",
             "chance":1.0,"y":[-38,-11],"min_surface":45}]}"#;
@@ -339,7 +257,6 @@ mod tests {
                 (!cells.is_empty()).then_some(((cx, cz), cells))
             })
             .expect("a fall where every column rolls one");
-        // Few enough per section that every one is answered sparsely.
         fall_cells.truncate(100);
         let cold = space_at(&fall_cells);
         let fall_cys: std::collections::BTreeSet<i32> =
@@ -409,9 +326,6 @@ mod tests {
         );
     }
 
-    /// The height and block queries read the merged surface memos (the cave
-    /// field's density surfaces, the shared surface tiles); they must answer
-    /// exactly the surfaces and biomes the terrain fill uses.
     #[test]
     fn the_terrain_queries_read_the_fill_inputs() {
         let seed = 0x4EA7_0001;

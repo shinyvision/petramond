@@ -29,10 +29,6 @@ fn shaders_json_accepts_sky_entry_shape() {
     assert_eq!(row.sky_light_param.as_deref(), Some("petramond:light"));
 }
 
-/// Parse + validate every bundled mod pack's WGSL with the same naga
-/// wgpu embeds, so a shader typo fails `cargo test` instead of the first
-/// windowed launch. Sources are read from `mods-src/*/pack` (the tracked
-/// tree — `mods/` is build output and may be absent).
 #[test]
 fn bundled_pack_shaders_parse_and_validate() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -66,7 +62,6 @@ fn bundled_pack_shaders_parse_and_validate() {
         }
     }
     assert!(checked >= 1, "the weather pack ships at least clouds.wgsl");
-    // Engine shaders have no fallback path; validate composed sources as used.
     for standalone in [
         "grade.wgsl",
         "crosshair.wgsl",
@@ -113,14 +108,12 @@ fn environment_rows_compose_in_layer_order_and_skip_invalid() {
             "params": ["a:one"]
         }
     }"#;
-    // Invalid: bare (non-namespaced) param — skipped, not substituted.
     let bad = r#"{
         "environment": {
             "shader": "shaders/daynight_sky.wgsl",
             "params": ["bare"]
         }
     }"#;
-    // A layer with only a sky row contributes no environment pass.
     let sky_only = r#"{ "sky": { "shader": "shaders/daynight_sky.wgsl" } }"#;
     let b = r#"{
         "environment": {

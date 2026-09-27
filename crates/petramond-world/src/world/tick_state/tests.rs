@@ -70,15 +70,12 @@ fn scheduled_queue_dedups_and_pops_due_checks_in_schedule_order() {
     assert!(q.is_empty());
 }
 
-/// A check left behind by a budgeted drain keeps its place ahead of
-/// anything scheduled later, so carry-over drains oldest-first.
 #[test]
 fn scheduled_queue_carry_over_stays_ahead_of_later_schedules() {
     let mut q = ScheduledQueue::default();
     q.schedule(p(1), 1);
     q.schedule(p(2), 1);
     assert_eq!(q.pop_due(1), Some(p(1)));
-    // Budget ran out; a later tick schedules fresh work due at once.
     q.schedule(p(3), 2);
     assert_eq!(q.pop_due(2), Some(p(2)));
     assert_eq!(q.pop_due(2), Some(p(3)));

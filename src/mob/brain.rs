@@ -1,17 +1,3 @@
-//! Composable mob AI: a [`Brain`] is a priority-ordered set of [`AiBehavior`]s.
-//!
-//! Each game tick the brain asks every behavior for a [`BehaviorOutput`] and settles
-//! it **per channel by priority** (see [`DecisionChannel`]): the highest-priority
-//! behavior that FILLS a channel wins it, and a behavior may also HOLD a channel
-//! empty ([`ChannelClaims`]) so nothing below it fills it. So behaviors compose —
-//! wander supplies a goal, a head-look behavior supplies head orientation, chase
-//! overrides the goal while a player is near, a fleeing response holds the attack
-//! channel shut — each owning exactly the channels it names at its priority.
-//!
-//! Behaviors hold their own per-instance state, so — unlike the stateless `&'static`
-//! block behaviors — they are owned per mob (`Box<dyn AiBehavior>`), built per spawn
-//! from the species' data brain rows (see `mob::build_brain` and `mob::behavior`).
-
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -25,206 +11,90 @@ use super::model_meta::IdleAnimMeta;
 use super::noise::NoiseField;
 use super::{EntityRef, Mob, MobRng, PlayerAnchor};
 
-/// Priority of wander — the lowest, so any deliberate locomotion overrides it.
 pub const PRIORITY_WANDER: u8 = 0;
-/// Expressive (non-locomotion) behaviors. They set `head_look` / `idle_anim`, which
-/// don't contend with `goal`, so their exact priority rarely matters — but giving
-/// them a slot keeps the ordering explicit.
 pub const PRIORITY_EXPRESSION: u8 = 10;
-/// Chase locomotion (`chase_player`, `chase_sound`) — above wander, so hunting
-/// overrides roaming.
 pub const PRIORITY_CHASE: u8 = 20;
-/// Contact aggression (`chase_contact`) — above ordinary chases: something
-/// touching the mob's body beats whatever it was hunting at a distance.
 pub const PRIORITY_CONTACT: u8 = 22;
-/// Attack behaviors (`melee_attack`) — above chase; they own the `attack` channel
-/// (which nothing else contends for), and the explicit slot keeps the ordering
-/// readable.
 pub const PRIORITY_ATTACK: u8 = 30;
-/// Damage responses (`panic`, `retaliate`) — above attacks: a mob that was just
-/// hit answers THAT first, and holding the attack/target channels from up here
-/// is how fleeing or reeling suppresses a stale combat decision below.
 pub const PRIORITY_DAMAGE_RESPONSE: u8 = 40;
-/// A desired head orientation **relative to the body** (radians): `yaw` swivels the
-/// head left/right, `pitch` tilts it up/down. The renderer applies it to the model's
-/// `head` bone (when the active animation isn't already moving the head).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HeadLook {
     pub yaw: f32,
     pub pitch: f32,
 }
 
-/// Read-only mob state captured at the start of a mob tick for AI decisions that need
-/// nearby companions without borrowing the live [`Mobs`](super::Mobs) container.
 #[derive(Clone, Debug)]
 pub struct AiMob {
-    /// Stable session id — what noise sources, targets, and attacker memory
-    /// name, so a lock survives `swap_remove` renumbering across ticks.
     pub id: u64,
     pub kind: Mob,
-    /// Feet position (like `Instance::pos`).
     pub pos: petramond_math::world_pos::WorldPos,
     pub active: bool,
-    /// Engine- and mod-owned tags attached to this mob instance, shared with
-    /// [`Instance::tags`](super::Instance::tags) by `Arc` clone (copy-on-write
-    /// — a mob whose tags change mid-tick keeps the snapshot's start-of-tick
-    /// view). Behaviors can query any tag generically; the engine reserves the
-    /// `petramond:` namespace.
     pub tags: Arc<BTreeMap<String, super::MobTagValue>>,
 }
 
 impl AiMob {
-    /// Whether this mob carries `key` with a truthy `Bool` value.
     pub fn bool_tag(&self, key: &str) -> bool {
         self.tags.get(key).and_then(super::MobTagValue::as_bool) == Some(true)
     }
 
-    /// The mob's `Int` tag under `key` (`None` = absent or another type).
     pub fn int_tag(&self, key: &str) -> Option<i64> {
         self.tags.get(key).and_then(super::MobTagValue::as_int)
     }
 
-    /// The mob's `Float` tag under `key` (`None` = absent or another type).
     pub fn float_tag(&self, key: &str) -> Option<f64> {
         self.tags.get(key).and_then(super::MobTagValue::as_float)
     }
 
-    /// The mob's `String` tag under `key` (`None` = absent or another type).
     pub fn str_tag(&self, key: &str) -> Option<&str> {
         self.tags.get(key).and_then(super::MobTagValue::as_str)
     }
 
-    /// Whether this mob is confined (captive / penned). Behaviors that rely on
-    /// a mob's freedom of movement (e.g., herd cohesion) should ignore confined
-    /// companions.
     pub fn confined(&self) -> bool {
         self.bool_tag(super::tags::CONFINED)
     }
 }
 
-/// The tick-wide, read-only inputs every mob's AI shares this tick — built once
-/// by the manager and threaded to each instance. New world-level perception
-/// channels extend this struct, not the instance tick signature.
 pub struct TickInputs<'a> {
     pub world: &'a ServerWorld,
-    /// Every connected player's anchor.
     pub players: &'a [PlayerAnchor],
-    /// The gameplay noises audible this tick.
     pub noises: &'a NoiseField,
-    /// Snapshot of live mobs at the start of this tick, spatially indexed.
     pub mobs: &'a super::spatial::MobSnapshot,
-    /// Rigid movement obstacles for this mob. Soft bodies receive the complete
-    /// start-of-tick solid snapshot; a moving solid receives only exact peer
-    /// supports, with every other solid handled by the simultaneous solver.
     pub solid: &'a [petramond_world::collision::DynBox],
-    /// This tick's shared route-search budget (see `nav::PATH_TICK_BUDGET`),
-    /// or `None` to search unbudgeted.
     pub path_budget: Option<&'a super::nav::PathBudget>,
-    /// Complete start-of-tick solid snapshot the ESCAPE pre-pass judges
-    /// against (what a body stuck inside geometry must get out of, and where
-    /// it may land). Moving solids otherwise receive just their exact
-    /// supports here and meet all other peers in the simultaneous solve.
     pub solid_escape: &'a [petramond_world::collision::DynBox],
 }
 
-/// Per-tick context a behavior reads to decide what the mob should do. Behaviors
-/// mutate only their own state + the shared [`MobRng`]; the world is read-only.
 pub struct AiCtx<'a> {
-    /// The mob's stable id (spawn-counter identity) — scripted (WASM) nodes
-    /// key per-mob guest state off it.
     pub mob_id: u64,
-    /// Mob feet position (world space).
     pub pos: petramond_math::world_pos::WorldPos,
-    /// Mob foothold cell (the voxel its feet occupy).
     pub cell: IVec3,
-    /// Mob body facing (radians) — for resolving head-look yaw relative to the body.
     pub yaw: f32,
-    /// Height of the mob's head above its feet (m) — for the look-at-player pitch.
     pub head_height: f32,
-    /// Horizontal body radius from centre to side, for standable/pathing probes.
     pub half_width: f32,
-    /// Read-only world, for sampling standable destinations / line-of-sight.
     pub world: &'a ServerWorld,
-    /// This tick's shared reachability-probe budget (see
-    /// `nav::REACH_PROBE_TICK_BUDGET`), or `None` for an unbudgeted context.
-    /// A policy that samples destinations must DEFER when it runs out, never
-    /// treat the refusal as a verdict.
     pub reach: Option<&'a super::nav::ReachBudget>,
-    /// The NEAREST player's session id — pairs with [`player_pos`](Self::player_pos);
-    /// what a player-anchored behavior (chase, melee fallback) targets.
     pub player_id: crate::player::PlayerId,
-    /// Player body-centre — for head-look (and future flee / attack).
     pub player_pos: petramond_math::world_pos::WorldPos,
-    /// Whether that player is sneaking — sneaking shrinks hostile detection
-    /// (see `chase_player`'s `sneak_radius_penalty`).
     pub player_sneaking: bool,
-    /// That player's selected (held) item — the hand fact lure/beg behaviors
-    /// read. `None` for an empty hand or a spectator.
     pub player_held: Option<petramond_world::item::ItemType>,
-    /// EVERY connected player's anchor, for behaviors that track a SPECIFIC
-    /// player (a heard target, an attacker) rather than the nearest one.
     pub players: &'a [PlayerAnchor],
-    /// The gameplay noises audible this tick (see [`super::noise`]) — the
-    /// perception input for hearing-based behaviors. Radius/memory policy
-    /// lives on the listening node.
     pub noises: &'a NoiseField,
-    /// The entities whose bodies overlapped THIS mob on the previous tick —
-    /// the TOUCH perception channel, recorded by the manager's push pass
-    /// (which already finds every overlapping pair). Sneaking silences
-    /// footsteps, but nothing silences a body pressed against yours.
     pub contacts: &'a [EntityRef],
-    /// The target the whole brain settled on LAST tick (the merged
-    /// [`BehaviorOutput::target`]) — how an attack node strikes what a
-    /// perception node locked, without in-pass ordering coupling.
     pub target: Option<EntityRef>,
-    /// Who last damaged this mob, and how many ticks ago — the retaliation
-    /// input. Recorded by the damage pipeline; `None` until first hit.
     pub attacker: Option<(EntityRef, u32)>,
-    /// True when the navigator has no active path (arrived / gave up / untasked).
-    /// Behaviors treat this as "the mob is idle".
     pub nav_idle: bool,
-    /// The fluid the mob's body is in or resting on. Behaviors react to it (e.g.
-    /// idle animations don't play while swimming); the kinematics float the mob up.
     pub in_fluid: Option<petramond_world::block::Block>,
-    /// The mob's vertical clearance in cells (its body height), for standable tests.
     pub head: i32,
-    /// Hazardous blocks this species may route through (`MobDef::tolerates`).
     pub tolerated: &'static [petramond_world::block::Block],
-    /// This species' `idle_*` animations (length + loop mode), so the idle-animation
-    /// behavior only picks valid ones and plays a one-shot for its actual length.
     pub idle_anims: &'a [IdleAnimMeta],
-    /// Index of this mob in [`mobs`](Self::mobs) (a snapshot position, not a
-    /// storage slot; `None` when the snapshot doesn't hold it), so
-    /// companion-aware behaviors can ignore the mob making the decision.
     pub mob_index: Option<usize>,
-    /// Snapshot of live mobs at the start of this tick. Neighbour queries go
-    /// through its spatial index ([`MobSnapshot::near`](super::spatial::MobSnapshot::near))
-    /// and entity lookups through its id map — it offers no whole-population
-    /// scan, so a behavior's cost stays proportional to what is around it.
     pub mobs: &'a super::spatial::MobSnapshot,
-    /// The deciding mob's OWN tag map (start-of-tick view) behind its shared
-    /// handle — the read side of per-mob tag state. The scripted node ships
-    /// it across the ABI as `AiNodeCtx::tags` by handle, never by copy;
-    /// writes ride [`BehaviorOutput::tag_writes`] and land after the whole
-    /// brain has decided.
     pub tags: &'a Arc<BTreeMap<String, super::MobTagValue>>,
-    /// The closed-off area this mob is captive in, when confinement detection
-    /// found one (`petramond:confined` set) — every foothold the mob can
-    /// reach. Wander picks destinations straight from it instead of sampling
-    /// (and pathing toward) spots beyond the walls.
     pub confined_region: Option<&'a super::confined::ConfinedRegion>,
-    /// This mob's scripted-node decisions for the tick, dispatched in one
-    /// batch per node key before any brain decided (see `behavior::wasm`).
     pub scripted: ScriptedReplies<'a>,
-    /// Deterministic per-mob RNG (no `rand` crate; reproducible).
     pub rng: &'a mut MobRng,
 }
 
-/// One mob's prefetched scripted-node decisions, in brain order. The manager
-/// gathers every claimed scripted node's request across the population and
-/// dispatches them per node key before the brains decide; as the brain then
-/// visits its nodes high→low, each claimed scripted node takes the next
-/// reply — the same order the gather walked them in.
 #[derive(Default)]
 pub struct ScriptedReplies<'a>(std::slice::IterMut<'a, Option<AiNodeDecision>>);
 
@@ -233,21 +103,16 @@ impl<'a> ScriptedReplies<'a> {
         ScriptedReplies(replies.iter_mut())
     }
 
-    /// The next claimed scripted node's decision (`None` = no opinion: the
-    /// mod is disabled or answered nothing for this mob).
     pub fn take_next(&mut self) -> Option<AiNodeDecision> {
         self.0.next().and_then(Option::take)
     }
 }
 
 impl AiCtx<'_> {
-    /// Navigation params for the deciding mob's body and tolerances.
     pub fn path_params(&self) -> super::path::PathParams {
         super::path::PathParams::for_body(self.head, self.half_width).tolerating(self.tolerated)
     }
 
-    /// Whether `who` still exists as a targetable entity this tick (a
-    /// connected player, or a live mob in the snapshot).
     pub fn entity_alive(&self, who: EntityRef) -> bool {
         match who {
             EntityRef::Player(pid) => self.players.iter().any(|a| a.id == pid),
@@ -255,13 +120,10 @@ impl AiCtx<'_> {
         }
     }
 
-    /// The live snapshot of mob `id` (`None` when unknown, dead or frozen).
     pub fn live_mob(&self, id: u64) -> Option<&AiMob> {
         self.mobs.live(id)
     }
 
-    /// `who`'s live body-centre position, or `None` when it is gone/dead.
-    /// (Player anchors are body centres already; mob snapshots carry feet.)
     pub fn entity_pos(&self, who: EntityRef) -> Option<petramond_math::world_pos::WorldPos> {
         match who {
             EntityRef::Player(pid) => self.players.iter().find(|a| a.id == pid).map(|a| a.pos),
@@ -273,65 +135,27 @@ impl AiCtx<'_> {
     }
 }
 
-/// A melee strike a behavior wants to land THIS tick. The instance latches it,
-/// the manager drains it into a [`MobAttack`](super::MobAttack) (deriving the
-/// knockback direction from the live attacker→target positions), and `Game`
-/// applies it through the matching damage pipeline: engine immunity plus
-/// `player_damage_pre` for a player target (either rejection drops damage AND
-/// knockback together), or the mob damage pipeline for a mob target (global
-/// immunity, `mob_damage_pre`, feedback, loot, ragdoll — mob-vs-mob combat is
-/// the same funnel as every other mob hit).
-/// Cooldown state lives on the emitting node, not here.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AttackIntent {
-    /// Who the strike lands on.
     pub target: EntityRef,
-    /// Damage in half-heart points (rounded when applied to a player; mobs
-    /// keep the fraction).
     pub damage: f32,
-    /// Horizontal knockback speed (m/s) imparted away from the mob. Applies to
-    /// player targets; a mob target takes its row's own `petramond:knockback`
-    /// feedback component instead.
     pub knockback: f32,
 }
 
-/// One behavior's contribution to a tick. The opinion fields default to "no
-/// opinion"; the brain settles each [`DecisionChannel`] with the highest-priority
-/// behavior that filled it, or that HELD it empty through [`claims`](Self::claims).
-/// `tag_writes` is not arbitrated — every node's writes apply, in brain order.
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct BehaviorOutput {
-    /// A navigation destination this behavior wants the mob to head to.
     pub goal: Option<IVec3>,
-    /// A desired head orientation (relative to the body).
     pub head_look: Option<HeadLook>,
-    /// Desired body facing in world radians, eased at the species turn rate.
     pub facing: Option<f32>,
-    /// Horizontal locomotion and gait rate multiplier for this tick.
     pub speed_scale: Option<f32>,
-    /// An `idle_*` animation index this behavior wants played.
     pub idle_anim: Option<u8>,
-    /// A melee strike this behavior wants landed this tick.
     pub attack: Option<AttackIntent>,
-    /// A named animation to activate at the start of an action.
     pub animation: Option<String>,
-    /// The entity this behavior is engaged on. The settled value is latched by
-    /// the instance and fed back as next tick's [`AiCtx::target`], so attack
-    /// nodes strike what the winning perception/chase node locked.
     pub target: Option<EntityRef>,
-    /// Channels this behavior holds EMPTY against every lower-priority node
-    /// (filling a channel already settles it). On the settled decision: the
-    /// union of every node's holds this tick.
     pub claims: ChannelClaims,
-    /// Tag writes on the deciding mob itself (`None` value = delete),
-    /// namespace-validated at the emitting node. The instance applies them
-    /// after the whole brain has decided — the engine-applied half of the
-    /// scripted `AiNodeDecision::tags` channel.
     pub tag_writes: Vec<(String, Option<super::MobTagValue>)>,
 }
 
-/// The arbitrated fields of a [`BehaviorOutput`] paired with their
-/// [`DecisionChannel`] — the one place the pairing is written down.
 macro_rules! for_each_channel {
     ($m:ident) => {
         $m!(goal => Goal);
@@ -346,7 +170,6 @@ macro_rules! for_each_channel {
 }
 
 impl BehaviorOutput {
-    /// The channels this output filled with a value.
     pub fn filled(&self) -> ChannelClaims {
         let mut filled = ChannelClaims::NONE;
         macro_rules! mark {
@@ -360,8 +183,6 @@ impl BehaviorOutput {
         filled
     }
 
-    /// Take every channel of `offer` that is still open, then close the ones
-    /// it filled or held.
     fn settle(&mut self, offer: BehaviorOutput, settled: &mut ChannelClaims) {
         let closing = offer.claims | offer.filled();
         macro_rules! take {
@@ -378,28 +199,19 @@ impl BehaviorOutput {
     }
 }
 
-/// One composable unit of mob AI. Each tick it contributes a [`BehaviorOutput`].
-/// `Send` because mobs ride the `World`, which lives on the server
-/// thread — behaviors are plain state machines; the scripted
-/// (WASM) node holds only its registry key.
 pub trait AiBehavior: Send {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput;
 
-    /// The scripted (WASM) node this behavior is, if it is one — how the
-    /// manager finds the nodes whose requests it batches before the brains
-    /// decide. Engine nodes are not.
     fn scripted(&self) -> Option<&ScriptedNode> {
         None
     }
 }
 
-/// A priority entry in a [`Brain`].
 struct Entry {
     priority: u8,
     behavior: Box<dyn AiBehavior>,
 }
 
-/// A mob's full AI: its behaviors, evaluated highest-priority-first each tick.
 #[derive(Default)]
 pub struct Brain {
     entries: Vec<Entry>,
@@ -412,32 +224,20 @@ impl Brain {
         }
     }
 
-    /// The scripted nodes of this brain, in the order [`decide`](Self::decide)
-    /// visits them.
     pub fn scripted_nodes(&self) -> impl Iterator<Item = &ScriptedNode> + '_ {
         self.entries.iter().filter_map(|e| e.behavior.scripted())
     }
 
-    /// Whether any node of this brain is scripted.
     pub fn has_scripted(&self) -> bool {
         self.scripted_nodes().next().is_some()
     }
 
-    /// Add a (boxed — the AI-node factories return trait objects) behavior at
-    /// `priority` (higher wins), keeping the list sorted so
-    /// [`decide`](Self::decide) scans it in order.
     pub fn with_boxed(mut self, priority: u8, behavior: Box<dyn AiBehavior>) -> Self {
         self.entries.push(Entry { priority, behavior });
-        // Highest priority first; stable so equal-priority behaviors keep insert order.
         self.entries.sort_by_key(|entry| Reverse(entry.priority));
         self
     }
 
-    /// The settled decision for this tick: behaviors are visited high→low
-    /// priority and each channel goes to the first one that fills it, or stays
-    /// empty once one holds it (see [`BehaviorOutput::claims`]). Every
-    /// behavior ticks every tick, so clocks advance and tag writes flow even
-    /// under a hold.
     pub fn decide(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         let mut decision = BehaviorOutput::default();
         let mut settled = ChannelClaims::NONE;

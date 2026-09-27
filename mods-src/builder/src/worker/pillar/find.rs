@@ -1,6 +1,3 @@
-//! Choosing where a pillar goes: the perch that lays the most for the
-//! least walking and climbing.
-
 use crate::host::prelude::*;
 
 use super::Pillar;
@@ -16,10 +13,6 @@ use crate::worker::tuning::window::WEIGHED;
 use crate::worker::Job;
 use crate::worker::{open_block, plan, sight, Body, Ctx};
 
-/// How many blocks of the `open` work the golem would lay from each of
-/// `perches` as the world stands: seen, against a face turned to it, and
-/// turned the way it would be looking. Reach alone flatters a perch — half of
-/// what is within arm's length of a pillar beside a roof faces away from it.
 pub(in crate::worker) fn lays(
     job: &Job,
     body: &Body,
@@ -51,8 +44,6 @@ pub(in crate::worker) fn lays(
     counts
 }
 
-/// A pillar to reach `cells` from, preferring perches that also reach the
-/// most of the other `open` work, so one climb does a stretch of wall.
 pub fn find(
     ctx: &mut Ctx,
     job: &Job,
@@ -69,8 +60,6 @@ pub fn find(
     if perches.is_empty() {
         return Search::None;
     }
-    // Nearest the golem first, those reaching more work between equals: the
-    // few places on the list go to columns beside it.
     perches.sort_by_key(|p| {
         let away = manhattan([p[0], 0, p[2]], [body.cell[0], 0, body.cell[2]]);
         (
@@ -84,10 +73,6 @@ pub fn find(
     choose(ctx, job, project, body, cells, viable)
 }
 
-/// Every perch within reach of `cells` (lowest at `low`) a pillar could top
-/// out at. A perch level with the target at head height first, then lower
-/// ones (under a floor being laid the head must stay below it), then higher
-/// ones reaching down (a wall under an eave is reached from above it).
 fn perches_for(job: &Job, task: Task, cells: &[[i32; 3]], low: [i32; 3]) -> Vec<[i32; 3]> {
     let mut perches = Vec::new();
     for top in [
@@ -102,8 +87,6 @@ fn perches_for(job: &Job, task: Task, cells: &[[i32; 3]], low: [i32; 3]) -> Vec<
             for dz in -4..=4 {
                 let perch = [low[0] + dx, top, low[2] + dz];
                 let head = offset(perch, [0, 1, 0]);
-                // A perch the task was already refused from would be
-                // climbed and left again forever.
                 if cells.iter().any(|c| *c == perch || *c == head)
                     || job.crew.deferrals.blind(task, perch)
                     || job.design.governed.contains(&head)
@@ -119,15 +102,12 @@ fn perches_for(job: &Job, task: Task, cells: &[[i32; 3]], low: [i32; 3]) -> Vec<
     perches
 }
 
-/// How many of the `open` cells a perch reaches.
 fn covers(perch: [i32; 3], open: &[[i32; 3]]) -> i32 {
     open.iter()
         .filter(|c| reaches(feet_of(perch), &[**c]))
         .count() as i32
 }
 
-/// The first few `perches`, in order, that see the work and have a column
-/// under them to raise a pillar in: each with its base.
 fn viable(
     ctx: &mut Ctx,
     job: &Job,
@@ -146,8 +126,6 @@ fn viable(
         if refusal.is_some() {
             continue;
         }
-        // A foot already known cut off, or already listed for another
-        // height, must not take one of the few places.
         if let Some(base) = column_base(ctx, job, project, [perch[0], perch[2]], perch[1], cells) {
             let foot = [perch[0], base, perch[2]];
             if !route::failed_recently(ctx, foot, project.home)
@@ -160,8 +138,6 @@ fn viable(
     viable
 }
 
-/// `viable` perches with feet on the ground first, then by what the trip to
-/// each costs for the work it lays.
 fn by_trip(
     ctx: &mut Ctx,
     job: &Job,
@@ -170,12 +146,7 @@ fn by_trip(
     low: [i32; 3],
     mut viable: Vec<([i32; 3], i32)>,
 ) -> Vec<([i32; 3], i32)> {
-    // Feet on the ground first when no flood says otherwise: a base on the
-    // design's own courses (a roof) is rarely walkable, and ranked by the work
-    // it covers it would crowd out every pillar that can be climbed.
     viable.sort_by_key(|(p, b)| job.design.filled.contains(&[p[0], *b - 1, p[2]]));
-    // Within that, work reached against the walk to the foot and the climb:
-    // the column across the house from the golem is the whole way round.
     let walks: Option<Vec<Option<u32>>> =
         route::region(ctx, body.cell, false, &[])
             .flatten()
@@ -210,42 +181,27 @@ fn by_trip(
     keyed.into_iter().map(|(v, _)| v).collect()
 }
 
-/// A pillar's trip weighed against the work it lays.
 struct Trip {
-    /// Moves walked to its foot, if the flood reaches it.
     moves: Option<u32>,
-    /// Whether its foot stands on the design's own courses.
     on_course: bool,
-    /// Levels climbed.
     levels: i32,
-    /// Blocks laid from its top as the world stands.
     lays: i32,
-    /// Open work within reach of its top.
     covers: i32,
 }
 
 impl Trip {
-    /// Lower is better: moves spent per block of work, scaled.
     fn key(&self) -> i32 {
-        // A foot on the design's own courses that the flood reaches (the
-        // upper floor) is as good as ground: a short pillar from it beats the
-        // long way out.
         let walk = match self.moves {
             Some(m) => m as i32,
             None if self.on_course => UNWALKED * 4,
             None => UNWALKED,
         };
-        // What it would lay now counts in full; what is merely in reach may
-        // follow once a neighbour stands, or may never be seen from here at
-        // all.
         let blocks = (4 * self.lays + self.covers).max(4);
         let trip = walk + LEVEL_MOVES * self.levels + MOUNT_MOVES;
         trip * 64 / blocks
     }
 }
 
-/// The first of the best `viable` perches whose foot stands and walks home
-/// and back.
 fn choose(
     ctx: &mut Ctx,
     job: &Job,
@@ -275,8 +231,6 @@ fn choose(
             continue;
         }
         let foot = [perch[0], base, perch[2]];
-        // Taken down, the pillar leaves the golem on its own foot; ground
-        // beside it at the same height is only a preference (a slope has none).
         let exit = (1..5)
             .find(|k| standing[at + k])
             .map_or(foot, |k| asks[at + k]);
@@ -308,9 +262,6 @@ fn choose(
     Search::None
 }
 
-/// The feet level a pillar in `column` would start from: the first open
-/// cell above ground, with open cells all the way up past `top` and none of
-/// them governed by the design.
 pub(super) fn column_base(
     ctx: &mut Ctx,
     job: &Job,

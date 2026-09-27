@@ -1,28 +1,12 @@
-//! Shared connection-shape primitives: the 4-bit horizontal connection mask and
-//! the post + full-height-arm box model that fences, panes, and the parameterized
-//! parameterized wall/bar families all build from.
-//!
-//! A connection shape's 4-bit mask of horizontal connections is REFINED
-//! per-cell state: the edit cascade resolves it (through [`resolved_mask`] +
-//! the rule here) and stores it as a [`ConnectionMask`]; every read decodes
-//! the stored byte. Only the post thickness (the box extent) and the
-//! per-neighbour connection rule differ between families; both are
-//! parameters here, so a family is its dimensions + its `connects`
-//! predicate, not a copy of this module.
-
 use crate::block::{Aabb, Block, BlockShapeKind, BlockTag, ConnectionRule, FullFace};
 use crate::mathh::{IVec3, Vec3};
 use crate::selection::MAX_SELECTION_BOXES;
 
-/// A connection shape's REFINED 4-bit mask as cell state — written by the
-/// fence/pane families' refine, decoded wherever the resolved arms are read.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ConnectionMask(pub u8);
 
 impl crate::block::CellView for ConnectionMask {
     fn owns(block: Block) -> bool {
-        // Any connection family (engine fence/pane or a parameterized
-        // wall/bar) — identified by its params, not a family list.
         block.shape_kind_def().params.connection().is_some()
     }
     fn from_cell(s: crate::block::ShapeState) -> Self {
@@ -35,13 +19,11 @@ impl crate::block::CellCodec for ConnectionMask {
     }
 }
 
-/// Connection-mask bits, one per horizontal side.
 pub const WEST: u8 = 0b0001;
 pub const EAST: u8 = 0b0010;
 pub const NORTH: u8 = 0b0100;
 pub const SOUTH: u8 = 0b1000;
 
-/// `(bit, offset)` per side, in mask-bit order.
 pub const SIDES: [(u8, (i32, i32)); 4] = [
     (WEST, (-1, 0)),
     (EAST, (1, 0)),
@@ -49,13 +31,6 @@ pub const SIDES: [(u8, (i32, i32)); 4] = [
     (SOUTH, (0, 1)),
 ];
 
-/// Resolve the 4-bit connection mask for a connection shape at `pos` from its
-/// horizontal neighbours. Callers supply the neighbour reads so the same rules
-/// serve every asker; `full_face` is the neighbour FAMILY's answer to "is your
-/// face toward me a complete surface?" (`ShapeSim::full_face` — this module
-/// holds NO family knowledge), consulted lazily only when the rule needs
-/// geometry. `connects` receives the neighbour block, the outgoing direction
-/// `(dx, dz)`, and that thunk.
 pub fn resolved_mask<B, F, C>(pos: IVec3, mut block_at: B, mut full_face: F, connects: C) -> u8
 where
     B: FnMut(IVec3) -> Block,
@@ -78,7 +53,7 @@ where
 /// neighbour `nb` in outgoing direction `(dx, dz)`. Same-family shapes join
 /// under every rule but [`Never`](ConnectionRule::Never); everything else asks
 /// the neighbour FAMILY for its face (`full_face`, lazy) and applies the
-/// rule's MATERIAL gate to full-cube faces only — the historical semantics
+/// rule's material gate to full-cube faces only
 /// (a wooden stair's complete back joins a wood-tight fence even though the
 /// stair block is not opaque; a glass CUBE joins only the glass-tight rule).
 /// This module holds no family knowledge: a mod family with a complete face
@@ -93,7 +68,6 @@ pub fn connects(
     if rule == ConnectionRule::Never {
         return false;
     }
-    // Same family (any params) joins — a wall to a wall, a fence to a fence.
     if nb.shape_kind().same_family(self_kind) {
         return true;
     }
@@ -102,32 +76,22 @@ pub fn connects(
         ConnectionRule::OpaqueOrSame | ConnectionRule::SolidOrSame => match full_face() {
             None => false,
             Some(FullFace::Cube) => {
-                // The pane opt-out for cube-row blocks whose real shape is not
-                // the full cell (the inset cactus and chest).
                 if rule == ConnectionRule::SolidOrSame && nb.has_tag(BlockTag::NO_PANE_CONNECT) {
                     return false;
                 }
                 if rule == ConnectionRule::OpaqueOrSame {
-                    // Wood-tight: opaque full cubes only (leaves/glass never join).
                     nb.is_solid() && nb.is_opaque()
                 } else {
-                    // Glass-tight: any solid full cube (glass included).
                     nb.is_solid()
                 }
             }
-            // A partial shape whose face is complete joins by geometry alone.
             Some(FullFace::Shaped) => true,
         },
     }
 }
 
-/// Up to two full-height runs (one per axis) is all a connection shape needs:
-/// the centre post, plus one X run and one Z run that extend to their connected
-/// cell edges.
 pub const MAX_BOXES: usize = 2;
 
-/// A connection shape's resolved boxes for one mask value: the centre post
-/// alone, or the axis runs. Built at compile time by [`make_shapes`].
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Shape {
     boxes: [Aabb; MAX_BOXES],
@@ -151,10 +115,9 @@ const EMPTY_SHAPE: Shape = Shape {
     len: 0,
 };
 
-/// The 16 collision/selection box sets of a connection shape whose post spans
-/// `lo..hi` on both horizontal axes: the centre post alone (mask 0), or up to
-/// two full-height runs that extend to the connected cell edges and stop at the
-/// centre on unconnected sides — the box model bodies never slip through.
+/// 16 box sets for a post spanning `lo..hi` on both axes. Mask 0 is just the centre post. Other
+/// masks run full-height to connected edges, stopping at centre where there's no connection, so
+/// bodies don't slip through gaps.
 pub const fn make_shapes(lo: f32, hi: f32) -> [Shape; 16] {
     let mut shapes = [EMPTY_SHAPE; 16];
     let mut mask = 0;
@@ -203,15 +166,11 @@ const fn push(mut shape: Shape, b: Aabb) -> Shape {
     shape
 }
 
-/// The collision/selection boxes for a connection mask, indexing a table built
-/// by [`make_shapes`].
 #[inline]
 pub fn boxes_for_mask(shapes: &'static [Shape; 16], mask: u8) -> &'static [Aabb] {
     shapes[(mask & 0b1111) as usize].as_slice()
 }
 
-/// Cell-local boxes in the selection outline's fixed-capacity form (a
-/// connection shape has at most 2 runs, under the outline cap).
 #[inline]
 pub fn local_boxes(boxes: &[Aabb]) -> ([(Vec3, Vec3); MAX_SELECTION_BOXES], u8) {
     let mut out = [(Vec3::ZERO, Vec3::ZERO); MAX_SELECTION_BOXES];
@@ -229,8 +188,6 @@ mod tests {
     use crate::block_state::{StairHalf, StairState};
     use crate::facing::Facing;
 
-    /// Resolve a one-neighbour-to-the-east mask under `rule` for a shape of
-    /// `kind`.
     fn east_mask(
         rule: ConnectionRule,
         kind: BlockShapeKind,
@@ -240,8 +197,6 @@ mod tests {
             IVec3::ZERO,
             &neighbour,
             |q, (_dx, _dz)| {
-                // The test neighbourhood holds cubes only: their family
-                // answer is a full CUBE face (material gates then apply).
                 (neighbour(q).shape_family() == ShapeFamily::Cube).then_some(FullFace::Cube)
             },
             |nb, dir, ff| connects(rule, kind, nb, dir, ff),
@@ -304,9 +259,6 @@ mod tests {
 
     #[test]
     fn stair_joins_only_on_its_flat_back_side() {
-        // The stair family's face answer drives the join: geometry from
-        // `stair::face_full` (the family's own math), Shaped so no material
-        // gate applies — a wooden stair joins the wood-tight rule.
         let mask_for = |facing| {
             let shape = crate::stair::shape(StairState::new(facing, StairHalf::Bottom));
             resolved_mask(
@@ -319,8 +271,6 @@ mod tests {
                     }
                 },
                 |q, (dx, dz)| {
-                    // Only the stair cell answers; air (every other side)
-                    // has no complete face in this fixture.
                     if q == EAST_CELL {
                         crate::stair::face_full(shape, IVec3::new(-dx, 0, -dz))
                     } else {

@@ -1,22 +1,5 @@
-//! Batched host calls over more items than one call carries.
-
 use crate::SIM_BATCH_MAX;
 
-/// Run a batched host call over any number of `items`: split at the host's
-/// per-call cap ([`SIM_BATCH_MAX`]) and join the replies in order. No items
-/// is no crossing at all.
-///
-/// Every batched call a mod makes over a list it does not bound itself goes
-/// through here, because an over-cap batch is not a slow call — it is a
-/// `HostRet::Err`, which the SDK turns into a guest panic and the host into
-/// a DISABLED MOD.
-///
-/// `call` must answer one reply per item, as every `*_many` / batched SDK
-/// call does:
-///
-/// ```ignore
-/// let blocks = paged(cells, get_blocks);
-/// ```
 pub fn paged<T, R>(items: Vec<T>, mut call: impl FnMut(Vec<T>) -> Vec<R>) -> Vec<R> {
     if items.is_empty() {
         return Vec::new();

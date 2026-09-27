@@ -1,6 +1,3 @@
-//! View claims at the app: the chrome a claim hides, what it must never hide,
-//! and a canvas's geometry and glyph rows on the overlay draw list.
-
 use super::app;
 use crate::app::client_mod_ui::{compose_canvas, CanvasPlacement};
 use petramond::modding::client::view::{ViewChromeClaim, ViewClaims};
@@ -27,8 +24,6 @@ fn renderer() -> Option<petramond_render::Renderer> {
     )
 }
 
-/// Update then draw until a frame presents (a menu's first solve can stamp a
-/// stale viewport).
 fn present(app: &mut crate::app::App, renderer: &mut petramond_render::Renderer) {
     for _ in 0..4 {
         app.update(renderer);
@@ -49,7 +44,6 @@ fn chrome(hud: Option<bool>) -> ViewClaims {
     }
 }
 
-/// Registered overlays of one kind (HUD or tool) that have an image to draw.
 fn overlays_with_images(app: &crate::app::App, hud: bool) -> usize {
     let game = app.game();
     game.client_mod_overlays()
@@ -75,7 +69,6 @@ fn a_hidden_hud_hides_the_hud_across_mods_but_never_an_open_menu() {
         overlays_with_images(&app, true) > 0,
         "a HUD overlay to hide"
     );
-    // One mod hides the HUD, another asks for it: hiding wins.
     let game = app.game_mut();
     assert!(game.claim_view_for_test("minimap", chrome(Some(false))));
     assert!(game.claim_view_for_test("weather", chrome(Some(true))));
@@ -92,7 +85,6 @@ fn a_hidden_hud_hides_the_hud_across_mods_but_never_an_open_menu() {
         "mod HUD overlays hide too; a tool's own overlay stays"
     );
 
-    // A hidden HUD is not a hidden UI.
     app.handle_control(Control::ToggleInventory, true);
     present(&mut app, &mut renderer);
     assert_eq!(
@@ -101,7 +93,6 @@ fn a_hidden_hud_hides_the_hud_across_mods_but_never_an_open_menu() {
     );
     assert!(!app.composed_doc.vertices.is_empty());
 
-    // Releasing the claims restores the HUD exactly.
     app.handle_control(Control::CloseScreen, true);
     let game = app.game_mut();
     game.claim_view_for_test("minimap", ViewClaims::default());
@@ -137,7 +128,6 @@ fn canvas_rules_and_labels_paint_in_order_and_inside_the_canvas() {
         &mut layer,
         &at,
         vec![
-            // Hangs off the canvas's bottom-right corner.
             row(
                 mod_api::ClientCanvasElement::Rect {
                     rect: [150.0, 100.0, 100.0, 100.0],
@@ -153,7 +143,6 @@ fn canvas_rules_and_labels_paint_in_order_and_inside_the_canvas() {
                 },
                 Some(image),
             ),
-            // Starts inside, runs far past the right edge.
             row(
                 mod_api::ClientCanvasElement::Text {
                     pos: [150.0, 10.0],
@@ -218,10 +207,6 @@ fn canvas_rules_and_labels_paint_in_order_and_inside_the_canvas() {
     );
 }
 
-/// A frame-size claim renders the world and its HUD at exactly that size,
-/// whatever the window's, with the HUD laid out at the FRAME's UI scale
-/// (uncapped: a 4K frame's HUD keeps a 1080p frame's proportions); the
-/// window's own UI keeps the window's. Releasing it gives the window back.
 #[test]
 fn a_frame_size_claim_renders_the_world_and_its_hud_at_that_size() {
     let Some(mut renderer) = renderer() else {

@@ -1,5 +1,3 @@
-//! Data-driven crafting and processing recipes.
-
 mod load;
 mod plan;
 mod recipe;

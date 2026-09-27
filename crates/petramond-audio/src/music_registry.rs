@@ -1,33 +1,10 @@
-//! The music catalog: a stable [`MusicTrack`] id per soundtrack piece, mapped to
-//! its clip file and playback gain.
-//!
-//! Music is its own catalog rather than a `music`-category row of
-//! `sounds.json`, for one structural reason: a sound is a short clip DECODED
-//! INTO MEMORY at startup (see the playback engine), and a three-minute track
-//! decoded to PCM is tens of megabytes — a handful of them would dwarf the
-//! rest of the client's resident audio. A music row is therefore streamed from
-//! its file at play time, and it also carries none of a sound row's shape (no
-//! interchangeable variants, no pitch jitter, no positional reach, no
-//! category — a music row IS the music category).
-//!
-//! The rows live in `assets/music.json`, a layered catalog like `sounds.json`:
-//! add an engine track by adding a const + name here and a row + asset there;
-//! a pack overrides an engine row by bare name or ADDS a track with a
-//! namespaced (`mod_id:name`) key (see [`petramond_world::registry`] for the
-//! shared rules). Because the scheduler picks uniformly over the whole loaded table,
-//! a pack that adds tracks joins the rotation with no engine change.
-
 use petramond_world::content::{ContentRegistry, Slot};
 use petramond_world::registry;
 use serde::Deserialize;
 
-/// A soundtrack piece, identified by its opaque runtime id (the row index in
-/// the loaded table). Engine tracks own the low ids in the frozen const order
-/// below; pack tracks register after them.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MusicTrack(pub u8);
 
-/// Engine track consts, in frozen id order.
 #[allow(non_upper_case_globals)]
 impl MusicTrack {
     pub const Firefly: MusicTrack = MusicTrack(0);
@@ -37,9 +14,6 @@ impl MusicTrack {
     pub const Lullaby: MusicTrack = MusicTrack(4);
 }
 
-/// Engine track names in frozen id order (`ENGINE_MUSIC_NAMES[id]` names
-/// `MusicTrack(id)`); the completeness oracle `music.json` is validated
-/// against.
 const ENGINE_MUSIC_NAMES: &[&str] = &[
     "petramond:firefly",
     "petramond:footsteps",
@@ -58,33 +32,20 @@ impl std::fmt::Debug for MusicTrack {
 }
 
 impl MusicTrack {
-    /// This track's definition row.
     #[inline]
     pub fn def(self) -> &'static MusicDef {
         &defs()[self.0 as usize]
     }
 }
 
-/// One row of the music table. Playback fields are read only by the
-/// `playback`-feature engine; the featureless (headless-server) build keeps
-/// the table so the catalog still validates at startup.
 #[allow(dead_code)]
 pub struct MusicDef {
     pub track: MusicTrack,
-    /// The row's registry name (`"petramond:firefly"`, `"mod_id:theme"`).
     pub name: &'static str,
-    /// The track's source clip (OGG/Vorbis), as an asset-relative path
-    /// (`music/...`) resolved through [`petramond_world::assets`] — so a pack
-    /// can replace a track by shipping the same path. Unlike a sound clip it is
-    /// read and decoded when the track PLAYS, never at startup.
     pub file: &'static str,
-    /// Base linear gain on top of the master/music mixer volumes (`1.0` = as
-    /// mastered). The seam for trimming one track that sits louder than the
-    /// rest, without re-encoding the asset.
     pub gain: f32,
 }
 
-/// One music row as written in `music.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawMusicDef {
@@ -103,21 +64,14 @@ struct RawFile {
     tracks: Vec<RawMusicDef>,
 }
 
-/// The runtime [`MusicTrack`] registered under `name`, or `None` when no such
-/// row is loaded.
 pub fn by_name(name: &str) -> Option<MusicTrack> {
     catalog().id(name).map(|id| MusicTrack(id as u8))
 }
 
-/// The current registry's music table, id-ordered (`defs()[track.0]`). A
-/// missing or inconsistent `music.json` fails the registry build when the
-/// process registers [`CATALOG`] as a stage.
 pub fn defs() -> &'static [MusicDef] {
     catalog().rows()
 }
 
-/// The music catalog as a content-registry stage; the client passes it to
-/// its `ContentLoader` so a bad track row is part of the load report.
 pub static CATALOG: Slot<registry::Catalog<MusicDef>> = Slot::new("music.json", &[], load);
 
 fn load(reg: &ContentRegistry) -> Result<registry::Catalog<MusicDef>, String> {
@@ -157,11 +111,6 @@ mod tests {
     use super::*;
     use petramond_world::assets;
 
-    /// The shipped `assets/music.json` must cover the engine track set — the
-    /// startup gate, surfaced as a test — and every row's clip must actually
-    /// be there. A track whose file is missing is silent at the exact moment
-    /// it is meant to play, minutes into a session, which is the kind of gap
-    /// a startup gate should catch instead.
     #[test]
     fn shipped_music_json_loads_fully_and_every_clip_resolves() {
         let (text, path) =

@@ -1,44 +1,19 @@
-//! Per-call legality: WHERE a host call may be made, declared once next to
-//! the call.
-//!
-//! Every variant of every domain call enum carries a [`Legality`] in the
-//! table its declaration generates ([`HostCall::legality`],
-//! [`HostCall::name`], and each domain's `CALLS` list). The host derives its
-//! gates from that one table — which instance sides a call reaches, whether
-//! it is confined to the `mod_init` registration window, whether it mutates
-//! (the read-only dispatch gate) — so there is no second list anywhere that
-//! has to agree with the declaration.
-//!
-//! [`HostCall::legality`]: crate::HostCall::legality
-//! [`HostCall::name`]: crate::HostCall::name
-
 use serde::{Deserialize, Serialize};
 
 use crate::data::RuntimeSide;
 
-/// A set of instance sides ([`RuntimeSide`]) a call is legal on.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Sides(u8);
 
 impl Sides {
-    /// The authoritative simulation instance.
     pub const SERVER: Self = Self(1 << 0);
-    /// The detached per-thread worldgen instances: no simulation context,
-    /// replies must be pure functions of their inputs and the world seed.
     pub const WORLDGEN: Self = Self(1 << 1);
-    /// A presentation-only `client_wasm` instance beside a world.
     pub const CLIENT: Self = Self(1 << 2);
-    /// A `client_wasm` instance on the shell, with no world beside it
-    /// ([`ClientContext::Shell`](crate::ClientContext::Shell)): its registries,
-    /// its own UI, images, storage and files, media, and opening a presentation.
     pub const SHELL: Self = Self(1 << 3);
     pub const SERVER_WORLDGEN: Self = Self::SERVER.union(Self::WORLDGEN);
     pub const SERVER_CLIENT: Self = Self::SERVER.union(Self::CLIENT);
-    /// A client instance wherever it runs: beside a world or on the shell.
     pub const CLIENT_SHELL: Self = Self::CLIENT.union(Self::SHELL);
-    /// Every instance that runs beside a world.
     pub const BESIDE_WORLD: Self = Self::SERVER_WORLDGEN.union(Self::CLIENT);
-    /// Every instance side, the shell included.
     pub const EVERY: Self = Self::BESIDE_WORLD.union(Self::SHELL);
 
     pub const fn union(self, other: Self) -> Self {
@@ -49,7 +24,6 @@ impl Sides {
         self.0 & other.0 == other.0
     }
 
-    /// The single side an instance runs on.
     pub const fn of(side: RuntimeSide) -> Self {
         match side {
             RuntimeSide::Server => Self::SERVER,
@@ -58,14 +32,10 @@ impl Sides {
         }
     }
 
-    /// Whether an instance on `side` may make the call.
     pub const fn allows(self, side: RuntimeSide) -> bool {
         self.contains(Self::of(side))
     }
 
-    /// Whether an instance on `side` may make the call, where `shell` says a
-    /// client instance runs on the shell with no world: there only the
-    /// [`SHELL`](Self::SHELL) side admits.
     pub const fn admits(self, side: RuntimeSide, shell: bool) -> bool {
         match side {
             RuntimeSide::Client if shell => self.contains(Self::SHELL),
@@ -74,35 +44,19 @@ impl Sides {
     }
 }
 
-/// When during an instance's life a call is legal.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
-    /// Any dispatch, `mod_init` included: the call reads only the mod's own
-    /// store, the process-wide registries, or pure functions of the world
-    /// seed.
     Any,
-    /// Only inside `mod_init` (the registration window).
     Init,
-    /// Needs a live dispatch context: the simulation on a server instance
-    /// (`mod_init`, tick systems, event handlers, hooks), the prediction
-    /// scope on a client instance. Outside one the call is refused with
-    /// [`ErrorCode::NoContext`](crate::ErrorCode::NoContext).
     Sim,
 }
 
-/// Whether a call changes state another dispatch can observe.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Access {
-    /// Changes nothing another dispatch can observe: queries, the mod's own
-    /// RNG stream, logging.
     Read,
-    /// Mutates the world, a player, a registration, shared memo state, or
-    /// presentation state others see. Refused inside a read-only dispatch
-    /// (a shape placement plan).
     Write,
 }
 
-/// One call's legality: the table row the host's gates read.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Legality {
     pub sides: Sides,
@@ -124,16 +78,12 @@ impl Legality {
     }
 }
 
-/// A call's name and legality, as its domain's declaration lists it: the
-/// data a host gate, a diagnostic or an audit tool reads without matching on
-/// the call enums.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CallInfo {
     pub name: &'static str,
     pub legality: Legality,
 }
 
-/// The vocabulary the domain declarations spell their legality column in.
 pub(crate) mod prelude {
     pub(crate) use super::Access::{Read, Write};
     pub(crate) use super::Scope::{Any, Init, Sim};

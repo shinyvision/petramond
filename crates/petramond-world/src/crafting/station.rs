@@ -1,25 +1,10 @@
-//! The crafting-station registry.
-//!
-//! A station is the context a player-crafting recipe requires, identified by
-//! the [`GuiKind`] whose open menu session admits it. The engine ships four
-//! (`petramond:inventory`, `petramond:crafting_table`,
-//! `petramond:furniture_workbench`, `petramond:chiseling_station`); packs ADD
-//! stations by naming a namespaced key in a `recipes.json` `station` field —
-//! the same key an `open_gui` block interaction uses, so a pack workbench is
-//! pure data: block row opens the kind, recipe rows require it, and the engine
-//! runs the ordinary crafting session (browser, planner, output slot) for it.
-//! Like every interning registry, registration is process-wide and ids are
-//! session-scoped; the stable identity is the key string.
-
 use std::sync::Mutex;
 
 use crate::gui_state::GuiKind;
 
-/// The minimum context a player-crafting recipe requires.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CraftingStation(GuiKind);
 
-/// Pack-registered station kinds (the engine stations live in the consts).
 static REGISTERED_STATIONS: Mutex<Vec<GuiKind>> = Mutex::new(Vec::new());
 
 #[allow(non_upper_case_globals)]
@@ -34,9 +19,6 @@ impl CraftingStation {
     pub const FURNITURE_WORKBENCH_KEY: &'static str = "petramond:furniture_workbench";
     pub const CHISELING_STATION_KEY: &'static str = "petramond:chiseling_station";
 
-    /// Resolve `key` to its station, REGISTERING a namespaced non-engine key
-    /// on first sight (the recipe-loading path — a recipe declaring a station
-    /// is what brings it into existence, on server and joining client alike).
     pub fn from_key(key: &str) -> Option<Self> {
         match key {
             Self::INVENTORY_KEY => Some(Self::Inventory),
@@ -54,8 +36,6 @@ impl CraftingStation {
         }
     }
 
-    /// The station whose menu session `kind` opens, if `kind` is one —
-    /// engine stations or a registered pack station. Never registers.
     pub fn of_kind(kind: GuiKind) -> Option<Self> {
         match kind {
             GuiKind::Inventory => Some(Self::Inventory),
@@ -70,7 +50,6 @@ impl CraftingStation {
         }
     }
 
-    /// The GUI kind whose open session admits this station's recipes.
     pub fn gui_kind(self) -> GuiKind {
         self.0
     }
@@ -85,11 +64,6 @@ impl CraftingStation {
         }
     }
 
-    /// Whether this open context admits a recipe with minimum station
-    /// `required`. A station admits exactly its own tier; the crafting table
-    /// — the engine's general station — also admits the bare-hands inventory
-    /// tier. A pack workbench deliberately does NOT (per Rachel): its
-    /// browser lists only its own recipes.
     pub fn admits(self, required: Self) -> bool {
         self == required || (self == Self::CraftingTable && required == Self::Inventory)
     }
@@ -128,7 +102,6 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(a.key(), "stationtest:bench");
         assert_eq!(CraftingStation::of_kind(a.gui_kind()), Some(a));
-        // A GUI kind never declared as a station is not one.
         let plain = crate::gui_state::intern_kind("stationtest:not_a_bench").unwrap();
         assert_eq!(CraftingStation::of_kind(plain), None);
     }
@@ -141,8 +114,6 @@ mod tests {
         assert!(!bench.admits(CraftingStation::CraftingTable));
         assert!(!CraftingStation::CraftingTable.admits(bench));
         assert!(!CraftingStation::Inventory.admits(bench));
-        // The engine stations keep their shipped behavior: the table admits both
-        // engine tiers, the inventory only its own.
         assert!(CraftingStation::CraftingTable.admits(CraftingStation::Inventory));
         assert!(CraftingStation::CraftingTable.admits(CraftingStation::CraftingTable));
         assert!(CraftingStation::Inventory.admits(CraftingStation::Inventory));

@@ -1,17 +1,9 @@
-//! Small interaction idioms many mods share: cell/point conversions, the
-//! sneak-to-build gate, and the water-bucket swap every fluid vessel (trough,
-//! cauldron, any future barrel or kettle) performs. The engine row names the
-//! bucket swap needs are declared here once, so a vessel mod never spells
-//! them itself.
-
 use mod_api::ItemId;
 
 use crate::{
     emit_sound, item_info, item_names, replace_held_one, resolve_item, PackKey, PackKeyKind,
 };
 
-/// The centre of block cell `pos` — where a cell's sounds and particles
-/// originate.
 pub fn block_center(pos: [i32; 3]) -> [f64; 3] {
     [
         f64::from(pos[0]) + 0.5,
@@ -20,7 +12,6 @@ pub fn block_center(pos: [i32; 3]) -> [f64; 3] {
     ]
 }
 
-/// The block cell containing world point `pos` (floor on every axis).
 pub fn cell_of(pos: [f64; 3]) -> [i32; 3] {
     [
         pos[0].floor() as i32,
@@ -29,10 +20,6 @@ pub fn cell_of(pos: [f64; 3]) -> [i32; 3] {
     ]
 }
 
-/// Whether the held item places a block (its row carries a `block` link) —
-/// the gate a sneak-to-build rule reads before claiming a click. Registry
-/// only, legal on any instance; no item, or an unresolvable id, reads as
-/// "not a block".
 pub fn held_item_places_block(held: Option<ItemId>) -> bool {
     let Some(id) = held else {
         return false;
@@ -45,15 +32,10 @@ pub fn held_item_places_block(held: Option<ItemId>) -> bool {
         .is_some_and(|info| info.block.is_some())
 }
 
-/// The engine's empty bucket row.
 pub const WOODEN_BUCKET: &str = "petramond:wooden_bucket";
-/// The engine's full water bucket row.
 pub const WATER_BUCKET: &str = "petramond:water_bucket";
-/// The engine sound a bucket pour or scoop plays.
 pub const WATER_SPLASH_SOUND: &str = "petramond:water_splash_small";
 
-/// The engine ids [`WaterBuckets`] depends on, for a vessel mod's pack
-/// validation test (`pack_check::assert_declared`).
 pub const WATER_BUCKET_KEYS: &[PackKey] = &[
     PackKey {
         kind: PackKeyKind::Item,
@@ -69,27 +51,19 @@ pub const WATER_BUCKET_KEYS: &[PackKey] = &[
     },
 ];
 
-/// Which way a bucket exchanges water with a vessel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BucketSwap {
-    /// A water bucket empties into the vessel and becomes an empty bucket.
     Pour,
-    /// An empty bucket fills from the vessel and becomes a water bucket.
     Scoop,
 }
 
-/// The engine's resolved bucket pair: the fluid-vessel interaction helper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WaterBuckets {
-    /// The empty bucket ([`WOODEN_BUCKET`]).
     pub empty: ItemId,
-    /// The water bucket ([`WATER_BUCKET`]).
     pub full: ItemId,
 }
 
 impl WaterBuckets {
-    /// Resolve both buckets. `None` when the base content is missing — the
-    /// vessel then offers no bucket interaction.
     pub fn resolve() -> Option<Self> {
         Some(Self {
             empty: resolve_item(WOODEN_BUCKET)?,
@@ -97,10 +71,6 @@ impl WaterBuckets {
         })
     }
 
-    /// The swap `held` offers against a vessel that `vessel_full` says holds
-    /// water or not: a water bucket pours into an empty vessel, an empty
-    /// bucket scoops from a full one. Pure, so client prediction and the
-    /// authoritative consumer classify identically.
     pub fn swap_for(&self, held: ItemId, vessel_full: bool) -> Option<BucketSwap> {
         match (held, vessel_full) {
             (id, false) if id == self.full => Some(BucketSwap::Pour),
@@ -109,11 +79,6 @@ impl WaterBuckets {
         }
     }
 
-    /// Perform `swap` at vessel cell `pos`: exchange the held bucket for its
-    /// counterpart, run `flip` (the caller's block/KV change to the vessel),
-    /// then play the splash. `false` — nothing changed, `flip` not run — when
-    /// the hand no longer holds the bucket the swap spends or the exchange has
-    /// no room.
     pub fn perform(&self, swap: BucketSwap, pos: [i32; 3], flip: impl FnOnce()) -> bool {
         let (spent, replacement) = match swap {
             BucketSwap::Pour => (self.full, WOODEN_BUCKET),

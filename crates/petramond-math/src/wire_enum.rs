@@ -1,28 +1,14 @@
-//! Declarative single-byte wire/save enums. The discriminants ARE the wire and
-//! save format, so they are spelled once at the definition and both byte
-//! conversions are generated from that same list — a hand-rolled `to_u8`/
-//! `from_u8` pair cannot drift from the variants. A neutral leaf module.
-
-/// Declare a `#[repr(u8)]` closed enum whose byte form crosses the wire or the
-/// save codec.
+/// Wire/save `u8` enum macro.
 ///
-/// Generates the enum (deriving `Copy, Clone, Debug, PartialEq, Eq`; extra
-/// derives/attributes written above the enum pass through), `VARIANTS` (every
-/// variant in declaration order), `to_u8` (the discriminant), and two
-/// decoders a caller chooses between explicitly:
+/// Generates the enum, `VARIANTS`, `to_u8` and two decoders.
 ///
-/// - `try_from_u8` (and the equivalent `TryFrom<u8>`, whose error is the
-///   rejected byte): exact discriminants only, `None` for a byte no variant
-///   declares — the decoder for untrusted input, which must fail (or log and
-///   substitute) rather than guess.
-/// - `from_u8`: the lenient form, mapping an unknown byte to the declared
-///   `default` variant (which is also the `Default` impl). Only for bytes
-///   whose corruption is harmless to paper over.
+/// `try_from_u8` and `TryFrom<u8>` reject unknown bytes. Use them for untrusted input.
 ///
-/// `with from_index` additionally generates `from_index(v)`: the variant at
-/// position `v % VARIANTS.len()` in declaration order, for cycling selectors.
-/// It indexes the variant list, not the discriminants, so it is correct for
-/// non-contiguous discriminants too.
+/// `from_u8` turns an unknown byte into the default variant. Only okay if a bad byte can't hurt
+/// anything.
+///
+/// `from_index` does `v % VARIANTS.len()` over declaration order, so discriminant gaps don't
+/// break it.
 #[macro_export]
 macro_rules! wire_enum {
     (
@@ -52,9 +38,6 @@ macro_rules! wire_enum {
         );
 
         impl $Name {
-            /// The variant at `index` modulo the variant count, in
-            /// declaration order, so any counter cycles through every
-            /// variant whatever the discriminants are.
             #[inline]
             #[allow(dead_code)]
             $vis fn from_index(index: u8) -> Self {
@@ -84,7 +67,6 @@ macro_rules! wire_enum {
         }
 
         impl TryFrom<u8> for $Name {
-            /// The byte no variant declares.
             type Error = u8;
 
             #[inline]
@@ -94,19 +76,15 @@ macro_rules! wire_enum {
         }
 
         impl $Name {
-            /// Every variant, in declaration order.
             #[allow(dead_code)]
             $vis const VARIANTS: &'static [Self] = &[$(Self::$Variant),+];
 
-            /// The stable wire/save discriminant.
             #[inline]
             #[allow(dead_code)]
             $vis fn to_u8(self) -> u8 {
                 self as u8
             }
 
-            /// Inverse of [`to_u8`](Self::to_u8): `None` for a byte no
-            /// variant declares (corrupt, or from a newer format).
             #[inline]
             #[allow(dead_code)]
             $vis fn try_from_u8(v: u8) -> Option<Self> {
@@ -116,9 +94,6 @@ macro_rules! wire_enum {
                 }
             }
 
-            /// Lenient inverse of [`to_u8`](Self::to_u8): an unknown byte
-            /// falls back to the declared default variant. Decoders of
-            /// untrusted bytes use [`try_from_u8`](Self::try_from_u8).
             #[inline]
             #[allow(dead_code)]
             $vis fn from_u8(v: u8) -> Self {

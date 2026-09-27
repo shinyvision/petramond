@@ -35,17 +35,11 @@ pub(super) fn bake_cell_template(
             })
             .expect("Face::ALL is non-empty")
     };
-    // Cubes are grouped by the part they belong to so each part's geometry is
-    // ONE run per (blend, cull) bucket. Within a group the original `cube_idx`
-    // order is preserved, so a row declaring no parts emits exactly the stream
-    // it always did.
     for group in std::iter::once(None).chain((0..parts.len()).map(Some)) {
-        // This group's faces in emission order, each with its route + gate.
         let mut group_faces: Vec<(u32, usize, bool, Option<Face>)> = Vec::new();
         for &ci in cube_idx.iter().filter(|&&ci| part_of(ci) == group) {
             let cube = &cubes[ci as usize];
             for slot in 0..6 {
-                // Fully-transparent faces drop out entirely (see `face_draw`).
                 if cube.faces[slot].is_none() || !face_draw[ci as usize][slot] {
                     continue;
                 }
@@ -53,8 +47,6 @@ pub(super) fn bake_cell_template(
                 group_faces.push((ci, slot, face_blend[ci as usize][slot], cull));
             }
         }
-        // Bucket order: opaque before blend, unculled before culled (`Face::ALL`
-        // order) — fixed so the baked stream is deterministic.
         for blend in [false, true] {
             for cull_bucket in 0..7 {
                 let bucket_cull = if cull_bucket == 0 {
@@ -118,14 +110,6 @@ pub(super) fn bake_cell_template(
     }
 }
 
-/// Append one textured cube face to a cell template. Cell light and warm tint are
-/// applied later by the mesher; the baked per-corner AO folds into `shade` here.
-///
-/// Faces are emitted ONCE with their outward CCW winding — the model pipelines
-/// cull back faces, so a solid cube's far side never ghosts through the near
-/// face's cutout texels. The exception is `double_sided` (the one kept face of
-/// a zero-thickness plane): it is emitted again with reversed winding (terrain's
-/// `push_back_face` pattern) so a decal stays visible from both sides.
 #[allow(clippy::too_many_arguments)]
 fn push_template_face(
     verts: &mut Vec<ModelTemplateVertex>,
@@ -152,9 +136,6 @@ fn push_template_face(
     if (p[1] - p[0]).cross(p[3] - p[0]).length_squared() < 1e-9 {
         return;
     }
-    // Corner UVs in `quad_box` order, per-face rotation applied. The rect is
-    // inset half an atlas texel first so edge fragments can't spill onto
-    // neighbouring sheet texels (see `ModelAtlas::inset_face_uv`).
     let corner_uv = uv.with_uv(atlas().inset_face_uv(uv.uv)).corner_uv();
     let mut emit = |order: [usize; 4]| {
         let start = verts.len() as u32;
@@ -176,11 +157,6 @@ fn push_template_face(
     }
 }
 
-/// The quad's triangulation for its corner AO: split along the darker diagonal
-/// so the interpolated gradient stays symmetric — the same anisotropy fix as
-/// terrain AO's `should_flip` (strict `>` leaves ties, and every AO-free face,
-/// on the default split). Public because the held/dropped/icon bakes
-/// (`render::item_model`) emit the same faces from the same cubes.
 pub fn model_face_tris(ao: [f32; 4]) -> [u32; 6] {
     if ao[0] + ao[2] > ao[1] + ao[3] {
         [1, 2, 3, 1, 3, 0]

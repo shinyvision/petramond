@@ -1,8 +1,3 @@
-//! Where the golem looks. Its hands work only what its eyes rest on: a block
-//! goes in against a face under its gaze, turned the way it is looking, and
-//! a dig or a door answers to a look at the block itself. So a place to
-//! stand is one with such a look, and every action waits for the head.
-
 use crate::host::prelude::*;
 
 use super::tuning::patience::GAZE_TRIES;
@@ -11,21 +6,15 @@ use crate::geometry::feet_of;
 use crate::survey::Known;
 use crate::worker::Job;
 
-/// What a look must find for a piece of work.
 #[derive(Clone)]
 pub enum Work {
-    /// Any of the cells under the crosshair, as a click on them would
-    /// need: a chest opened.
     Touch,
-    /// A click: `record` built at `pos`, or without one the block there dug
-    /// or used.
     Click {
         pos: [i32; 3],
         record: Option<BlockRecord>,
     },
 }
 
-/// A scaffold block stood in `pos`, of whatever the golem has to hand.
 pub fn scaffold(job: &Job, pos: [i32; 3]) -> Work {
     match job.crew.scaffolding.block.clone() {
         Some(record) => Work::Click {
@@ -58,8 +47,6 @@ pub fn work(job: &Job, task: Task) -> Work {
     }
 }
 
-/// Whether the golem standing in each of `stances` would have the look
-/// `work` needs at `cells`: `None` = it would.
 pub fn sees(
     body: &Body,
     stances: &[[i32; 3]],
@@ -89,8 +76,6 @@ pub fn sees_from(
     }
 }
 
-/// Whether a click on any of `cells` would land from each of `from`, by the
-/// rule the engine judges a dig or a use with: `None` = one would.
 pub fn clicks_any(
     body: &Body,
     from: Vec<[f64; 3]>,
@@ -109,8 +94,6 @@ pub fn clicks_any(
     refusals
 }
 
-/// Turn the head (and the body after it) to `work` from where the golem
-/// stands. `Err` = nothing to look at from here.
 pub fn turn(ctx: &Ctx, job: &mut Job, body: &Body, work: &Work) -> Result<(), ActionRefusal> {
     let Work::Click { pos, record } = work else {
         return Ok(());
@@ -123,8 +106,6 @@ pub fn turn(ctx: &Ctx, job: &mut Job, body: &Body, work: &Work) -> Result<(), Ac
     Ok(())
 }
 
-/// Whether an action refused as not aimed at should simply be asked again:
-/// the head is still coming round. Past [`GAZE_TRIES`] the look is not coming.
 pub fn still_turning(job: &mut Job) -> bool {
     job.crew.presence.unaimed += 1;
     job.crew.presence.unaimed <= GAZE_TRIES

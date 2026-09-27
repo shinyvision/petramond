@@ -1,5 +1,3 @@
-//! Work that would wall the golem in, or wall ground off, waits its turn.
-
 use crate::host::prelude::*;
 
 use super::places;
@@ -11,8 +9,6 @@ use crate::worker::tuning::patience::{CUTTER_ROUNDS, SITE_STALLED};
 use crate::worker::Job;
 use crate::worker::{Ctx, Task, TRACE};
 
-/// Whether placing `task` would cut the golem at `from` off from its home.
-/// Clearance never seals, and neither does a unit with nowhere to walk.
 pub(super) fn sealed_by(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -24,8 +20,6 @@ pub(super) fn sealed_by(
     Some(strands(ctx, job, project, from, task, cells)? || cutting(ctx, job, project, task, cells)?)
 }
 
-/// Whether placing `task` would leave the golem standing at `from` no way home:
-/// a fault of the stance, not of the placement.
 pub(super) fn strands(
     ctx: &mut Ctx,
     job: &Job,
@@ -34,12 +28,9 @@ pub(super) fn strands(
     task: Task,
     cells: &[[i32; 3]],
 ) -> Option<bool> {
-    // A support scaffold walls the golem in as surely as a block does.
     if !places(job, task) && !matches!(task, Task::Support { .. }) {
         return Some(false);
     }
-    // Nobody stands in a cell that is no foothold now (a pillar's own foot
-    // while it stands): it strands nobody.
     if !stands_at(from) {
         return Some(false);
     }
@@ -48,7 +39,6 @@ pub(super) fn strands(
     Some(route::out(ctx, hubs, from, &walls)? != Route::Open)
 }
 
-/// Whether `task` walls off ground with work beside it and must wait its turn.
 pub(in crate::worker) fn cutting(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -56,7 +46,6 @@ pub(in crate::worker) fn cutting(
     task: Task,
     cells: &[[i32; 3]],
 ) -> Option<bool> {
-    // A door is opened as it is laid, and the golem walks through it open.
     if let Task::Unit(i) = task {
         if job.design.passage(i) && swings_open(ctx.caches, &job.design, i) {
             return Some(false);
@@ -84,18 +73,12 @@ pub(in crate::worker) fn cutting(
     }
     if cuts_off(ctx, hubs, cells, &walls, |n| work_near(job, i, n))? {
         job.crew.deferrals.cutters.insert(i);
-        // Ways in are held apart; a wall that keeps cutting off some ledge
-        // with work beside it goes in after waiting a few rounds, or a ring
-        // of such walls waits on itself forever.
         let waits = job.crew.deferrals.cutter_waits.within(i, CUTTER_ROUNDS);
         return Some(waits && !only_cutting_work_left(ctx, job, Some(i)));
     }
     Some(false)
 }
 
-/// Whether building `cells` would wall off ground the golem reaches from
-/// home now — a door closing a house, the last block of a room. Only cells
-/// with standing room on two sides can be such a passage.
 fn cuts_off(
     ctx: &mut Ctx,
     hubs: Hubs,
@@ -103,9 +86,6 @@ fn cuts_off(
     walls: &[[i32; 3]],
     needed: impl Fn([i32; 3]) -> bool,
 ) -> Option<bool> {
-    // Standing room beside the cells, a step up or down included (a doorway
-    // often sits a step above the ground outside it), and two down: a block at
-    // head height closes the gap under it as surely as one at the feet.
     let mut beside = Vec::new();
     for cell in cells {
         for side in SIDES {
@@ -125,9 +105,6 @@ fn cuts_off(
     if standing.len() < 2 {
         return Some(false);
     }
-    // The site's floods toward home answer exactly: ground beside the cells
-    // that reaches home now and would not once they stand is cut off. Ground
-    // that does not reach home now (a roof course) is cut off from nothing.
     let reaching: Option<Vec<[i32; 3]>> = route::region(ctx, hubs.home, true, &[])?.map(|now| {
         standing
             .iter()
@@ -150,18 +127,13 @@ fn cuts_off(
             return Some(cut.is_some());
         }
     }
-    // Asked outward from each side: from inside a room the search floods the
-    // room and is decided quickly, where a search in from home is not.
     for n in standing {
         let after = route::out(ctx, hubs, n, walls)?;
         if after == Route::Open {
             continue;
         }
-        // Undecided now reads as reachable: a wrong guess only makes the unit
-        // wait for the end of the build.
         let before = route::out(ctx, hubs, n, &[])?;
         trace!("TRACE seal {cells:?} from {n:?}: after {after:?} before {before:?}");
-        // Ground nothing is left to do from (a roof course's ledge) may close.
         if before != Route::Closed && needed(n) {
             return Some(true);
         }
@@ -169,9 +141,6 @@ fn cuts_off(
     Some(false)
 }
 
-/// The cells a route judges `cells` by once they stand: blocks there, and the
-/// cell above one no body stands on or steps over (a fence, a pane, a wall),
-/// since a route takes a stand-in block for a cube it can climb onto.
 pub(in crate::worker) fn as_walls(ctx: &mut Ctx, job: &Job, cells: &[[i32; 3]]) -> Vec<[i32; 3]> {
     let mut walls = cells.to_vec();
     for cell in cells {
@@ -203,8 +172,6 @@ pub(in crate::worker) fn as_walls(ctx: &mut Ctx, job: &Job, cells: &[[i32; 3]]) 
     walls
 }
 
-/// Whether a way in is a door: opened as it is laid and walked through open,
-/// it closes nothing off and need not wait for the end of the build.
 pub(super) fn swings_open(
     caches: &mut crate::caches::Caches,
     design: &crate::design::Design,
@@ -216,8 +183,6 @@ pub(super) fn swings_open(
         .is_some_and(|info| info.interaction == Some(BlockUse::ToggleDoor))
 }
 
-/// Whether open work other than `unit` is near standing at `n`: within two
-/// reaches, so work across the room that ground opens onto counts too.
 fn work_near(job: &Job, unit: usize, n: [i32; 3]) -> bool {
     let Some(survey) = job.survey.as_ref() else {
         return true;
@@ -236,14 +201,7 @@ fn work_near(job: &Job, unit: usize, n: [i32; 3]) -> bool {
     })
 }
 
-/// Whether every open unit but `except` walls off ground, is a way in, or
-/// was built already, or nothing has landed for a long while: what closes
-/// the site may go in now.
 pub(super) fn only_cutting_work_left(ctx: &Ctx, job: &Job, except: Option<usize>) -> bool {
-    // A build this long without a block landing is stuck on something else, and
-    // closing a gap may be all that is left. Only as a last resort: a front
-    // door laid in an ordinary stall seals the house with interior work still
-    // open.
     if ctx.now > job.crew.pace.progress_at + SITE_STALLED {
         return true;
     }

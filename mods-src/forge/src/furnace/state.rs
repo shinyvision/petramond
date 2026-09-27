@@ -1,18 +1,8 @@
-//! One furnace's PERSISTED state: the blob, its layout version, and the two
-//! questions the blob alone can answer.
-//!
-//! Split from the machine that drives it because it changes for its own
-//! reason — a field added, removed or reordered — and that change has its own
-//! discipline (bump [`KvRecord::VERSION`], extend BOTH halves, teach
-//! `upgrade` the old layout) which has nothing to do with how the furnace
-//! melts or pours.
-
 use machine_core::Burner;
 use mod_sdk::*;
 
 use crate::liquid::Liquid;
 
-/// How long an unlit furnace's crucible stays pourable.
 const HARDEN_TICKS: u32 = 200;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -40,13 +30,10 @@ impl Phase {
     }
 }
 
-/// One furnace's whole state, in section cell KV at the anchor, so a furnace
-/// mid-pour reloads mid-pour and a crucible left to harden is still hard.
 #[derive(Clone, Default, PartialEq)]
 pub(super) struct State {
     pub(super) fire: Burner,
     pub(super) melt_progress: u32,
-    /// Ticks the fire has been out. Past `HARDEN_TICKS` the crucible has set.
     pub(super) idle_ticks: u32,
     pub(super) units: u8,
     pub(super) phase: Phase,
@@ -55,23 +42,11 @@ pub(super) struct State {
     pub(super) feed_ticks: u32,
     pub(super) ready_mould: String,
     pub(super) pour_mould: String,
-    /// The item the crucible's metal was melted FROM — the ingredient half of
-    /// the cast lookup, and empty when the crucible is.
     pub(super) metal: String,
-    /// The molten metal's continuous state — the part of a pour that is a
-    /// number rather than a stage.
     pub(super) liquid: Liquid,
 }
 
-/// The version byte is bumped whenever a field is added, removed or
-/// reordered. The blob is POSITIONAL, so a mismatched layout does not fail to
-/// parse — it shifts every field after the change and hands the machine
-/// someone else's numbers, which surfaces as a furnace full of metal it never
-/// melted or a pour that never ends. A version this build cannot read resets
-/// the machine instead.
 impl KvRecord for State {
-    /// Version 5 is version 4's fields behind the SDK's one-byte version
-    /// instead of the u32 prefix earlier builds wrote.
     const VERSION: u8 = 5;
     const OLDEST_VERSION: u8 = 4;
 
@@ -110,8 +85,6 @@ impl KvRecord for State {
         w.finish()
     }
 
-    /// Version 4 led with a u32 version: its low byte is the SDK version
-    /// byte, and the other three (zero) are all that remains to strip.
     fn upgrade(from: u8, bytes: &[u8]) -> Option<Vec<u8>> {
         match (from, bytes) {
             (4, [0, 0, 0, rest @ ..]) => Some(rest.to_vec()),
@@ -121,8 +94,6 @@ impl KvRecord for State {
 }
 
 impl State {
-    /// The stored state; an unwritten furnace — or one this build cannot
-    /// read — is a cold, empty machine.
     pub(super) fn load(bytes: &[u8]) -> State {
         if bytes.is_empty() {
             return State::default();
@@ -134,10 +105,6 @@ impl State {
         encode_versioned(self)
     }
 
-    /// The state-only half of "may the lever be pulled": metal in the
-    /// crucible, still liquid, nothing already running. The other half is
-    /// whether the pour has anywhere to GO — see
-    /// [`ForgingFurnaceSpec::pourable`](super::ForgingFurnaceSpec::pourable).
     pub(super) fn ready_to_pour(&self) -> bool {
         self.phase == Phase::Idle && self.units > 0 && !self.hardened()
     }
@@ -162,10 +129,6 @@ fn read_str(r: &mut ByteReader) -> String {
 mod tests {
     use super::*;
 
-    /// The furnace's whole machine state is one cell-KV blob, decoded
-    /// positionally: adding a field without extending BOTH halves silently
-    /// shifts every field after it, which reads as a furnace that reloads with
-    /// someone else's metal in it.
     #[test]
     fn state_survives_the_kv_round_trip() {
         let mut state = State {
@@ -191,8 +154,6 @@ mod tests {
         assert!(back == state, "every field, not just the ones a test names");
     }
 
-    /// Earlier builds framed the same fields behind a u32 version 4; such a
-    /// furnace reloads with its metal, not reset.
     #[test]
     fn a_version_4_blob_migrates() {
         let state = State {
@@ -205,16 +166,12 @@ mod tests {
         assert!(State::load(&old) == state);
     }
 
-    /// An empty blob is what a freshly placed furnace reads, so the decode has
-    /// to answer with a cold, empty machine rather than a partly-filled one.
     #[test]
     fn an_unwritten_furnace_decodes_cold() {
         let fresh = State::load(&[]);
         assert!(fresh == State::default());
     }
 
-    /// A blob written by an older layout must reset the machine, not be read
-    /// as if it were the current one.
     #[test]
     fn a_foreign_state_blob_resets_rather_than_misreads() {
         let mut w = ByteWriter::new();

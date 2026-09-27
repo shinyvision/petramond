@@ -9,7 +9,6 @@ fn blob(len: usize) -> Arc<[u8]> {
         .into()
 }
 
-/// Pump a stream to completion, the receiver crediting what it consumed.
 fn stream(sender: &mut BlobSender, receiver: &mut Option<BlobReceiver>) -> Result<Vec<u8>, String> {
     for _ in 0..1000 {
         for packet in sender.packets() {

@@ -1,14 +1,6 @@
-//! Baking the first-person hand pass: the rig's arms in the player's skin and
-//! each hand's item CARRIED by its fist from the item's rest seat, all in
-//! view space under one MVP.
-
 use super::Renderer;
 
 impl Renderer {
-    /// The hurt-shake as a clip-space post-transform: left-multiplying a
-    /// translation adds `t * w` to the clip position, which after the divide is
-    /// exactly an NDC screen shift — the whole hand jitters without touching
-    /// any pose math.
     fn hand_shake_mat(&self) -> glam::Mat4 {
         if !self.hand.screen_shake {
             return glam::Mat4::IDENTITY;
@@ -16,10 +8,6 @@ impl Renderer {
         glam::Mat4::from_translation(glam::Vec3::new(self.hand.shake[0], self.hand.shake[1], 0.0))
     }
 
-    /// Build + upload this frame's hand pass geometry. Both hands' block cubes
-    /// share one indexed model3d stream (absolute indices); sprites, bbmodels
-    /// and the arms share the item3d stream as ranges. Nothing draws without
-    /// the rig.
     pub(super) fn prepare_held_item(&mut self) {
         use crate::first_person::Hand;
         use crate::player_model::transform_positions;
@@ -157,9 +145,6 @@ impl Renderer {
         self.hand.first_person = Some(first_person);
     }
 
-    /// One upload per hand stream, each buffer grown to fit, and the MVP
-    /// both hands draw through (slot 0 of the hand and item3d MVP buffers;
-    /// slot 1, at byte 256, mirrors it so either binding works).
     fn upload_hand(
         &mut self,
         hv: &[petramond_mesh::Vertex],

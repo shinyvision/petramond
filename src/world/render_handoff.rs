@@ -5,8 +5,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use super::side::TerrainRenderState;
 use super::store::for_each_column_cy;
 
-/// The renderer's view of the replica's terrain presentation: the packed
-/// column meshes to upload and the settle/urgency signals around them.
 pub struct TerrainRenderHandoff<'a> {
     world: &'a mut ReplicaWorld,
 }
@@ -26,8 +24,6 @@ impl TerrainRenderHandoff<'_> {
         &mut self.world.side.terrain
     }
 
-    /// Whether terrain still has meshing or upload work in flight — the "not
-    /// settled" signal behind idle-only frame work.
     pub fn is_streaming(&self) -> bool {
         self.world.has_dirty_meshes() || !self.terrain().mesh_upload_dirty_columns.is_empty()
     }
@@ -36,9 +32,6 @@ impl TerrainRenderHandoff<'_> {
         self.terrain().column_has_mesh(pos)
     }
 
-    /// Columns a synchronous click presentation just installed meshes into,
-    /// drained. The caller's upload scheduler should upload these without
-    /// waiting out its quiet-gate coalescing.
     pub fn take_urgent_columns(&mut self) -> Vec<ChunkPos> {
         self.terrain_mut().upload_urgent_columns.drain().collect()
     }
@@ -72,8 +65,6 @@ impl TerrainRenderHandoff<'_> {
         out
     }
 
-    /// Recover released CPU geometry when the renderer has no reusable GPU copy.
-    /// Queue forced remeshes and keep the column upload-dirty until they finish.
     pub fn needs_repack_remeshes(&mut self, pos: ChunkPos) -> bool {
         let terrain = self.terrain_mut();
         let Some(&bits) = terrain.mesh_column_cys.get(&pos) else {
@@ -89,8 +80,6 @@ impl TerrainRenderHandoff<'_> {
             }
         });
         for sp in forced {
-            // Newly forced sections enter the dirty queue; already-forced ones
-            // are somewhere in the pipeline (queued, light-blocked, or in flight).
             if terrain.repack_forced.insert(sp) {
                 terrain.dirty_meshes.push(sp);
             }
@@ -98,10 +87,6 @@ impl TerrainRenderHandoff<'_> {
         waiting
     }
 
-    /// A new renderer holds no GPU terrain (its device was lost and it was
-    /// rebuilt): queue every meshed column for upload again. Columns whose
-    /// CPU geometry was released recover through
-    /// [`needs_repack_remeshes`](Self::needs_repack_remeshes).
     pub fn request_full_reupload(&mut self) {
         let terrain = &mut self.world.side.terrain;
         terrain
@@ -133,8 +118,6 @@ mod tests {
     use petramond_world::chunk::SectionPos;
     use petramond_world::section::Section;
 
-    /// A renderer missing the GPU copy can recover released CPU geometry without
-    /// removing the installed mesh while the forced remesh is pending.
     #[test]
     fn released_meshes_gate_column_repack_and_force_a_remesh() {
         let mut world = ReplicaWorld::new(0, 0);
@@ -150,7 +133,6 @@ mod tests {
         world.terrain_render_handoff().mark_column_uploaded(column);
         assert!(world.side.terrain.mesh_release_after.contains_key(&column));
 
-        // Fast-forward past the quiet window onto a sweep frame.
         world.side.terrain.mesh_pump_frame +=
             super::super::mesh_queue::MESH_RELEASE_DELAY_FRAMES * 2;
         world.side.terrain.mesh_pump_frame -= world.side.terrain.mesh_pump_frame % 64;
@@ -165,7 +147,6 @@ mod tests {
             "emptiness must stay truthful after release"
         );
 
-        // Missing GPU copies must force recovery before a column is repacked.
         world.side.terrain.mesh_upload_dirty_columns.insert(column);
         let mut handoff = world.terrain_render_handoff();
         assert!(handoff.needs_repack_remeshes(column));
@@ -175,8 +156,6 @@ mod tests {
             "gating a repack must never remove the installed mesh"
         );
 
-        // The inline pool finishes each submitted job inside the pump, so a
-        // bounded run of pumps (light, submit, drain) always lands it.
         for _ in 0..64 {
             if !world.side.terrain.meshes[&pos].is_released() {
                 break;
@@ -194,8 +173,6 @@ mod tests {
         );
     }
 
-    /// A renderer rebuilt after device loss starts empty: every meshed
-    /// column must come back as upload work, uploaded or not.
     #[test]
     fn a_full_reupload_requeues_every_meshed_column() {
         let mut world = ReplicaWorld::new(0, 0);

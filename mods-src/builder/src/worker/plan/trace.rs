@@ -1,5 +1,3 @@
-//! The plan's longer diagnostics, kept out of the way of what they describe.
-
 use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
@@ -35,7 +33,6 @@ pub(super) fn heartbeat(ctx: &Ctx, job: &Job, body: &Body) {
     ));
 }
 
-/// A long stall with ways in still held open: what holds them.
 pub(super) fn held_ways_in(
     ctx: &Ctx,
     design: &Design,
@@ -75,7 +72,6 @@ pub(super) fn held_ways_in(
     log(&format!("TRACE stalled; ways in held for {holding:?}"));
 }
 
-/// Where a way in stands in the queue.
 pub(super) fn passage(
     ctx: &Ctx,
     design: &Design,
@@ -97,8 +93,6 @@ pub(super) fn passage(
     ));
 }
 
-/// What stands between the golem and the task its climb was planned for.
-/// Asks the verdict again, so it is never called but when tracing.
 pub(super) fn committed(ctx: &mut Ctx, job: &mut Job, body: &Body, task: Task) {
     let cells = task_cells(job, task);
     let known = match (task, job.survey.as_ref()) {
@@ -129,7 +123,6 @@ pub(super) fn committed(ctx: &mut Ctx, job: &mut Job, body: &Body, task: Task) {
     ));
 }
 
-/// From a pillar's top: the open work near it, and why none of it is in hand.
 pub(super) fn perch_top(job: &Job, body: &Body, top: [i32; 3], candidates: &[(Task, [i32; 3])]) {
     if !TRACE || body.cell != top {
         return;
@@ -152,7 +145,6 @@ pub(super) fn perch_top(job: &Job, body: &Body, top: [i32; 3], candidates: &[(Ta
     ));
 }
 
-/// Work is left and all of it waits: the nearest of it, and until when.
 pub(super) fn deferred(ctx: &Ctx, job: &Job, candidates: &[(Task, [i32; 3])]) {
     if !TRACE || !ctx.now.is_multiple_of(200) {
         return;

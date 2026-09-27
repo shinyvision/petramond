@@ -4,24 +4,17 @@ use super::HeightTable;
 use super::{apply, evaluate, Formula, Inputs, Noises, Op, MAX_NODES};
 use std::sync::Arc;
 
-/// A dependency partition lets several parameter sets share the same spatial work.
 pub struct BatchFormula<'a> {
     formula: &'a Formula,
     shared_column: Vec<usize>,
     shared_vertical: Vec<usize>,
     varied_column: Vec<usize>,
     varied_vertical: Vec<usize>,
-    /// Member-independent operands of the first output's conjunction: a
-    /// column where one of them is false at every height has no accepting
-    /// member, and its members are never evaluated.
     shared_conjuncts: Vec<usize>,
-    /// Whether the first output is a predicate whose members may be skipped
-    /// once interval arithmetic proves it non-positive at every height.
     predicate: bool,
 }
 
 impl Formula {
-    /// Select the input lanes that vary between members; Y remains the scan axis.
     pub fn batch(&self, varying: &[usize]) -> BatchFormula<'_> {
         let mut batch = self.batch_predicate(varying);
         batch.shared_conjuncts.clear();
@@ -29,9 +22,6 @@ impl Formula {
         batch
     }
 
-    /// [`Self::batch`] for a formula whose first output is a predicate
-    /// conjunction: a column where a member-independent conjunct is false at
-    /// every height skips its members, every output reading exactly zero.
     pub fn batch_predicate(&self, varying: &[usize]) -> BatchFormula<'_> {
         assert!(varying.iter().all(|&i| i < 10 && i != 1));
         let mask = varying.iter().fold(0u16, |mask, &i| mask | (1 << i));
@@ -85,7 +75,6 @@ pub struct BatchColumn<'a, 'f> {
 }
 
 impl BatchFormula<'_> {
-    /// Every member must agree with `shared` outside the declared varying lanes.
     pub fn column(&self, shared: Inputs, members: &[Inputs]) -> BatchColumn<'_, '_> {
         self.column_seeded(0, shared, members)
     }
@@ -123,7 +112,6 @@ impl BatchFormula<'_> {
         }
     }
 
-    /// Reusable scratch for scanning whole columns of every member at once.
     pub fn scan(&self, seed: u32) -> BatchScan<'_, '_> {
         let mut varied = vec![false; self.formula.nodes.len()];
         for &i in self.varied_column.iter().chain(&self.varied_vertical) {
@@ -192,7 +180,6 @@ impl BatchColumn<'_, '_> {
         }
     }
 
-    /// Evaluate members in caller order, stopping once the consumer has an answer.
     pub fn find_map<const N: usize, R>(
         &mut self,
         y: f64,
@@ -208,42 +195,30 @@ impl BatchColumn<'_, '_> {
     }
 }
 
-/// [`BatchColumn`] over every height of a column at once: the shared work
-/// runs once per column instead of once per cell, and each member's varied
-/// work runs once per column as a short vector.
+/// Does a whole column of heights, not cell by cell. Shared work runs once per column, and so
+/// does each member's varied work, as a short vector.
 pub struct BatchScan<'a, 'f> {
     batch: &'a BatchFormula<'f>,
     seed: u32,
     noises: Noises,
     values: Vec<f64>,
-    /// `members × lanes × outputs`, member-major.
     outputs: Vec<f64>,
     lanes: usize,
     members: usize,
-    /// Per node, whether it belongs to the varied partition: a lane-wise
-    /// member read keeps those as scalars beside the shared lanes.
     varied: Vec<bool>,
     scalar: Vec<f64>,
     scalar_member: Option<usize>,
     ys: Vec<f64>,
-    /// Per node, its range over the lanes of the last run (shared nodes) or
-    /// the current member's value (varied nodes), for the pruning pass.
     ranges: Vec<Interval>,
     table: Option<Arc<HeightTable>>,
     rows: Vec<usize>,
 }
 
 impl BatchScan<'_, '_> {
-    /// Evaluate every member at every height of `ys`. Every member must
-    /// agree with `shared` outside the declared varying lanes.
     pub fn run(&mut self, shared: Inputs, members: &[Inputs], ys: &[f64]) {
         self.run_until(shared, members, ys, |_, _| false);
     }
 
-    /// [`Self::run`] handing each member's outputs — lane-major, one value
-    /// per output per lane — to `done` as soon as they exist. Once `done`
-    /// answers `true` the members after it are not evaluated and read as
-    /// rejections; a member proven dead is not offered.
     pub fn run_until(
         &mut self,
         shared: Inputs,
@@ -299,7 +274,6 @@ impl BatchScan<'_, '_> {
         }
         self.outputs.resize(members.len() * lanes * n, 0.0);
         if !self.alive() {
-            // The conjunction is exactly zero at every height for every member.
             self.outputs.fill(0.0);
             return;
         }
@@ -321,8 +295,6 @@ impl BatchScan<'_, '_> {
                 );
             }
             if prune && self.member_dead(inputs) {
-                // Proven non-positive at every height: the member cannot
-                // accept a cell, so its outputs read as a rejection.
                 let at = m * lanes * n;
                 self.outputs[at..at + lanes * n].fill(0.0);
                 continue;
@@ -352,10 +324,8 @@ impl BatchScan<'_, '_> {
         }
     }
 
-    /// Whether the first output is provably never positive at each height
-    /// of `ys` for every column and member of a box: interval arithmetic over
-    /// the recipe with each input bounded over the box (`None` = unknown)
-    /// and the height a point per lane.
+    /// One flag per height in `ys`, set when the first output can't be positive for any column or
+    /// member in the box. Box-bounded inputs (`None` = unknown), height a point per lane.
     pub fn dead_lanes(&self, inputs: &[Option<[f64; 2]>; 10], ys: &[f64], out: &mut Vec<bool>) {
         let formula = self.batch.formula;
         out.clear();
@@ -391,8 +361,6 @@ impl BatchScan<'_, '_> {
         }
     }
 
-    /// The range of every shared node a varied height-dependent node reads,
-    /// over the lanes of the last run.
     fn shared_ranges(&mut self, ys: &[f64]) {
         let formula = self.batch.formula;
         let lanes = self.lanes;
@@ -416,9 +384,6 @@ impl BatchScan<'_, '_> {
         }
     }
 
-    /// Interval arithmetic over the member's varied height-dependent nodes,
-    /// with its column values as points and the shared nodes as their lane
-    /// ranges: true when the first output is provably never positive.
     fn member_dead(&mut self, inputs: Inputs) -> bool {
         let formula = self.batch.formula;
         let lanes = self.lanes;
@@ -443,9 +408,6 @@ impl BatchScan<'_, '_> {
         self.ranges[root].never_positive()
     }
 
-    /// Whether any lane can still accept after the shared work: false once a
-    /// shared conjunct of the first output is zero (or not a number) in
-    /// every lane, which makes that output exactly zero for every member.
     fn alive(&self) -> bool {
         let formula = self.batch.formula;
         let conjuncts = &self.batch.shared_conjuncts;
@@ -459,9 +421,6 @@ impl BatchScan<'_, '_> {
         })
     }
 
-    /// Only the shared work over `ys`; members are then read one lane at a
-    /// time with [`Self::member_lane`], which suits a search over heights
-    /// that stops after a few probes.
     pub fn run_shared(&mut self, shared: Inputs, ys: &[f64]) {
         let formula = self.batch.formula;
         let lanes = ys.len();
@@ -513,9 +472,6 @@ impl BatchScan<'_, '_> {
         }
     }
 
-    /// One member's outputs at `lane` of the last [`Self::run_shared`]. The
-    /// member's height-independent work is kept between consecutive reads
-    /// of the same `member` index, so a search pays only the vertical part.
     pub fn member_lane<const N: usize>(
         &mut self,
         member: usize,
@@ -580,7 +536,6 @@ impl BatchScan<'_, '_> {
         })
     }
 
-    /// The outputs of `member` at the height `ys[lane]` of the last run.
     #[inline]
     pub fn output<const N: usize>(&self, member: usize, lane: usize) -> [f64; N] {
         debug_assert_eq!(N, self.batch.formula.outputs.len());

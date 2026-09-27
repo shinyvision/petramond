@@ -1,5 +1,3 @@
-//! Bounded weighted reward graphs. Callers own randomness and delivery.
-
 use crate::item::{ItemStack, ItemType};
 use crate::registry::Catalog;
 
@@ -34,7 +32,6 @@ pub struct Table {
     pools: Vec<Pool>,
 }
 
-/// Immutable tables validated as an acyclic graph with bounded expansion.
 pub struct Loot {
     tables: Catalog<Table>,
 }
@@ -43,8 +40,6 @@ impl Loot {
     pub fn contains(&self, key: &str) -> bool {
         self.tables.id(key).is_some()
     }
-    /// Roll without mutating inventory or world state. Equal random streams
-    /// produce equal stacks, independent of who will eventually receive them.
     pub fn roll(&self, key: &str, mut random: impl FnMut() -> u64) -> Option<Vec<ItemStack>> {
         let id = self.tables.id(key)?;
         let mut output = Vec::new();

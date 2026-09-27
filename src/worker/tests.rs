@@ -63,11 +63,8 @@ fn removing_waiting_jobs_leaves_running_and_finished_work_owned_by_the_caller() 
 
 #[test]
 fn pool_runs_lowest_key_first_and_fifo_on_ties() {
-    // One worker so execution order IS pop order.
     let pool = JobPool::new(1);
     let order = Arc::new(Mutex::new(Vec::new()));
-    // Park the worker on a first job so the rest queue up behind it and get
-    // priority-ordered rather than raced one-by-one.
     let gate = Arc::new((Mutex::new(false), Condvar::new()));
     {
         let gate = gate.clone();
@@ -83,8 +80,6 @@ fn pool_runs_lowest_key_first_and_fifo_on_ties() {
         let order = order.clone();
         pool.submit(key, move || order.lock().unwrap().push(tag));
     }
-    // Largest key = runs last; signals that everything before it completed
-    // (dropping the pool discards unstarted jobs, so wait before dropping).
     let (done_tx, done_rx) = channel::<()>();
     pool.submit(i64::MAX, move || {
         let _ = done_tx.send(());
@@ -101,8 +96,6 @@ fn pool_runs_lowest_key_first_and_fifo_on_ties() {
     );
 }
 
-/// A worker runs each job under the registry its SUBMITTER reads, not the
-/// worker thread's own: a pool serves whichever world queued the work.
 #[test]
 fn jobs_run_under_the_submitters_content_registry() {
     use petramond_world::content::{self, Content};
@@ -207,8 +200,6 @@ fn rekeying_and_removing_touch_only_the_named_jobs() {
         })
         .collect();
     assert_eq!(pool.queued_len(), 1000);
-    // Re-key three jobs to the front and drop one: the other jobs keep their
-    // places.
     pool.reprioritize([(tickets[900], -3), (tickets[901], -2), (tickets[902], -1)]);
     assert_eq!(pool.remove_queued([tickets[0]]).len(), 1);
     assert_eq!(pool.queued_len(), 999);

@@ -1,70 +1,20 @@
-//! Mining controller: turns a held left-mouse-button + a raycast target into a
-//! timed break, producing a [`BreakEvent`] the frame a block finishes breaking.
-//!
-//! The model is deliberately small and pure: progress is a single `elapsed`
-//! accumulator measured against [`break_time`]. Changing the target, releasing
-//! the button, opening the inventory, switching tools, or losing the raycast all
-//! reset progress. A block that breaks in no time at all (`hardness == 0`, or a
-//! CUT — see below) goes the first qualifying frame and never displays a break
-//! overlay.
-//!
-//! Tools: a held tool whose KIND matches the block's
-//! [`Block::preferred_tool`] (a pickaxe on stone/ore, an axe on wood, a shovel on
-//! dirt/sand, shears on wool and foliage) mines it faster by its tier (×2/×4/×6/×8
-//! up the shared ladder), scaled by the kind's efficiency — the shovel digs at
-//! 0.5625× so it is uniformly slower than a pickaxe/axe of equal tier. A
-//! material its tool PARTS rather than grinds ([`Block::cut_by_preferred_tool`],
-//! shipped on foliage) skips the ladder entirely and breaks instantly. For a
-//! tool-gated block (stone, ore, LOGS) the tool must also meet the block's
-//! [`Block::harvest_tier`] to unlock the drop; a wrong-kind, insufficient, or
-//! absent tool yields nothing there AND pays the [`FRUITLESS_BREAK_PENALTY`],
-//! so a fruitless break is markedly slower than the bare-hand rate rather than
-//! equal to it. That gate is why a bare fist cannot start the wood economy: the
-//! first axe is knapped from ground litter, not cut from a tree.
-
 use crate::block::Block;
 use crate::item::Tool;
 use crate::mathh::IVec3;
 use crate::world::data::WorldData;
 
-/// Seconds of mining per unit of hardness, bare-handed and unpenalised — the
-/// rate for anything a bare hand can actually take (dirt, sand, leaves).
 pub const SECONDS_PER_HARDNESS_HAND: f32 = 2.5;
-/// Multiplier on a break that will YIELD NOTHING — the whole of "your hands
-/// are wrong for this". It covers a bare fist on stone or a log, an axe swung
-/// at stone, and a stone pickaxe on diamond ore, because those are one
-/// situation: [`harvests`] is false, so the block breaks for no drop.
-///
-/// Keyed on the harvest gate rather than on a list of materials, so it needs no
-/// maintenance and picks up every future gated row. Blocks a hand CAN take are
-/// untouched at any hardness, and `hardness 0` rows (grass, the whole gathering
-/// layer) return before it — punching a tuft stays instant.
-///
-/// The number is balance data. At 4x a fist takes 15 s on stone and 20 s on an
-/// oak log, for nothing: long enough to read as "go and make a tool" rather
-/// than as a slow but viable way to play.
 pub const FRUITLESS_BREAK_PENALTY: f32 = 4.0;
-/// Number of distinct break-overlay stages (`0..BREAK_STAGES`).
 pub const BREAK_STAGES: u8 = 10;
 
-/// The per-tick mining progress for the block currently under the crosshair.
-///
-/// Holds the active target cell, the block being mined (cached so a `set_block`
-/// elsewhere can't desync the timer mid-break), and the accumulated mining time.
 #[derive(Clone, Debug, Default)]
 pub struct MiningState {
     target: Option<IVec3>,
     block: Option<Block>,
-    /// Tool in use on this target (`None` = bare hand). Cached so a tool switch
-    /// mid-break restarts progress and the overlay reads the right break time.
     tool: Option<Tool>,
     elapsed: f32,
 }
 
-/// Emitted by [`MiningState::update`] the frame a block finishes breaking.
-///
-/// `harvested == false` means the block broke but yields no drop (Stone/Ore by
-/// hand in 0.1); the caller still clears the cell, it just rolls no drops.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BreakEvent {
     pub pos: IVec3,
@@ -78,20 +28,6 @@ impl MiningState {
         Self::default()
     }
 
-    /// Advance mining by `dt`. Call every tick.
-    ///
-    /// - `look`: the targeted cell of the current raycast, or `None` if nothing
-    ///   is targeted.
-    /// - `mining_held`: left mouse button currently held down (not edge).
-    /// - `barred`: this body may not mine at all (an open menu, a pack's claim).
-    ///   Gates mining off entirely, resetting rather than pausing.
-    /// - `world`: looked up to resolve the targeted block.
-    /// - `tool`: the held mining tool (`None` = bare hand). Drives break speed +
-    ///   whether the block is harvested.
-    ///
-    /// Returns `Some(BreakEvent)` exactly on the frame the block breaks; resets
-    /// progress whenever the target changes, the tool changes, or the button
-    /// releases.
     pub fn update(
         &mut self,
         dt: f32,
@@ -106,9 +42,6 @@ impl MiningState {
         })
     }
 
-    /// Pure state machine behind [`update`](Self::update): `block_at` resolves the
-    /// block at a cell. Split out so tests can drive the full controller without
-    /// standing up a real `World` (which spins a worker thread pool).
     fn update_core(
         &mut self,
         dt: f32,
@@ -118,7 +51,6 @@ impl MiningState {
         tool: Option<Tool>,
         block_at: &impl Fn(IVec3) -> Block,
     ) -> Option<BreakEvent> {
-        // Not mining, barred, or nothing targeted -> reset and bail.
         let pos = match (mining_held, barred, look) {
             (true, false, Some(cell)) => cell,
             _ => {
@@ -129,7 +61,6 @@ impl MiningState {
 
         let block = block_at(pos);
 
-        // Unbreakable cells (Air/Water/hardness < 0) are never mining targets.
         if block.hardness() < 0.0 {
             self.reset();
             return None;
@@ -138,9 +69,6 @@ impl MiningState {
         self.advance(dt, pos, block, tool)
     }
 
-    /// The clock alone: `dt` more of mining `block` at `pos` with `tool`, for
-    /// whoever drives it (a held button, a mob told to dig this tick).
-    /// `Some` on the advance that breaks the block.
     pub fn advance(
         &mut self,
         dt: f32,
@@ -148,8 +76,6 @@ impl MiningState {
         block: Block,
         tool: Option<Tool>,
     ) -> Option<BreakEvent> {
-        // New target, OR a tool switch on the same cell: restart the timer (the
-        // break time depends on the tool, so switching mid-break starts over).
         if self.target != Some(pos) || self.tool != tool {
             self.target = Some(pos);
             self.block = Some(block);
@@ -164,9 +90,6 @@ impl MiningState {
             let event = BreakEvent {
                 pos,
                 block,
-                // Harvested only when the held tool meets this block's harvest
-                // requirement; below that (wrong kind, too low a tier, or bare
-                // hand) it breaks but drops nothing (diamond ore by hand).
                 harvested: harvests(block, tool),
             };
             self.reset();
@@ -176,12 +99,9 @@ impl MiningState {
         None
     }
 
-    /// Current break-overlay target + stage `0..BREAK_STAGES`, or `None` when not
-    /// actively mining a breakable, non-instant block.
     pub fn overlay(&self) -> Option<(IVec3, u8)> {
         let target = self.target?;
         let block = self.block?;
-        // Instant blocks never show an overlay.
         let break_time = break_time(block, self.tool);
         if break_time <= 0.0 || self.elapsed <= 0.0 {
             return None;
@@ -190,25 +110,18 @@ impl MiningState {
         Some((target, stage))
     }
 
-    /// True while a block is actively being mined (a target with accrued time).
-    /// The client-side hand/dust key on the REPLICATED `overlay()` state, so
-    /// this is a test-only readout of the raw latch.
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
     pub fn is_mining(&self) -> bool {
         self.target.is_some() && self.elapsed > 0.0
     }
 
-    /// The cell currently being mined, if any. Test-only readout of the mined target.
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
     pub fn target(&self) -> Option<IVec3> {
         self.target
     }
 
-    /// The active target and its accrued mining time — the SERVER-OBSERVED
-    /// window `BreakFinished` validation measures against (the server never
-    /// trusts a client-reported duration).
     #[inline]
     pub fn progress(&self) -> Option<(IVec3, f32)> {
         Some((self.target?, self.elapsed))
@@ -223,11 +136,6 @@ impl MiningState {
     }
 }
 
-/// The effective mining tier of `tool` against `block`: the tool's `tier` when it
-/// is the block's [`preferred_tool`](Block::preferred_tool) kind (a pickaxe on
-/// stone/ore, an axe on wood), else `0` (the bare-hand tier). Both the harvest
-/// gate and the speed multiplier key off this, so a wrong-kind tool (an axe on
-/// stone, a pickaxe on a log) mines exactly like a bare hand.
 #[inline]
 fn tool_power(block: Block, tool: Option<Tool>) -> u8 {
     match tool {
@@ -236,27 +144,11 @@ fn tool_power(block: Block, tool: Option<Tool>) -> u8 {
     }
 }
 
-/// Whether `tool` harvests `block` (i.e. the break yields its drop). True when the
-/// effective `tool_power` meets the block's [`harvest_tier`](Block::harvest_tier):
-/// hand-harvestable blocks (tier `0` — dirt, wood, plants) always drop, while
-/// stone/ore need a pickaxe of sufficient tier and never drop to an axe or a hand.
 #[inline]
 pub fn harvests(block: Block, tool: Option<Tool>) -> bool {
     tool_power(block, tool) >= block.harvest_tier()
 }
 
-/// Total seconds to break `block` with `tool` (`None` = bare hand). `0.0` for
-/// instant blocks; callers must not pass unbreakable blocks (`hardness < 0`). A
-/// tool of the block's [`preferred_tool`](Block::preferred_tool) kind that also
-/// meets its [`harvest_tier`](Block::harvest_tier) divides the hand time by the
-/// tool's own [`speed`](crate::item::Tool::speed) (its row's, or the tier's
-/// rung — [`default_speed`](crate::item::default_speed)) scaled by the kind's
-/// [`mining_efficiency`](crate::item::ToolKind::mining_efficiency) (so a shovel
-/// digs slower than a pickaxe/axe of equal tier), floored at the bare-hand
-/// rate; a wrong-kind, insufficient, or absent tool mines at that rate. The one
-/// break that skips the ladder entirely is a
-/// [`cut`](Block::cut_by_preferred_tool) — shears through leaves — which takes
-/// no time at all.
 #[inline]
 pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     let h = block.hardness();
@@ -265,24 +157,10 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     }
     let base = h * SECONDS_PER_HARDNESS_HAND;
     let power = tool_power(block, tool);
-    // The speed-up needs a real tool (tier >= 1) of the right kind that also meets
-    // the harvest tier — so an under-tier pickaxe (stone on diamond ore) never
-    // gets it. `max(1)` covers the tier-0 blocks: any matching tool speeds them,
-    // a bare hand never does.
     if power >= block.harvest_tier().max(1) {
-        // A block its tool PARTS rather than grinds gives way with no
-        // resistance at all — shears through leaves. Its `hardness` is the
-        // rate for tearing it apart by hand, and nothing else.
         if block.cut_by_preferred_tool() {
             return 0.0;
         }
-        // `power >= 1` means the tool's kind matched the block, so `tool` is Some.
-        // Scale the shared tier ladder by the kind's efficiency so a clumsier kind —
-        // the shovel — is uniformly slower than a pickaxe/axe of the same tier.
-        // A tool of the right kind that HARVESTS the block is never slower
-        // than a bare hand: a soft metal may dig no faster than a fist, and a
-        // clumsy kind may scale that down, but the two together must not make
-        // holding the tool worse than dropping it.
         let efficiency = tool.map_or(1.0, |t| t.kind.mining_efficiency());
         let speed = tool.map_or(1.0, |t| t.speed);
         base / (speed * efficiency).max(1.0)
@@ -293,10 +171,6 @@ pub fn break_time(block: Block, tool: Option<Tool>) -> f32 {
     }
 }
 
-/// Map mining progress to a break-overlay stage in `0..BREAK_STAGES`.
-///
-/// `((elapsed / break_time) * 10).floor().clamp(0, 9)`. Caller guarantees
-/// `break_time > 0.0`.
 #[inline]
 pub fn overlay_stage(elapsed: f32, break_time: f32) -> u8 {
     let frac = (elapsed / break_time) * BREAK_STAGES as f32;
@@ -310,32 +184,26 @@ mod tests {
     use crate::item::ToolKind;
     use crate::mathh::IVec3;
 
-    /// A pickaxe of `tier` in hand.
     fn pick(tier: u8) -> Option<Tool> {
         Some(Tool::new(ToolKind::Pickaxe, tier))
     }
 
-    /// An axe of `tier` in hand.
     fn axe(tier: u8) -> Option<Tool> {
         Some(Tool::new(ToolKind::Axe, tier))
     }
 
-    /// A shovel of `tier` in hand.
     fn shovel(tier: u8) -> Option<Tool> {
         Some(Tool::new(ToolKind::Shovel, tier))
     }
 
-    /// Shears in hand (one tier only: tier 1, the ×2 rung of the shared ladder).
     fn shears() -> Option<Tool> {
         Some(Tool::new(ToolKind::Shears, 1))
     }
 
-    /// The targeted cell, as the controller consumes it.
     fn hit_at(pos: IVec3) -> IVec3 {
         pos
     }
 
-    /// Drive `update_core` bare-handed with a constant single-block world.
     fn step(
         state: &mut MiningState,
         dt: f32,
@@ -347,7 +215,6 @@ mod tests {
         state.update_core(dt, look, held, inv_open, None, &|_| block)
     }
 
-    /// Like [`step`] but with `tool` in hand.
     fn step_with_tool(
         state: &mut MiningState,
         dt: f32,
@@ -362,11 +229,7 @@ mod tests {
 
     #[test]
     fn break_time_anchors_match_contract() {
-        // Hardness x SECONDS_PER_HARDNESS_HAND is the rate for a break that
-        // YIELDS: dirt (0.5) comes up in 1.25 s bare-handed.
         assert_eq!(break_time(Block::Dirt, None), 1.25);
-        // A gated block breaks for nothing, and pays for it: an oak log is
-        // hardness 2.0, so 5 s of base times the fruitless penalty.
         assert_eq!(
             break_time(Block::OakLog, None),
             5.0 * FRUITLESS_BREAK_PENALTY
@@ -375,28 +238,21 @@ mod tests {
             break_time(Block::Stone, None),
             3.75 * FRUITLESS_BREAK_PENALTY
         );
-        // Instant plants: 0.0 s, penalty or no penalty.
         assert_eq!(break_time(Block::Poppy, None), 0.0);
         assert_eq!(break_time(Block::ShortGrass, None), 0.0);
     }
 
-    /// The penalty is keyed on the HARVEST GATE, not on a material list, so it
-    /// must land on every fruitless break and on no productive one.
     #[test]
     fn only_a_break_that_yields_nothing_pays_the_penalty() {
         let penalised = |b: Block, t: Option<Tool>| {
             let base = b.hardness() * SECONDS_PER_HARDNESS_HAND;
             (break_time(b, t) - base * FRUITLESS_BREAK_PENALTY).abs() < 1e-4
         };
-        // A fist on gated stone/wood/ore, an axe swung at stone, an under-tier
-        // pickaxe on diamond ore: one situation, one rule.
         assert!(penalised(Block::Stone, None));
         assert!(penalised(Block::OakLog, None));
         assert!(penalised(Block::Stone, axe(4)));
         assert!(penalised(Block::OakLog, pick(4)));
         assert!(penalised(Block::DiamondOre, pick(2)));
-        // Anything a hand can actually take keeps the plain rate, at any
-        // hardness — the penalty must never touch ordinary digging.
         for b in [Block::Dirt, Block::Sand, Block::Gravel, Block::OakPlanks] {
             assert!(!penalised(b, None), "{b:?}");
             assert_eq!(
@@ -413,15 +269,12 @@ mod tests {
         let pos = IVec3::new(1, 2, 3);
         let hit = hit_at(pos);
 
-        // Well before the 20 s fruitless break we are still mining.
         let total = break_time(Block::OakLog, None);
         for _ in 0..((total / 0.1) as usize - 10) {
             assert!(step(&mut state, 0.1, Some(hit), true, false, Block::OakLog).is_none());
         }
         assert!(state.is_mining());
 
-        // Mine until it breaks, tracking accumulated time. It must break right
-        // around the 5.0 s anchor (within one tick of float-summed dt).
         let dt = 0.1;
         let mut elapsed = total - 1.0;
         let mut ev = None;
@@ -445,7 +298,6 @@ mod tests {
              knapped from ground litter, not cut from a tree"
         );
 
-        // Breaking resets progress.
         assert!(!state.is_mining());
         assert_eq!(state.overlay(), None);
     }
@@ -459,7 +311,6 @@ mod tests {
             .expect("instant block breaks on the first qualifying frame");
         assert_eq!(ev.block, Block::Poppy);
         assert!(ev.harvested);
-        // Instant blocks never show an overlay even mid-break.
         assert_eq!(state.overlay(), None);
     }
 
@@ -468,7 +319,7 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(5, 5, 5);
         let hit = hit_at(pos);
-        let total = break_time(Block::Stone, None); // 1.5 * 2.5 = 3.75 s
+        let total = break_time(Block::Stone, None);
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
@@ -487,7 +338,7 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(2, 2, 2);
         let hit = hit_at(pos);
-        let total = break_time(Block::Dirt, None); // 0.5 * 2.5 = 1.25 s
+        let total = break_time(Block::Dirt, None);
         let dt = 0.05;
         let mut ev = None;
         for _ in 0..((total / dt) as usize + 2) {
@@ -504,11 +355,8 @@ mod tests {
     #[test]
     fn overlay_stage_climbs_zero_to_nine() {
         let total = break_time(Block::Stone, None);
-        // Just-started progress is stage 0.
         assert_eq!(overlay_stage(0.0001, total), 0);
-        // Just-before-break is stage 9.
         assert_eq!(overlay_stage(total - 0.0001, total), 9);
-        // Spot-check the climb is monotone and spans the full 0..=9 range.
         let mut seen = [false; BREAK_STAGES as usize];
         let mut last = 0u8;
         let steps = 200;
@@ -528,7 +376,6 @@ mod tests {
         let mut state = MiningState::new();
         let pos = IVec3::new(7, 8, 9);
         let hit = hit_at(pos);
-        // Mine ~half of stone's break time.
         let total = break_time(Block::Stone, None);
         let half = total / 2.0;
         let dt = 0.05;
@@ -551,7 +398,6 @@ mod tests {
         let a = hit_at(IVec3::new(0, 0, 0));
         let b = hit_at(IVec3::new(0, 0, 1));
 
-        // Mine a fifth of the way in, so the stage is unambiguously past 0.
         for _ in 0..(break_time(Block::Stone, None) / 0.5) as usize {
             step(&mut state, 0.1, Some(a), true, false, Block::Stone);
         }
@@ -559,7 +405,6 @@ mod tests {
         let (_, before) = state.overlay().unwrap();
         assert!(before > 0);
 
-        // Switching the target restarts the timer for this frame.
         step(&mut state, 0.1, Some(b), true, false, Block::Stone);
         let (target, stage) = state.overlay().unwrap();
         assert_eq!(target, IVec3::new(0, 0, 1));
@@ -575,7 +420,6 @@ mod tests {
         }
         assert!(state.is_mining());
 
-        // Button up: progress clears.
         assert!(step(&mut state, 0.1, Some(hit), false, false, Block::Stone).is_none());
         assert!(!state.is_mining());
         assert_eq!(state.overlay(), None);
@@ -589,7 +433,6 @@ mod tests {
             step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         assert!(state.is_mining());
-        // Opening the inventory resets even with the button held.
         assert!(step(&mut state, 0.1, Some(hit), true, true, Block::Stone).is_none());
         assert!(!state.is_mining());
     }
@@ -602,7 +445,6 @@ mod tests {
             step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         assert!(state.is_mining());
-        // Losing the raycast (look = None) clears progress.
         assert!(step(&mut state, 0.1, None, true, false, Block::Stone).is_none());
         assert!(!state.is_mining());
     }
@@ -611,7 +453,6 @@ mod tests {
     fn unbreakable_block_is_never_a_target() {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(0, 0, 0));
-        // Water has hardness < 0: never mined.
         assert!(step(&mut state, 1.0, Some(hit), true, false, Block::Water).is_none());
         assert!(!state.is_mining());
         assert_eq!(state.target(), None);
@@ -619,21 +460,14 @@ mod tests {
 
     #[test]
     fn pickaxe_speeds_and_harvest_gate_by_tier() {
-        // A pickaxe that HARVESTS stone drops off the penalty AND takes the
-        // tier speed-up, so the first tool is a step change, not a nudge: 15 s
-        // by fist, 1.875 s with a tier-1 pickaxe.
         assert_eq!(break_time(Block::Stone, None), 15.0);
         assert_eq!(break_time(Block::Stone, pick(1)), 3.75 / 2.0);
         assert_eq!(break_time(Block::Stone, pick(2)), 3.75 / 4.0);
-        // Iron needs a stone pickaxe: an under-tier one is no better than bare
-        // hands — both fruitless, both penalised.
         assert_eq!(
             break_time(Block::IronOre, pick(1)),
             break_time(Block::IronOre, None)
         );
         assert_eq!(break_time(Block::IronOre, pick(2)), 7.5 / 4.0);
-        // Diamond ore needs an iron pickaxe: a stone one is still fruitless;
-        // iron is ×6 and diamond ×8.
         assert_eq!(
             break_time(Block::DiamondOre, pick(2)),
             break_time(Block::DiamondOre, None)
@@ -644,18 +478,14 @@ mod tests {
 
     #[test]
     fn axes_speed_wood_and_pickaxes_do_not() {
-        // Oak log is wood (hardness 2.0 -> a 5 s base). Each axe tier mines it
-        // faster than the last: ×2/×4/×6/×8 up the shared ladder.
         assert_eq!(break_time(Block::OakLog, axe(1)), 5.0 / 2.0);
         assert_eq!(break_time(Block::OakLog, axe(2)), 5.0 / 4.0);
         assert_eq!(break_time(Block::OakLog, axe(3)), 5.0 / 6.0);
         assert_eq!(break_time(Block::OakLog, axe(4)), 5.0 / 8.0);
-        // A pickaxe is the wrong kind for wood: no better than a bare fist.
         assert_eq!(
             break_time(Block::OakLog, pick(4)),
             break_time(Block::OakLog, None)
         );
-        // The crafting table and chest are wood too, so axes speed them as well.
         for wood in [Block::CraftingTable, Block::Chest] {
             assert!(
                 break_time(wood, axe(1)) < break_time(wood, None),
@@ -667,7 +497,6 @@ mod tests {
                 "{wood:?}"
             );
         }
-        // Conversely, an axe is the wrong kind for stone/ore: no speed-up.
         assert_eq!(
             break_time(Block::Stone, axe(4)),
             break_time(Block::Stone, None)
@@ -677,11 +506,9 @@ mod tests {
     #[test]
     fn shovels_speed_dirt_and_sand_but_less_than_an_equal_tier_pickaxe_axe() {
         use crate::item::ToolKind;
-        // Dirt is shovel-material (hardness 0.5 -> 1.25 s by hand).
         let hand = break_time(Block::Dirt, None);
         assert_eq!(hand, 1.25);
 
-        // A shovel is, by design, a less efficient digger than the baseline kinds.
         let eff = ToolKind::Shovel.mining_efficiency();
         assert!(
             eff < 1.0,
@@ -690,35 +517,27 @@ mod tests {
 
         for tier in 1..=4u8 {
             let with_shovel = break_time(Block::Dirt, shovel(tier));
-            // Still a real speed-up over the bare hand at every tier...
             assert!(
                 with_shovel < hand,
                 "shovel tier {tier} should beat the hand"
             );
-            // ...yet slower than a full-efficiency (pickaxe/axe-grade) tool of the
-            // same tier would be — the kind penalty applies across the board.
             let full_speed = hand / crate::item::default_speed(tier);
             assert!(
                 with_shovel > full_speed,
                 "shovel tier {tier} should be slower than a full-efficiency tool"
             );
-            // Exact: the tool's own speed scaled by the kind's efficiency,
-            // floored at the bare hand (a tool is never worse than no tool).
             let want = (crate::item::default_speed(tier) * eff).max(1.0);
             assert_eq!(with_shovel, hand / want);
         }
 
-        // The whole dirt/sand family is shovel-sped (grass, gravel, clay, …).
         for b in [Block::Grass, Block::Sand, Block::Gravel, Block::Clay] {
             assert!(
                 break_time(b, shovel(1)) < break_time(b, None),
                 "{b:?} should mine faster with a shovel"
             );
         }
-        // A pickaxe/axe is the wrong kind for dirt: hand speed, no faster than bare.
         assert_eq!(break_time(Block::Dirt, pick(4)), hand);
         assert_eq!(break_time(Block::Dirt, axe(4)), hand);
-        // And a shovel is the wrong kind for stone/wood: no speed-up there.
         assert_eq!(
             break_time(Block::Stone, shovel(4)),
             break_time(Block::Stone, None)
@@ -734,25 +553,17 @@ mod tests {
         for wool in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
             let hand = break_time(wool, None);
             assert!(hand > 0.0, "{wool:?} should not break instantly");
-            // Shears are tier 1 at full efficiency: exactly twice the hand rate.
             assert_eq!(break_time(wool, shears()), hand / 2.0, "{wool:?}");
-            // Wool is hand-harvestable: the drop needs no tool.
             assert!(harvests(wool, None), "{wool:?}");
-            // Every other kind — even diamond — is wrong for wool: hand speed.
             for tool in [pick(4), axe(4), shovel(4)] {
                 assert_eq!(break_time(wool, tool), hand, "{wool:?} with {tool:?}");
             }
         }
-        // And shears are the wrong kind everywhere else: no speed-up off wool.
         for b in [Block::Stone, Block::OakLog, Block::Dirt] {
             assert_eq!(break_time(b, shears()), break_time(b, None), "{b:?}");
         }
     }
 
-    /// Shears PART foliage instead of grinding it, and that is keyed on the
-    /// material, so it has to hold for every leaf row in the game — a canopy
-    /// you can clear with one blade and one that fights you leaf by leaf are
-    /// different games.
     #[test]
     fn shears_cut_through_every_leaf_instantly() {
         let mut checked_any = false;
@@ -762,8 +573,6 @@ mod tests {
             }
             checked_any = true;
             assert_eq!(break_time(leaves, shears()), 0.0, "{leaves:?}");
-            // A bare hand still tears each leaf loose, and no other kind of
-            // tool helps at all.
             let hand = break_time(leaves, None);
             assert!(hand > 0.0, "{leaves:?} should not break instantly by hand");
             for tool in [pick(4), axe(4), shovel(4)] {
@@ -771,15 +580,11 @@ mod tests {
             }
         }
         assert!(checked_any, "expected at least one leaf block");
-        // The cut is foliage's, not the shears': wool is the other material
-        // they pair with and it stays a timed grind.
         assert!(break_time(Block::WoolBlock, shears()) > 0.0);
     }
 
     #[test]
     fn iron_pickaxe_harvests_every_ore() {
-        // The iron pickaxe (tier 3) unlocks the drop on every ore — including the
-        // tier-3 gold/diamond ores a stone pickaxe can't crack.
         for ore in [
             Block::CoalOre,
             Block::IronOre,
@@ -796,17 +601,11 @@ mod tests {
                 "diamond pickaxe should harvest {ore:?}"
             );
         }
-        // A stone pickaxe still can't harvest the tier-3 ores.
         assert!(!harvests(Block::GoldOre, pick(2)));
         assert!(!harvests(Block::DiamondOre, pick(2)));
-        // An axe — even diamond — never harvests ore (wrong tool kind).
         assert!(!harvests(Block::GoldOre, axe(4)));
     }
 
-    /// The bootstrap must stay openable BY HAND. Logs are axe-gated, so a
-    /// fresh world's whole path to a first tool runs through ground litter —
-    /// if any of these ever gains a harvest tier, that world is unwinnable and
-    /// nothing else in the suite would notice.
     #[test]
     fn every_source_of_the_first_tool_yields_to_a_bare_hand() {
         for b in [
@@ -825,7 +624,6 @@ mod tests {
                 "{b:?} must drop what it is for"
             );
         }
-        // ...and the thing they exist to unlock stays shut.
         assert!(!harvests(Block::OakLog, None));
     }
 
@@ -844,20 +642,14 @@ mod tests {
             }
             panic!("{block:?} should break with tool {tool:?}");
         };
-        // Wooden pickaxe harvests stone; a bare hand breaks it for nothing.
         assert!(mine(pick(1), Block::Stone).harvested);
         assert!(!mine(None, Block::Stone).harvested);
-        // Iron ore needs a stone pickaxe — a wooden one yields nothing.
         assert!(!mine(pick(1), Block::IronOre).harvested);
         assert!(mine(pick(2), Block::IronOre).harvested);
-        // Diamond ore yields nothing to a stone pickaxe, but the iron pickaxe cracks
-        // it — and a diamond gem actually drops.
         assert!(!mine(pick(2), Block::DiamondOre).harvested);
         assert!(mine(pick(3), Block::DiamondOre).harvested);
-        // Logs are axe-gated: any axe drops one, a bare hand never does.
         assert!(mine(axe(1), Block::OakLog).harvested);
         assert!(!mine(None, Block::OakLog).harvested);
-        // A pickaxe is the wrong KIND, so tier cannot buy its way in.
         assert!(!mine(pick(4), Block::OakLog).harvested);
     }
 
@@ -865,13 +657,11 @@ mod tests {
     fn switching_tools_resets_progress() {
         let mut state = MiningState::new();
         let hit = hit_at(IVec3::new(2, 2, 2));
-        // Mine stone bare-handed for a fifth of its (penalised) break time.
         for _ in 0..(break_time(Block::Stone, None) / 0.5) as usize {
             step(&mut state, 0.1, Some(hit), true, false, Block::Stone);
         }
         let (_, before) = state.overlay().unwrap();
         assert!(before > 0);
-        // Pull out a pickaxe on the same cell: progress restarts this frame.
         step_with_tool(
             &mut state,
             0.1,

@@ -6,26 +6,17 @@ use petramond_world::{mathh::IVec3, section::Section};
 use super::{Feature, FeaturePlan};
 use crate::{rng::FeatureRng, TerrainSpace};
 
-/// An admitted configured feature: its [`FeaturePlan`], recorded before
-/// section clipping and replayed with the engine trees' own overwrite rules.
-/// Occupancy and root support use positional terrain, so a neighbour cannot
-/// admit half a tree whose trunk failed in its owner's section.
 pub struct PlacedFeature {
     plan: FeaturePlan,
 }
 
-/// A memoized [`PlacedFeature::resolve`]: the world's context, the feature
-/// key, the origin and the salt.
 pub(crate) type PlacedKey = (crate::cache::GenContext, Box<str>, [i32; 3], u64);
 
-/// Resident bytes of a memoized placement.
 pub(crate) fn placed_heap(placed: &Arc<PlacedFeature>) -> usize {
     std::mem::size_of::<PlacedFeature>() + placed.plan.memory_bytes()
 }
 
 impl PlacedFeature {
-    /// Choose the first complete fit. Candidate sets are replayed whole by every
-    /// section; cached admission is independent of section order and residency.
     pub fn resolve_first(
         key: &str,
         origins: &[[i32; 3]],
@@ -73,9 +64,6 @@ impl PlacedFeature {
         }))
     }
 
-    /// Resolve and sample one configured feature. Occupied geometry or an
-    /// unsupported ground cell yields an empty placement; invalid references
-    /// and geometry outside the feature envelope are errors.
     pub fn resolve(
         key: &str,
         origin: [i32; 3],
@@ -101,8 +89,6 @@ impl PlacedFeature {
     ) -> Result<Self, String> {
         let plan = FeaturePlan::record_feature(feature, origin, &mut rng)
             .ok_or("configured feature exceeds its placement envelope")?;
-        // Every cell the feature writes must be open terrain, and every
-        // non-leaf cell it roots at the origin's level must stand on ground.
         let cells: BTreeSet<[i32; 3]> = plan.placements().map(|p| p.pos.to_array()).collect();
         let ground: BTreeSet<[i32; 3]> = plan
             .placements()
@@ -114,7 +100,6 @@ impl PlacedFeature {
             .map(|p| (p, TerrainSpace::Air))
             .chain(ground.into_iter().map(|p| (p, TerrainSpace::Solid)))
             .collect();
-        // Keep each terrain tile hot while probing an entire crown.
         probes.sort_unstable_by_key(|([x, y, z], _)| {
             (x.div_euclid(16), z.div_euclid(16), *x, *z, *y)
         });
@@ -132,7 +117,6 @@ impl PlacedFeature {
         })
     }
 
-    /// Whether admission rejected every candidate.
     pub fn is_empty(&self) -> bool {
         self.plan.is_empty()
     }

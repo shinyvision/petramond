@@ -9,19 +9,15 @@ use petramond_world::section::Section;
 use crate::world::fluid::fluid_of;
 
 impl ServerWorld {
-    /// Kick generated/overlaid fluid once its loaded neighbourhood gives it
-    /// somewhere to go. Reads neighbours by world coordinate (so it crosses
-    /// section and column seams) and only flows into a neighbour that is
-    /// actually loaded, so fluid never spills into a not-yet-streamed void.
+    /// Kicks fluid once loaded neighbours give it somewhere to go. Reads neighbours by world coord
+    /// so it crosses section/column seams, and only flows into neighbours that are actually loaded,
+    /// so nothing spills into unstreamed void.
     ///
-    /// The kick is also the RE-ARM for simulation work the streaming-finality
-    /// guard dropped (`world::sim_guard`): whichever side of a fluid-air or
-    /// quench seam lands LAST re-queues the contact, so no flow is permanently
-    /// lost to gating. Each step is cheap in the bulk cases (calm ocean, deep
-    /// stone, a single-fluid body) by the section counters, and every
-    /// cross-cell probe reads through a section cursor: a scan walks one
-    /// section (or one neighbour's seam plane) at a time, so nearly every
-    /// probe hits the cursor's cached section instead of the section map.
+    /// Also re-arms sim work the streaming-finality guard dropped (`world::sim_guard`): whichever
+    /// side of a fluid-air or quench seam lands last re-queues the contact, so nothing gets lost to
+    /// gating. Section counters keep bulk cases (calm ocean, deep stone, single-fluid body) cheap.
+    /// Cross-cell probes go through a section cursor, walking one section or seam plane at a time,
+    /// so most probes hit the cursor's cached section instead of the section map.
     pub(in crate::world) fn queue_loaded_section_fluid_updates(&mut self, ingested: &[SectionPos]) {
         let ingested_set: FxHashSet<SectionPos> = ingested.iter().copied().collect();
         let mut updates: Vec<IVec3> = Vec::new();
@@ -72,7 +68,6 @@ impl ServerWorld {
                     };
                     let pos = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
                     let flowing = metas.is_some_and(|m| m[idx] != 0);
-                    // Air above is a normal surface and does not start flow.
                     let open_outflow = || {
                         KICK_OUTFLOW_DIRS.iter().any(|&d| {
                             let n = pos + IVec3::from(d);
@@ -80,7 +75,6 @@ impl ServerWorld {
                                 && cursor.chunk_block(n) == Block::Air.id()
                         })
                     };
-                    // An unloaded neighbour reads as air, never as the quencher.
                     let quenched = || {
                         fluid.quench.is_some_and(|q| {
                             KICK_CONTACT_DIRS.iter().any(|&d| {
@@ -97,18 +91,15 @@ impl ServerWorld {
         }
     }
 
-    /// All-source fluid without air (ocean interior, fluid over a sealed
-    /// floor): only boundary fluid can flow, outward through the five outflow
-    /// planes, and only against a loaded neighbour that holds air.
     fn kick_outflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let cursor = self.data.cursor();
         let blocks = section.blocks();
         for &d in &KICK_OUTFLOW_DIRS {
             let Some(neighbour) = self.data.sections.get(&offset_section(sp, d)) else {
-                continue; // absent: its own landing kick handles the seam
+                continue;
             };
             if !neighbour.has_air() {
-                continue; // full fluid/stone plane cannot accept flow
+                continue;
             }
             for_each_seam_cell(sp, d, |local, here, there| {
                 if is_fluid(blocks.get(local)) && cursor.chunk_block(there) == Block::Air.id() {
@@ -118,9 +109,6 @@ impl ServerWorld {
         }
     }
 
-    /// Any air: fluid in a LOADED neighbour may now flow into it, from above
-    /// (falling in) or from the sides — the cross-seam case neither section's
-    /// own fluid scan can see. Queues the NEIGHBOUR's fluid cell.
     fn kick_inflow_planes(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let cursor = self.data.cursor();
         let blocks = section.blocks();
@@ -139,10 +127,6 @@ impl ServerWorld {
         }
     }
 
-    /// A quench contact lying exactly on a section seam, queued on whichever
-    /// side holds the quenching fluid — so it re-arms in either landing order.
-    /// Kept six-directional: fluid below still has to queue the reacting cell's
-    /// downward pour.
     fn kick_quench_seams(&self, sp: SectionPos, section: &Section, updates: &mut Vec<IVec3>) {
         let cursor = self.data.cursor();
         let blocks = section.blocks();
@@ -166,11 +150,10 @@ impl ServerWorld {
         }
     }
 
-    /// While this section was absent the guard DROPPED fired checks whose read
-    /// box touched it — checks living up to `SIM_READ_REACH` cells inside loaded
-    /// neighbours that never unloaded, which no scan of the ingested section
-    /// sees. Re-arm every non-source fluid cell in that band; all-source
-    /// neighbours (calm ocean) skip by the metadata summary.
+    /// While this section was gone, the guard dropped checks whose read box touched it (checks up
+    /// to `SIM_READ_REACH` cells into loaded neighbours that never unloaded). No scan of the
+    /// ingested section catches those, so re-arm every non-source fluid cell in that band.
+    /// All-source neighbours (calm ocean) skip via the metadata summary.
     fn rearm_dropped_neighbour_checks(
         &self,
         sp: SectionPos,
@@ -191,13 +174,13 @@ impl ServerWorld {
                     }
                     let npos = offset_section(sp, (dx, dy, dz));
                     if ingested.contains(&npos) {
-                        continue; // its own interior scan covers it fully
+                        continue;
                     }
                     let Some(neighbour) = self.data.sections.get(&npos) else {
                         continue;
                     };
                     let Some(metas) = neighbour.fluid_slice() else {
-                        continue; // no mid-flow cells: nothing to re-arm
+                        continue;
                     };
                     let blocks = neighbour.blocks();
                     let (ox, oy, oz) = npos.origin_world();
@@ -223,12 +206,8 @@ impl ServerWorld {
 
 type Dir = (i32, i32, i32);
 
-/// Fluid can leave a section down or sideways (never up).
 const KICK_OUTFLOW_DIRS: [Dir; 5] = [(0, -1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)];
-/// Fluid can enter a section's air from above (falling) or from the sides
-/// (never rising from below).
 const KICK_INFLOW_DIRS: [Dir; 5] = [(0, 1, 0), (-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)];
-/// A quench contact is judged over the full 6-neighbourhood.
 const KICK_CONTACT_DIRS: [Dir; 6] = [
     (0, -1, 0),
     (0, 1, 0),
@@ -243,7 +222,6 @@ fn is_fluid(id: u16) -> bool {
     fluid_of(Block::from_id(id)).is_some()
 }
 
-/// Whether a cell of `id` is quenched by a neighbouring cell of `other`.
 #[inline]
 fn quenched_by(id: u16, other: u16) -> bool {
     fluid_of(Block::from_id(id))
@@ -256,8 +234,6 @@ fn offset_section(sp: SectionPos, (dx, dy, dz): Dir) -> SectionPos {
     SectionPos::new(sp.cx + dx, sp.cy + dy, sp.cz + dz)
 }
 
-/// Visit the 16×16 boundary plane of `sp` facing `d`: the section-local index
-/// of each cell, its world position, and the world position across the seam.
 fn for_each_seam_cell(sp: SectionPos, d: Dir, mut visit: impl FnMut(usize, IVec3, IVec3)) {
     let (ox, oy, oz) = sp.origin_world();
     let step = IVec3::from(d);
@@ -270,8 +246,6 @@ fn for_each_seam_cell(sp: SectionPos, d: Dir, mut visit: impl FnMut(usize, IVec3
     }
 }
 
-/// The section-local cell on the boundary plane facing `d`, indexed by the
-/// plane's two free axes `(a, b)`.
 #[inline]
 fn boundary_cell(d: Dir, a: usize, b: usize) -> (usize, usize, usize) {
     let hi = SECTION_SIZE - 1;

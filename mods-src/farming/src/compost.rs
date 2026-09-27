@@ -1,29 +1,8 @@
-//! The compost barrel: surplus produce becomes fertilizer.
-//!
-//! FILL rides `item_use_pre`: right-clicking a non-full barrel with any item
-//! carrying the `farming:compostable` tag consumes one unit and advances the
-//! barrel one fill stage. Stage identity IS the block id (the crop pattern) —
-//! no cell KV, and the barrel's look is always honest about its fill: the
-//! four stages are `models.json` rows over ONE composter `.bbmodel`, the
-//! empty row hiding the `compost_surface` cube and each fill posing it
-//! higher via `part_offsets`. Stage flips are same-footprint
-//! `swap_block`s (the kitchen lit-machine mechanism), never plain
-//! block writes. COLLECT rides `block_interact`: any click on a FULL barrel
-//! pops one fertilizer and resets it to empty — the same pop-and-reset
-//! ergonomics as a mature crop harvest, working with an empty hand or any
-//! held item.
-//!
-//! What the popped fertilizer then DOES to a block is [`crate::fertilize`]'s
-//! business — its own link in the lib.rs item-use chain.
-
 use mod_sdk::*;
 
 use crate::content::Content;
 use crate::keys;
 
-/// The fill's claim GATE, run by both instances (see [`crate::claims`]): a
-/// compostable held item on a non-full barrel. Answers the barrel's current
-/// stage.
 pub fn fill_gate(content: &Content, item: ItemId, block: BlockId) -> Option<u8> {
     if !content.compostable.contains(&item) {
         return None;
@@ -34,7 +13,6 @@ pub fn fill_gate(content: &Content, item: ItemId, block: BlockId) -> Option<u8> 
     }
 }
 
-/// One compostable unit advances a gated barrel one fill stage (server).
 pub fn fill(content: &Content, item: ItemId, pos: [i32; 3], stage: u8) -> Outcome {
     if !consume_held(item, 1) {
         return Outcome::Continue;
@@ -46,14 +24,10 @@ pub fn fill(content: &Content, item: ItemId, pos: [i32; 3], stage: u8) -> Outcom
     Outcome::Cancel
 }
 
-/// The collect's claim GATE, run by both instances: any right click on a
-/// FULL barrel. Non-full barrels don't consume the click — the fill path
-/// (or ordinary placement against the barrel) still sees it.
 pub fn collect_gate(content: &Content, block: BlockId) -> bool {
     content.compost_stage(block) == Some(3)
 }
 
-/// Pop one fertilizer from a gated (full) barrel and reset it (server).
 pub fn collect(content: &Content, pos: [i32; 3]) -> Outcome {
     let center = barrel_top(pos);
     spawn_item(keys::FERTILIZER, 1, center);

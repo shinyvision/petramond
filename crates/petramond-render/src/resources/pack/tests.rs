@@ -13,9 +13,6 @@ fn mesh(cy: i32, quads: usize, value: u32) -> ChunkMesh {
         })
         .collect();
     mesh.opaque = vertices.clone();
-    // A real leaf tail: the opaque stream is packed as two per-column regions
-    // (every section's far LOD, then every section's tail), and a fixture with
-    // an empty tail would never exercise the second one.
     mesh.far_opaque_len = ((quads.max(1) - quads / 2) * 4) as u32;
     mesh.transparent = vertices.clone();
     mesh.transparent_two_sided = vertices.clone();
@@ -35,7 +32,6 @@ fn mesh(cy: i32, quads: usize, value: u32) -> ChunkMesh {
         .collect();
     mesh.contact = vec![ContactShadowVertex::zeroed(); quads * 6];
     mesh.mesh_dirty = true;
-    // What the mesh worker hands over.
     mesh.into_sealed()
 }
 
@@ -51,12 +47,9 @@ fn bytes(
     })
 }
 
-/// The repack's byte-level contract, read back from the GPU: every buffer of
-/// a column whose sibling was released (CPU buffers gone, GPU bytes retained)
-/// equals a from-scratch upload of the same meshes. Iterations cover every
-/// upload path — same-size remesh (the vertex patch), growth and shrink
-/// (siblings shift, GPU→GPU copies into a fresh allocation) and a section
-/// added between them (index rebasing).
+/// Reads the repack back from the GPU. Once a sibling is released (CPU buffers gone, GPU bytes
+/// kept), every buffer of the column must equal a fresh upload of the same meshes. The iterations
+/// hit every upload path: same-size remesh, growth and shrink, and a section added in between.
 #[test]
 fn updates_and_repacking_preserve_released_siblings_in_every_buffer() {
     let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
@@ -140,9 +133,6 @@ fn updates_and_repacking_preserve_released_siblings_in_every_buffer() {
     }
 }
 
-/// A fresh column lays each buffer out region by region: every section's far
-/// opaque range before any leaf tail, every opaque model index before any
-/// blend index — and each section's ranges tile its regions in order.
 #[test]
 fn a_packed_column_tiles_every_region_in_section_order() {
     let meshes = [mesh(0, 2, 1), mesh(1, 3, 2), mesh(2, 1, 3)];
@@ -175,7 +165,6 @@ fn a_packed_column_tiles_every_region_in_section_order() {
             "{buffer:?} spans cover the buffer"
         );
     }
-    // Blend indices rebase onto their own section's model vertices.
     let index_plan = &plans[ColumnBuffer::ModelIndices.index()];
     let blend_start = regions[SectionStream::ModelIndices.index()];
     for (entry, p) in entries

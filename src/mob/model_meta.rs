@@ -1,25 +1,12 @@
-//! Sim-side metadata derived from a mob's compiled [`Model`](petramond_world::bbmodel::Model): the
-//! idle-animation info the AI needs and the bone hierarchy the death ragdoll tumbles.
-//!
-//! These are pure functions of the precached [`Model`] (see [`crate::mob::model`]) — the
-//! same in-memory asset the renderer bakes from — so the simulation reads `.llmob`-derived
-//! data and never re-parses a `.bbmodel`. Bone indices line up with the renderer's by
-//! construction, since both come from the one `Model`.
-
 use petramond_math::math::Vec3;
 use petramond_world::bbmodel::{euler_quat, Model};
 
-/// Length + loop mode of one NAMED animation, for the sim's one-shot layer
-/// retirement: a mod-activated `once` clip (`MobAnimSet`) retires itself when
-/// its phase passes the clip's length (see `mob::anim`). Name-sorted for a
-/// binary-search lookup.
 pub struct NamedAnimMeta {
     pub name: String,
     pub length: f32,
     pub looping: bool,
 }
 
-/// Every animation the model carries, name-sorted, with length + loop mode.
 pub fn named_anims(model: &Model) -> Vec<NamedAnimMeta> {
     let mut anims: Vec<NamedAnimMeta> = model
         .animations
@@ -34,18 +21,12 @@ pub fn named_anims(model: &Model) -> Vec<NamedAnimMeta> {
     anims
 }
 
-/// What the AI needs to know about one `idle_*` animation.
 #[derive(Copy, Clone, Debug)]
 pub struct IdleAnimMeta {
-    /// Length in seconds (so a one-shot idle is played for exactly its length).
     pub length: f32,
-    /// Whether it loops (Blockbench `loop: "loop"`); `once`/`hold` do not.
     pub looping: bool,
 }
 
-/// This model's `idle_*` animations in its own stable (name-sorted) index order, each with
-/// its length + loop mode. The index lines up 1:1 with [`Model::idle_animation`], so an
-/// index the AI picks resolves to exactly the animation the renderer plays for it.
 pub fn idle_anims(model: &Model) -> Vec<IdleAnimMeta> {
     let mut out = Vec::new();
     let mut i = 0;
@@ -59,49 +40,22 @@ pub fn idle_anims(model: &Model) -> Vec<IdleAnimMeta> {
     out
 }
 
-/// One bone of the sim-side skeleton. The death ragdoll treats each bone as a rigid
-/// *body* — the box `[bbox_min, bbox_max]` covering its geometry — whose corners are
-/// simulated as particles. A rigid rotation is recovered from the corners each tick
-/// (shape matching), so a bone tumbles and falls over physically; `pivot` is the joint
-/// where it attaches to its physical ragdoll parent (see [`crate::mob::ragdoll`]).
 #[derive(Copy, Clone, Debug)]
 pub struct SkBone {
-    /// The joint pivot in authored rest-pose model space.
     pub pivot: Vec3,
-    /// Axis-aligned box covering the bone's cubes in authored rest-pose model space,
-    /// regularised to a minimum thickness so even a flat cube is a genuine 3D body. A
-    /// geometry-less bone gets a small box around its rest-pose `pivot`.
     pub bbox_min: Vec3,
     pub bbox_max: Vec3,
-    /// Physical ragdoll parent. This usually matches the authored model parent, but
-    /// disconnected top-level authored bones are attached to the creature's main root
-    /// so one mob dies as one connected body, not as independent loose parts.
     pub parent: Option<usize>,
-    /// The bone gets no rigid body of its own in the ragdoll and moves rigidly with its
-    /// parent: authored with a `_weld` name suffix (teeth, decorative shells that only
-    /// exist as separate bones for animation), or a cube-less rig group (physics anchors
-    /// on geometry; see [`skeleton`]). Never true for the root — there is nothing to
-    /// weld to.
     pub welded: bool,
 }
 
-/// The bone hierarchy of a mob, in the SAME index order as the renderer's
-/// [`Model`](petramond_world::bbmodel::Model) (it is derived from that very model), so a sim-computed
-/// per-bone pose drops straight into the render bake.
 #[derive(Clone, Debug, Default)]
 pub struct Skeleton {
     pub bones: Vec<SkBone>,
 }
 
-/// Smallest half-extent (model units) a bone's box is inflated to on each axis, so a
-/// flat cube still has 3D thickness for the ragdoll to tumble realistically.
 const MIN_HALF: f32 = 0.5;
 
-/// Build the sim skeleton from a compiled [`Model`]: each bone's pivot and box are
-/// derived in the same authored rest-pose model space the renderer uses. Authored
-/// parent links are preserved, while multiple top-level roots are given inferred
-/// physical parents for ragdoll constraints. Indices match the renderer exactly
-/// because both come from this one `Model`.
 pub fn skeleton(model: &Model) -> Skeleton {
     let n = model.bones.len();
     let mut lo = vec![Vec3::splat(f32::INFINITY); n];
@@ -159,7 +113,7 @@ pub fn skeleton(model: &Model) -> Skeleton {
         })
         .collect();
     let has_geom: Vec<bool> = (0..n).map(|i| hi[i].cmpge(lo[i]).all()).collect();
-    // Nearest geometry-bearing ancestor through the (connected) provisional tree.
+    // Nearest ancestor with geometry, walking the provisional tree.
     let geom_ancestor = |bone: usize| -> Option<usize> {
         let mut next = parents[bone];
         for _ in 0..n {
@@ -207,8 +161,6 @@ pub fn skeleton(model: &Model) -> Skeleton {
                     let parent = geom_ancestor(i).unwrap_or(ar);
                     (Some(parent), !has_geom[i] || is_weld_name(&b.name))
                 }
-                // No usable geometry anywhere (empty or degenerate model): keep the
-                // provisional tree and the name convention only.
                 None => (parents[i], parents[i].is_some() && is_weld_name(&b.name)),
             };
             let (bbox_min, bbox_max) = boxes[i];
@@ -224,8 +176,6 @@ pub fn skeleton(model: &Model) -> Skeleton {
     Skeleton { bones }
 }
 
-/// The `_weld` bone-name suffix marks a bone as welded (see [`SkBone::welded`]). Names
-/// carry meaning like the `head` bone (AI head-look) and the `body` root preference.
 fn is_weld_name(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with("_weld")
 }
@@ -358,8 +308,6 @@ mod tests {
 
     #[test]
     fn idle_anims_line_up_with_the_models_idle_index() {
-        // The sim's list is 1:1 with the model's idle index, so an index the AI picks
-        // resolves to the same animation the renderer plays (no independent re-sorting).
         let m = owl();
         let v = idle_anims(&m);
         for (i, meta) in v.iter().enumerate() {
@@ -390,7 +338,6 @@ mod tests {
             if let Some(p) = b.parent {
                 assert!(p < skel.bones.len(), "parent index in range");
             }
-            // Regularised to MIN_HALF, so every bone is a genuine 3D body the ragdoll can tumble.
             assert!(
                 (b.bbox_max - b.bbox_min).min_element() > 0.0,
                 "non-degenerate box"
@@ -461,10 +408,6 @@ mod tests {
 
     #[test]
     fn weld_suffixed_and_cube_less_bones_are_welded_to_a_parent() {
-        // Two ways a bone opts out of ragdoll physics, both flagged `welded` (with a
-        // parent to weld to): the authored `_weld` name suffix (the hushjaw's teeth) and
-        // having no cubes at all (the hushjaw's rig-only `root` group — as a rigid body
-        // it is a noise-driven placeholder box every real bone gets slaved to).
         let m = hushjaw();
         let skel = skeleton(&m);
         assert!(
@@ -487,9 +430,6 @@ mod tests {
 
     #[test]
     fn physics_roots_on_a_geometry_bearing_bone() {
-        // The hushjaw's authored root has no cubes. The PHYSICAL root must be a real
-        // body (a geometry-bearing, non-welded bone) and every non-welded bone must
-        // reach it through non-welded geometry — never through a rig placeholder.
         let m = hushjaw();
         let skel = skeleton(&m);
         let roots: Vec<usize> = (0..skel.bones.len())

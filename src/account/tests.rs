@@ -1,10 +1,6 @@
 use super::*;
 use serde_json::json;
 
-/// The status→error mapping every caller branches on. `signInRequired` is the
-/// only thing that may discard a player's stored credential, and a 5xx or a
-/// malformed body must never read that way: a service outage would sign
-/// everybody out.
 #[test]
 fn only_a_sign_in_required_refusal_clears_the_stored_credential() {
     let dead = http::classify(
@@ -43,9 +39,6 @@ fn a_reply_missing_a_field_is_unreachable_not_a_successful_sign_in() {
     assert!(!e.clears_sign_in());
 }
 
-/// Lifetimes arrive as durations and are banked against the local clock, so the
-/// refresh decision never depends on the service and the client agreeing on the
-/// time of day.
 #[test]
 fn durations_from_the_service_become_local_deadlines() {
     let signed_in = SignedIn {
@@ -73,7 +66,6 @@ fn durations_from_the_service_become_local_deadlines() {
     assert!(due.due_for_refresh(), "a passed refresh deadline is due");
     assert!(!due.expired(), "due for rotation is not expired");
 
-    // An answer that mints no token (an identity check) keeps the one in hand.
     let kept = SavedSignIn::from_service(
         "previous",
         &SignedIn {
@@ -86,8 +78,6 @@ fn durations_from_the_service_become_local_deadlines() {
 
 #[test]
 fn offline_mode_is_opt_in_through_one_spelling_set() {
-    // The parse, not the process environment: the env var itself is global
-    // state no test may set for the rest of the suite.
     assert!(AccountPolicy::default().requires_account());
     assert!(!AccountPolicy::Offline.requires_account());
 }
@@ -103,26 +93,10 @@ fn a_server_id_is_unguessable_and_fresh_per_server() {
 
 #[test]
 fn the_service_url_trims_to_a_prefix_paths_append_to() {
-    // The default; the env override is process-global and left to deployment.
     let url = service_url();
     assert!(!url.ends_with('/'), "{url} must not double the path slash");
 }
 
-/// The cross-repository check: a real sign-in against a real account service,
-/// and a real join through an ONLINE server that redeems the ticket.
-///
-/// OPT-IN, like the website's own PostgreSQL tests: it runs only when
-/// `PETRAMOND_ACCOUNT_URL`, `PETRAMOND_TEST_ACCOUNT` and
-/// `PETRAMOND_TEST_PASSWORD` are all set, and it WRITES `account.json` in the
-/// data dir — point `PETRAMOND_DATA_DIR` at a scratch directory. The ordinary
-/// suite must never reach the network, so nothing here is reachable from
-/// `make test`.
-///
-/// ```text
-/// PETRAMOND_DATA_DIR=/tmp/scratch PETRAMOND_ACCOUNT_URL=http://localhost:8044 \
-///   PETRAMOND_TEST_ACCOUNT=someone PETRAMOND_TEST_PASSWORD=... \
-///   cargo test --profile fasttest -p petramond --lib account::tests::live_ -- --ignored
-/// ```
 #[test]
 #[ignore = "needs a running account service and test credentials"]
 fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
@@ -137,7 +111,6 @@ fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
     assert!(!identity.username.is_empty());
     let saved = session::current().expect("the sign-in is stored");
     assert!(!saved.token.is_empty() && !saved.due_for_refresh() && !saved.expired());
-    // A bearer credential on disk must not be readable by other users.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -154,7 +127,6 @@ fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
         );
     }
 
-    // A ticket is good exactly once, and only at the server it names.
     let server_id = new_server_id();
     let ticket = session::join_ticket_for(&server_id).expect("mint a ticket");
     assert_eq!(
@@ -172,7 +144,6 @@ fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
         "a ticket is worthless at another server"
     );
 
-    // The whole join, through the real handshake against a real ONLINE server.
     let mut server = crate::server::session_build::build_headless_session("", 21, 4);
     server.set_account_policy(AccountPolicy::Online);
     let mut host = crate::server::handle::spawn(server);

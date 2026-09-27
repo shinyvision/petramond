@@ -1,6 +1,3 @@
-//! Cells this dispatch has spoken for, and the three ways a pass writes
-//! through them.
-
 use mod_sdk::{BlockId, GenCtx, GenWrite};
 
 use super::{is_open, CLAIM_ROWS};
@@ -30,9 +27,6 @@ impl Default for Claims {
 }
 
 impl Claims {
-    /// This cell's index, or `None` when it is out of the claim window
-    /// entirely. Being IN the window does not make a cell writable — see
-    /// [`Emitter::push_if_clear`].
     fn slot(origin: [i32; 3], p: [i32; 3]) -> Option<usize> {
         let (lx, ly, lz) = (p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]);
         let inside =
@@ -44,7 +38,6 @@ impl Claims {
         self.0[i / 64] & (1u64 << (i % 64)) != 0
     }
 
-    /// Take `i`, or answer `false` when it is already spoken for.
     fn take(&mut self, i: usize) -> bool {
         let free = !self.holds(i);
         self.0[i / 64] |= 1u64 << (i % 64);
@@ -52,7 +45,6 @@ impl Claims {
     }
 }
 
-/// One dispatch's writes, and the claims every pass writes through.
 pub(super) struct Emitter<'a> {
     ctx: &'a GenCtx,
     claims: Claims,
@@ -76,17 +68,10 @@ impl<'a> Emitter<'a> {
         self.writes
     }
 
-    /// Has an earlier pass of this dispatch already spoken for `p`?
     pub(super) fn taken(&self, p: [i32; 3]) -> bool {
         Claims::slot(self.ctx.origin_world(), p).is_some_and(|i| self.claims.holds(i))
     }
 
-    /// Write into a cell this section owns, that the snapshot says is open,
-    /// and that nothing earlier in this dispatch has already claimed.
-    ///
-    /// A cell in the margin rows is CLAIMED but never written: the section
-    /// above owns it and writes its own copy. Claiming it is what makes a
-    /// curtain stop at the same mushroom on both sides of the plane.
     pub(super) fn push_if_clear(&mut self, p: [i32; 3], block: BlockId) {
         let Some(i) = Claims::slot(self.ctx.origin_world(), p) else {
             return;
@@ -100,15 +85,6 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    /// Write into a cell this section owns that nothing earlier in the
-    /// dispatch has claimed — WITHOUT the openness test.
-    ///
-    /// A cascade is cut out of rock, so "is the snapshot open here" is the
-    /// wrong question for it: every cell it replaces was proven SOLID by the
-    /// same positional terrain read the containment proof is built on, and a
-    /// cell that read open there would mean the proof was taken against
-    /// different terrain from the one being written. Refusing on openness
-    /// would punch holes in a gorge wall exactly where the water is.
     pub(super) fn push_over_terrain(&mut self, p: [i32; 3], block: BlockId) {
         let Some(i) = Claims::slot(self.ctx.origin_world(), p) else {
             return;

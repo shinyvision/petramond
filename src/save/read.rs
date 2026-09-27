@@ -1,11 +1,10 @@
-//! The read side of a world's save: several reader threads, each owning the
-//! reads of the region files hashed to it, feeding the shared decoder pool.
+//! Read side of a save. Each reader thread owns the region files hashed to it and feeds the shared
+//! decoder pool.
 //!
-//! Sharding by region keeps every read of one region (and so every read of
-//! one section) on one thread, in request order, while reads of different
-//! regions overlap. A read waits for the write it must see (its barrier);
-//! readers sleep on a condvar the writer signals whenever a write lands, so
-//! a waiting read costs nothing and starts the moment its write is on disk.
+//! Sharding by region keeps every read of one region, and so of one section, on one thread in
+//! request order, while other regions overlap. A read waits for the write it must see (its
+//! barrier). Readers sleep on a condvar the writer signals on every write, so waiting costs
+//! nothing and a read starts the moment its write is on disk.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -19,12 +18,10 @@ use super::decode::{DecodeJob, Decoders};
 use super::palette::Palette;
 use super::{colgen, region, DecodedLoad, LoadedColumnGen, SectionStore};
 
-/// One requested read, answered through the decoder pool.
 pub(super) enum ReadMsg {
     Section {
         pos: SectionPos,
         store: SectionStore,
-        /// The write sequence that must land before the record is read.
         barrier: u64,
     },
     ColumnGen {
@@ -41,8 +38,6 @@ impl ReadMsg {
         }
     }
 
-    /// The reader that owns this read: every read of one file lands on the
-    /// same reader.
     fn shard(&self, shards: usize) -> usize {
         let ((rx, rz), salt) = match self {
             Self::Section { pos, .. } => (region::region_of(*pos), 0),
@@ -57,14 +52,10 @@ impl ReadMsg {
 
 struct ReadState {
     shards: Vec<VecDeque<ReadMsg>>,
-    /// The newest write sequence known to be on disk.
     completed: u64,
     shutdown: bool,
 }
 
-/// The readers' inboxes plus the writer's completion mark, under one lock
-/// and one condvar: a request, a landed write and shutdown all wake the
-/// readers.
 pub(super) struct ReadQueues {
     state: Mutex<ReadState>,
     wake: Condvar,
@@ -98,7 +89,6 @@ impl ReadQueues {
         self.wake.notify_all();
     }
 
-    /// The writer landed every write up to `seq`.
     pub(super) fn complete(&self, seq: u64) {
         self.lock().completed = seq;
         self.wake.notify_all();
@@ -108,15 +98,11 @@ impl ReadQueues {
         self.lock().completed
     }
 
-    /// Stop the readers once they have run every read that is ready. Reads
-    /// still waiting on a write that never landed have nobody left to answer.
     pub(super) fn shut_down(&self) {
         self.lock().shutdown = true;
         self.wake.notify_all();
     }
 
-    /// The oldest ready read of `shard`, sleeping until there is one; `None`
-    /// once shut down with nothing ready.
     fn next(&self, shard: usize) -> Option<ReadMsg> {
         let mut state = self.lock();
         loop {
@@ -138,15 +124,10 @@ impl ReadQueues {
     }
 }
 
-/// How many reader threads a world gets: enough to overlap file reads on a
-/// fast disk without competing with the decoders for cores.
 pub(super) fn reader_count() -> usize {
     std::thread::available_parallelism().map_or(1, |n| (n.get() / 4).clamp(1, 4))
 }
 
-/// Start one reader per shard of `queues`, all feeding one decoder pool
-/// that publishes to `sections` / `columns`. The pool shuts down when the
-/// last reader exits.
 pub(super) fn spawn_readers(
     dir: PathBuf,
     palette: Arc<Palette>,
@@ -197,7 +178,6 @@ fn read_loop(shard: usize, dir: &Path, queues: &ReadQueues, decoders: &Mutex<Dec
             ReadMsg::ColumnGen { pos, seed, barrier } => {
                 let (rx, rz) = colgen::region_of(pos);
                 let path = colgen::cache_path(&colgen_dir, rx, rz);
-                // A rebuildable cache: an unreadable record is simply a miss.
                 let bytes = colgen_cache
                     .read_record(&path, colgen::local_index(pos), barrier)
                     .ok()
@@ -212,9 +192,6 @@ fn read_loop(shard: usize, dir: &Path, queues: &ReadQueues, decoders: &Mutex<Dec
     }
 }
 
-/// Open region readers retained by recency. Distance-ordered streaming crosses
-/// region boundaries repeatedly, so a one-entry cache thrashes even though the
-/// request set is spatially compact.
 struct RegionFileCache {
     entries: VecDeque<(PathBuf, region::RegionReader, u64)>,
     capacity: usize,
@@ -228,9 +205,6 @@ impl RegionFileCache {
         }
     }
 
-    /// The record's bytes, `Ok(None)` when the region file or the record is
-    /// absent. Any other failure is an error: the record may exist. A reader
-    /// opened before `barrier` landed is reopened, so it sees that write.
     fn read_record(
         &mut self,
         path: &Path,
@@ -285,9 +259,6 @@ mod tests {
         }
     }
 
-    /// A read waits for its write, without polling: it is handed out the
-    /// moment the writer marks that write landed, and ready reads keep their
-    /// request order.
     #[test]
     fn a_read_waits_for_its_barrier_and_ready_reads_keep_their_order() {
         let queues = ReadQueues::new(1);

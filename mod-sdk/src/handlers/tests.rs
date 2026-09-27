@@ -12,7 +12,6 @@ struct Counter {
 
 impl Mod for Counter {
     fn init(&mut self) {
-        // A power user's hand-numbered registration beside the typed ones.
         crate::register_tick_system(Stage::Mining, AttachSide::Before, 0, 5);
     }
 
@@ -85,7 +84,6 @@ fn mismatched_and_unknown_dispatches_are_logged_once_not_dropped_silently() {
     let mut m = Typed::<Counter>::default();
     host.run(|| {
         m.init();
-        // The BlockPlaced handler must never see another kind's payload.
         for _ in 0..3 {
             assert!(matches!(
                 m.handle_event(TYPED_ID_BASE + 1, &mut mod_event()),

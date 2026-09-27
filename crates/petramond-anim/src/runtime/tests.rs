@@ -17,7 +17,6 @@ fn animator(rig: &Model, clips: ClipLibrary, source: &str) -> Animator {
     Animator::new(Arc::new(graph), 7)
 }
 
-/// Update for `seconds`, answering `bone`'s X rotation after each frame.
 fn run(a: &mut Animator, seconds: f32, dt: f32, bone: usize) -> Vec<f32> {
     let frames = (seconds / dt).round() as usize;
     (0..frames)
@@ -210,7 +209,6 @@ fn an_interrupting_montage_covers_the_one_it_cut_off_without_dipping_to_the_grou
     a.fire_named("swing");
     run(&mut a, 0.35, DT, arm);
     a.fire_named("swing");
-    // The first swing ends at 0.5 under the second's 0.3 s fade-in.
     let covered = run(&mut a, 0.4, DT, arm);
     assert!(covered.iter().all(|x| *x > 89.99), "{covered:?}");
 }
@@ -596,9 +594,6 @@ fn an_event_fired_twice_before_an_update_runs_its_rules_once() {
     );
 }
 
-/// A handle addresses its own montage and nothing else: once a rule cuts in
-/// over it the handle reads displaced, and seeking it moves nothing — a
-/// scrubbing caller can never drive the rule's clip.
 #[test]
 fn a_seek_moves_only_the_play_it_names_and_a_cut_off_play_reads_displaced() {
     let m = rig();
@@ -650,8 +645,6 @@ fn a_seek_moves_only_the_play_it_names_and_a_cut_off_play_reads_displaced() {
     );
 }
 
-/// A montage that plays to its end reads finished, not displaced, after it
-/// has left; stopping one play leaves the montage over it playing.
 #[test]
 fn a_play_that_ends_reads_finished_and_stopping_one_play_spares_the_other() {
     let m = rig();
@@ -688,9 +681,6 @@ fn a_play_that_ends_reads_finished_and_stopping_one_play_spares_the_other() {
     assert_eq!(a.play_state(slot, under), PlayState::Displaced);
 }
 
-/// A gate stands down, in one place, every rule on its events that plays
-/// into its slot — and nothing else: a rule on the same event into another
-/// slot still plays.
 #[test]
 fn a_gate_stands_down_the_rules_it_names_and_no_other() {
     let m = rig();
@@ -727,8 +717,6 @@ fn a_gate_stands_down_the_rules_it_names_and_no_other() {
     assert_eq!(playing(&a, "action").as_deref(), Some("chop"));
 }
 
-/// A clip template picks its clip by its param's value when the rule fires;
-/// a value naming no clip is no match, so the next rule gets the event.
 #[test]
 fn a_clip_template_plays_what_its_param_names_and_falls_through_where_nothing_is_named() {
     let m = rig();
@@ -762,9 +750,6 @@ fn a_clip_template_plays_what_its_param_names_and_falls_through_where_nothing_is
     }
 }
 
-/// A marker the graph maps to an event fires it on the update after a clip
-/// crosses it, and a mirrored clip reads its marker under the other side's
-/// name.
 #[test]
 fn a_mapped_marker_fires_its_event_next_update_and_a_mirrored_clip_swaps_its_side() {
     let m = rig();
@@ -815,9 +800,6 @@ fn a_mapped_marker_fires_its_event_next_update_and_a_mirrored_clip_swaps_its_sid
     );
 }
 
-/// A frame nobody draws still runs the graph's rules and montages — a swing
-/// fired then is under way when the body is next posed — without evaluating
-/// a pose.
 #[test]
 fn advancing_unposed_runs_rules_and_montages_and_leaves_the_pose() {
     let m = rig();

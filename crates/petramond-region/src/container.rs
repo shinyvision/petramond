@@ -1,6 +1,3 @@
-//! The region container itself: reading v2 and v3 files, appending to a v3
-//! file, and compacting (see the crate docs for the format and its rules).
-
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
@@ -11,22 +8,16 @@ use rustc_hash::FxHashMap;
 use petramond_persist::atomic_file::{self, Durability};
 use petramond_persist::bytecodec::{read_u16, read_u32, Reader};
 
-const MAGIC_V2: u32 = 0x3252_434C; // "LCR2" little-endian
-const MAGIC_V3: u32 = 0x3352_434C; // "LCR3" little-endian
+const MAGIC_V2: u32 = 0x3252_434C;
+const MAGIC_V3: u32 = 0x3352_434C;
 const VERSION_V2: u16 = 2;
 const VERSION_V3: u16 = 3;
-/// v2: magic + version + record count, then per record `lidx u16 + len u32`.
 const V2_RECORD_HEADER_BYTES: u64 = 6;
 const V2_HEADER_BYTES: u64 = 8;
-/// v3: magic + version + a reserved `u16`, then the two index slots.
 const V3_PREFIX_BYTES: u64 = 8;
 const SLOT_BYTES: usize = 32;
-/// Where a v3 file's record bodies (and appended indexes) begin.
 const DATA_START: u64 = V3_PREFIX_BYTES + 2 * SLOT_BYTES as u64;
-/// Per v3 index entry: `lidx u16 + offset u64 + len u32`.
 const INDEX_ENTRY_BYTES: usize = 14;
-/// Garbage below this never triggers a compaction: small regions are cheap
-/// to append to and not worth rewriting.
 const COMPACT_FLOOR: u64 = 256 << 10;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -35,8 +26,6 @@ struct RecordLocation {
     len: u32,
 }
 
-/// One index slot of a v3 header: where the index it names lives, its
-/// checksum, and the slot's sequence number (the higher valid one wins).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Slot {
     seq: u64,
@@ -61,8 +50,6 @@ impl Slot {
         out
     }
 
-    /// `None` for a slot never written (all zeros) or one whose bytes are
-    /// torn.
     fn from_bytes(b: &[u8]) -> Option<Slot> {
         let mut r = Reader::new(b);
         let (seq, index_offset, index_len, index_hash, check) =
@@ -79,30 +66,19 @@ impl Slot {
     }
 }
 
-/// FNV-1a: a checksum that tells a written slot or index from torn or
-/// stale bytes. Not a defence against deliberate tampering.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
 
-/// How the file behind a reader is laid out.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Layout {
-    /// No file: an empty region.
     Absent,
-    /// A v2 file; the next merge rewrites it as v3.
     V2,
-    /// A v3 file whose index came from slot `active`.
     V3 { active: usize, seq: u64 },
 }
 
-/// An open region plus its compact record index. Opening reads ONLY the
-/// header and the index — record bodies are never touched until a targeted
-/// `read_record`. The save thread keeps several of these readers in an LRU;
-/// a reader stays valid while the file is appended to, because nothing it
-/// indexed is ever overwritten in place.
 pub struct RegionReader {
     file: Option<File>,
     records: FxHashMap<u16, RecordLocation>,
@@ -120,16 +96,12 @@ impl RegionReader {
         }
     }
 
-    /// Missing files are valid empty regions. Every recorded body is bounds-checked
-    /// while indexing so a later targeted read cannot seek outside the container.
     pub fn open(path: &Path) -> io::Result<Self> {
         let file = match File::open(path) {
             Ok(file) => file,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::empty()),
             Err(e) => return Err(e),
         };
-        // A file too short for its own header or table is as corrupt as a bad
-        // magic.
         Self::index(file).map_err(|e| match e.kind() {
             io::ErrorKind::UnexpectedEof => corrupt_region(),
             _ => e,
@@ -167,8 +139,6 @@ impl RegionReader {
         self.records.keys().copied()
     }
 
-    /// Read one compressed body. Other records remain in the kernel page cache and
-    /// are not copied into userspace.
     pub fn read_record(&mut self, lidx: u16) -> io::Result<Option<Vec<u8>>> {
         let Some(loc) = self.records.get(&lidx).copied() else {
             return Ok(None);
@@ -184,9 +154,6 @@ impl RegionReader {
         self.records.values().map(|l| u64::from(l.len)).sum()
     }
 
-    /// Whether merging `replacements` should compact instead of append:
-    /// the garbage left after the append would outweigh the live records
-    /// (and the floor).
     fn compacts_after(&self, replacements: &BTreeMap<u16, Vec<u8>>) -> bool {
         let replaced: u64 = replacements
             .keys()
@@ -200,8 +167,6 @@ impl RegionReader {
     }
 }
 
-/// The v2 table: contiguous `(lidx, len)` headers, then the bodies packed in
-/// the same order.
 fn index_v2(
     file: &mut File,
     file_len: u64,
@@ -245,8 +210,6 @@ fn index_v2(
     Ok(records)
 }
 
-/// The v3 index named by the newest slot that checks out; an older slot
-/// stands in when the newest one (or its index) is torn.
 fn index_v3(
     file: &mut File,
     file_len: u64,
@@ -276,8 +239,6 @@ fn index_v3(
     Err(corrupt_region())
 }
 
-/// The index `slot` names, or `None` when it is out of bounds, fails its
-/// checksum, or does not parse.
 fn read_index(
     file: &mut File,
     file_len: u64,
@@ -299,8 +260,6 @@ fn read_index(
     Ok(parse_index(&bytes, slot.index_offset))
 }
 
-/// Every body an index names lies between the header and the index itself
-/// (bodies are always written before the index that points at them).
 fn parse_index(bytes: &[u8], index_offset: u64) -> Option<FxHashMap<u16, RecordLocation>> {
     let mut r = Reader::new(bytes);
     let count = r.u32()? as usize;
@@ -343,40 +302,24 @@ fn too_large(what: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, what)
 }
 
-/// The present local indices only (for building the load manifest cheaply).
 pub fn read_region_indices(path: &Path) -> io::Result<Vec<u16>> {
     let mut indices: Vec<_> = RegionReader::open(path)?.indices().collect();
     indices.sort_unstable();
     Ok(indices)
 }
 
-/// What a region file's records are worth, which decides how carefully a
-/// merge treats the old file and the new one.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum MergePolicy {
-    /// The records exist nowhere else. An old file that cannot be read fails
-    /// the merge (starting fresh would drop every record not being
-    /// replaced), and a compaction flushes the new file to disk before it
-    /// replaces the old one. Appends are left for the caller's [`sync`].
     Durable,
-    /// The records can be rebuilt. An unreadable old file starts fresh and
-    /// nothing is flushed.
     Rebuildable,
 }
 
-/// Merge replacement records into a region: appended to a v3 file (bodies,
-/// then a new index, then the inactive header slot), or — for a new file, a
-/// v2 file, an unreadable rebuildable one, or one whose garbage has grown
-/// past its live data — compacted into a fresh v3 file that atomically
-/// replaces the old one.
 pub fn merge_region(
     path: &Path,
     replacements: impl IntoIterator<Item = (u16, Vec<u8>)>,
     policy: MergePolicy,
 ) -> io::Result<()> {
     let replacements: BTreeMap<u16, Vec<u8>> = replacements.into_iter().collect();
-    // Nothing to write: leave the existing file alone (or the absent path as
-    // absent). Callers occasionally flush empty batches through this path.
     if replacements.is_empty() {
         return Ok(());
     }
@@ -399,8 +342,6 @@ pub fn merge_region(
     }
 }
 
-/// Append `replacements` and a new index covering every live record, then
-/// point the inactive slot at it. Nothing is flushed (see [`sync`]).
 fn append(
     path: &Path,
     old: &RegionReader,
@@ -409,8 +350,6 @@ fn append(
     replacements: &BTreeMap<u16, Vec<u8>>,
 ) -> io::Result<()> {
     let mut file = OpenOptions::new().write(true).open(path)?;
-    // Past any bytes a crashed append left behind: they are garbage no
-    // slot names, and compaction drops them.
     let mut offset = file.seek(SeekFrom::End(0))?;
     let mut records: BTreeMap<u16, RecordLocation> = old
         .records
@@ -445,9 +384,6 @@ fn append(
     file.write_all(&slot.to_bytes())
 }
 
-/// Write every live record (replacements from RAM, the rest copied from the
-/// old file) into a fresh, garbage-free v3 file that atomically replaces
-/// the old one.
 fn compact(
     path: &Path,
     mut old: RegionReader,
@@ -507,9 +443,6 @@ fn compact(
     })
 }
 
-/// Flush a region's appended bytes to disk. [`merge_region`] never flushes
-/// an append itself, so a caller writing several regions for one durable
-/// batch syncs each touched file once, after all of them are written.
 pub fn sync(path: &Path) -> io::Result<()> {
     OpenOptions::new().write(true).open(path)?.sync_all()
 }

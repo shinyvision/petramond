@@ -1,10 +1,5 @@
-//! Pure document-tree editing helpers: node paths (child-index chains from the
-//! root), structural mutations, id generation, and the DocIssue path resolver.
-//! No egui in here — everything is unit-testable.
-
 use petramond_ui::{Document, LayoutProps, Node, NodeKind};
 
-/// A node path: child indices from the root. `[]` is the root itself.
 pub type NodePath = Vec<usize>;
 
 pub fn node_at<'a>(root: &'a Node, path: &[usize]) -> Option<&'a Node> {
@@ -23,7 +18,6 @@ pub fn node_at_mut<'a>(root: &'a mut Node, path: &[usize]) -> Option<&'a mut Nod
     Some(n)
 }
 
-/// Remove the node at `path` (never the root). Returns it.
 pub fn remove_at(root: &mut Node, path: &[usize]) -> Option<Node> {
     let (&last, parent) = path.split_last()?;
     let p = node_at_mut(root, parent)?;
@@ -34,7 +28,6 @@ pub fn remove_at(root: &mut Node, path: &[usize]) -> Option<Node> {
     }
 }
 
-/// Insert `node` as child `index` of the container at `parent` (index clamped).
 pub fn insert_at(root: &mut Node, parent: &[usize], index: usize, node: Node) -> Option<NodePath> {
     let p = node_at_mut(root, parent)?;
     let i = index.min(p.children.len());
@@ -44,13 +37,10 @@ pub fn insert_at(root: &mut Node, parent: &[usize], index: usize, node: Node) ->
     Some(path)
 }
 
-/// Whether `descendant` is `ancestor` or lives inside it.
 pub fn is_same_or_descendant(ancestor: &[usize], descendant: &[usize]) -> bool {
     descendant.len() >= ancestor.len() && descendant[..ancestor.len()] == *ancestor
 }
 
-/// Move the node at `from` to become child `index` of `to_parent`. Refuses
-/// moves into the node's own subtree. Returns the node's new path.
 pub fn move_node(
     root: &mut Node,
     from: &[usize],
@@ -61,7 +51,6 @@ pub fn move_node(
         return None;
     }
     let node = remove_at(root, from)?;
-    // Removing `from` may shift the target parent path / index.
     let mut parent = to_parent.to_vec();
     let mut index = index;
     let (&from_last, from_parent) = from.split_last().unwrap();
@@ -76,7 +65,6 @@ pub fn move_node(
     insert_at(root, &parent, index, node)
 }
 
-/// Every id used anywhere in the document.
 pub fn all_ids(doc: &Document) -> Vec<String> {
     let mut out = Vec::new();
     doc.root.visit(&mut |n| {
@@ -87,7 +75,6 @@ pub fn all_ids(doc: &Document) -> Vec<String> {
     out
 }
 
-/// A fresh id `base`, `base2`, `base3`… not used in the document.
 pub fn unique_id(doc: &Document, base: &str) -> String {
     let used = all_ids(doc);
     if !used.iter().any(|i| i == base) {
@@ -102,8 +89,6 @@ pub fn unique_id(doc: &Document, base: &str) -> String {
     unreachable!()
 }
 
-/// Reassign fresh unique ids to every id-bearing node in `node` (duplication,
-/// preset insertion) so the document keeps its ids unique.
 pub fn uniquify_ids(doc: &Document, node: &mut Node) {
     let mut used = all_ids(doc);
     fn walk(n: &mut Node, used: &mut Vec<String>) {
@@ -128,7 +113,6 @@ pub fn uniquify_ids(doc: &Document, node: &mut Node) {
     walk(node, &mut used);
 }
 
-/// A new default node of each kind, with an id where the kind requires one.
 pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     let kind = NodeKind::default_for(type_name)?;
     let mut node = Node::leaf(kind);
@@ -167,10 +151,8 @@ pub fn new_node(doc: &Document, type_name: &str) -> Option<Node> {
     Some(node)
 }
 
-/// Every insertable node type name, palette order.
 pub const NODE_TYPES: &[&str] = NodeKind::TYPE_NAMES;
 
-/// Wrap the node at `path` in a fresh row/column container in place.
 pub fn wrap_in(root: &mut Node, path: &[usize], kind: NodeKind) -> Option<()> {
     if path.is_empty() {
         return None;
@@ -188,12 +170,6 @@ pub fn wrap_in(root: &mut Node, path: &[usize], kind: NodeKind) -> Option<()> {
     Some(())
 }
 
-// ---- static images ----------------------------------------------------------
-
-/// Every static image file name the document references (`image`/`rotimage`
-/// nodes and image-backed `button` faces), deduplicated in document order.
-/// Bound image names (`bind.image`) are state keys, not files, so they don't
-/// count.
 pub fn static_image_names(doc: &Document) -> Vec<String> {
     petramond_ui::contract::image_refs(doc)
         .into_iter()
@@ -201,10 +177,6 @@ pub fn static_image_names(doc: &Document) -> Vec<String> {
         .collect()
 }
 
-// ---- DocIssue path resolver ---------------------------------------------------
-
-/// Resolve a `DocIssue.path` (e.g. `root/2/0(button#spin)` or `document`) back
-/// to a node path. Document-level issues resolve to the root.
 pub fn resolve_issue_path(path: &str) -> Option<NodePath> {
     if path == "document" {
         return Some(Vec::new());
@@ -248,7 +220,6 @@ mod tests {
     #[test]
     fn issue_paths_resolve_to_the_offending_node() {
         let d = sample();
-        // The duplicate-id issue is anchored at the second button.
         let issues = d.validate(None, None);
         let dup = issues
             .iter()
@@ -258,7 +229,6 @@ mod tests {
         let node = node_at(&d.root, &path).expect("path resolves");
         assert_eq!(node.kind.type_name(), "button");
         assert_eq!(path, vec![1, 1]);
-        // Document-level issues select the root.
         assert_eq!(resolve_issue_path("document"), Some(vec![]));
         assert_eq!(resolve_issue_path("root(frame)"), Some(vec![]));
         assert_eq!(resolve_issue_path("bogus/1"), None);
@@ -267,13 +237,11 @@ mod tests {
     #[test]
     fn move_node_adjusts_shifted_indices() {
         let mut d = sample();
-        // Move the label (0) to the end of the row (1 -> shifts to 0 after removal).
         let new = move_node(&mut d.root, &[0], &[1], 2).unwrap();
         assert_eq!(new, vec![0, 2]);
         assert_eq!(d.root.children.len(), 1);
         assert_eq!(d.root.children[0].children.len(), 3);
         assert_eq!(d.root.children[0].children[2].kind.type_name(), "label");
-        // Refuses to move a node into its own subtree.
         assert!(move_node(&mut d.root, &[0], &[0, 0], 0).is_none());
     }
 
@@ -316,12 +284,9 @@ mod tests {
             petramond_ui::contract::image_issues(&d, &|name| (name == "ok.png").then_some((4, 4)));
         assert_eq!(issues.len(), 2);
         assert!(issues[0].message.contains("missing.png"));
-        // The panel's click-to-select resolver understands the shared rule's
-        // paths.
         let path = resolve_issue_path(&issues[0].path).unwrap();
         assert_eq!(path, vec![1, 0]);
         assert_eq!(node_at(&d.root, &path).unwrap().kind.type_name(), "image");
-        // Image-backed button faces are checked too.
         assert!(issues[1].message.contains("missing_btn.png"));
         let path = resolve_issue_path(&issues[1].path).unwrap();
         assert_eq!(node_at(&d.root, &path).unwrap().kind.type_name(), "button");

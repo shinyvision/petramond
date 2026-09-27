@@ -1,12 +1,3 @@
-//! Staging, pending changes, applying them, and the content lock.
-//!
-//! A download is unpacked and admitted into `mods/.staging/` (hidden, so
-//! discovery never sees it, and on the same filesystem, so the final rename
-//! is atomic) and a pending change is written. Applying it holds the content
-//! lock exclusively, in steps
-//! ordered so a crash anywhere leaves a state the next run finishes and no
-//! failure ever costs the player the version they had.
-
 use std::collections::BTreeSet;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -17,12 +8,9 @@ use serde::{Deserialize, Serialize};
 use super::records::{self, InstallRecord};
 use super::{archive, Kind};
 
-/// Where installed packs and the library's state live.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Dirs {
-    /// The installed root (`installed_mods_dir()`).
     pub mods: PathBuf,
-    /// The library's own state (`content::dir()`).
     pub content: PathBuf,
 }
 
@@ -75,7 +63,6 @@ impl ContentLock {
             .open(dirs.content.join("lock-gate"))
     }
 
-    /// Wait for, then hold, the shared lock.
     pub fn shared(dirs: &Dirs) -> std::io::Result<Self> {
         let gate = Self::open_gate(dirs)?;
         gate.lock_shared()?;
@@ -90,7 +77,6 @@ impl ContentLock {
         })
     }
 
-    /// The exclusive lock, or `None` while another process holds it.
     pub fn try_exclusive(dirs: &Dirs) -> std::io::Result<Option<Self>> {
         let gate = Self::open_gate(dirs)?;
         match gate.try_lock() {
@@ -117,8 +103,6 @@ impl ContentLock {
         }
     }
 
-    /// Block new readers while converting the shared lock to exclusive. On
-    /// contention, restore the shared lock before opening the gate again.
     pub fn try_upgrade(&mut self) -> std::io::Result<bool> {
         if self.gate_held {
             return Err(std::io::Error::other("content lock is already exclusive"));
@@ -152,7 +136,6 @@ impl ContentLock {
         }
     }
 
-    /// Return to the shared lock after an in-process apply.
     pub fn downgrade_in_place(&mut self) -> std::io::Result<()> {
         if !self.gate_held {
             return Ok(());
@@ -164,7 +147,6 @@ impl ContentLock {
         Ok(())
     }
 
-    /// Exclusive to shared, for the rest of the process's life.
     pub fn downgrade(self) -> std::io::Result<Self> {
         let mut lock = self;
         lock.downgrade_in_place()?;
@@ -172,15 +154,12 @@ impl ContentLock {
     }
 }
 
-/// One staged change, `content/pending/<dir>.json`, keyed by DIRECTORY name.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingChange {
     pub format: u32,
     #[serde(flatten)]
     pub op: Op,
     pub dir: String,
-    /// `(moved-aside path, original path)`, written before anything moves:
-    /// what a failed or interrupted apply puts back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub journal: Vec<(PathBuf, PathBuf)>,
 }
@@ -189,31 +168,23 @@ pub struct PendingChange {
 #[serde(tag = "op", rename_all = "lowercase")]
 pub enum Op {
     Install {
-        /// Relative to the installed root.
         staged: PathBuf,
         record: Box<InstallRecord>,
     },
     Remove,
 }
 
-/// What the startup apply did, shown once to the player (the title's notice,
-/// the library's rows): a release build may have no console to log to.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ApplyReport {
-    /// Directory names installed, updated or removed.
     pub applied: Vec<String>,
-    /// `(directory name, why)` for each change that was dropped.
     pub failed: Vec<(String, String)>,
-    /// Another Petramond process held the lock: nothing was applied.
     pub deferred: bool,
 }
 
-/// What is being installed: the listing's facts, never the archive's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Offer {
     pub mod_id: String,
     pub kind: Kind,
-    /// `None` for a local development install.
     pub content_id: Option<i64>,
     pub name: String,
     pub version: String,
@@ -231,7 +202,6 @@ impl From<&super::ListingRow> for Offer {
     }
 }
 
-/// Every pending change, by directory name.
 pub fn pending(dirs: &Dirs) -> Vec<PendingChange> {
     let Ok(entries) = std::fs::read_dir(dirs.pending_dir()) else {
         return Vec::new();
@@ -250,9 +220,6 @@ fn write_pending(dirs: &Dirs, change: &PendingChange) -> std::io::Result<()> {
     petramond_persist::atomic_file::replace(&dirs.pending_path(&change.dir), &bytes)
 }
 
-/// Unpack the archive at `zip`, admit it as a pack, and stage it as a
-/// pending install of `offer`. The zip is consumed; every failure removes
-/// what this call wrote. `Err` is the player-facing reason.
 pub fn stage_install(
     dirs: &Dirs,
     zip: &Path,
@@ -337,7 +304,6 @@ fn stage(
     .map_err(|e| format!("could not stage the install: {e}"))
 }
 
-/// Stage removing the installed directory `dir`.
 pub fn stage_remove(dirs: &Dirs, dir: &str) -> Result<(), String> {
     if dir.starts_with('.') || dir.contains(['/', '\\']) || !dirs.mods.join(dir).is_dir() {
         return Err(format!("'{dir}' is not an installed pack"));
@@ -357,7 +323,6 @@ pub fn stage_remove(dirs: &Dirs, dir: &str) -> Result<(), String> {
     .map_err(|e| format!("could not stage the removal: {e}"))
 }
 
-/// Withdraw a pending change (and an install's staged files).
 pub fn undo(dirs: &Dirs, dir: &str) {
     if let Some(change) = pending(dirs).into_iter().find(|c| c.dir == dir) {
         if let Op::Install { staged, .. } = &change.op {
@@ -367,9 +332,6 @@ pub fn undo(dirs: &Dirs, dir: &str) {
     let _ = std::fs::remove_file(dirs.pending_path(dir));
 }
 
-/// Apply every pending change, if no other Petramond process is running,
-/// and return the report with the SHARED lock this process then holds for
-/// its life. Must run before pack discovery.
 pub fn apply_pending() -> (ApplyReport, Option<ContentLock>) {
     debug_assert!(
         !petramond_world::assets::discovery_started(),
@@ -408,8 +370,6 @@ pub fn apply_pending() -> (ApplyReport, Option<ContentLock>) {
     (report, lock)
 }
 
-/// Apply staged changes while this process remains open. The caller must
-/// switch to a newly built registry before entering another world session.
 pub fn apply_pending_live(dirs: &Dirs, lock: &mut ContentLock) -> ApplyReport {
     match lock.try_upgrade() {
         Ok(true) => {}
@@ -433,7 +393,6 @@ pub fn apply_pending_live(dirs: &Dirs, lock: &mut ContentLock) -> ApplyReport {
     report
 }
 
-/// The apply itself, with the lock already held.
 pub fn apply_in(dirs: &Dirs, shipped: &BTreeSet<String>) -> ApplyReport {
     let mut report = ApplyReport::default();
     for change in pending(dirs) {
@@ -451,8 +410,6 @@ pub fn apply_in(dirs: &Dirs, shipped: &BTreeSet<String>) -> ApplyReport {
     report
 }
 
-/// Installed-root directories holding pack `id`: `mods/<id>` and any other
-/// whose `pack.json` says that id.
 fn occupants(dirs: &Dirs, id: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let own = dirs.mods.join(id);
@@ -477,11 +434,7 @@ fn occupants(dirs: &Dirs, id: &str) -> Vec<PathBuf> {
     out
 }
 
-/// A version moved aside by an install: the sweep puts it back while its
-/// place is empty.
 const OLD: &str = ".old-";
-/// A pack moved aside by a removal: the sweep only ever deletes it, so a
-/// deletion that failed part way never restores what the player removed.
 const TRASH: &str = ".trash-";
 
 fn aside(dirs: &Dirs, original: &Path, suffix: &str) -> PathBuf {
@@ -493,7 +446,6 @@ fn aside(dirs: &Dirs, original: &Path, suffix: &str) -> PathBuf {
         .join(format!("{name}{suffix}{}", super::nonce()))
 }
 
-/// Put every moved-aside directory back where it was.
 fn roll_back(journal: &[(PathBuf, PathBuf)]) {
     for (old, original) in journal.iter().rev() {
         if old.exists() && !original.exists() {
@@ -541,7 +493,6 @@ fn apply_install(
         ));
     }
     if !staged.exists() {
-        // Interrupted after the rename: finish it, or put back what was.
         let landed = std::fs::read(target.join("pack.json"))
             .is_ok_and(|b| super::sha256_hex(&b) == record.pack_json_sha256);
         if !landed {
@@ -573,8 +524,6 @@ fn apply_install(
         }
     }
     if let Err(e) = records::write(dirs, &record) {
-        // The new files go back to staging (and away with the change) so the
-        // old version can return to its place.
         let _ = std::fs::rename(&target, &staged);
         roll_back(&change.journal);
         drop_change(dirs, &change);
@@ -597,18 +546,11 @@ fn apply_remove(dirs: &Dirs, mut change: PendingChange) -> Result<(), String> {
             return Err(format!("could not remove it: {e}"));
         }
     }
-    // A record only ever describes `mods/<id>`: removing a stray folder that
-    // merely claims an id leaves the real pack's record alone.
     records::remove(dirs, &change.dir);
     finish(dirs, &change);
     Ok(())
 }
 
-/// Clear what no pending change refers to: partial downloads, orphaned
-/// stages and removed packs go; a version an install moved aside goes only
-/// when something now occupies its place, else it goes BACK (a crash between
-/// moving it and finishing must never cost the player their pack); records
-/// of packs that are gone.
 fn sweep(dirs: &Dirs) {
     let remaining = pending(dirs);
     let referenced: BTreeSet<PathBuf> = remaining

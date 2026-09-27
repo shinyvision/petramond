@@ -1,10 +1,3 @@
-//! petramond.com's content endpoints: the listing, a pack's icon and its
-//! download, and how the content library reads their answers. No policy:
-//! what to do with a busy site or a changed package is the caller's.
-//!
-//! The client trusts nothing a listing says: every row is validated and its
-//! text cleaned, and no host other than the site's own is ever followed.
-
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -15,11 +8,8 @@ use serde_json::Value;
 use super::Kind;
 use crate::service::{ServiceError, Timeouts};
 
-/// The largest archive the site serves.
 pub const MAX_ARCHIVE: u64 = super::archive::MAX_BYTES as u64;
 
-/// A download's budgets: a stalled connection fails in 30 s; the whole body
-/// has ten minutes (20 MiB at a poor 35 KiB/s).
 pub const DOWNLOAD: Timeouts = Timeouts {
     connect: Duration::from_secs(10),
     headers: Duration::from_secs(30),
@@ -27,7 +17,6 @@ pub const DOWNLOAD: Timeouts = Timeouts {
     total: Duration::from_secs(600),
 };
 
-/// An icon is small and public.
 const ICON: Timeouts = Timeouts {
     connect: Duration::from_secs(10),
     headers: Duration::from_secs(30),
@@ -35,12 +24,10 @@ const ICON: Timeouts = Timeouts {
     total: Duration::from_secs(60),
 };
 
-/// Retry-After bounds, and the wait when it says nothing usable.
 const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(300);
 const RETRY_DEFAULT: Duration = Duration::from_secs(10);
 
-/// One downloadable pack, as the listing describes it, validated.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListingRow {
     pub content_id: i64,
@@ -56,8 +43,6 @@ pub struct ListingRow {
     pub icon_path: Option<String>,
 }
 
-/// Control characters stripped (a description keeps its line breaks), then
-/// cut to `max` characters.
 pub fn clean(text: &str, max: usize, keep_line_breaks: bool) -> String {
     text.chars()
         .filter(|c| !c.is_control() || (keep_line_breaks && *c == '\n'))
@@ -78,7 +63,6 @@ fn site_path(path: &str) -> bool {
     path.starts_with("/api/v1/content/")
 }
 
-/// One listing row, or why it is skipped.
 fn row(item: &Value) -> Result<ListingRow, String> {
     let text = |key: &str| item.get(key).and_then(Value::as_str).unwrap_or("");
     let mod_id = text("modId");
@@ -126,7 +110,6 @@ fn row(item: &Value) -> Result<ListingRow, String> {
     })
 }
 
-/// The listing's rows the client will show; each skipped row is logged once.
 pub fn parse_listing(body: &Value) -> Vec<ListingRow> {
     let Some(items) = body.get("items").and_then(Value::as_array) else {
         return Vec::new();
@@ -143,8 +126,6 @@ pub fn parse_listing(body: &Value) -> Vec<ListingRow> {
         .collect()
 }
 
-/// How the content library reads a non-success answer. ONLY a 429 whose
-/// code is `too_many_downloads` is `Busy`; any other refusal is a refusal.
 pub fn classify(status: u16, body: &Value, retry_after: Option<&str>) -> ServiceError {
     let message = body
         .get("message")
@@ -166,8 +147,6 @@ pub fn classify(status: u16, body: &Value, retry_after: Option<&str>) -> Service
     }
 }
 
-/// `Retry-After` as delta-seconds or an HTTP-date, clamped to 1..=300 s;
-/// 10 s when absent or unreadable.
 pub fn retry_wait(header: Option<&str>, now_unix: i64) -> Duration {
     let Some(value) = header.map(str::trim).filter(|v| !v.is_empty()) else {
         return RETRY_DEFAULT;
@@ -184,7 +163,6 @@ pub fn retry_wait(header: Option<&str>, now_unix: i64) -> Duration {
     })
 }
 
-/// The listing, with the stored token (rotated when due).
 pub fn listing() -> Result<Vec<ListingRow>, ServiceError> {
     crate::account::session::spend(|token| {
         let (status, body) = crate::service::http::get_json("/api/v1/content", Some(token))
@@ -203,7 +181,6 @@ pub fn listing() -> Result<Vec<ListingRow>, ServiceError> {
     })
 }
 
-/// An icon's bytes (public, no token), at most 512 KiB.
 pub fn icon(path: &str) -> Result<Vec<u8>, ServiceError> {
     if !site_path(path) {
         return Err(ServiceError::Refused("not a petramond.com icon".into()));
@@ -225,17 +202,11 @@ pub fn icon(path: &str) -> Result<Vec<u8>, ServiceError> {
     Ok(bytes)
 }
 
-/// Why a download produced no archive.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DownloadError {
-    /// The site answered with a refusal, was busy, or did not answer.
     Service(ServiceError),
-    /// 404: the package is no longer on the site.
     Gone,
-    /// The package was replaced after the listing was fetched (its length
-    /// or hash no longer matches the row).
     Changed,
-    /// The body broke off, overran, or does not hash to what was promised.
     Broken(String),
     Cancelled,
 }
@@ -252,16 +223,12 @@ impl DownloadError {
     }
 }
 
-/// Bytes done and expected, for a progress display read every frame.
 #[derive(Default)]
 pub struct Progress {
     pub done: AtomicU64,
     pub total: AtomicU64,
 }
 
-/// Download `row`'s archive into `into` (a fresh `.partial` file), hashing
-/// as it arrives; `Ok` only for exactly the promised bytes. The partial file
-/// is removed on every failure.
 pub fn download(
     row: &ListingRow,
     into: &Path,
@@ -295,7 +262,6 @@ pub fn download(
     written.map(|()| into.to_owned())
 }
 
-/// Stream the body to `into` with its length and hash checked.
 pub fn receive(
     mut body: impl Read,
     row: &ListingRow,

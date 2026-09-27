@@ -1,6 +1,3 @@
-//! ABI plumbing for [`register_mod!`](crate::register_mod). Not mod-facing
-//! API — everything here is `#[doc(hidden)]` and may change with the SDK.
-
 use core::cell::UnsafeCell;
 
 use mod_api::{Decoded, GuestCall, GuestRet, HostCall, HostRet};
@@ -11,9 +8,6 @@ extern "C" {
     fn host_dispatch(ptr: u32, len: u32) -> u64;
 }
 
-/// Host-target stub so the SDK itself type-checks off-wasm: a mod built
-/// natively answers its host calls through the host installed on the calling
-/// thread ([`crate::testing`]) or not at all.
 #[cfg(not(target_arch = "wasm32"))]
 unsafe fn host_dispatch(_ptr: u32, _len: u32) -> u64 {
     panic!(
@@ -22,11 +16,6 @@ unsafe fn host_dispatch(_ptr: u32, _len: u32) -> u64 {
     )
 }
 
-/// The single mod instance behind the raw exports.
-///
-/// SAFETY: the wasm guest is single-threaded by construction (the host
-/// disables wasm threads), so unsynchronized interior mutability is sound
-/// there; the `Sync` impl exists only to allow the `static`.
 pub struct ModSlot<T>(UnsafeCell<Option<T>>);
 
 unsafe impl<T> Sync for ModSlot<T> {}
@@ -38,12 +27,9 @@ impl<T> ModSlot<T> {
     }
 }
 
-/// Guest-side buffers cross the ABI as raw byte allocations with align 1;
-/// `alloc`/`free` are the exported allocator the HOST also uses to hand
-/// buffers in (requests) and reclaim buffers it read (replies).
 pub fn alloc(len: u32) -> u32 {
     if len == 0 {
-        return 4; // non-null, never dereferenced nor freed (len 0)
+        return 4;
     }
     let layout = core::alloc::Layout::from_size_align(len as usize, 1).unwrap();
     let ptr = unsafe { std::alloc::alloc(layout) };
@@ -59,18 +45,12 @@ pub fn free(ptr: u32, len: u32) {
     unsafe { std::alloc::dealloc(ptr as *mut u8, layout) };
 }
 
-/// Encode a byte buffer into a fresh allocation and pack its address for
-/// the `u64` return lane. The receiver frees it via [`free`].
 fn to_wire(bytes: &[u8]) -> u64 {
     let ptr = alloc(bytes.len() as u32);
     unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len()) };
     mod_api::pack_ptr_len(ptr, bytes.len() as u32)
 }
 
-/// One host call: encode, dispatch, decode the reply (the host allocated
-/// it in our memory through `mod_alloc`; we own and free it). Off-wasm the
-/// call goes to the host installed on the calling thread instead
-/// ([`crate::testing::install_host`]).
 pub fn host_call(call: &HostCall) -> HostRet {
     match host_call_reply(call) {
         Answer::Native(ret) => ret,
@@ -78,18 +58,11 @@ pub fn host_call(call: &HostCall) -> HostRet {
     }
 }
 
-/// A host call's reply, before decoding.
 pub enum Answer {
-    /// From the off-wasm host installed on the calling thread
-    /// ([`crate::testing::install_host`]).
     Native(HostRet),
-    /// The encoded reply in guest memory, as the host wrote it.
     Guest(Reply),
 }
 
-/// An encoded reply the host allocated in this guest's memory through
-/// `mod_alloc`. This guest owns it, and frees it on drop — so a caller can
-/// keep the reply's own allocation as a decoded value's buffer, with no copy.
 pub struct Reply {
     ptr: u32,
     len: u32,
@@ -122,9 +95,6 @@ pub fn host_call_reply(call: &HostCall) -> Answer {
     Answer::Guest(Reply { ptr, len })
 }
 
-/// Registration replies must be `Unit`; an [`HostRet::Err`] (e.g.
-/// registering outside `mod_init`) is a mod bug — panic loudly, which
-/// traps and disables the mod.
 pub fn expect_unit(what: &str, ret: HostRet) {
     match ret {
         HostRet::Unit => {}
@@ -133,17 +103,12 @@ pub fn expect_unit(what: &str, ret: HostRet) {
     }
 }
 
-/// Declare a public host-call wrapper: build the [`HostCall`](crate::HostCall),
-/// dispatch it, and decode the one reply shape the call contract allows (any
-/// other reply is a protocol break — panic = trap = mod disabled).
+/// Public host-call wrapper. Builds the `HostCall`, sends it, and decodes the only reply shape
+/// the call is allowed to get. Anything else panics, which traps and disables the mod.
 ///
-/// Three reply forms:
-/// - no `->` return: the call must reply `Unit` (registrations, actions);
-/// - `=> Variant`: a single-payload reply variant, returned as-is;
-/// - `=> pattern => expr`: a one-off reply shape mapped by hand.
-///
-/// The call body `{ ... }` holds ordinary struct-literal fields, so argument
-/// conversions (`key: key.into()`) happen right there.
+/// No `->` means the call replies `Unit` (registrations, actions). `=> Variant` hands back that
+/// variant's payload as-is, and `=> pattern => expr` is for a one-off reply you map by hand.
+/// Conversions like `key: key.into()` go right in the struct-literal body.
 macro_rules! host_fn {
     (
         $(#[$meta:meta])*
@@ -188,8 +153,6 @@ macro_rules! host_fn {
 }
 pub(crate) use host_fn;
 
-/// A data-dependent refusal returns to the caller. A protocol or programming
-/// error still traps, just as it does in the ordinary wrappers.
 pub fn recoverable(what: &str, ret: HostRet) -> Result<HostRet, mod_api::HostError> {
     match ret {
         HostRet::Err(error) if error.code.is_recoverable() => Err(error),
@@ -237,12 +200,8 @@ macro_rules! try_host_fn {
 }
 pub(crate) use try_host_fn;
 
-/// `mod_init`: record the host's side of the ABI handshake, then run the
-/// mod's registration window.
 pub fn init<T: crate::Mod>(slot: &ModSlot<T>, host_abi: u32, host_caps: u64) {
     crate::abi::record_host(host_abi, host_caps);
-    // Panics abort the guest (a trap); surface the message through the
-    // host log first so the disable line has a cause next to it.
     std::panic::set_hook(Box::new(|info| {
         let _ = host_call(&HostCall::from(mod_api::calls::Log {
             msg: format!("PANIC: {info}"),
@@ -256,11 +215,10 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
     let decoded = {
         let request = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
         let decoded = mod_api::decode_call::<GuestCall>(request).expect("malformed engine call");
-        free(ptr, len); // the guest owns request buffers once dispatched
+        free(ptr, len);
         decoded
     };
     let mod_ = unsafe { (*slot.0.get()).as_mut() }.expect("mod_dispatch before mod_init");
-    // A call from a newer ABI minor than this SDK knows: decline, don't trap.
     let ret = match decoded {
         Decoded::Known(call) => dispatch_call(mod_, call),
         Decoded::Unknown { .. } => GuestRet::Unsupported,
@@ -268,7 +226,6 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
     to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
 }
 
-/// Route one known [`GuestCall`] to its [`Mod`](crate::Mod) hook.
 fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
     match call {
         GuestCall::TickSystem { id } => {
@@ -350,8 +307,6 @@ fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
         GuestCall::AiNode { callback_id, ctx } => {
             GuestRet::AiDecision(mod_.ai_node(callback_id, &ctx))
         }
-        // The batch is transport only: every context still reaches the mod's
-        // one per-mob `ai_node`, in order.
         GuestCall::AiNodeBatch { callback_id, ctxs } => GuestRet::AiDecisions(
             ctxs.iter()
                 .map(|ctx| mod_.ai_node(callback_id, ctx))

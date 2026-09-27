@@ -1,19 +1,7 @@
-//! The engine's own one-shot gesture vocabulary — a swing, a break, a
-//! place, an interact, a throw, per hand — resolved ONCE per registered rig
-//! into that rig's graph event ids (`main.swing`, `off.place`, …). Every
-//! layer above fires them through the same `(rig, event)` lane a mod's
-//! `FirePlayerAnimatorEvent` rides: the server replicates them to observers,
-//! the client predicts them onto its own rigs, the render drivers only ever
-//! see graph events. A rig whose graph declares no such name simply never
-//! hears that gesture.
-
 use petramond_world::inventory::Hand;
 
 use super::rigs::{self, RigId};
 
-/// The hand gestures the engine itself fires as edges. Level-derived edges
-/// (`mine`, `eat`, `equip`) are not here: the drivers compute those from
-/// the hand's levels each frame.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum OneShot {
     Swing,
@@ -32,7 +20,6 @@ impl OneShot {
         Self::Throw,
     ];
 
-    /// The graph event name under a hand's prefix.
     pub fn name(self) -> &'static str {
         match self {
             Self::Swing => "swing",
@@ -64,9 +51,6 @@ fn hand_slot(hand: Hand) -> usize {
 
 type EventTable = Vec<[[Option<u16>; 5]; 2]>;
 
-/// Per rig, per hand, per gesture: the graph event id, or `None` where the
-/// rig's graph declares no such name — derived per content registry from its
-/// rigs.
 static TABLE: petramond_world::content::Slot<EventTable> =
     petramond_world::content::Slot::new("rig gesture events", &[], resolve_events);
 
@@ -85,13 +69,10 @@ fn resolve_events(_: &petramond_world::content::ContentRegistry) -> Result<Event
         .collect())
 }
 
-/// The event id `kind` from `hand` fires on `rig`, if its graph has one.
 pub fn resolve(rig: RigId, hand: Hand, kind: OneShot) -> Option<u16> {
     TABLE.current().get(rig.index())?[hand_slot(hand)][kind.slot()]
 }
 
-/// Every rig's event for `kind` from `hand` — the `(rig, event)` rows a
-/// fired gesture becomes, in rig id order.
 pub fn fired(hand: Hand, kind: OneShot) -> impl Iterator<Item = (RigId, u16)> {
     TABLE
         .current()

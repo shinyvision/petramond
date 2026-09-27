@@ -1,6 +1,5 @@
 use super::*;
 
-/// An authored vertical profile repeated around every branch attachment.
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LayeredFoliage {

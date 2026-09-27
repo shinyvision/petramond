@@ -1,8 +1,3 @@
-//! The server's memory of every spatial LOOP still playing (see
-//! [`crate::net::spatial_loops`]): the table `super::event_scope` starts and
-//! stops per recipient by earshot, ending a mob-pinned loop with its mob, so
-//! a mod owns "start, retune, stop" and nothing else.
-
 use crate::mob::Mobs;
 use crate::net::protocol::WorldEventMsg;
 use crate::net::spatial_loops::{fold_spatial_loops, is_looped};
@@ -10,8 +5,6 @@ use crate::net::spatial_loops::{fold_spatial_loops, is_looped};
 use super::replication::Broadcast;
 
 impl Broadcast {
-    /// [`fold_spatial_loops`] over the registry's rows and the world's live
-    /// mobs, for the window about to ship.
     pub fn track_spatial_loops(&mut self, mobs: &Mobs, world_events: &mut Vec<WorldEventMsg>) {
         fold_spatial_loops(
             self.spatial_loops_mut(),
@@ -30,8 +23,6 @@ impl Broadcast {
 mod tests {
     use crate::net::protocol::{ServerToClient, SpatialSoundMsg, WorldEventMsg};
 
-    /// A session joining while a loop plays within its earshot hears it: the
-    /// restart leads its first tick batch, and ships only once.
     #[test]
     fn a_joining_session_is_caught_up_on_the_loops_in_earshot() {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);

@@ -1,16 +1,14 @@
-//! Background job pool: ONE priority-ordered thread pool shared by every streaming
-//! stage — worldgen (columns + sections), light bakes, and mesh builds.
+//! One priority-ordered thread pool shared by worldgen (columns + sections), light bakes, and mesh
+//! builds.
 //!
-//! The stages used to run on three fixed pools sized by a static core split, which
-//! left most threads idle whenever the streaming mix shifted (gen-heavy while flying
-//! into new terrain, light/mesh-heavy right after). One shared pool means whichever
-//! stage has work gets the whole machine, and one shared PRIORITY queue means the
-//! nearest work runs first ACROSS stages, not merely within each stage: a near
-//! section's whole ladder (gen → light → mesh) outranks far terrain.
+//! Whichever stage has work gets the whole machine as the streaming mix shifts
+//! between generation, lighting and meshing. One shared priority queue means nearest
+//! work wins across stages, not just within a stage: a near section's whole gen→light→mesh ladder
+//! beats far terrain.
 //!
-//! Priorities are the streamer's distance keys (`LoadTarget::{column,section}_priority_key`,
-//! lower = sooner), which share one scale so keys from different stages compare
-//! meaningfully. Ties run FIFO via a submission sequence number.
+//! Priorities come from the streamer's distance keys (`LoadTarget::{column,section}_priority_key`,
+//! lower = sooner), sharing one scale so stages compare directly. Ties go FIFO by submission
+//! sequence number.
 
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::section::Section;
@@ -50,7 +48,6 @@ impl JobCancel {
     }
 }
 
-/// Identifies one submission, including after its execution has finished.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct JobTicket(u64);
 
@@ -58,12 +55,6 @@ static NEXT_JOB: AtomicU64 = AtomicU64::new(0);
 
 type Job = Box<dyn FnOnce() + Send>;
 
-/// The waiting jobs, ordered by `(key, seq)` — nearest first, then FIFO — with
-/// an index from submission sequence to current key. Every queue operation
-/// (push, pop, re-key, remove) is `O(log n)` in the queue length and touches
-/// only the jobs it names, so re-prioritising a moved anchor's admitted window
-/// never drains and rebuilds the whole queue under the lock the workers pop
-/// from.
 #[derive(Default)]
 struct JobQueue {
     order: BTreeMap<(i64, u64), Job>,
@@ -82,8 +73,6 @@ impl JobQueue {
         Some(run)
     }
 
-    /// Move a waiting job to `key`; a finished, running, or foreign ticket is
-    /// not in the index and is ignored.
     fn rekey(&mut self, seq: u64, key: i64) {
         let Some(old) = self.keys.get_mut(&seq) else {
             return;
@@ -99,7 +88,6 @@ impl JobQueue {
         self.order.insert((key, seq), run);
     }
 
-    /// Take a waiting job out of the queue (the caller drops it unrun).
     fn remove(&mut self, seq: u64) -> Option<Job> {
         let key = self.keys.remove(&seq)?;
         self.order.remove(&(key, seq))
@@ -118,25 +106,12 @@ struct PoolShared {
     shutdown: AtomicBool,
 }
 
-/// Run one job with its panic contained: one panicking job (a worldgen bug on
-/// one section, a mesher edge case) must neither kill a worker — shrinking the
-/// pool until streaming stalls — nor unwind into an inline pool's caller. Jobs
-/// are pure over owned/`Arc` inputs, so a caught unwind leaves no broken
-/// shared state behind; the job's own [`ReportSlot`] (dropped during the
-/// unwind) is what tells its owner it failed.
 fn run_contained(run: Job) {
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_err() {
         eprintln!("background job panicked; its owner was sent a failure result");
     }
 }
 
-/// The result half of the stage contract: every job a stage submits reports
-/// EXACTLY ONCE. [`complete`](Self::complete) sends the job's own result; if
-/// the slot is dropped without completing — the job panicked (the slot drops
-/// during the unwind) or the pool discarded it unstarted — it sends the
-/// `failure` value instead. Owner bookkeeping keyed on results (in-flight
-/// counters, pending slots) is therefore always released: a panicking job can
-/// never wedge its stage.
 pub struct ReportSlot<T: Send + 'static> {
     tx: Sender<T>,
     failure: Option<T>,
@@ -145,8 +120,6 @@ pub struct ReportSlot<T: Send + 'static> {
 }
 
 impl<T: Send + 'static> ReportSlot<T> {
-    /// A slot reporting on `tx`, sending `failure` unless completed. `stage`
-    /// and `at` identify the job in the failure log.
     pub fn new(tx: Sender<T>, failure: T, stage: &'static str, at: SectionPos) -> Self {
         Self {
             tx,
@@ -156,7 +129,6 @@ impl<T: Send + 'static> ReportSlot<T> {
         }
     }
 
-    /// Report the job's own result.
     pub fn complete(mut self, result: T) {
         self.failure = None;
         let _ = self.tx.send(result);
@@ -178,9 +150,6 @@ impl<T: Send + 'static> Drop for ReportSlot<T> {
     }
 }
 
-/// The shared background pool. Owned once per `World`
-/// behind an `Arc`; each stage adapter (gen [`WorkerPool`], mesh, light) holds a clone
-/// and submits closures with a distance-priority key.
 pub struct JobPool {
     shared: Arc<PoolShared>,
     handles: Vec<thread::JoinHandle<()>>,
@@ -191,10 +160,6 @@ impl JobPool {
         let n = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        // Leave two cores to the render and simulation owner threads, but
-        // never run more workers than cores: the old `max(4)` floor
-        // oversubscribed small machines, where the pool then fought the owner
-        // threads for CPU.
         n.saturating_sub(2).max(2).min(n)
     }
 
@@ -204,8 +169,6 @@ impl JobPool {
             available: Condvar::new(),
             shutdown: AtomicBool::new(false),
         });
-        // `threads == 0` is INLINE mode (see [`inline`](Self::inline)): no
-        // workers at all, so `submit` can never queue — it runs on the caller.
         let mut handles = Vec::with_capacity(threads);
         for _ in 0..threads {
             let shared = shared.clone();
@@ -236,24 +199,14 @@ impl JobPool {
         Self { shared, handles }
     }
 
-    /// A pool with NO worker threads: [`submit`](Self::submit) runs each job
-    /// immediately on the caller, in submission order. The in-process test
-    /// harness uses this so a pump that queues gen/light/mesh work FINISHES it
-    /// before returning — tests then gate on one more pump, never on
-    /// wall-clock sleeps racing a (possibly CPU-starved) worker pool, which is
-    /// what made the streaming test class slow and intermittently flaky.
     pub fn inline() -> Self {
         Self::new(0)
     }
 
-    /// Whether this pool runs jobs on the calling thread (see [`inline`](Self::inline)).
     pub fn is_inline(&self) -> bool {
         self.handles.is_empty()
     }
 
-    /// Queue `f` at `key` (lower runs sooner; equal keys run FIFO). On an
-    /// INLINE pool the job runs immediately, inline with this call, with the
-    /// same panic containment as a worker thread.
     pub fn submit<F: FnOnce() + Send + 'static>(&self, key: i64, f: F) -> JobTicket {
         let seq = NEXT_JOB.fetch_add(1, Ordering::Relaxed);
         let ticket = JobTicket(seq);
@@ -261,8 +214,6 @@ impl JobPool {
             run_contained(Box::new(f));
             return ticket;
         }
-        // The job reads content through the SUBMITTER's registry, whatever the
-        // worker thread's own: a pool serves whichever world queued the work.
         let content = petramond_world::content::Content::current();
         self.shared.queue.lock().unwrap().push(
             key,
@@ -276,10 +227,6 @@ impl JobPool {
         ticket
     }
 
-    /// Change priorities of waiting jobs without restarting work. Finished and
-    /// running tickets are ignored; equal priorities retain submission order.
-    /// Costs `O(updates · log queue)` under the lock: jobs not named are never
-    /// touched.
     pub fn reprioritize(&self, updates: impl IntoIterator<Item = (JobTicket, i64)>) {
         let mut updates = updates.into_iter().peekable();
         if updates.peek().is_none() {
@@ -291,9 +238,6 @@ impl JobPool {
         }
     }
 
-    /// Remove only jobs that have not started. The returned tickets identify
-    /// exactly the requests whose owners can now release their pending slots.
-    /// The removed closures drop after the lock is released.
     pub fn remove_queued(
         &self,
         tickets: impl IntoIterator<Item = JobTicket>,
@@ -313,7 +257,6 @@ impl JobPool {
         removed
     }
 
-    /// Jobs waiting in the queue (not running, not finished).
     #[cfg(test)]
     fn queued_len(&self) -> usize {
         self.shared.queue.lock().unwrap().len()
@@ -322,8 +265,6 @@ impl JobPool {
 
 #[cfg(target_os = "linux")]
 pub fn lower_current_thread_priority() {
-    // Background throughput should not preempt the render or simulation owner
-    // threads. Failure is harmless (for example under a restrictive sandbox).
     unsafe {
         let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
         let _ = libc::setpriority(libc::PRIO_PROCESS, tid, 5);
@@ -336,15 +277,9 @@ pub fn lower_current_thread_priority() {}
 impl Drop for JobPool {
     fn drop(&mut self) {
         self.shared.shutdown.store(true, Ordering::Relaxed);
-        // Drop queued-but-unstarted work so shutdown doesn't generate a world nobody
-        // will see; in-flight jobs finish (they hold snapshots, not world borrows).
-        // Taken out first so the discarded jobs' report slots send outside the lock.
         let discarded = std::mem::take(&mut *self.shared.queue.lock().unwrap());
         drop(discarded);
         self.shared.available.notify_all();
-        // The last owner can be one of the pool's own jobs (it held the
-        // pool through a snapshot): that worker exits on its own once the
-        // job returns, and joining it from itself would deadlock.
         let me = std::thread::current().id();
         for h in self.handles.drain(..) {
             if h.thread().id() != me {
@@ -354,22 +289,16 @@ impl Drop for JobPool {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Worldgen stage adapter.
-// ---------------------------------------------------------------------------
-
-/// A unit of off-thread generation. Both variants carry the world `seed` so a worker
-/// can rebuild its (immutable, seed-derived) generator if the world is reseeded.
 pub enum GenJob {
-    /// Compute one column's shared 2D data.
-    Column { pos: ChunkPos, seed: u32 },
-    /// Generate one 16³ section from its column's shared data.
+    Column {
+        pos: ChunkPos,
+        seed: u32,
+    },
     Section {
         sp: SectionPos,
         col: Arc<ColumnGen>,
         seed: u32,
     },
-    /// Continue a section a hook deferred, from the hook that deferred it.
     ResumeSection {
         pending: Box<PendingSection>,
         col: Arc<ColumnGen>,
@@ -388,33 +317,21 @@ impl GenJob {
     }
 }
 
-/// A finished generation job, drained by the world's `poll`. Both payloads ride
-/// behind `Arc` — the world stores them as `Arc` anyway, and it keeps the enum small
-/// through the result channel.
 pub enum GenOutput {
-    /// A column's shared data; the world installs it and submits its section jobs.
-    Column { pos: ChunkPos, col: Arc<ColumnGen> },
-    /// A generated section, ready to install.
+    Column {
+        pos: ChunkPos,
+        col: Arc<ColumnGen>,
+    },
     Section {
         sp: SectionPos,
         section: Arc<Section>,
     },
-    /// A hook deferred the section: a positional fact it depends on is being
-    /// derived by another worker. The owner submits a
-    /// [`GenJob::ResumeSection`] later (the column data and the partial
-    /// section ride along so it can); the eventual section does not depend on
-    /// when.
     SectionDeferred {
         sp: SectionPos,
         col: Arc<ColumnGen>,
         pending: Box<PendingSection>,
     },
-    /// The column job panicked (a worldgen bug at these coordinates). Reported —
-    /// not silently dropped — so the streamer clears its pending flag: a leaked
-    /// flag left the column permanently ungenerated (an invisible hole) and
-    /// permanently in-flight (freezing the sim guard around it).
     ColumnFailed(ChunkPos),
-    /// The section job panicked; same contract as [`GenOutput::ColumnFailed`].
     SectionFailed(SectionPos),
 }
 
@@ -456,7 +373,6 @@ fn run_gen_job(job: GenJob) -> GenOutput {
     })
 }
 
-/// A section job's result as the world drains it.
 fn section_output(sp: SectionPos, attempt: SectionGen, col: Arc<ColumnGen>) -> GenOutput {
     match attempt {
         SectionGen::Ready(section) => GenOutput::Section {
@@ -471,12 +387,6 @@ fn section_output(sp: SectionPos, attempt: SectionGen, col: Arc<ColumnGen>) -> G
     }
 }
 
-/// Fan a set of 16×16 surface-tile warmups across the pool at maximum
-/// priority: each job fills one tile of the shared feature-window memo
-/// through the worker's thread-local generator. Fire-and-forget — the memo
-/// is the output. Session bootstrap uses this to compute the spawn area's
-/// tiles in parallel while the rest of construction runs, instead of the
-/// first column job deriving them serially on one worker.
 pub fn warm_surface_tiles(pool: &JobPool, seed: u32, tiles: impl IntoIterator<Item = (i32, i32)>) {
     for (tcx, tcz) in tiles {
         pool.submit(i64::MIN, move || {
@@ -493,7 +403,6 @@ pub fn warm_surface_tiles(pool: &JobPool, seed: u32, tiles: impl IntoIterator<It
     }
 }
 
-/// Cancellation and queue identity for one generation request.
 pub struct GenJobHandle {
     cancel: JobCancel,
     pub(crate) ticket: JobTicket,
@@ -505,8 +414,6 @@ impl GenJobHandle {
     }
 }
 
-/// Gen-stage adapter over the shared [`JobPool`]: `submit` queues generation at a
-/// distance priority, `try_recv` drains finished outputs on the main thread.
 pub struct WorkerPool {
     pool: Arc<JobPool>,
     tx_res: Sender<GenOutput>,
@@ -611,8 +518,6 @@ fn spawn_gen(
                 let _ = tx.send(out);
             }
             Err(_) => {
-                // The per-thread generator may be mid-mutation; rebuild it
-                // before the next job rather than trusting its caches.
                 GENERATOR.with(|slot| *slot.borrow_mut() = None);
                 eprintln!("worldgen job panicked; reporting failure");
                 let _ = tx.send(failed);
@@ -621,8 +526,6 @@ fn spawn_gen(
     })
 }
 
-/// Parked jobs whose fact never published wake after the lease expiry; the
-/// sweep runs from the owner's poll, throttled to a few times a second.
 fn sweep_parked() {
     static LAST: AtomicU64 = AtomicU64::new(0);
     static EPOCH: std::sync::LazyLock<std::time::Instant> =

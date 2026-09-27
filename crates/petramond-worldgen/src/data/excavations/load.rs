@@ -207,17 +207,8 @@ const CHAMBER_FLATTEN_RANGE: (f64, f64) = (0.1, 2.0);
 
 const CHAMBER_FEATHER_MAX: f64 = 48.0;
 
-/// A term of 1.0 already lifts the cavern threshold clear of the sampler's
-/// whole range, i.e. unconditionally open. Past ~2 an author is only making
-/// the skip mask give up over a wider rim for no visible gain.
 const CHAMBER_STRENGTH_MAX: f64 = 2.0;
 
-/// A chamber is trilinear on the cave lattice, so a rim that ramps faster than
-/// two lattice steps comes out visibly faceted — octahedral, which is the one
-/// artefact that reads as an engine bug rather than as rock. The rim is
-/// measured in BLOCKS in every direction, so this bound now means what it says
-/// vertically too (it used to be scaled by `flatten` there and was routinely
-/// violated in silence).
 const CHAMBER_FEATHER_MIN: f64 = 2.0 * CAVE_LATTICE_STEP as f64;
 
 const CHAMBER_LOBES_MAX: i32 = 4;
@@ -226,13 +217,8 @@ const CHAMBER_LOBE_SPREAD_MAX: f64 = 1.0;
 
 const CHAMBER_LOBE_SCALE_MAX: f64 = 1.5;
 
-/// A room already lifts the cavern threshold clear of the sampler; past this a
-/// tunnel gain only makes the skip mask give up over a wider rim.
 const CHAMBER_TUNNEL_GAIN_MAX: f64 = 4.0;
 
-/// The kneading field reaches about ±0.54, so past this the ramp can invert and
-/// the rim collapses onto the analytic core in patches — the artefact the knob
-/// exists to remove.
 const CHAMBER_RIM_NOISE_MAX: f64 = 1.8;
 
 fn convert_chamber(c: RawChamber, placement: &Placement) -> Result<Chamber, String> {
@@ -301,12 +287,6 @@ fn convert_chamber(c: RawChamber, placement: &Placement) -> Result<Chamber, Stri
              (0, {CHAMBER_LOBE_SCALE_MAX}]"
         ));
     }
-    // A satellite offset the full spread on all three axes sits
-    // `spread * sqrt(3)` primary-radii from the centre, in the normalised space
-    // where both lobes are spheres. Past `1 + smallest satellite` it can clear
-    // the primary entirely and the room comes out as a big void plus a detached
-    // bubble — a sealed pocket no player can reach, which is the exact failure
-    // the whole attachment work exists to remove.
     if c.lobes > 1 && c.lobe_spread * 3.0f64.sqrt() >= 1.0 + s_min {
         return Err(format!(
             "'chamber.lobe_spread' {} can detach a satellite lobe of scale {s_min} from the \
@@ -344,10 +324,6 @@ fn convert_chamber(c: RawChamber, placement: &Placement) -> Result<Chamber, Stri
         tunnel: c.tunnel,
         rim_noise: c.rim_noise,
     };
-    // One room may span at most two candidate columns per axis. That is what
-    // keeps the carver's per-box candidate window a small constant instead of
-    // growing with the radius — the whole performance argument for evaluating
-    // this inside the lattice build.
     let reach = chamber.reach_xz();
     if 2 * reach > placement.spacing {
         return Err(format!(
@@ -356,12 +332,6 @@ fn convert_chamber(c: RawChamber, placement: &Placement) -> Result<Chamber, Stri
             placement.spacing
         ));
     }
-    // The band has to hold the biggest room the row can roll, with a lattice
-    // step of slack at each end so at least one legal centre exists — measured
-    // against the CARVABLE part of the band, because that is where centres are
-    // actually rolled. A row whose usable window is too short is a load error
-    // rather than a row that quietly generates half-height rooms sliced by the
-    // world floor.
     let (drop, rise) = chamber.extent_y();
     let needed = drop + rise + 2 * CAVE_LATTICE_STEP;
     let band = Chamber::placement_band(y);

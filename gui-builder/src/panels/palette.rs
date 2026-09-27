@@ -1,7 +1,3 @@
-//! Component palette: one button per node type plus document-fragment presets
-//! (compiled in from `assets/presets/*.json`). Clicking inserts into the
-//! selected container (ids are uniquified on insert).
-
 use crate::app::App;
 use crate::doc_edit;
 use eframe::egui;
@@ -65,7 +61,6 @@ mod tests {
     fn every_preset_parses_as_a_node_fragment() {
         for (name, json) in PRESETS {
             let node: Node = serde_json::from_str(json).unwrap_or_else(|e| panic!("{name}: {e}"));
-            // Fragments must serialize back (they're inserted verbatim).
             serde_json::to_string(&node).unwrap();
         }
     }

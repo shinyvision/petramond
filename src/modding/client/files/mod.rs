@@ -1,18 +1,16 @@
 //! A client mod's FILES in its storage buckets, and the one store every
-//! writer of them goes through: the mod's own appends, writes, syncs,
-//! renames, deletes, reads and listings, and the records the engine writes
-//! into a mod's files for it.
+//! writer goes through: the mod's appends, writes, syncs, renames, deletes,
+//! reads, listings, plus the records the engine writes into a mod's files.
 //!
-//! Every mutation of one file lands in submission order ([`queue`]); the I/O
-//! threads ([`io`]) make the blocking calls, so nothing here touches the disk
-//! on the frame except [`stat`]'s one metadata read of a file the store is
-//! not writing. Nothing is counted or refused for its size: a producer that
-//! outpaces the disk grows memory, and [`stat`]'s `len - written` lets the
-//! mod act on its own backlog.
+//! Mutations of one file land in submission order ([`queue`]); I/O threads
+//! ([`io`]) do the blocking calls, so nothing here touches disk on the frame
+//! except [`stat`]'s one metadata read of a file the store isn't writing.
+//! Sizes aren't counted or capped: a fast producer just grows memory, and
+//! [`stat`]'s `len - written` lets the mod track its own backlog.
 //!
-//! Every file has an INCARNATION: a rename moves it, a delete ends it, and a
-//! positioned write announces the bytes it changes ([`subscribe`]), so a
-//! cache keyed by `(incarnation, offset, len)` is never stale.
+//! Every file has an INCARNATION: rename moves it, delete ends it, a
+//! positioned write announces the bytes it changed ([`subscribe`]). That's
+//! what keeps a cache keyed by `(incarnation, offset, len)` from going stale.
 
 pub mod folders;
 mod io;
@@ -36,9 +34,6 @@ use queue::{Disk, Effect, FileKey, Sched};
 
 pub use reveal::os_helper_turn;
 
-/// A fresh id for any ticket or handle a client instance is given: file
-/// tickets, events logs, captures, applies, taps and media files share one
-/// counter, so no two families ever answer to one id.
 pub fn issue_id() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
@@ -50,7 +45,6 @@ pub(super) fn now_ms() -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// One file or directory in one mod's bucket, as the mod named it.
 #[derive(Clone, Debug)]
 pub struct FileRef {
     root: Arc<Path>,
@@ -59,8 +53,6 @@ pub struct FileRef {
 }
 
 impl FileRef {
-    /// `rel` must already pass [`mod_api::file_path_problem`] (or be `""`,
-    /// the bucket's root directory).
     fn new(root: Arc<Path>, rel: &str) -> Self {
         Self {
             key: FileKey {
@@ -72,21 +64,16 @@ impl FileRef {
         }
     }
 
-    /// `rel` in a bucket whose files live under `dir` — a test's scratch
-    /// directory, never the player's data.
     #[cfg(test)]
     pub fn in_dir(dir: &Path, rel: &str) -> Self {
         Self::new(Arc::from(dir), rel)
     }
 
-    /// `rel` (which passes the path rule) under the bucket directory `root`:
-    /// a test's own bucket.
     #[cfg(any(test, feature = "test-support"))]
     pub fn in_bucket(root: &Path, rel: &str) -> Self {
         Self::new(Arc::from(root), rel)
     }
 
-    /// The path the mod named, for messages.
     pub fn rel(&self) -> &str {
         &self.rel
     }
@@ -95,7 +82,6 @@ impl FileRef {
         paths::join(&self.root, &self.rel)
     }
 
-    /// A sibling in the same bucket.
     pub fn sibling(&self, rel: &str) -> Self {
         Self::new(self.root.clone(), rel)
     }
@@ -104,32 +90,26 @@ impl FileRef {
         format!("{}: {error}", self.rel)
     }
 
-    /// This file's incarnation: the same number until it is deleted or
-    /// renamed over, whatever it is renamed to.
     pub fn incarnation(&self) -> u64 {
         shared().with(|store| store.incarnation(&self.key))
     }
 }
 
-/// What changed under an incarnation, announced at the call that changed it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileChange {
-    /// Bytes `[start, end)` changed (`end` = `u64::MAX`: through the end).
-    Overwritten { incarnation: u64, range: [u64; 2] },
-    /// These incarnations ended: `path` was deleted, or renamed over.
+    Overwritten {
+        incarnation: u64,
+        range: [u64; 2],
+    },
     Ended {
         incarnations: Vec<u64>,
         path: String,
     },
 }
 
-/// Who writes a file from outside its queue, while they do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WriterKind {
-    /// Appends only (an events log): the mod's own appends may interleave
-    /// between its records, but a positioned write could land inside one.
     Appends(&'static str),
-    /// Owns every byte (a media file's encoder).
     Exclusive(&'static str),
 }
 
@@ -139,8 +119,6 @@ struct Store {
     next_incarnation: u64,
     writers: BTreeMap<FileKey, Vec<(u64, WriterKind)>>,
     subscribers: Vec<mpsc::Sender<FileChange>>,
-    /// Jobs an I/O thread took and has not yet finished running, completion
-    /// included.
     active: usize,
 }
 
@@ -158,7 +136,6 @@ impl Store {
             .retain(|subscriber| subscriber.send(change.clone()).is_ok());
     }
 
-    /// The incarnations of `key` and everything under it, ended.
     fn end_subtree(&mut self, key: &FileKey, path: &str) {
         let keys = queue::under(&self.incarnations, key);
         let incarnations: Vec<u64> = std::iter::once(key)
@@ -173,9 +150,6 @@ impl Store {
         }
     }
 
-    /// Why an external writer keeps `file` from this operation: `whole` =
-    /// the operation replaces or removes it and everything under it;
-    /// `positioned` = it writes inside existing bytes.
     fn in_use(&self, file: &FileRef, whole: bool, positioned: bool) -> Result<(), String> {
         let keys = if whole {
             let mut keys = queue::under(&self.writers, &file.key);
@@ -205,7 +179,6 @@ impl Store {
 struct Shared {
     store: Mutex<Store>,
     work: Condvar,
-    /// Told when the store has nothing queued or running.
     idle: Condvar,
 }
 
@@ -214,7 +187,6 @@ impl Shared {
         self.store.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Change the queues, and wake the I/O threads for whatever became ready.
     fn with<R>(&self, change: impl FnOnce(&mut Store) -> R) -> R {
         let mut store = self.lock();
         let before = store.sched.ready_len();
@@ -225,9 +197,6 @@ impl Shared {
         result
     }
 
-    /// Operation `id` ran: record what it did to its files, and move on.
-    /// The I/O thread calling this takes the next ready work itself, so one
-    /// fewer thread is woken for it.
     fn landed(&self, id: queue::OpId, record: impl FnOnce(&mut Store)) {
         let mut store = self.lock();
         let before = store.sched.ready_len() + 1;
@@ -264,13 +233,8 @@ fn shared() -> &'static Shared {
 
 type Hook<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
 
-/// An open file and the exact name it was opened by: an operation naming
-/// the file in another case must not reuse it past the case rule.
 type Handle = (Arc<str>, Arc<File>);
 
-/// Append `bytes` at the end of `file`, creating it and its directories.
-/// `done` answers where they landed. `Err` = refused (an external writer
-/// owns the file).
 pub fn append(
     file: &FileRef,
     bytes: Vec<u8>,
@@ -294,8 +258,6 @@ pub fn append(
     })
 }
 
-/// Put `bytes` at `offset` of `file` (a gap fills with zeros); `truncate`
-/// then cuts it at `offset + bytes.len()`.
 pub fn write(
     file: &FileRef,
     offset: u64,
@@ -331,10 +293,6 @@ pub fn write(
     })
 }
 
-/// Put `bytes` at `offset` of `file` in its turn: how the engine completes a
-/// record it streamed there (its head, rewritten in place). Unlike
-/// [`write`], an external writer never refuses it: the bytes are the
-/// engine's own record, and no one else's record can lie under them.
 pub fn patch(
     file: &FileRef,
     offset: u64,
@@ -369,7 +327,6 @@ pub fn patch(
     });
 }
 
-/// fsync `file` once everything queued to it before this has landed.
 pub fn sync(file: &FileRef, done: impl FnOnce(Result<(), String>) + Send + 'static) {
     queue_sync(file, false, Box::new(done));
 }
@@ -385,9 +342,6 @@ fn queue_sync(file: &FileRef, if_dirty: bool, done: Hook<()>) {
     });
 }
 
-/// Rename `from` onto `to` after everything queued to either: `from` is
-/// synced first, an existing file at `to` is replaced atomically, and the
-/// incarnation moves with the content.
 pub fn rename(
     from: &FileRef,
     to: &FileRef,
@@ -419,9 +373,6 @@ pub fn rename(
     })
 }
 
-/// Delete a file, or a directory with everything under it, after what is
-/// queued under it. Its incarnations end NOW, and reads still waiting there
-/// fail by name.
 pub fn delete(
     file: &FileRef,
     done: impl FnOnce(Result<(), String>) + Send + 'static,
@@ -445,8 +396,6 @@ pub fn delete(
     Ok(())
 }
 
-/// Read `[offset, offset + len)` of `file`: the bytes that exist there, after
-/// exactly the queued writes that change them.
 pub fn read(
     file: &FileRef,
     offset: u64,
@@ -464,9 +413,6 @@ pub fn read(
     });
 }
 
-/// One page of `dir` (`rel` `""` = the bucket's root), sorted by name,
-/// after `after`, while the encoded answer stays within `max_bytes` (always
-/// one entry while any remain).
 pub fn list(
     dir: &FileRef,
     after: Option<String>,
@@ -484,8 +430,6 @@ pub fn list(
     });
 }
 
-/// `file` as it stands: `len` once every queued write whose size is known
-/// lands, `written` on disk now. `None` = no such file (a directory too).
 pub fn stat(file: &FileRef) -> Option<ClientFileInfo> {
     let known = |store: &Store| {
         store
@@ -524,9 +468,6 @@ pub fn stat(file: &FileRef) -> Option<ClientFileInfo> {
     })
 }
 
-/// A record the engine appends to `file` in its turn, though its bytes are
-/// still being encoded: [`RecordSlot::fill`] hands them over. `done` answers
-/// where the record landed once it is handed to the OS.
 pub fn record(
     file: &FileRef,
     done: impl FnOnce(Result<[u64; 2], String>) + Send + 'static,
@@ -546,8 +487,6 @@ pub fn record(
     })
 }
 
-/// Bytes a write hands the store: owned, or shared with a cache that keeps
-/// them, so a piece is written without a copy either way.
 pub enum Chunk {
     Owned(Vec<u8>),
     Shared(Arc<[u8]>),
@@ -576,22 +515,17 @@ impl From<Arc<[u8]>> for Chunk {
     }
 }
 
-/// A queued record's place in its file; dropped unfilled, it fails. Fill or
-/// drop it promptly: everything queued to the file after it waits for it,
-/// an instance shutting down included.
 pub struct RecordSlot {
     op: Option<queue::OpId>,
 }
 
 impl RecordSlot {
-    /// The record's bytes, written in one go in these pieces.
     pub fn fill<C: Into<Chunk>>(mut self, pieces: impl IntoIterator<Item = C>) {
         let pieces: Vec<Chunk> = pieces.into_iter().map(Into::into).collect();
         let len = pieces.iter().map(|piece| piece.len() as u64).sum();
         self.settle(Ok(pieces), len);
     }
 
-    /// The record could not be made; its ticket answers `why`.
     pub fn fail(mut self, why: String) {
         self.settle(Err(why), 0);
     }
@@ -615,15 +549,12 @@ impl Drop for RecordSlot {
     }
 }
 
-/// While held, `file` is written from outside its queue (see [`WriterKind`]).
 pub struct WriterClaim {
     id: u64,
     key: FileKey,
     exclusive: bool,
 }
 
-/// Claim `file` for an external writer. `Err` = another writer's claim
-/// excludes this one.
 pub fn claim(file: &FileRef, kind: WriterKind) -> Result<WriterClaim, String> {
     shared().with(|store| {
         let exclusive = matches!(kind, WriterKind::Exclusive(_));
@@ -658,7 +589,6 @@ impl Drop for WriterClaim {
                 }
             }
             if self.exclusive {
-                // Written behind the store's back: learn it afresh.
                 let state = store.sched.file_mut(&self.key);
                 state.disk = Disk::Unknown;
                 state.handle = None;
@@ -667,21 +597,16 @@ impl Drop for WriterClaim {
     }
 }
 
-/// Every [`FileChange`] from now on.
 pub fn subscribe() -> mpsc::Receiver<FileChange> {
     let (tx, rx) = mpsc::channel();
     shared().with(|store| store.subscribers.push(tx));
     rx
 }
 
-/// Show `file` in the OS file manager. `false` = no such path, or no file
-/// manager.
 pub fn reveal(file: &FileRef) -> bool {
     reveal::reveal(file.path())
 }
 
-/// A scope's files directory, `None` = no such bucket (`World` on the
-/// shell) or no folder chosen.
 pub(in crate::modding) fn root(
     client: &super::ClientStoreData,
     scope: ClientStorageScope,
@@ -696,7 +621,6 @@ pub(in crate::modding) fn root(
     Some(Arc::from(bucket.dir().join("files")))
 }
 
-/// `path` in `scope`'s bucket. The caller has checked the path rule.
 pub(in crate::modding) fn locate(
     client: &super::ClientStoreData,
     scope: ClientStorageScope,
@@ -707,14 +631,11 @@ pub(in crate::modding) fn locate(
 
 type FileResult = Result<ClientFileAnswer, String>;
 
-/// One instance's file tickets: issued at the call, answered from any
-/// thread, consumed by the poll that reads the answer.
 pub(in crate::modding) struct FileTickets {
     tx: mpsc::Sender<(u64, FileResult)>,
     rx: mpsc::Receiver<(u64, FileResult)>,
     waiting: HashSet<u64>,
     ready: HashMap<u64, FileResult>,
-    /// Every file this instance mutated: synced when it shuts down.
     touched: BTreeMap<FileKey, FileRef>,
 }
 
@@ -732,7 +653,6 @@ impl Default for FileTickets {
 }
 
 impl FileTickets {
-    /// A new ticket, answered through its [`TicketSink`].
     pub fn issue(&mut self) -> TicketSink {
         let ticket = issue_id();
         self.waiting.insert(ticket);
@@ -742,20 +662,16 @@ impl FileTickets {
         }
     }
 
-    /// A ticket whose operation was refused: never issued after all.
     pub fn withdraw(&mut self, ticket: u64) {
         self.waiting.remove(&ticket);
     }
 
-    /// Remember that this instance writes `file`.
     pub fn touch(&mut self, file: &FileRef) {
         self.touched
             .entry(file.key.clone())
             .or_insert_with(|| file.clone());
     }
 
-    /// `Ok(None)` = not finished; `Ok(Some)` answers and consumes the
-    /// ticket; `Err` = never issued to this instance, or already consumed.
     pub fn poll(&mut self, ticket: u64) -> Result<Option<FileResult>, String> {
         while let Ok((done, result)) = self.rx.try_recv() {
             if self.waiting.remove(&done) {
@@ -775,8 +691,6 @@ impl FileTickets {
 }
 
 impl Drop for FileTickets {
-    /// An instance's files are synced when it shuts down: queued behind what
-    /// is written to them, never waited for here. [`flush`] waits, at exit.
     fn drop(&mut self) {
         for file in self.touched.values() {
             queue_sync(file, true, Box::new(|_| {}));
@@ -784,9 +698,6 @@ impl Drop for FileTickets {
     }
 }
 
-/// Block until every queued file operation, and whatever their completions
-/// queued in turn, has run. For the process's exit only: the I/O threads die
-/// with it.
 pub fn flush() {
     let shared = shared();
     let mut store = shared.lock();
@@ -798,7 +709,6 @@ pub fn flush() {
     }
 }
 
-/// Where a ticket's answer goes, from whichever thread finishes it.
 pub struct TicketSink {
     ticket: u64,
     tx: Option<mpsc::Sender<(u64, FileResult)>>,

@@ -1,10 +1,5 @@
-//! Mesh space: a section's vertices are column-local, so identical content
-//! meshes to identical positions however far from the world origin it lies.
-
 use super::*;
 
-/// Positions only: tile variation legitimately hashes the world coordinate,
-/// so the packed words may differ between the two copies.
 #[test]
 fn a_far_section_meshes_to_the_same_positions_as_one_at_spawn() {
     let blocks = [
@@ -35,7 +30,6 @@ fn a_far_section_meshes_to_the_same_positions_as_one_at_spawn() {
             |_, _, _| SKY_FULL,
         )
     };
-    // A billion blocks out, where an absolute f32 coordinate rounds to 64.
     let far = 62_500_000;
     let near = mesh_at(SectionPos::new(0, 4, 0));
     let far = mesh_at(SectionPos::new(far, 4, -far));

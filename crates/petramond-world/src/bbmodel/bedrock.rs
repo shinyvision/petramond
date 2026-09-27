@@ -1,25 +1,9 @@
-//! Bedrock `.animation.json` clip libraries: the NAME-keyed export Blockbench
-//! writes (File → Export → Bedrock Animations), so a pack can ship clips for a
-//! rig it does not own — a `.bbmodel`'s own animators are keyed by group uuid,
-//! which only that file knows.
-//!
-//! Parsing mirrors Blockbench's importer: arrays flip into Blockbench's
-//! internal axes (rotation X and Y and position X negate; a uniform number
-//! does not), `pre`/`post` objects become two-point keys, a key whose leaving
-//! value equals the next key's arriving value becomes a `step`, `lerp_mode`
-//! sets interpolation, and the effect tracks become markers.
-
 use glam::Vec3;
 use serde_json::Value;
 
 use super::parse::{interpolation_named, num, script_lines};
 use super::{Animation, Channel, Interpolation, Keyframe, Marker, MarkerKind};
 
-/// Parse every animation in a Bedrock animation file, resolving bone names
-/// through `bone_named` (tried verbatim, then lowercased; a name the rig
-/// lacks drops that bone's tracks). A document without an `animations`
-/// object is an error; a malformed value inside one reads as 0, like the
-/// `.bbmodel` parser.
 pub fn parse_library(
     text: &str,
     bone_named: impl Fn(&str) -> Option<usize>,
@@ -102,8 +86,6 @@ pub fn parse_library(
     Ok(out)
 }
 
-/// One channel's keys in any of Bedrock's spellings: a constant (array, number
-/// or string) or a `pre`/`post` object at time 0, or a map of timestamps.
 fn channel_keys(value: &Value, flip: Vec3) -> Vec<Keyframe> {
     let mut keys: Vec<Keyframe> = match value {
         Value::Object(map) if !map.contains_key("post") && !map.contains_key("pre") => map
@@ -113,8 +95,6 @@ fn channel_keys(value: &Value, flip: Vec3) -> Vec<Keyframe> {
         other => key(0.0, other, flip).into_iter().collect(),
     };
     keys.sort_by(|a, b| a.time.total_cmp(&b.time));
-    // A key stepping into the next one; the last key steps only when the
-    // pair right before it did.
     let mut last_was_step = false;
     for i in 0..keys.len() {
         if i + 1 < keys.len() {

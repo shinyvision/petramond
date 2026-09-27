@@ -1,23 +1,3 @@
-//! The interact dispatch: one use click (or hold-repeat) becomes ONE
-//! [`InteractAttempt`] — the most primitive gesture possible: what the
-//! crosshair held (a block cell + face, a live mob) and who is acting.
-//! Nothing else rides the attempt; every gate (sneak, held item, block
-//! identity) belongs to the CONSUMER that cares about it, read from the
-//! actor's state, never pre-interpreted by the dispatcher.
-//!
-//! The attempt walks the consumer registry through the SHARED walk
-//! (`rules::use_click::run_use_click`: the main/off-hand ladder over
-//! `ConsumerKind::CLAIM_ORDER`) — the same walk the client's prediction runs
-//! against its replica, not an if-ladder kept twice. Each consumer inspects
-//! the attempt and either claims it or passes; the first claim wins and
-//! nothing later runs. Mods participate through the
-//! `interact_attempt` bus event (one consumer entry dispatches it; a
-//! handler's Cancel is a claim); engine capabilities are sibling entries in
-//! the same registry. Whether the hand jabs is exactly whether ANYTHING
-//! claimed the attempt (`GameEvents::interacted` / `used_item` at the
-//! claiming consumer, plus the `used_unpredicted` echo for effects the
-//! initiator's replica could not foresee).
-
 use super::game::ServerGame;
 use crate::events::tick::TickEvents;
 use crate::events::{InteractAttempt, Outcome, PostEvent};
@@ -29,65 +9,28 @@ use crate::server::player::PendingUseClick;
 use petramond_math::math::IVec3;
 use petramond_world::block::{Block, BlockInteraction};
 
-/// Click plumbing that rides beside the attempt but is not part of the
-/// gesture: the raw click target (the placement consumers' input), the
-/// client's prediction claims, and the hold-repeat flag. Consumers read it;
-/// the attempt payload the mods see never carries it.
 pub struct ClickMeta {
-    /// The claimed block target (click-time latch, reach-validated).
     pub target: Option<TargetRef>,
-    /// Whether the client ran a full place ghost for this click.
     pub predicted: bool,
-    /// A server-paced hold-repeat rather than a real client click: never
-    /// STARTS an eat, ships no corrective cells.
     pub repeat: bool,
 }
 
-/// One consumer's verdict on the attempt: a placement claim carries the
-/// cell its anchor landed at (the ghost-accept convention needs it).
 type Claim = use_click::Claim<IVec3>;
 
-/// One consumer's claim function: it is offered the attempt and either
-/// claims it or passes. The signature is the whole contract — a consumer sees
-/// the acting player, the attempt, the click, and the tick's event sink, and
-/// nothing else.
 type Consume = fn(&mut ServerGame, usize, &InteractAttempt, &ClickMeta, &mut TickEvents) -> Claim;
 
-/// The server's claim function for each consumer kind. The kind's facts
-/// (claim order, `presents_itself`) live in `crate::rules::interact`, and
-/// the walk over them in `crate::rules::use_click`, where the client's
-/// prediction mirror reads both too.
 fn consume_fn(kind: ConsumerKind) -> Consume {
     match kind {
-        // Mods first: every attempt, sneak or not, block or mob — a handler's
-        // Cancel is a claim (mod GUIs, boat boarding, the trough take-out).
         ConsumerKind::Registered => ServerGame::consume_registered_attempt,
-        // Engine mob use: shears on a shearable mob.
         ConsumerKind::Shear => ServerGame::consume_shear,
-        // The block's built-in capability (GUI open, door, bed) — passes on
-        // sneak via the shared claim rule the client predictions also run.
         ConsumerKind::BuiltinBlock => ServerGame::consume_builtin_block,
-        // A dual-natured held item (food AND placeable — a plantable carrot)
-        // tries its placement before the eat gate: a VALID placement wins over
-        // starting to eat; a refused one passes so the eat still sees the click.
-        // Ordering the real attempt ahead of the eat keeps one dispatch per
-        // event: no dry-run duplicating `try_place`.
         ConsumerKind::ContextualPlace => ServerGame::consume_contextual_place,
-        // Eating the held food (never started by a hold-repeat).
         ConsumerKind::Eat => ServerGame::consume_eat,
-        // The held item's own use (`item_use_pre`, then the engine buckets).
         ConsumerKind::ItemUse => ServerGame::consume_item_use,
-        // Ordinary placement of the held block (skipped for dual-natured items —
-        // their placement already ran above).
         ConsumerKind::Place => ServerGame::consume_place,
     }
 }
 
-/// The server's consumer registry as the shared walk sees it: every offer
-/// EXECUTES the kind's consumer against the authoritative world.
-/// Deterministic and data-shaped: a new engine capability is a new
-/// [`ConsumerKind`] (plus its client prediction arm), never a branch in the
-/// dispatcher.
 struct ServerConsumers<'a> {
     game: &'a mut ServerGame,
     s: usize,
@@ -117,22 +60,10 @@ impl UseClickConsumers for ServerConsumers<'_> {
 }
 
 impl ServerGame {
-    /// Interact / placement, on the tick: consume a buffered secondary-button
-    /// press once and dispatch it down the consumer registry. An in-progress
-    /// EAT (held button on a food item) advances every tick, click or not.
     pub fn tick_place(&mut self, s: usize, events: &mut TickEvents) {
-        // LETTING GO ends the gesture, whoever had it and however it ended.
-        // This runs before every other gate: a body that cannot use is still a
-        // body whose button came up, and a gesture that could not be released
-        // while barred would never be released at all.
         if !self.sessions[s].using() {
             self.sessions[s].player.use_gesture = UseGesture::Free;
         }
-        // A barred body still HOLDS the button — that intent is what raised
-        // whatever is barring it — but the press buys nothing. Taking the
-        // click spends it rather than queueing it, so releasing the claim
-        // cannot fire a stored interact, and the repeat never starts. The eat
-        // still advances below, which is how it notices and aborts.
         if self.sessions[s]
             .player
             .denied_actions()
@@ -142,27 +73,17 @@ impl ServerGame {
             self.advance_eating(s);
             return;
         }
-        // A gesture with an owner is offered to nobody — not a fresh click, not
-        // the repeat. That is the whole difference between a one-shot and a
-        // continuous use: an eat runs to its end and a raised guard stays up,
-        // and neither is interrupted by the button it is still riding.
         if !self.sessions[s].player.use_gesture.is_free() {
             self.sessions[s].input.pending_use_click = None;
             self.advance_eating(s);
             return;
         }
-        // Taking the whole click clears its target, request, presentation
-        // verdict, and held-selection guard together. A newer hotbar
-        // selection invalidates the attempt before any consumer can observe
-        // or mutate through a different item than receipt-time targeting used.
         if let Some(click) = self.sessions[s].input.pending_use_click.take() {
             if click.selection_still_matches(&self.sessions[s].player) {
                 self.dispatch_use_click(s, click, events, false);
             } else {
                 self.reject_selection_changed_use_click(s, click);
             }
-            // A real click paces the hold-repeat: the first repeat comes one
-            // full interval after it (and spam clicks never compound rates).
             self.sessions[s].input.use_repeat_cooldown = USE_REPEAT_TICKS;
         } else {
             self.tick_use_repeat(s, events);
@@ -170,25 +91,7 @@ impl ServerGame {
         self.advance_eating(s);
     }
 
-    /// A HELD use button re-runs the WHOLE interact dispatch every
-    /// [`USE_REPEAT_TICKS`] against the current look latch, as if the player
-    /// re-clicked: doors keep toggling, the hoe keeps tilling
-    /// (`item_use_pre`), crops keep planting and harvesting, blocks keep
-    /// placing. Two deliberate exceptions ride [`ClickMeta::repeat`]: a
-    /// repeat never STARTS an eat (one eat per click — and no surprise bite
-    /// when the look wanders off a door onto grass), and it ships no
-    /// corrective cells (there is no client prediction to reconcile). A held
-    /// button over nothing actionable attempts-and-does-nothing, exactly
-    /// like a single click; an in-progress eat owns the hold outright. Mob
-    /// use does not repeat — a targeted mob blanks the block look, and the
-    /// mob id only rides real clicks. Consumed repeats animate through the
-    /// ordinary click machinery: `interacted`/`used_item` rows for
-    /// observers, the `used_unpredicted` echo for the initiator's own jab
-    /// (there was no client click to animate it).
     fn tick_use_repeat(&mut self, s: usize, events: &mut TickEvents) {
-        // Whether this body may use AT ALL — spectator, corpse, open menu, a
-        // pack's claim — was asked once in `tick_place`, which is the only
-        // caller. What is left is what only a repeat cares about.
         let sess = &mut self.sessions[s];
         if !sess.input.intent_use_held || sess.sim.eating.is_some() {
             return;
@@ -203,9 +106,6 @@ impl ServerGame {
         self.dispatch_use_click(s, click, events, true);
     }
 
-    /// Resolve one consumed secondary-button press: build the attempt from
-    /// the CLICK's target (never the look latch, which may be newer) and
-    /// walk the consumer registry.
     fn dispatch_use_click(
         &mut self,
         s: usize,
@@ -221,9 +121,6 @@ impl ServerGame {
             jabbed,
             ..
         } = click;
-        // The claimed mob resolves through the authoritative view-ray
-        // validator BEFORE any consumer (mods included) can observe it: a
-        // forged, vanished, dead, or occluded claim is no mob at all.
         let mob = super::mob_target::authoritative_mob_target(&self.world, &self.sessions[s], mob);
         let attempt = InteractAttempt {
             block: target.map(|t| t.block),
@@ -236,15 +133,6 @@ impl ServerGame {
             predicted,
             repeat,
         };
-        // The shared ladder: if the RIGHT hand can act, it acts; only when
-        // the whole registry passes does the walk run again with the OFF hand
-        // as the acting hand. The attempt payload never names a hand — the
-        // acting hand is actor context (`Player::acting_hand`), so every
-        // consumer and every mod host call (`PlayerState`, `PlayerHeld`,
-        // `ConsumeHeld`) resolves the off-hand item on the second pass with
-        // no new vocabulary. The walk resets the acting hand to `Main`
-        // before returning (level-state reads like the roster and
-        // replication are main-hand by definition).
         let outcome = use_click::run_use_click(&mut ServerConsumers {
             game: &mut *self,
             s,
@@ -257,8 +145,6 @@ impl ServerGame {
         let placed_at = outcome.placement;
         events.player(s).click_off_hand = off_hand_acted;
         if consumed {
-            // The acting hand's jab, mirrored onto the swing facts the roster
-            // publishes — the mod-facing twin of `click_off_hand` beside it.
             let hand = if off_hand_acted {
                 petramond_world::inventory::Hand::Off
             } else {
@@ -293,18 +179,8 @@ impl ServerGame {
                 let bus = mods.bus_mut();
                 bus.use_unclaimed(world, sessions, actor, events, &mut ev) == Outcome::Cancel
             };
-            // Deliberately NOT folded into `consumed`: the chain already
-            // passed, so nothing happened to the world and the hand has
-            // nothing to jab about. Taking the gesture is a claim on the
-            // BUTTON, not an interaction — whoever took it poses the body
-            // itself. `Cancel` here only ends the dispatch for later handlers.
             let _ = claimed;
         }
-        // The attempt RESOLVED: announce it once, whoever took it. A claim
-        // ends the pre dispatch, so `interact_attempt` handlers after the
-        // claimant never saw it — this is where anything that only wants to
-        // OBSERVE the click (progression, statistics, tutorial hints) reads
-        // it, with the outcome attached.
         if attempt.block.is_some() || attempt.mob.is_some() {
             self.mods.emit(PostEvent::Interacted {
                 block: attempt.block,
@@ -314,11 +190,6 @@ impl ServerGame {
                 consumed,
             });
         }
-        // A consumed click whose initiator stayed silent (its replica could
-        // not foresee the effect — a registered consumer's claim like tilling or a
-        // right-click harvest) gets its hand jab echoed back; `jabbed`
-        // guarantees this can never double an already-played one. A claimant
-        // that presents itself has no jab to echo.
         if consumed && !jabbed && !outcome.presents_itself() {
             events.player(s).used_unpredicted = true;
         }
@@ -339,11 +210,6 @@ impl ServerGame {
                 (!accepted).then_some(crate::net::protocol::ActionDenyReason::Denied),
             );
         }
-        // Reconcile channel: when the click did nothing (the client may have
-        // clicked a block that only exists in ITS replica) or its prediction
-        // was denied, ship the authoritative state of the disputed cells.
-        // Repeats skip it — no click, no prediction, nothing to reconcile
-        // (a held button over a no-op target must not stream deltas).
         if let Some(t) = target.filter(|_| !repeat) {
             let disputed = !consumed || (request_id.is_some() && !accepted);
             if disputed {
@@ -352,10 +218,6 @@ impl ServerGame {
         }
     }
 
-    /// Refuse a real click whose selected slot/item changed after receipt.
-    /// This is the same no-op contract as any other denied use: answer its
-    /// prediction request and correct the disputed cells, but dispatch no
-    /// consumer and emit no action presentation.
     fn reject_selection_changed_use_click(&mut self, s: usize, click: PendingUseClick) {
         if let Some(id) = click.request_id {
             self.push_action_outcome(
@@ -380,10 +242,6 @@ impl ServerGame {
         }
     }
 
-    /// The mod consumer: dispatch the attempt to every registered
-    /// `interact_attempt` handler; a handler's Cancel is a claim. Dispatched
-    /// with the clicking session as the actor, so handlers (and the host
-    /// calls they make — `PlayerState`) resolve it.
     fn consume_registered_attempt(
         &mut self,
         s: usize,
@@ -414,7 +272,6 @@ impl ServerGame {
         }
     }
 
-    /// Engine shears on the targeted mob.
     fn consume_shear(
         &mut self,
         s: usize,
@@ -433,10 +290,6 @@ impl ServerGame {
         }
     }
 
-    /// Swing the door at `pos`, whoever used it: the open/closed bit flips on
-    /// this tick (collision updates at once), and every observer's swing
-    /// animation and positional sound come from the world event. Answers the
-    /// new open state; `None` for a door whose paired cell cannot be resolved.
     pub(super) fn swing_door(&mut self, pos: IVec3, events: &mut TickEvents) -> Option<bool> {
         let lower = self.world.door_lower_cell(pos.x, pos.y, pos.z)?;
         self.world.toggle_door(pos);
@@ -449,19 +302,12 @@ impl ServerGame {
         Some(now_open)
     }
 
-    /// Swing the trapdoor at `pos`, whoever used it — the door's single-cell
-    /// sibling, announced on the same panel event. `None` when the cell holds
-    /// no trapdoor.
     pub(super) fn swing_trapdoor(&mut self, pos: IVec3, events: &mut TickEvents) -> Option<bool> {
         let now_open = self.world.toggle_trapdoor(pos)?;
         events.world.panel_changed.push((pos, now_open));
         Some(now_open)
     }
 
-    /// The block's built-in capability as a consumer: claims the attempt when
-    /// the target block has one AND the shared claim rule says this attempt
-    /// is its business (`use_click::builtin_claims_at` — built-ins pass on
-    /// sneak clicks; the client jab/ghost prediction runs the SAME rule).
     fn consume_builtin_block(
         &mut self,
         s: usize,
@@ -476,14 +322,7 @@ impl ServerGame {
             return Claim::Pass;
         }
         let block = Block::from_id(self.world.data().chunk_block(pos.x, pos.y, pos.z));
-        // Menu opens join the ordered menu-action stream. Placement resolves
-        // before the Menu stage, so this appends behind any close/click/craft
-        // messages already received for the old screen.
         let claimed = match block.interaction() {
-            // Engine containers and mod GUIs ride ONE open lane. The clicked
-            // block's position rides the session so per-kind session setup
-            // (chest viewer, machine gauges, mod container anchoring) and
-            // gui_click dispatches know where the GUI was opened from.
             BlockInteraction::OpenGui(kind) => {
                 self.queue_menu_action(
                     s,
@@ -494,21 +333,13 @@ impl ServerGame {
                 );
                 true
             }
-            // Right-clicking a door toggles it: the open/closed bit flips on this tick
-            // (so collision updates at once and the player can step through), and the
-            // visual swing is eased from the door's current angle. Seed the swing entry
-            // BEFORE the toggle so it starts from the old pose, then eases to the new one.
             BlockInteraction::ToggleDoor => {
-                // Act-based claim: a door row whose paired cell cannot be
-                // resolved toggles nothing and consumes nothing.
                 let Some(now_open) = self.swing_door(pos, events) else {
                     return Claim::Pass;
                 };
-                // The TOGGLER's own one-shot (hand flick).
                 events.player(s).toggled_panel = Some(now_open);
                 true
             }
-            // A trapdoor swings on the same act, one cell instead of two.
             BlockInteraction::ToggleTrapdoor => {
                 let Some(now_open) = self.swing_trapdoor(pos, events) else {
                     return Claim::Pass;
@@ -517,11 +348,6 @@ impl ServerGame {
                 true
             }
 
-            // Right-clicking a bed sets the spawn point beside it and/or
-            // starts the sleep (see `game::bed`); the app opens the sleep
-            // overlay via the open request this queues. Act-based claim: a
-            // click that moved no spawn and started no sleep consumed
-            // nothing.
             BlockInteraction::Sleep => {
                 let acted = self.start_sleep(s, pos);
                 if acted {
@@ -539,9 +365,6 @@ impl ServerGame {
         }
     }
 
-    /// Whether the ACTING hand's item is BOTH food and placeable (a plantable
-    /// carrot) — the shared split the contextual-place / ordinary-place pair
-    /// makes on both mirrors.
     fn held_is_contextual_placeable(&self, s: usize) -> bool {
         crate::rules::item_use::held_item(&self.sessions[s].player)
             .is_some_and(crate::rules::item_use::is_contextual_placeable)
@@ -571,8 +394,6 @@ impl ServerGame {
         events: &mut TickEvents,
     ) -> Claim {
         if !meta.repeat && self.try_start_eating(s, events) {
-            // An eat is CONTINUOUS: it takes the gesture, so the repeat stops
-            // offering the button and the next food is not started behind it.
             self.sessions[s].player.use_gesture =
                 UseGesture::Held(crate::player::ENGINE_CLAIMANT.into());
             Claim::Claimed
@@ -603,8 +424,6 @@ impl ServerGame {
         meta: &ClickMeta,
         events: &mut TickEvents,
     ) -> Claim {
-        // A dual-natured item's placement already ran (and passed) above —
-        // its click belongs to the eat/use rungs, never a second attempt.
         if self.held_is_contextual_placeable(s) {
             return Claim::Pass;
         }
@@ -614,17 +433,10 @@ impl ServerGame {
         }
     }
 
-    /// Test-only: latch a use click on session `s` aimed at its current look —
-    /// what a real client click ships as its click-time target.
     #[cfg(any(test, feature = "test-support"))]
     pub fn queue_place_click_for_test(&mut self, s: usize) {
         let sess = &mut self.sessions[s];
-        // A real client sends a use click only from gameplay focus, and the
-        // engine bars the hands of a body whose menu is open — so a click that
-        // did not say so would model a body that cannot act.
         sess.input.intent_gameplay = true;
-        // The hook models a client that ran its full place prediction (the
-        // common case), so the echo strip applies like production.
         sess.input.pending_use_click = Some(PendingUseClick::capture(
             &sess.player,
             None,
@@ -635,10 +447,6 @@ impl ServerGame {
         ));
     }
 
-    /// Test-only variant of [`queue_place_click_for_test`] carrying a claimed
-    /// stable mob id instead of a block target.
-    ///
-    /// [`queue_place_click_for_test`]: Self::queue_place_click_for_test
     #[cfg(any(test, feature = "test-support"))]
     pub fn queue_mob_use_click_for_test(&mut self, s: usize, mob: u64) {
         let sess = &mut self.sessions[s];
@@ -662,15 +470,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::item::{ItemStack, ItemType};
 
-    /// Placing a boat on water is the whole `use_ray: water` pipeline end to
-    /// end: the receipt-time water-ray validator accepts the claimed surface
-    /// cell, the consumer registry carries the click past every earlier rung
-    /// to `item_use_pre`, and the vehicles pack's real WASM handler spends
-    /// the item and spawns the hull — here from a SHORE-HUGGING click, so the
-    /// mod's nudge search (the clicked cell clips the ring; a nearby open
-    /// cell fits) is what places the boat. Pack rows + wasm need the fixture
-    /// registry, so the assertions run in a child process (the established
-    /// `PETRAMOND_MODS` re-spawn pattern).
     #[test]
     fn boat_use_click_on_water_spawns_the_hull() {
         let Some(root) = crate::modding::tests::stage_mods_fixture(
@@ -694,30 +493,17 @@ mod tests {
         );
     }
 
-    /// Half-width of the flat stone stage the boat fixture builds around the
-    /// spawn: the pool sits five cells out with a four-cell ring, plus a
-    /// margin the hull nudge search may explore.
     const STAGE_REACH: i32 = 12;
-    /// Air cells cleared above the stage: the player, the aim ray and the
-    /// checked hull spawn sweep all fit inside.
     const STAGE_HEADROOM: i32 = 4;
 
-    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-    /// pointing at the staged vehicles pack before first registry touch).
     #[test]
     #[ignore = "spawned by boat_use_click_on_water_spawns_the_hull with the vehicles pack env"]
     fn boat_use_click_on_water_spawns_the_hull_inner() {
         let mut server = crate::server::session_build::build_server_inline("", 1, 2);
-        // Inline pool: pumping drains the spawn area's gen/light work to
-        // stream-final, which the mod's gated `get_block` reads require.
         for _ in 0..40 {
             server.pump_tagged(0.06, &mut Vec::new(), &[]);
         }
 
-        // The fixture owns its terrain. Spawn is drawn from OS entropy onto
-        // whatever the generator put there, so a natural slope, tuft, canopy
-        // or cave mouth under the player would move the aim ray; a flat stone
-        // stage with clear air above it makes the geometry below a constant.
         let feet = server.sessions[0].player.pos;
         let (bx, by, bz) = (
             feet.x.floor() as i32,
@@ -744,8 +530,6 @@ mod tests {
             sess.input.claim_pos = standing;
         }
 
-        // A contained one-cell pool two cells ahead of the player (+x):
-        // stone floor and ring so the source cannot spread, air above.
         let (wx, wy, wz) = (bx + 5, by, bz);
         for dx in -4..=4 {
             for dz in -4..=4 {
@@ -759,8 +543,6 @@ mod tests {
             }
         }
 
-        // A use click is a GAMEPLAY click: the engine bars the hands of a body
-        // whose menu is open, and the client never sends one from a menu.
         server.sessions[0].input.intent_gameplay = true;
 
         let boat = ItemType::by_key("vehicles:boat").expect("the vehicles pack item registered");
@@ -778,16 +560,9 @@ mod tests {
             "the boat sits in the selected hotbar slot"
         );
 
-        // Aim the authoritative view ray at the pool (the server validates
-        // the claim against ITS OWN water-stopping ray, so the claimed
-        // target is derived from that same ray).
         {
             let sess = &mut server.sessions[0];
             let eye = crate::server::movement::reach_eye(sess);
-            // Aim at the SURFACE, not the cell centre — the centre aim would
-            // clip the near containment wall on the way down — and at the
-            // shore-hugging interior cell (right against the ring): the hull
-            // does NOT fit there, so only the nudge search can place it.
             let dir = (petramond_math::world_pos::WorldPos::new(
                 wx as f64 - 3.0 + 0.5,
                 wy as f64 + 0.95,

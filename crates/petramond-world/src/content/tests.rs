@@ -5,8 +5,6 @@ use super::*;
 use crate::assets::{PackRoots, PackSet};
 use crate::block::Block;
 
-/// A complete fluid row (the shape every loader stage accepts) naming the
-/// pack's own tiles `<tiles>_still` / `<tiles>_flow`.
 fn fluid_row(name: &str, tiles: &str) -> String {
     format!(
         r#"{{
@@ -33,7 +31,6 @@ fn fluid_row(name: &str, tiles: &str) -> String {
     )
 }
 
-/// A fresh `mods/` root under the temp dir, removed when dropped.
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -49,7 +46,6 @@ impl Fixture {
         self.0.join("mods")
     }
 
-    /// Add pack `id` with a manifest (plus `extra` manifest fields) and files.
     fn pack(&self, id: &str, extra: &str, files: &[(&str, String)]) -> &Fixture {
         let dir = self.mods().join(id);
         std::fs::create_dir_all(dir.join("textures")).unwrap();
@@ -88,9 +84,6 @@ fn block_id(name: &str) -> Option<u16> {
     crate::registry::names().blocks.id(name)
 }
 
-/// A pack's bad rows come back ALL AT ONCE, attributed to their stage, and
-/// every stage that reads the failed one is skipped rather than run against
-/// missing data — nothing panics.
 #[test]
 fn the_loader_reports_every_bad_row_and_skips_dependent_stages() {
     let fx = Fixture::new("bad-rows");
@@ -123,8 +116,6 @@ fn the_loader_reports_every_bad_row_and_skips_dependent_stages() {
     }
 }
 
-/// A registry built from a fixture pack is an ordinary value: pinned, it is
-/// what content accessors read on this thread — and only on this thread.
 #[test]
 fn a_pinned_fixture_registry_is_current_on_its_thread_only() {
     let fx = Fixture::new("pinned");
@@ -160,8 +151,6 @@ fn a_pinned_fixture_registry_is_current_on_its_thread_only() {
     assert_eq!(block_id("fx:tar"), None, "the pin ends with its guard");
 }
 
-/// A world that switches a pack off gets a registry without its ids, built
-/// once per enablement and reused; the full set is the base registry itself.
 #[test]
 fn for_world_drops_a_disabled_packs_ids_and_reuses_registries() {
     let fx = Fixture::new("for-world");
@@ -193,8 +182,6 @@ fn for_world_drops_a_disabled_packs_ids_and_reuses_registries() {
     assert_eq!(block_id("fx:tar"), None, "activate re-pins a pinned thread");
 }
 
-/// Disabling a pack takes its dependents out of the CATALOG layers too, while
-/// the asset layers keep every installed pack.
 #[test]
 fn enabled_views_cascade_to_dependents_and_keep_asset_layers() {
     let fx = Fixture::new("cascade");
@@ -220,8 +207,6 @@ fn enabled_views_cascade_to_dependents_and_keep_asset_layers() {
     assert_eq!(scoped.catalog_layers().len(), 1);
 }
 
-/// Discovery refusals are recorded on the pack set (and so reach a failed
-/// load's report), not only logged.
 #[test]
 fn refused_packs_are_listed_on_the_pack_set() {
     let fx = Fixture::new("refused");

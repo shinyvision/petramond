@@ -60,34 +60,20 @@ use self::ui_icons::{create_model_icon_pipeline, create_ui_pipeline};
 pub(super) struct PipelineResources {
     pub uniform_bind: wgpu::BindGroup,
     pub atlas_bind: wgpu::BindGroup,
-    /// The terrain tile-ARRAY bind (group 1 for the opaque/transparent block pipelines),
-    /// parallel to `atlas_bind` — see [`create_atlas_array`](super::resources::create_atlas_array).
     pub atlas_array_bind: wgpu::BindGroup,
-    /// The atlas bind-group LAYOUT (texture + sampler), returned so the renderer
-    /// can build a separate bind group over the entity model texture for the `mob`
-    /// pipeline (same shape, different texture).
     pub atlas_bgl: wgpu::BindGroupLayout,
     pub sky_pipe: crate::pipeline::SampledPipeline,
     pub sky_bind: wgpu::BindGroup,
     pub sky_texture_bind: wgpu::BindGroup,
     pub sky_shader_param_keys: Vec<String>,
     pub sky_light_param_key: Option<String>,
-    /// Pack-supplied environment (volumetric) passes in pack load order,
-    /// minus their depth-coupled group-0 binds (built by the renderer, which
-    /// owns the depth view lifecycle).
     pub env_passes: Vec<EnvPassResources>,
-    /// Half-res env scaler (downsample + composite around the env passes).
     pub env_scaler: EnvScalers,
-    /// Terrain opaque (quantized [`TerrainVertex`] + column origin instance).
     pub opaque_pipe: crate::pipeline::SampledPipeline,
     pub translucent_pipe: crate::pipeline::SampledPipeline,
     pub transparent_pipe: crate::pipeline::SampledPipeline,
     pub transparent_two_sided_pipe: crate::pipeline::SampledPipeline,
-    /// Absolute-`Vertex` opaque pipe for chests / doors / item entities.
     pub dynamic_opaque_pipe: crate::pipeline::SampledPipeline,
-    /// Full-screen colour-grade pass: reads the offscreen scene texture, writes
-    /// the swapchain (see `grade.wgsl`). The bind group over the scene view is
-    /// built by [`create_grade_bind`] (and rebuilt on resize).
     pub grade_pipe: wgpu::RenderPipeline,
     pub grade_bgl: wgpu::BindGroupLayout,
     pub outline_pipe: crate::pipeline::SampledPipeline,
@@ -98,15 +84,8 @@ pub(super) struct PipelineResources {
     /// model3d pipeline: per-draw MVP (dynamic offset) + block atlas, full-bright,
     /// NO depth. Serves the isometric slot icons in the depthless UI pass.
     pub model3d_pipe: wgpu::RenderPipeline,
-    /// Same shader/layout as `model3d_pipe` but WITH a depth attachment (Depth32
-    /// Float, write, Less). Used for the first-person held block in the hand pass,
-    /// which now carries a cleared depth buffer so the held geometry self-sorts.
     pub model3d_hand_pipe: crate::pipeline::SampledPipeline,
-    /// Dynamic-offset uniform buffer holding up to [`MODEL3D_MVP_SLOTS`] MVP
-    /// matrices in 256-byte slots; written per frame by the hand / icon passes.
     pub model3d_mvp_buf: wgpu::Buffer,
-    /// group(0) bind for model3d: the MVP buffer (dynamic offset) + the shared
-    /// uv_rects table at binding 1. Bound with the per-draw 256-aligned offset.
     pub model3d_mvp_bind: wgpu::BindGroup,
     /// The model3d group(0) bind-group LAYOUT (dynamic-offset MVP at binding 0 +
     /// uv_rects at binding 1), exposed so the renderer can build a SEPARATE,
@@ -114,12 +93,8 @@ pub(super) struct PipelineResources {
     /// needs one live MVP slot per cube/sprite icon simultaneously — more than the
     /// per-frame [`MODEL3D_MVP_SLOTS`]).
     pub model3d_mvp_bgl: wgpu::BindGroupLayout,
-    /// The shared uv-rect table buffer (binding 1 of the model3d group(0)), exposed
-    /// so the icon-atlas bake's own MVP bind group can reference the same table.
     pub uv_rects_buf: wgpu::Buffer,
-    /// Reusable dynamic vertex buffer for model3d draws (hand + icons).
     pub model3d_vbuf: wgpu::Buffer,
-    /// Reusable dynamic index buffer for model3d draws.
     pub model3d_ibuf: wgpu::Buffer,
     /// item3d pipeline: the EXTRUDED first-person held item (flowers / tools).
     /// Explicit per-vertex (pos, uv, shade); group(0) = a dynamic-offset MVP over
@@ -127,24 +102,9 @@ pub(super) struct PipelineResources {
     /// alpha-cutout, double-sided, depth test + write (the hand pass clears depth)
     /// so the front/back/side-wall faces self-sort instead of overdrawing.
     pub item3d_pipe: crate::pipeline::SampledPipeline,
-    /// group(0) bind for item3d: just the dynamic-offset MVP (binding 0) over the
-    /// shared `model3d_mvp_buf` — reuses slot 0 (the hand slot is free for a held
-    /// sprite, which emits no model3d geometry).
     pub item3d_mvp_bind: wgpu::BindGroup,
-    /// Reusable dynamic vbuf for the extruded held-item geometry (non-indexed
-    /// triangle list, rewritten in place per frame).
     pub item3d_vbuf: wgpu::Buffer,
-    /// `mob` pipeline: world-space explicit-UV streams (held and dropped
-    /// sprite/bbmodel items). Reuses the block `uniform_bgl` + `atlas_bgl`
-    /// pipeline layout (group0 = world `view_proj`, group1 = the sheet the
-    /// stream samples), the explicit-UV `ItemVertex`, REPLACE blend +
-    /// alpha-cutout, double-sided (flat sub-cubes show from both sides), depth
-    /// test + WRITE so the geometry occludes terrain.
     pub mob_pipe: crate::pipeline::SampledPipeline,
-    /// `skinned` pipeline: mobs and player bodies skinned on the GPU from
-    /// each model's static bind-space mesh (see [`crate::skinned`]). The mob
-    /// pipeline's layout plus group2 = the frame's bone palette, laid out by
-    /// `bone_palette_bgl`; draws instanced, one call per model.
     pub skinned_pipe: crate::pipeline::SampledPipeline,
     pub bone_palette_bgl: wgpu::BindGroupLayout,
     /// World-model pipeline: the chunk's bbmodel-block stream (`ModelVertex`,
@@ -153,51 +113,18 @@ pub(super) struct PipelineResources {
     /// sim's day/night sky scale at draw time, so placed models darken at
     /// night like terrain (their meshes don't rebake when the sun sets).
     pub world_model_pipe: crate::pipeline::SampledPipeline,
-    /// The alpha-BLEND twin of `world_model_pipe` for the chunk's
-    /// semi-transparent bbmodel faces (`fs_world_model_blend`): same vertex
-    /// layout and depth test+write, drawn in the model-blend pass after the
-    /// translucent-block pass.
     pub world_model_blend_pipe: crate::pipeline::SampledPipeline,
-    /// The bbmodel-block break crack: a decal over the model's own triangles
-    /// (see [`crate::model_break`]), with its own group(2) layout for the
-    /// frame's crack masks + the block atlas.
     pub model_break_pipe: crate::pipeline::SampledPipeline,
     pub model_break_bgl: wgpu::BindGroupLayout,
-    /// Break-overlay pipeline: the cracked-block destroy quad. Reuses the block
-    /// `uniform_bind` (view_proj + uv_rects) + `atlas_bind`, alpha-blended, depth
-    /// LessEqual / no-write over geometry coincident with the block faces.
     pub break_pipe: crate::pipeline::SampledPipeline,
-    /// Model→terrain contact-shadow pipeline: the packed columns'
-    /// `ContactShadowVertex` streams, multiplicative, depth read-only with its
-    /// own coplanar bias, drawn between the opaque and sky passes. Binds only
-    /// the shared `uniform_bind` at group 0.
     pub contact_pipe: crate::pipeline::SampledPipeline,
-    /// Entity blob-shadow pipeline: one horizontal MULTIPLY-blended quad per
-    /// entity, same depth/cull rules as the contact pass, drawn right after it.
     pub entity_shadow_pipe: crate::pipeline::SampledPipeline,
-    /// Cutout terrain-particle cube pipeline. Reuses the block `uniform_bind`
-    /// + `atlas_bind`, depth-tests, and depth-writes.
     pub particle_pipe: crate::pipeline::SampledPipeline,
-    /// Translucent block-emitter particle pipeline: solid-color cube particles, alpha
-    /// blended, depth-tested without writes, and back-face culled so transparency never
-    /// exposes all six cube faces at once.
     pub emitter_particle_pipe: crate::pipeline::SampledPipeline,
-    /// UI pipeline: 2D HUD / inventory quads (NDC pos + uv + color). Alpha-blended,
-    /// NO depth, drawn last; group(0) binds whatever texture each quad samples — a
-    /// baked GUI texture or the icon atlas (solid quads ignore the sampler).
     pub ui_pipe: wgpu::RenderPipeline,
-    /// model-icon pipeline: bbmodel-block icons. The icon MVP is baked into the
-    /// `ItemVertex` positions CPU-side and the faces self-sort by depth (the model is
-    /// double-sided like the in-world block), so this is a near pass-through sampling
-    /// the MODEL atlas at group(0); alpha-cutout, alpha-blended, depth test + write.
-    /// Used ONLY to bake the bbmodel-block cells of the icon atlas at renderer init.
     pub model_icon_pipe: wgpu::RenderPipeline,
 }
 
-/// The terrain shader, composed: the registry-generated tables (transition
-/// sets, variation, flipbooks, the fluid `media`) ahead of the shared helpers
-/// and `block.wgsl`, with every `#import` (frame uniforms, vertex lanes)
-/// resolved.
 fn block_shader_source(media: &[petramond_world::fluid::FluidMedium]) -> String {
     let source = transition::declarations()
         + &variation::declarations()
@@ -247,7 +174,6 @@ pub(super) fn create_pipeline_resources(
         array_sampler,
     );
 
-    // Absolute 24-byte vertex (dynamic bakes / break): pos f32x3 + tint + packed×2.
     let vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -306,8 +232,6 @@ pub(super) fn create_pipeline_resources(
         attributes: &terrain_vbuf_attrs,
     };
 
-    // Vertex: pos (f32x3 @0) + uv (f32x2 @12) + shade (f32 @20) + tint (f32x3 @24)
-    // = 36 bytes (matches `ItemVertex`).
     let item3d_vbuf_attrs = [
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -324,7 +248,6 @@ pub(super) fn create_pipeline_resources(
             offset: 20,
             shader_location: 2,
         },
-        // tint (foliage-green for fern / short grass, white otherwise)
         wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
             offset: 24,
@@ -346,8 +269,6 @@ pub(super) fn create_pipeline_resources(
             &shared.array_layout,
             &[terrain_vbuf_layout, crate::resources::COLUMN_ORIGIN_LAYOUT],
         );
-    // Absolute-pos opaque pipe for chests / doors / item entities (same FS as
-    // terrain opaque; `vs_main` keeps world-space f32 positions).
     let dynamic_opaque_targets = builders::color_target(
         format,
         Some(wgpu::BlendState::REPLACE),
@@ -427,7 +348,6 @@ pub(super) fn create_pipeline_resources(
         &mob_shader,
         true,
     );
-    // The model-break decal binds the model pipeline's two groups plus its own.
     let model_break_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("model break bgl"),
         entries: &crate::model_break::layout_entries(),
@@ -506,23 +426,14 @@ pub(super) fn create_pipeline_resources(
     }
 }
 
-/// Bind groups / layouts shared across the per-pipeline constructors: the
-/// uv-rect table, the frame-uniform group, the 2D atlas group, the block
-/// pipeline layout, and the terrain tile-array group + layout.
 struct SharedBindings {
     uv_rects_buf: wgpu::Buffer,
-    /// The block group-0 LAYOUT (Uniforms + uv_rects), for pipelines that bind
-    /// `uniform_bind` alone (the contact-shadow pass).
     uniform_bgl: wgpu::BindGroupLayout,
     uniform_bind: wgpu::BindGroup,
     atlas_bgl: wgpu::BindGroupLayout,
     atlas_bind: wgpu::BindGroup,
-    /// The block pipeline layout ([uniform_bgl, atlas_bgl]), reused by the
-    /// mob / world-model / break-overlay / particle passes.
     layout: wgpu::PipelineLayout,
     atlas_array_bind: wgpu::BindGroup,
-    /// The terrain pipeline layout ([uniform_bgl, array_bgl]) for the
-    /// opaque/transparent block passes.
     array_layout: wgpu::PipelineLayout,
 }
 
@@ -534,12 +445,6 @@ fn create_shared_bindings(
     array_view: &wgpu::TextureView,
     array_sampler: &wgpu::Sampler,
 ) -> SharedBindings {
-    // uv-rect table: the EXACT `tile_uv()` bits per tile, indexed by `Tile as
-    // usize`. The vertex shader only SELECTS corners from this (no arithmetic),
-    // so reconstructed uvs are bit-identical to the old CPU-baked per-vertex uvs
-    // on every backend. Never updated after creation. A storage buffer sized to
-    // the loaded catalogue, so the table grows with content (at least one row:
-    // a binding cannot be empty).
     let mut uv_rects = vec![[0f32; 4]; Tile::count().max(1)];
     for t in Tile::all() {
         uv_rects[t.index()] = tile_uv(t);
@@ -575,9 +480,9 @@ fn create_shared_bindings(
     );
     let layout = pipeline_layout(device, "pipe layout", &[&uniform_bgl, &atlas_bgl]);
 
-    // Terrain-only tile ARRAY (group 1 for the opaque/transparent block pipelines): one
-    // layer per tile with REPEAT wrapping, so a greedy-meshed quad tiles its layer. The 2D
-    // `atlas_bgl`/`atlas_bind` above stay for the model/break/particle/mob passes.
+    // Terrain block pipelines bind a tile array in group 1: one layer per tile, REPEAT wrapping, so
+    // a greedy-meshed quad tiles its layer. Models, break cracks, particles and mobs keep the 2D
+    // atlas above.
     let (array_bgl, atlas_array_bind) = texture_sampler_bgl_bind(
         device,
         "atlas array",

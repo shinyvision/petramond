@@ -1,7 +1,5 @@
 use super::*;
 
-/// A water source cell at the section's +X face, meshed with the east
-/// neighbour either loaded (air) or not yet streamed in.
 fn edge_water_mesh(east_section_loaded: bool) -> ChunkMesh {
     let mut section = Section::new(0, 0, 0);
     section.set_fluid(SECTION_SIZE - 1, 8, 8, Block::Water, 0);
@@ -17,8 +15,6 @@ fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
     let loaded_air = edge_water_mesh(true);
     let unloaded = edge_water_mesh(false);
 
-    // The TOP face rides its own cull-none stream (it must stay visible from
-    // below), so the back-face-culled stream carries the other five.
     assert_eq!(
         loaded_air.transparent.len() + loaded_air.transparent_two_sided.len(),
         24,
@@ -33,37 +29,29 @@ fn water_side_faces_at_unloaded_streaming_edges_are_culled() {
     assert_eq!(unloaded.transparent_two_sided.len(), 4, "one top face");
 }
 
-/// Still water uses the still tile and renders at the (recessed) full height;
-/// flowing water uses the animated flow tile and renders lower, so the surface
-/// slopes. Locks the mesher's water tile selection + variable-height geometry.
 #[test]
 fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     let still_id = Block::Water.fluid_still_tile().index() as u32;
     let flow_id = Block::Water.fluid_flow_tile().index() as u32;
 
-    // A 5x5 pool of sources on a stone floor at y=4, plus one explicitly
-    // flowing cell (falloff 4) at the east rim that opens onto air.
     let mut section = Section::new(0, 0, 0);
     for z in 6..=10 {
         for x in 6..=10 {
             section.set_block(x, 4, z, Block::Stone);
-            section.set_fluid(x, 5, z, Block::Water, 0); // source
+            section.set_fluid(x, 5, z, Block::Water, 0);
         }
     }
     section.set_block(11, 4, 8, Block::Stone);
-    section.set_fluid(11, 5, 8, Block::Water, 4); // flowing, opens east onto air
+    section.set_fluid(11, 5, 8, Block::Water, 4);
 
     let m = mesh(&section);
 
-    // Decode the upward-facing tile for each top vertex (those raised above the
-    // cell floor). Collect tile ids and the lowest/highest surface heights.
     let mut saw_still = false;
     let mut saw_flow = false;
     let mut min_top = f32::INFINITY;
     let mut max_top: f32 = 0.0;
     for v in &m.transparent {
         let tile = tile_idx(v);
-        // Top vertices sit above the cell base (y=5); skip the side/bottom ones.
         if v.pos[1] > 5.05 {
             min_top = min_top.min(v.pos[1]);
             max_top = max_top.max(v.pos[1]);
@@ -80,7 +68,6 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
         "interior still sources should use the still tile"
     );
     assert!(saw_flow, "the flowing rim cell should use the flow tile");
-    // Full sources sit at the recessed 0.875; the falloff-4 cell is well below.
     assert!(
         max_top <= 5.9,
         "water tops are recessed below the full block (got {max_top})"
@@ -91,16 +78,11 @@ fn water_meshing_picks_still_vs_flow_tiles_and_varies_height() {
     );
 }
 
-/// A submerged (capped) water cell must render its side face toward a shorter
-/// open-surface neighbour — the exposed vertical step — so a 1-deep flow stepping
-/// down doesn't show the floor through the height gap.
 #[test]
 fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
     let mut section = section_with(&[((8, 3, 8), Block::Stone), ((9, 3, 8), Block::Stone)]);
-    // 2-deep column at x=8 -> the y=4 cell is capped (water above) and full.
     section.set_fluid(8, 4, 8, Block::Water, 0);
     section.set_fluid(8, 5, 8, Block::Water, 0);
-    // Shorter open-surface flowing cell next door (air above it).
     section.set_fluid(9, 4, 8, Block::Water, 3);
 
     let m = mesh(&section);
@@ -120,9 +102,6 @@ fn submerged_water_renders_exposed_step_toward_a_shorter_neighbour() {
     );
 }
 
-/// Falling water is also full-height. When it diverges beside a thinner
-/// same-level flow, its internal side must render the exposed step; otherwise the
-/// two water meshes do not meet and the floor/terrain shows through as a wedge.
 #[test]
 fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
     const FALLING_META: u8 = 0x80;
@@ -149,10 +128,6 @@ fn falling_water_renders_exposed_step_toward_a_shorter_neighbour() {
     );
 }
 
-/// The frozen-sea sheet — an ice layer capping water at the section's top row
-/// — must emit its geometry into the TRANSPARENT (alpha-blended) buffer: ice
-/// is a translucent block, and a routing regression in either direction is
-/// invisible or wrongly-solid ice.
 #[test]
 fn sea_ice_sheet_over_water_emits_translucent_geometry() {
     let mut section = Section::new(0, 0, 0);
@@ -185,9 +160,6 @@ fn sea_ice_sheet_over_water_emits_translucent_geometry() {
     assert_eq!(cutout, 0, "no ice face may leak into the cutout pass");
     assert_eq!(water_pass, 0, "no ice face may leak into the water pass");
 
-    // Water under ice looks like water under ANY block: the ordinary recessed
-    // 8/9 source surface, never pulled flush to the ice underside. (Flush
-    // sealing under ice was tried and reverted — consistency won.)
     let top_water = 14.0 + 8.0 / 9.0;
     assert!(
         m.transparent
@@ -201,11 +173,6 @@ fn sea_ice_sheet_over_water_emits_translucent_geometry() {
     );
 }
 
-/// Water never climbs to meet a block above it — ANY block: a FLOWING
-/// trickle under a stone bridge keeps its own recessed surface, a STILL
-/// SOURCE under stone keeps the classic 8/9 gap, and a source under ICE
-/// keeps the exact same gap (flush "sealing" lids were tried in three
-/// variants and all reverted — `world::fluid::fills_cell`).
 #[test]
 fn water_under_ordinary_blocks_keeps_its_own_surface() {
     let mut section = Section::new(0, 0, 0);
@@ -214,8 +181,6 @@ fn water_under_ordinary_blocks_keeps_its_own_surface() {
             section.set_block(x, 0, z, Block::Stone);
         }
     }
-    // A flowing cell (level 4 → amount 4 → surface 4/9) and a still SOURCE,
-    // each under a stone "bridge" block; a source under ICE must match stone.
     section.set_fluid(4, 1, 8, Block::Water, 4);
     section.set_block(4, 2, 8, Block::Stone);
     section.set_fluid(8, 1, 8, Block::Water, 0);
@@ -253,19 +218,10 @@ fn water_under_ordinary_blocks_keeps_its_own_surface() {
     );
 }
 
-/// Still sources never wear the FLOW look, whatever sits in the water: a
-/// block submerged in a still sea makes the recessed cell under/around it
-/// slope against its full mid-column neighbours, but two adjacent still
-/// sources never flow into each other — so no flow tile and no flow heading
-/// anywhere (`fluid_math::surface_flow_dir`). A genuinely FLOWING cell beside
-/// sources keeps its flow look.
 #[test]
 fn blocks_sitting_in_still_water_grow_no_flow_streaks() {
     let flow_tile = Block::Water.fluid_flow_tile().index() as u32;
 
-    // A still walled pool (all sources, meta 0) with a block resting in it —
-    // walled because out-of-section reads are air, which would otherwise put
-    // a genuine waterfall edge on the section border.
     let mut sea = Section::new(0, 0, 0);
     for z in 0..SECTION_SIZE {
         for x in 0..SECTION_SIZE {
@@ -280,15 +236,14 @@ fn blocks_sitting_in_still_water_grow_no_flow_streaks() {
             }
         }
     }
-    sea.set_block(8, 3, 8, Block::Stone); // at the surface row
-    sea.set_block(8, 2, 8, Block::Stone); // fully submerged
+    sea.set_block(8, 3, 8, Block::Stone);
+    sea.set_block(8, 2, 8, Block::Stone);
     let m = mesh(&sea);
     assert!(
         !m.transparent.iter().any(|v| tile_idx(v) == flow_tile),
         "still sources around a submerged block must not render as flowing"
     );
 
-    // Contrast: one genuinely flowing cell in the open keeps the flow tile.
     let mut stream = Section::new(0, 0, 0);
     for z in 0..SECTION_SIZE {
         for x in 0..SECTION_SIZE {
@@ -296,7 +251,7 @@ fn blocks_sitting_in_still_water_grow_no_flow_streaks() {
         }
     }
     stream.set_fluid(8, 1, 8, Block::Water, 0);
-    stream.set_fluid(9, 1, 8, Block::Water, 3); // flowing neighbour
+    stream.set_fluid(9, 1, 8, Block::Water, 3);
     let m = mesh(&stream);
     assert!(
         m.transparent.iter().any(|v| tile_idx(v) == flow_tile),
@@ -304,7 +259,6 @@ fn blocks_sitting_in_still_water_grow_no_flow_streaks() {
     );
 }
 
-/// Every registered fluid — whatever its row says — is under test here.
 fn fluids() -> impl Iterator<Item = Block> {
     petramond_world::fluid::medium::media().iter().copied()
 }
@@ -327,8 +281,6 @@ pub(super) fn face_of(v: &Vertex) -> crate::face::Face {
         .unwrap_or_else(|| panic!("fluid vertex with normal code {code}"))
 }
 
-/// The quads carrying `fluid`'s medium in their vertex lane, from every
-/// stream — the lane, not the stream, is what makes a face a fluid face.
 pub(super) fn fluid_quads(m: &ChunkMesh, fluid: Block) -> Vec<[Vertex; 4]> {
     let slot = petramond_world::fluid::medium::medium_index(fluid).expect("a fluid row") + 1;
     [&m.opaque, &m.transparent, &m.transparent_two_sided]
@@ -364,7 +316,6 @@ fn every_fluid_meshes_from_its_own_row() {
     }
 }
 
-/// Every fluid meshes from its own row (see `every_fluid_meshes_from_its_own_row`).
 pub(super) fn assert_meshes_from_its_row(fluid: Block) {
     use crate::face::Face;
 
@@ -376,11 +327,11 @@ pub(super) fn assert_meshes_from_its_row(fluid: Block) {
     for z in 6..=10 {
         for x in 6..=10 {
             section.set_block(x, 4, z, Block::Stone);
-            section.set_fluid(x, 5, z, fluid, 0); // source
+            section.set_fluid(x, 5, z, fluid, 0);
         }
     }
     section.set_block(11, 4, 8, Block::Stone);
-    section.set_fluid(11, 5, 8, fluid, 4); // flowing rim, opens east
+    section.set_fluid(11, 5, 8, fluid, 4);
     let m = mesh(&section);
 
     let quads = fluid_quads(&m, fluid);
@@ -453,17 +404,12 @@ pub(super) fn assert_meshes_from_its_row(fluid: Block) {
     }
 }
 
-/// The face set of a fluid BODY, for every fluid: a free-standing two-deep
-/// pool emits side walls only on its outer boundary planes, each declaring
-/// the outward normal and wound front-facing along it, and no face at all
-/// between two full same-fluid cells. Sides are back-face culled, so an
-/// inward-wound or interior wall would show the far side of the body.
 #[test]
 fn fluid_body_emits_only_outward_boundary_walls() {
     use crate::face::Face;
 
     const LO: usize = 6;
-    const HI: usize = 9; // exclusive
+    const HI: usize = 9;
     for fluid in fluids() {
         let mut section = floor_section(Block::Stone);
         for z in LO..HI {
@@ -483,7 +429,6 @@ fn fluid_body_emits_only_outward_boundary_walls() {
                 "{fluid:?}: a {face:?} face on a body resting on rock"
             );
             let d = face.dir();
-            // The wall lies on the body's outer plane on its declared side.
             let (axis, plane) = if d.x != 0 { (0, d.x) } else { (2, d.z) };
             let want = if plane > 0 { HI } else { LO } as f32;
             assert!(
@@ -491,8 +436,6 @@ fn fluid_body_emits_only_outward_boundary_walls() {
                 "{fluid:?}: {face:?} wall off the body boundary: {:?}",
                 quad.iter().map(|v| v.pos).collect::<Vec<_>>()
             );
-            // Winding: the quad's geometric normal points along the declared
-            // outward direction (front-facing under back-face culling).
             let n = geometric_normal(quad);
             assert!(
                 n[0] * d.x as f32 + n[2] * d.z as f32 > 1e-6,
@@ -509,7 +452,6 @@ fn fluid_body_emits_only_outward_boundary_walls() {
             walls_seen, [true; 4],
             "{fluid:?}: every outer boundary plane grows a wall"
         );
-        // The surface sheet: only the open top layer, never the capped cells.
         let tops: Vec<_> = quads
             .iter()
             .filter(|q| face_of(&q[0]) == Face::PosY)
@@ -521,13 +463,10 @@ fn fluid_body_emits_only_outward_boundary_walls() {
     }
 }
 
-/// A FALLING stream draws the flow tile on every exposed face, for every
-/// fluid: the FALLING bit decides, not the horizontal surface gradient. A
-/// column in open air has a symmetric neighbourhood (zero gradient), so its
-/// exposed top — the topmost cell when the pour above is gone or not yet
-/// streamed — must not fall back to the still tile. Sides of the still
-/// SOURCE feeding a worldgen-style ceiling pour stay calm; the falling cells
-/// under it stream.
+/// The FALLING bit picks the flow tile on every exposed face, not the surface gradient.
+/// An open-air column has zero gradient, and its top cell still must not fall back to the
+/// still tile when the pour above is gone or hasn't streamed yet.
+/// A still SOURCE feeding a ceiling pour keeps calm sides; the falling cells below it stream.
 #[test]
 fn falling_fluid_column_draws_the_flow_tile_on_every_exposed_face() {
     use crate::face::Face;
@@ -538,7 +477,6 @@ fn falling_fluid_column_draws_the_flow_tile_on_every_exposed_face() {
         let flow_id = fluid.fluid_flow_tile().index() as u32;
         let is_side = |q: &&[Vertex; 4]| face_of(&q[0]) != Face::PosY;
 
-        // Ceiling pour: a still source under rock at y=7, falling cells 1..=6.
         let mut section = floor_section(Block::Stone);
         section.set_block(8, 8, 8, Block::Stone);
         section.set_fluid(8, 7, 8, fluid, 0);
@@ -565,7 +503,6 @@ fn falling_fluid_column_draws_the_flow_tile_on_every_exposed_face() {
             );
         }
 
-        // Truncated fall: the same stream with nothing above its top cell.
         let mut section = floor_section(Block::Stone);
         for y in 1..=6 {
             section.set_fluid(8, y, 8, fluid, FALLING_META);
@@ -587,9 +524,6 @@ fn falling_fluid_column_draws_the_flow_tile_on_every_exposed_face() {
     }
 }
 
-/// Two pockets in a cave (no skylight): a source sealed under a stone lid with
-/// rock on every side, and a source in a one-wide trench whose walls rise past
-/// its open top.
 fn cave_pockets(block: Block) -> Section {
     let place = |section: &mut Section, x: usize, z: usize| {
         if block.is_fluid() {
@@ -612,9 +546,6 @@ fn cave_pockets(block: Block) -> Section {
     section
 }
 
-/// The flood's seeding around `block`: its own cell holds its full emission
-/// and each face neighbour that accepts light one decay step of it; rock takes
-/// none. Nothing else in the scene is lit.
 fn emission_field(
     section: &Section,
     block: Block,
@@ -717,9 +648,6 @@ fn a_fluid_lights_its_faces_by_its_medium_self_lit_fraction() {
     }
 }
 
-/// An emissive SOLID cube is not a self-lit face: its sides keep the light
-/// sampled in front of them and their contact AO. Keying the lift on emission
-/// alone made every glowing block glow flat on all six faces.
 #[test]
 fn an_emissive_solid_cube_keeps_its_sampled_light_and_ao() {
     let block = Block::all()

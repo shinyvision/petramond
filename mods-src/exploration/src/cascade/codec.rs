@@ -1,11 +1,7 @@
-//! The memo encoding of a settled cell's outcome.
-
 use mod_sdk::{ByteReader, ByteWriter};
 
 use super::{Feature, Kind};
 
-/// A settled cell's key in the shared memo (the host scopes it to this mod
-/// and the world seed).
 pub fn memo_key(ours: u8, (lx, ly, lz): (i32, i32, i32)) -> Vec<u8> {
     let mut w = ByteWriter::with_capacity(14);
     w.raw(&[b'c', ours]);
@@ -14,7 +10,6 @@ pub fn memo_key(ours: u8, (lx, ly, lz): (i32, i32, i32)) -> Vec<u8> {
 }
 
 impl Feature {
-    /// The memo value of a settled cell: `None` = no cascade here.
     pub fn encode(feature: Option<&Feature>) -> Vec<u8> {
         let Some(f) = feature else {
             return vec![0];
@@ -45,13 +40,10 @@ impl Feature {
         w.finish()
     }
 
-    /// The exact [`encode`](Self::encode)d size of a feature with these list
-    /// lengths: a tag and three counts, 13 bytes per write, 12 per cell.
     pub fn encoded_len(writes: usize, reserves: usize, suppressed: usize) -> usize {
         13 + 13 * writes + 12 * (reserves + suppressed)
     }
 
-    /// Outer `None` = malformed (recompute); inner `None` = no cascade.
     pub fn decode(bytes: &[u8]) -> Option<Option<Feature>> {
         let mut r = ByteReader::new(bytes);
         match r.take(1)? {

@@ -1,17 +1,8 @@
-/// The process-wide index buffer every implied-triangulation terrain draw uses
-/// (see [`petramond_mesh::QuadIdx`]): `0,1,2, 0,2,3` repeated, so a draw is
-/// `draw_indexed(0..6*quads, base_vertex = the section's first vertex)`.
-///
-/// It replaces a per-column index allocation for the opaque and far-LOD streams
-/// — 122 MiB of VRAM at render distance 32, and the same again on the CPU side,
-/// for one buffer of a couple of megabytes.
 pub(crate) struct QuadIndexBuffer {
     buf: wgpu::Buffer,
     quads: u32,
 }
 
-/// Quads the shared index buffer covers on creation. Sized so an ordinary
-/// column's whole-column opaque draw never has to grow it.
 const QUAD_INDEX_INITIAL: u32 = 1 << 16;
 
 impl QuadIndexBuffer {
@@ -38,7 +29,6 @@ impl QuadIndexBuffer {
         buf
     }
 
-    /// Guarantee the buffer covers a draw of `quads` quads.
     pub(crate) fn ensure(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, quads: u32) {
         if quads <= self.quads {
             return;

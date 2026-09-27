@@ -18,37 +18,20 @@ use mod_sdk::*;
 
 use crate::keys;
 
-/// Frozen positional salt. Changing it reshuffles the ore in every world.
 const SALT_VEIN: u64 = 0xF012_04E0_0000_0001;
 
-/// The vein band, absolute world Y. The world floor is −64; nothing is
-/// carved below −48, so all but the band's roof is dig-only.
 const Y_MIN: i32 = -64;
 const Y_MAX: i32 = -40;
 
-/// The feature's write bounds for host-side admission. A vein's cluster
-/// reaches ONE block past the band its origin rolled in (see [`CLUSTER`]),
-/// so the declared roof is one higher than `Y_MAX` — declared here, beside
-/// the geometry that makes it so.
 pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(Y_MIN, Y_MAX + 1);
 
-/// Vein candidates rolled per 16×16 chunk column. Tuned against `orecensus`
-/// for Rachel's target: petramond ≈ 2× rarer than diamond by total cells
-/// (diamond's mass is spread over −64..16; petramond packs its half into
-/// the deep band, so the local density down there is diamond-like).
 const VEINS_PER_COLUMN: i32 = 11;
 
-/// Acceptance at the band floor (`t = 1`): the depth ramp is
-/// `chance(y) = FLOOR_CHANCE * t²`, `t = (Y_MAX − y) / (Y_MAX − Y_MIN)` —
-/// the engine's own deeper-is-likelier shape (diamond's exact ramp).
 const FLOOR_CHANCE: f32 = 1.0;
 
-/// Gems per vein.
 const SIZE_MIN: i32 = 1;
 const SIZE_MAX: i32 = 2;
 
-/// Cluster offsets a vein's extra cells pick from, nearest first. One block
-/// of reach, so the 3×3 chunk-column neighbourhood over-covers horizontally.
 const CLUSTER: [[i32; 3]; 6] = [
     [1, 0, 0],
     [-1, 0, 0],
@@ -65,8 +48,6 @@ pub struct Ore {
 }
 
 impl Ore {
-    /// Registry resolution only: this runs on the DETACHED per-thread
-    /// worldgen instances too, where there is no simulation to call into.
     pub fn init(&mut self) {
         self.ore = resolve_block_logged(keys::PETRAMOND_ORE);
         self.stone = resolve_block_logged(keys::STONE);
@@ -76,8 +57,6 @@ impl Ore {
         let (Some(ore), Some(stone)) = (self.ore, self.stone) else {
             return Vec::new();
         };
-        // The host already skips sections outside `GEN_FILTER`; a direct call
-        // (a unit test) gets the same answer from the same bounds.
         if !GEN_FILTER.intersects(ctx.section_pos()[1], &[]) {
             return Vec::new();
         }
@@ -89,8 +68,6 @@ impl Ore {
         for ncx in (cx - 1)..=(cx + 1) {
             for ncz in (cz - 1)..=(cz + 1) {
                 for i in 0..VEINS_PER_COLUMN {
-                    // The vein's OWN stream: skipping any other vein can
-                    // never shift this one.
                     let mut rng = GenRng::positional(seed, SALT_VEIN, ncx, i, ncz);
                     let ox = (ncx << 4) + rng.next_i32(0, 15);
                     let oz = (ncz << 4) + rng.next_i32(0, 15);
@@ -106,9 +83,6 @@ impl Ore {
                         cells.push([ox + off[0], oy + off[1], oz + off[2]]);
                     }
                     for pos in cells {
-                        // Per-cell clip: only cells this dispatch owns, and
-                        // only into stone — cave air, tuff, marble and every
-                        // earlier vein survive.
                         if ctx.block(pos) == Some(stone) {
                             writes.push((pos, ore));
                         }
@@ -135,9 +109,6 @@ mod tests {
         )
     }
 
-    /// The seam contract: two horizontally-adjacent sections re-derive the
-    /// same veins and each emits only cells it owns — the union has no
-    /// duplicates and every cell lands in its emitting section.
     #[test]
     fn adjacent_sections_agree_on_the_veins_and_emit_only_their_own_cells() {
         let stone = BlockId(7);
@@ -145,7 +116,7 @@ mod tests {
             ore: Some(BlockId(200)),
             stone: Some(stone),
         };
-        let cy = -4; // sections −64..−48, the heart of the band
+        let cy = -4;
         let mut all = Vec::new();
         for scx in 0..4 {
             let writes = ore.generate(&ctx_at([scx, cy, 0], stone));
@@ -170,8 +141,6 @@ mod tests {
         );
     }
 
-    /// The band holds: nothing above Y_MAX, and a section far above the
-    /// band rejects before rolling anything.
     #[test]
     fn the_ore_stays_in_its_deep_band() {
         let stone = BlockId(7);

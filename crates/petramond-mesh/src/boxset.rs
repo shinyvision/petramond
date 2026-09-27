@@ -16,9 +16,8 @@
 //!   [`push_occluder`]), the neighbour cell's own box set for faces flush on
 //!   the cell boundary (a fence post cap on a slab, a chain continuing into
 //!   the chain above), and the classic whole-face cull against a full opaque
-//!   neighbour. The old per-family rules (fence post-cap enums, pane
-//!   per-segment caps, stair/slab half-cell adjacency) are subsumed by this
-//!   subtraction.
+//!   neighbour. The same subtraction handles fence post caps, pane segment
+//!   caps, and stair/slab half-cell adjacency.
 //! - **Lighting is the cube's, per plane.** The emitter gathers the
 //!   mesher's face lighting (`face_light`) once per (face direction, boundary/interior
 //!   plane) — the front voxel is the neighbour for a flush face, the cell
@@ -26,9 +25,8 @@
 //!   bilinearly samples it at every emitted corner, so a box face shades
 //!   identically to a full cube face wherever their corners coincide.
 //!   `NegY` planes stay flat-lit (the stair's closed-underside rule). Every
-//!   box family is smooth-lit — the old flat-lit thin-shape policy predated
-//!   plane-field sampling (its "AO smears on thin geometry" concern was an
-//!   artifact of per-quad corner lighting) and is gone.
+//!   box family is smooth-lit because plane-field sampling keeps lighting
+//!   continuous across thin geometry.
 //! - **Self-AO and neighbour casting come from corner probes.** Each emitted
 //!   corner probes its three front-side pockets (the sub-cell analogue of
 //!   the grid ring's side/side/diagonal cells): a probe inside the cell
@@ -59,13 +57,8 @@ use super::plane::{cell_uv, FaceUvSpan, PlaneLight};
 use super::vertex::{pack_cell_uv, pack_normal_code, pack_vertex, Vertex, UV_MODE_CELL_LOCAL};
 use super::UV_MODE_SHIFT;
 
-// The emitter's box vocabulary is the ENGINE-NEUTRAL shape currency (see
-// `block::shape`): every shape family resolves to the same `ShapeBox` list
-// that collision, targeting, and the occupancy cull read, so the drawn
-// geometry cannot drift from the collided geometry.
 pub(super) use petramond_world::block::{ShapeBox, ShapeFace};
 
-/// An axis-aligned rectangle in a face's (u, v) plane.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct Rect {
     u0: f32,
@@ -91,51 +84,23 @@ impl Rect {
     }
 }
 
-/// Coordinate tolerance for coverage/coincidence tests: bake and family
-/// geometry is authored on the 1/16 grid (finer subdivisions stay far above
-/// this), so 1e-4 cleanly separates "same plane" from "different plane".
 const T: f32 = 1e-4;
-/// A subtraction remainder thinner than this is dropped (degenerate sliver).
 const AREA_EPS: f32 = 1e-4;
-/// Probe lift off the face plane: keeps a coplanar continuation (two flush
-/// boxes forming one surface) from shadowing its own seam, the model-AO rule.
-/// Shared with the face-lighting gather's cast probes so casting and self-AO
-/// speak one geometry.
 pub(super) const PROBE_LIFT: f32 = 0.02;
-/// Probe tangential reach (1.5 texels): how close sub-cell geometry must be
-/// to a corner to occlude it. Shared with the cube gathers' cast probes.
 pub(super) const PROBE_REACH: f32 = 1.5 / 16.0;
 
-/// The shared sub-cell AO occupancy oracle: does the world cell's matter
-/// overlap the cell-local pocket AABB `(lo, hi)`?
 pub(super) type MatterFn<'a> = dyn Fn(IVec3, [f32; 3], [f32; 3]) -> bool + 'a;
 
-/// The world around one box-set cell, as the emitter reads it. The mesher
-/// answers it from its neighbourhood; the emitter holds no world knowledge.
 pub(super) trait BoxWorld {
-    /// Whether a full opaque occupier lies across the cell's `face` boundary
-    /// (the classic whole-face cull).
     fn neighbour_solid(&self, face: Face) -> bool;
 
-    /// Push the occupancy boxes of the neighbour across `face`, in
-    /// NEIGHBOUR-local coordinates, for sub-cell boundary culling. May push
-    /// nothing (unknown/none).
     fn neighbour_boxes(&self, face: Face, out: &mut Vec<([f32; 3], [f32; 3])>);
 
-    /// The shared sub-cell AO occupancy query (world cell + cell-local
-    /// pocket AABB) — the out-of-cell probe resolution AND the plane
-    /// gather's cast probe, so box shapes receive neighbour casting with
-    /// exactly the cube faces' semantics.
     fn matter(&self, cell: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool;
 
-    /// The mesher's face-lighting gather: the per-corner light of a `face`
-    /// plane lying `plane` along the normal from the `front` world voxel's
-    /// minimum corner; `smooth = false` lights it flat from the front voxel.
     fn face_light(&self, face: Face, front: IVec3, plane: f32, smooth: bool) -> CornerLight;
 }
 
-/// Where a box-set cell sits: its world cell, and the mesh-space origin the
-/// emitted positions are relative to.
 #[derive(Copy, Clone)]
 pub(super) struct BoxCell {
     pub(super) cell: IVec3,
@@ -143,7 +108,6 @@ pub(super) struct BoxCell {
 }
 
 impl BoxCell {
-    /// A cell-local point in mesh space.
     #[inline]
     fn mesh_pos(self, local: [f32; 3]) -> [f32; 3] {
         let base = (self.cell - self.anchor).as_vec3();
@@ -151,8 +115,6 @@ impl BoxCell {
     }
 }
 
-/// One face plane of a box: its axes (`face_axes`), which way it faces, and
-/// its cell-local coordinate along the normal.
 #[derive(Copy, Clone)]
 struct FacePlane {
     axes: (usize, usize, usize),
@@ -160,8 +122,6 @@ struct FacePlane {
     d: f32,
 }
 
-/// Reusable scratch for [`emit_box_set`] — one per mesh build, so the hot
-/// loop allocates nothing after warm-up.
 #[derive(Default)]
 pub(super) struct BoxSetScratch {
     occ: Vec<Rect>,
@@ -169,16 +129,9 @@ pub(super) struct BoxSetScratch {
     runs: Vec<(f32, f32)>,
     rects: Vec<Rect>,
     nb: Vec<([f32; 3], [f32; 3])>,
-    // Per-face plane light gathers, keyed by the plane's cell-local
-    // coordinate along the face normal: a face direction can hold SEVERAL
-    // distinct planes (a custom shape's floor and shelf), and the pockets a
-    // gather casts sit on its plane, so gathers at different heights must
-    // not share.
     planes: Vec<(f32, PlaneLight)>,
 }
 
-/// Mesh one cell's box set. See the module doc for the model; `world`
-/// answers every read beyond the cell's own boxes.
 pub(super) fn emit_box_set(
     vbuf: &mut Vec<Vertex>,
     at: BoxCell,
@@ -192,8 +145,6 @@ pub(super) fn emit_box_set(
         let (axis, ua, va) = face_axes(face);
         let positive = matches!(face, Face::PosX | Face::PosY | Face::PosZ);
 
-        // Per-face lazies: the whole-face solid cull, the neighbour box
-        // fetch, and the per-plane light gathers.
         let mut solid: Option<bool> = None;
         let mut nb_fetched = false;
         scratch.planes.clear();
@@ -233,7 +184,6 @@ pub(super) fn emit_box_set(
                 v1: b.aabb.max[va],
             };
 
-            // Everything covering the space just in front of this face.
             let face_plane = FacePlane {
                 axes: (axis, ua, va),
                 positive,
@@ -241,8 +191,6 @@ pub(super) fn emit_box_set(
             };
             scratch.occ.clear();
             for (j, o) in boxes.iter().enumerate() {
-                // A posed sibling lies on no axis plane: it can neither seal
-                // this face nor tie with it.
                 if j != i && o.pose.is_none() {
                     push_occluder(
                         &mut scratch.occ,
@@ -252,8 +200,7 @@ pub(super) fn emit_box_set(
                         // boxes draws a shared plane. A box that never emits
                         // this face has no claim on it and must not suppress
                         // the box that does — otherwise a cap plate flush with
-                        // the body it caps loses its only face (the cactus's
-                        // invisible top, 2026-07-25).
+                        // the body it caps loses its only face.
                         j < i && o.faces[fi].is_some(),
                         &rect,
                     );
@@ -319,10 +266,6 @@ pub(super) fn emit_box_set(
                 max3[va] = r.v1;
                 let local = face.quad_box(min3, max3);
 
-                // The corner rotation that expresses the darker AO diagonal
-                // (see `face_emit::push_cube_face`) needs every
-                // corner's AO before any vertex is written, so the corners are
-                // sampled first and emitted second.
                 let mut quad_ao = [3u32; 4];
                 let mut sky = [0u32; 4];
                 let mut light = [petramond_world::light::BlockLight6::DARK; 4];
@@ -366,10 +309,6 @@ pub(super) fn emit_box_set(
                     });
                 }
                 if b.double_sided {
-                    // Seen from either side: the cactus's side tile is
-                    // transparent along its edge columns except where the
-                    // spines poke out, so a single-sided plane loses half the
-                    // spines as you strafe past.
                     super::vertex::push_back_face(vbuf, start);
                 }
             }
@@ -377,7 +316,6 @@ pub(super) fn emit_box_set(
     }
 }
 
-/// A cell-local UV quantized to the vertex's 1/16 lanes.
 #[inline]
 fn quant_uv(x: f32) -> u32 {
     super::vertex::round_i32(x * 16.0).clamp(0, 16) as u32
@@ -405,7 +343,6 @@ fn emit_posed_face(
     world: &dyn BoxWorld,
 ) {
     let (_, ua, va) = face_axes(face);
-    // The edge faces of a flat plane have no area.
     if b.aabb.max[ua] - b.aabb.min[ua] <= 0.0 || b.aabb.max[va] - b.aabb.min[va] <= 0.0 {
         return;
     }
@@ -430,7 +367,6 @@ fn emit_posed_face(
     let mut uvs = [(0u32, 0u32); 4];
     let span = FaceUvSpan::of(face, b.aabb.min, b.aabb.max);
     for ci in 0..4 {
-        // Light: the posed corner projected onto the lit plane.
         let proj = posed[ci].map(|c| c.clamp(0.0, 1.0));
         let [pu, pv] = cell_uv(lit, proj);
         let (mut ao, sky6, block) = pl.sample(pu, pv);
@@ -441,7 +377,6 @@ fn emit_posed_face(
         quad_ao[ci] = ao;
         sky[ci] = sky6;
         light[ci] = block;
-        // Art: carved in the box's own frame.
         let [u, v] = cell_uv(face, local[ci]);
         let (uu, vv) = style.texel_uv((u, v), span.fraction((u, v)));
         uvs[ci] = (quant_uv(uu), quant_uv(vv));
@@ -473,8 +408,6 @@ fn emit_posed_face(
     }
 }
 
-/// The axis face a world normal leans most toward — how a posed face picks
-/// its directional shade and the light plane it samples.
 fn dominant_face(n: glam::Vec3) -> Face {
     let a = n.abs();
     if a.y >= a.x && a.y >= a.z {
@@ -516,14 +449,8 @@ pub(crate) fn cell_seals_face(
 ) -> bool {
     let block = nb.block(pos);
     boxes.clear();
-    // The blanket a `snow_bedded` cell is drawn standing in seals exactly like
-    // the snow layer it stands in for — and it must be counted BEFORE the
-    // box-shape flags below, because the cells that need it most (a tuft, a
-    // fern, a hemp stalk) are transparent crosses with no box form at all.
     let tint_for = |_: petramond_world::tile::Tile| [1.0f32; 3];
     snow_bed_boxes(nb, pos, block, &tint_for, boxes);
-    // Dense flags first: the shape-kind row behind `mesh_emitter` is a
-    // big-table load, and almost every cell asked here is rejected.
     if block.has_box_shape() && !block.is_transparent() && !block.is_translucent() {
         let k = block.shape_kind_def();
         k.render.boxes(
@@ -563,10 +490,6 @@ fn snow_bed(
     petramond_world::block::snow_cover_at(pos, |p| nb.block(p))
 }
 
-/// Whether this cell presents a SNOW BLANKET to the block beneath it — it
-/// either IS a snow-cover block or is [`snow_bed`]ded in one. What the grass
-/// below swaps its sides for, so a decorated column keeps the snowy sides its
-/// undecorated neighbours have.
 pub(crate) fn cell_wears_snow(
     nb: &dyn petramond_world::block::ShapeNeighborhood,
     pos: glam::IVec3,
@@ -574,11 +497,6 @@ pub(crate) fn cell_wears_snow(
     petramond_world::block::snow_cover_at(pos, |p| nb.block(p)).is_some()
 }
 
-/// The bedding blanket's own boxes, resolved IN this cell. Reading the
-/// neighbour's shape rather than naming a plate is what keeps the bed honest:
-/// it is whatever the snow beside it actually is, so it lines up by
-/// construction and a retuned snow row moves both together. Appends; empty
-/// when the cell is not bedded.
 pub(crate) fn snow_bed_boxes(
     nb: &dyn petramond_world::block::ShapeNeighborhood,
     pos: glam::IVec3,
@@ -603,17 +521,11 @@ pub(crate) fn snow_bed_boxes(
     );
 }
 
-/// Whether `boxes` cover the whole 1×1 cell-boundary rectangle their `face`
-/// lies on. Only boxes FLUSH on that boundary can contribute; the coverage
-/// test is the emitter's own rect subtraction, so a shape tiling its floor
-/// with several boxes seals exactly like one that uses a single slab.
 fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) -> bool {
     let (axis, ua, va) = face_axes(face);
     let positive = matches!(face, Face::PosX | Face::PosY | Face::PosZ);
     scratch.occ.clear();
     for b in boxes.iter().filter(|b| b.occludes && b.pose.is_none()) {
-        // A box only seals if it OWNS the boundary plane; a face the family
-        // never emits still seals (the matter is there either way).
         let d = if positive {
             b.aabb.max[axis]
         } else {
@@ -667,9 +579,8 @@ fn covers_boundary(boxes: &[ShapeBox], face: Face, scratch: &mut BoxSetScratch) 
 /// visible holes. Where the straddling box is fully opaque the retained face
 /// is overdraw — invisible if the surface in front is a texel or more away,
 /// but a Z-FIGHT once the two are a fraction of a texel apart and the depth
-/// buffer stops separating them, which only shows AT DISTANCE. So a pack shape
-/// built from overlapping boxes should BUTT them instead; the furniture
-/// cauldron's belly plates were the case that taught this (2026-07-30).
+/// buffer stops separating them, which only shows at distance. A pack shape
+/// should butt adjacent boxes to let the emitter cull their shared faces.
 fn push_occluder(
     occ: &mut Vec<Rect>,
     (omin, omax): ([f32; 3], [f32; 3]),
@@ -739,7 +650,6 @@ fn subtract(
         if vb - va <= AREA_EPS {
             continue;
         }
-        // Occluder u-intervals overlapping this band, merged.
         runs.clear();
         for o in occ {
             if o.v0 <= va + T && o.v1 >= vb - T {
@@ -773,8 +683,6 @@ fn subtract(
         }
     }
 
-    // Vertical re-merge: adjacent bands producing the same u-extent fuse
-    // back into one rect (restores e.g. a pane's full broad face).
     let mut i = 0;
     while i < out.len() {
         let mut j = i + 1;
@@ -787,7 +695,7 @@ fn subtract(
                 out[i].v0 = a.v0.min(b.v0);
                 out[i].v1 = a.v1.max(b.v1);
                 out.swap_remove(j);
-                j = i + 1; // rescan: the grown rect may fuse further
+                j = i + 1;
             } else {
                 j += 1;
             }
@@ -796,17 +704,14 @@ fn subtract(
     }
 }
 
-/// Corner-probe self-AO + received casting: the sub-cell generalization of
-/// grid vertex AO. The three probes are POCKET VOLUMES (side-u / side-v /
-/// diagonal quadrants of a [`PROBE_REACH`]-sized region around the corner,
-/// lifted [`PROBE_LIFT`] off the face plane) overlap-tested against matter —
-/// the cell's own box set directly, and any out-of-cell portion through the
-/// shared `matter` query (opaque whole-cell, a neighbour's stair/slab
-/// occupancy, its box set...). Volumes, not points: an inset neighbour base
-/// still overlaps an edge pocket, so received casting is uniform along an
-/// edge. A full-cell box face reproduces classic grid vertex AO exactly, and
-/// the lift keeps two flush boxes forming one continuous surface from
-/// shadowing their shared seam.
+/// Corner-probe self-AO + received casting: sub-cell version of grid vertex AO. Three probes are
+/// pocket volumes (side-u / side-v / diagonal quadrants, [`PROBE_REACH`] sized, lifted
+/// [`PROBE_LIFT`] off the face plane), overlap-tested against matter: cell's own box set directly,
+/// plus out-of-cell part via `matter` (opaque whole-cell, neighbour stair/slab occupancy, box
+/// set...).
+/// Volumes not points: an inset neighbour base still overlaps an edge pocket, so received casting
+/// stays uniform along an edge. Full-cell box face reproduces classic grid vertex AO exactly. The
+/// lift stops two flush boxes from shadowing their shared seam.
 fn probe_ao(
     boxes: &[ShapeBox],
     corner: [f32; 3],
@@ -850,8 +755,6 @@ fn probe_ao(
     };
 
     let occupied = |(plo, phi): ([f32; 3], [f32; 3])| -> bool {
-        // The cell's own boxes: strict positive overlap (a graze is not
-        // matter; the lift owns continuation immunity).
         if boxes
             .iter()
             .filter(|b| b.occludes && b.casts_ao)
@@ -859,8 +762,6 @@ fn probe_ao(
         {
             return true;
         }
-        // Out-of-cell portions: split the pocket per axis at the cell
-        // bounds and resolve each non-empty foreign part through `matter`.
         let segs = |a: usize| -> [(i32, f32, f32); 3] {
             [
                 (-1, plo[a], phi[a].min(0.0)),

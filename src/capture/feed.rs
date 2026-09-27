@@ -1,15 +1,3 @@
-//! What a presentation plays forward, and the MOMENT it presents.
-//!
-//! The moment is everything presented besides terrain: the clock, every
-//! entity's row, the roster, the replicated environment, the spatial loops
-//! sounding, the captured player's dig cell and own state, the open
-//! containers. State pieces restate parts of it; released frames move it on
-//! exactly as a live client's batches do (a batch's entity lanes despawn,
-//! spawn and update the tracked set).
-//!
-//! The QUEUE is the events ranges still to release, walked record by record;
-//! frames read ahead of the position wait decoded until they come due.
-
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
@@ -26,7 +14,6 @@ use crate::net::protocol::{
 use crate::net::spatial_loops::{is_looped, loop_restarts, note_loop_commands, LiveSpatialLoops};
 use crate::player::PlayerId;
 
-/// One batch's rows, as the pair the position interpolates needs them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BatchMoment {
     pub tick: u64,
@@ -36,33 +23,24 @@ pub struct BatchMoment {
     pub players: Arc<[PlayerStateRow]>,
 }
 
-/// Everything presented besides terrain.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Moment {
-    /// The newest applied batch's tick and the day clock.
     pub clock: Option<(u64, u64)>,
     pub mobs: BTreeMap<u64, MobStateRow>,
     pub items: BTreeMap<u64, ItemStateRow>,
     pub players: BTreeMap<PlayerId, PlayerStateRow>,
     pub roster: BTreeMap<PlayerId, String>,
-    /// Every shader param as replicated.
     pub env: BTreeMap<String, [f32; 4]>,
     pub loops: LiveSpatialLoops,
     pub dig: Option<IVec3>,
     pub open_chests: Vec<IVec3>,
-    /// The captured player's own state.
     pub viewer: Option<SelfState>,
-    /// The captured player, as the `Session` piece names it.
     pub local_player: Option<PlayerId>,
-    /// The server-wide sleep headcount the newest batch carried.
     pub sleep: Option<SleepTally>,
-    /// The batch before the newest, when a stretch released both.
     pub previous: Option<BatchMoment>,
 }
 
 impl Moment {
-    /// A state piece's part of the moment replaces what is presented.
-    /// Terrain pieces and whole-world statements are not the moment's.
     pub fn restate(&mut self, body: &StateBody) {
         match body {
             StateBody::Clock(c) => self.clock = Some((c.tick, c.day_clock)),
@@ -105,8 +83,6 @@ impl Moment {
         }
     }
 
-    /// Keep only the entities `population` lists. `Err` names one it lists
-    /// that nobody states.
     pub fn restrict(
         &mut self,
         population: &mod_api::capture::ClientPopulation,
@@ -146,7 +122,6 @@ impl Moment {
         Ok(())
     }
 
-    /// A released world message.
     pub fn message(&mut self, msg: &ServerToClient) {
         match msg {
             ServerToClient::PlayerJoined { id, name } => {
@@ -159,8 +134,6 @@ impl Moment {
         }
     }
 
-    /// A released tick batch: its lanes move the entity set on, its sections
-    /// the rest of the moment.
     pub fn batch(&mut self, t: &TickUpdate) {
         if let Some((tick, clock)) = self.clock {
             self.previous = Some(BatchMoment {
@@ -196,7 +169,6 @@ impl Moment {
         }
     }
 
-    /// Fold a released frame's moment parts.
     pub fn frame(&mut self, frame: &Frame) {
         for item in &frame.items {
             match item {
@@ -208,10 +180,6 @@ impl Moment {
         }
     }
 
-    /// The moment as the messages a client ingests to present it over an
-    /// empty entity store: the roster, then the pair's batches (the newest
-    /// carrying the environment, the open containers, the captured player's
-    /// own state and the loops still sounding). No terrain, no one-shots.
     pub fn restatement(&self) -> Vec<ServerToClient> {
         let mut out: Vec<ServerToClient> = self
             .roster
@@ -254,8 +222,6 @@ impl Moment {
     }
 }
 
-/// The lane that takes a store holding `before` (nothing, without it) to
-/// `now`: every row of `now`, and the ids only `before` held despawned.
 fn lane_from<R: EntityRow>(before: Option<&[R]>, now: &BTreeMap<R::Id, R>) -> EntityLane<R, R::Id> {
     let mut lane = EntityLane::from(now.values().cloned().collect::<Vec<R>>());
     lane.despawned = before
@@ -277,13 +243,11 @@ fn loop_handle(cmd: &SpatialSoundMsg) -> u64 {
     }
 }
 
-/// Events ranges still to walk, record by record, in order.
 #[derive(Clone, Debug, Default)]
 pub struct Queue {
     ranges: VecDeque<Span>,
 }
 
-/// The rest of one queued range.
 #[derive(Clone, Debug)]
 pub struct Span {
     pub file: SourceFile,
@@ -314,7 +278,6 @@ impl Queue {
         self.ranges.iter()
     }
 
-    /// The front range's next record was taken (`len` bytes).
     pub fn advance(&mut self, len: u64) {
         if let Some(span) = self.ranges.front_mut() {
             span.offset += len;
@@ -332,7 +295,6 @@ impl Queue {
         self.ranges.clear();
     }
 
-    /// Drop every range of the ended incarnation.
     pub fn forget(&mut self, incarnation: u64) {
         self.ranges.retain(|s| s.file.incarnation != incarnation);
     }

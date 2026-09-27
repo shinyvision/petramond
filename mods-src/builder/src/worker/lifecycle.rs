@@ -1,7 +1,3 @@
-//! Summoning, emerging and burrowing: the golem rises out of the ground
-//! beside the table and sinks back into it, the body authored along the way
-//! so it passes through the terrain without changing it.
-
 use crate::host::prelude::*;
 
 use super::presence::Presentation;
@@ -14,7 +10,6 @@ use crate::worker::Job;
 pub const EMERGE: &str = "emerge";
 pub const BURROW: &str = "burrow";
 
-/// Open ground near the table the golem can rise out of.
 pub fn find_home(ctx: &mut Ctx, job: &Job, table: [i32; 3]) -> Option<[i32; 3]> {
     let mut candidates = Vec::new();
     for r in 1..=4i32 {
@@ -42,9 +37,6 @@ pub fn find_home(ctx: &mut Ctx, job: &Job, table: [i32; 3]) -> Option<[i32; 3]> 
         .map(|(cell, _)| cell)
 }
 
-/// Which of `cells` the golem can rise out of and sink back into: open, room
-/// to stand, and a whole block under it that is neither the table nor a
-/// supply chest.
 pub fn homes(ctx: &mut Ctx, table: [i32; 3], cells: &[[i32; 3]]) -> Vec<bool> {
     let standing = footholds(GOLEM, cells.to_vec());
     let here = get_blocks(cells.to_vec());
@@ -106,9 +98,6 @@ pub fn summon(
 fn earth(home: [i32; 3], t: u32) {
     let feet = feet_of(home);
     if t.is_multiple_of(6) {
-        // Thrown up out of whatever it comes through: the ground's own
-        // flecks, as digging it would shed them. The bundle's brown is for
-        // ground that cannot be read.
         let ground = get_block([home[0], home[1] - 1, home[2]]);
         emitter_burst_of(
             EARTH_BURST,
@@ -137,8 +126,6 @@ pub fn emerge(projects: &mut Projects, job: &mut Job, body: &Body) {
     if t >= EMERGE_TICKS {
         job.crew.presence.animate(body.id, None);
         job.crew.presence.set_hold(body.id, false);
-        // It comes up beside the table and takes its plans with it: from here
-        // on the blueprint it carries is what it builds by.
         container_transfer(
             ContainerAddress::Block(project.table),
             0,
@@ -164,9 +151,6 @@ pub fn emerge(projects: &mut Projects, job: &mut Job, body: &Body) {
     job.crew.step = Step::Emerge { t: t + 1 };
 }
 
-/// Stuck past getting out: sink into the ground where the golem stands, pass
-/// home under the ground, and rise again there, carrying what it carried.
-/// What it was up on or laying is left for the planner to take down.
 pub fn relocate(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -263,13 +247,8 @@ pub fn burrow(projects: &mut Projects, job: &mut Job, body: &Body) {
         Step::Burrow { t } => t,
         _ => 0,
     };
-    // The step arrives as `Burrow { t: 0 }` from the walk home: the first
-    // tick of sinking is where it starts from.
     if t == 0 {
         job.crew.rescue.burrow_from = body.cell;
-        // A job called off is still owed: its plans go back into the table,
-        // where Start takes the same build up again. (A finished job's go
-        // down with the golem.)
         if let Some(project) = projects.get(job.id).filter(|p| p.cancelling()).cloned() {
             let bound = |stack: &ItemStackData| projects.bound(stack) == Some(project.id);
             if let Some(slot) = body
@@ -283,9 +262,6 @@ pub fn burrow(projects: &mut Projects, job: &mut Job, body: &Body) {
                     ContainerAddress::Block(project.table),
                     1,
                 );
-                // No table to take them (it is gone, or its slot is taken):
-                // the plans are left here on the ground. Carried down, they
-                // scatter where the body leaves, at the bottom of its burrow.
                 if let (None, Some(plans)) = (tabled, &body.slots[slot]) {
                     let data: Vec<(&str, &[u8])> = plans
                         .data
@@ -305,9 +281,6 @@ pub fn burrow(projects: &mut Projects, job: &mut Job, body: &Body) {
     job.crew.presence.set_hold(body.id, true);
     job.crew.presence.animate(body.id, Some(BURROW));
     if t >= BURROW_TICKS {
-        // A body that leaves scatters what it carries; a finished job's plans
-        // go down with it instead. A cancelled job's that found no room in
-        // the table are left to scatter: the player is owed them.
         let cancelled = projects.get(job.id).is_some_and(|p| p.cancelling());
         let plans: Vec<(u32, Option<ItemStackData>)> = body
             .slots

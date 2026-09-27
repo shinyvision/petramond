@@ -1,17 +1,8 @@
-//! The wooden door: a thin slab on a cell edge with per-cell facing/open/half state.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A wooden door; a thin slab on a cell edge, per-cell facing/open/half state.
 pub struct DoorFamily;
 
 impl ShapeSim for DoorFamily {
-    /// The two stacked halves, lower first, each carrying the shared facing
-    /// and open bit with its own `top`. A cell with no stored state cannot
-    /// say which half it is, so it stands alone (the door's failure policy).
     fn compound_members(
         &self,
         _p: &ShapeParams,
@@ -50,7 +41,6 @@ impl ShapeRender for DoorFamily {
         MeshEmitter::Nothing
     }
 
-    /// The lower half draws the whole door; the upper draws nothing itself.
     fn animated_pose(
         &self,
         _p: &ShapeParams,
@@ -154,9 +144,6 @@ impl ShapePlacement for DoorFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A door is a 2-tall thin block: both cells must be loaded +
-        // replaceable with a floor to stand on, and the closed slab must not
-        // trap a body. It sits on the edge nearest the placer.
         let p = inputs.place_pos;
         if !w.door_footprint_clear(p) {
             return PlacementOutcome::Refused;
@@ -189,8 +176,6 @@ impl ShapePlacement for DoorFamily {
     }
 }
 
-/// Whether `block` is a door-shaped row — the ownership test of the door
-/// cell state.
 pub fn is_door(block: Block) -> bool {
     block.shape_family() == ShapeFamily::Door
 }

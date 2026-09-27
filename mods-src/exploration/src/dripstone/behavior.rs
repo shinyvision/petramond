@@ -1,34 +1,11 @@
-//! The spike rows' block behaviour: what a stalactite or stalagmite DOES.
-//!
-//! The engine keeps the shape (a run's taper is refined on every edit); the
-//! pack keeps the consequences. Both rows share one behaviour key, and every
-//! hook re-reads the cell's block first, so a hook that fires on a cell the
-//! world has already changed under it does nothing.
-
 use mod_sdk::*;
 
 use super::{Dripstone, Run, MAX_RUN, PLACED_KEY};
 use crate::keys;
 
-// A cell is random-ticked about once every 68 seconds (the engine draws
-// `RANDOM_TICK_SPEED` = 3 of a section's 4,096 cells per tick, 20 ticks a
-// second), so a per-mille chance here is a wait of `68 s / chance`. The
-// first cut's 12 per mille was a growth step every 95 MINUTES — rare enough
-// that a player would call it broken.
-
-/// Per-mille chance per random tick that a dripping tip GROWS. ~7.6 minutes
-/// per step; when both directions are open each is half that, so a run and
-/// the stalagmite under it take their turns and a farm is a patient thing
-/// rather than an invisible one.
 const GROW_PER_MILLE: u64 = 150;
-/// Per-mille chance per random tick that a drip fills the vessel under it:
-/// ~4.5 minutes a fill, a water source worth walking back to.
 const VESSEL_PER_MILLE: u64 = 250;
-/// How far below a tip a drip reaches: the first non-air cell within this
-/// many is what it lands on.
 const DRIP_REACH: i32 = 11;
-/// Downward launch speed of a falling piece, m/s. Gravity does the rest;
-/// this only keeps the pieces from hanging for a tick where they were.
 const FALL_SPEED: f32 = 2.0;
 
 pub fn on_hook(d: &Dripstone, kind: BlockHookKind, pos: [i32; 3]) {
@@ -43,10 +20,6 @@ pub fn on_hook(d: &Dripstone, kind: BlockHookKind, pos: [i32; 3]) {
             if !held(d, pos, block) {
                 come_down(d, pos, block);
             } else {
-                // The cheapest chance to tell the truth: whatever changed
-                // beside this spike may have started or stopped its drip, and
-                // a tip newly exposed by the segment below it breaking has a
-                // stale skin to shed.
                 wetness(d, pos, block);
             }
         }
@@ -71,7 +44,7 @@ fn wetness(d: &Dripstone, pos: [i32; 3], block: BlockId) -> Option<bool> {
         return None;
     }
     if d.segment_at([pos[0], pos[1] - 1, pos[2]], Run::Hanging) {
-        return None; // not the free end
+        return None;
     }
     let (_, support) = d.run_root(pos, Run::Hanging);
     let wet = drips(d, support);
@@ -82,10 +55,6 @@ fn wetness(d: &Dripstone, pos: [i32; 3], block: BlockId) -> Option<bool> {
     Some(wet)
 }
 
-/// Whether the cell rootward still holds this segment: another segment of
-/// the same run, or a full-cube surface (the same footing the engine's
-/// placement demanded). An unloaded rootward cell counts as held — a
-/// streaming edge must never bring a run down.
 fn held(d: &Dripstone, pos: [i32; 3], block: BlockId) -> bool {
     let Some(run) = d.run_of(block) else {
         return true;
@@ -134,23 +103,12 @@ fn come_down(d: &Dripstone, pos: [i32; 3], block: BlockId) {
     }
 }
 
-/// A DRIPPING stalactite tip — water standing over the dripstone block its
-/// run hangs from — does one of three things on a random tick: fills the
-/// vessel its drip lands in, extends itself by a segment, or raises the
-/// stalagmite under it (starting one on a full surface). Stalagmites never
-/// act on their own.
 fn grow(d: &Dripstone, pos: [i32; 3], block: BlockId) {
-    // The skin comes first and is its own answer: the row a tip wears IS
-    // whether it drips, so the particle a player sees and the growth that
-    // follows can never disagree.
     if wetness(d, pos, block) != Some(true) {
         return;
     }
     let below = [pos[0], pos[1] - 1, pos[2]];
     let (len, _) = d.run_root(pos, Run::Hanging);
-    // What the drip lands on: the first non-air cell within reach, or
-    // nothing. A streaming edge stops the search — never grow into the
-    // unknown.
     let mut landing = None;
     for k in 1..=DRIP_REACH {
         let c = [pos[0], pos[1] - k, pos[2]];
@@ -172,11 +130,6 @@ fn grow(d: &Dripstone, pos: [i32; 3], block: BlockId) {
             return;
         }
     }
-    // A drip fills a vessel whoever put the spike there: that changes the
-    // player's pot, not the cave, so the branch above is ungated. GROWTH is
-    // what must never touch a generated formation — the cultivated gate
-    // sits HERE, and after the chance roll, so the KV read is paid only by
-    // the few ticks that would otherwise grow something.
     if roll % 1000 >= GROW_PER_MILLE || !is_placed(pos) {
         return;
     }
@@ -187,31 +140,21 @@ fn grow(d: &Dripstone, pos: [i32; 3], block: BlockId) {
         (true, None) => true,
         (false, _) => false,
     };
-    // What grows out of a cultivated spike is cultivated too, or a farm
-    // would stop dead after its first segment.
     if extend {
-        // The new free end inherits the drip it grew from, so a farm keeps
-        // showing that it is live without waiting for a random tick.
         grow_into(below, d.stalactite_wet);
     } else if let Some(target) = raise {
         grow_into(target, d.stalagmite);
     }
 }
 
-/// Write a grown spike and carry the cultivated mark onto it. The block
-/// write clears the cell's KV, so the mark has to follow it, never precede.
 fn grow_into(pos: [i32; 3], block: BlockId) {
     if set_block(pos, block) {
         mark_placed(pos);
     }
 }
 
-/// Remember that a player put this spike here (see [`PLACED_KEY`]).
 pub fn on_placed(d: &Dripstone, payload: &EventPayload) -> Outcome {
     if let EventPayload::BlockPlaced { pos, block } = payload {
-        // The event names the HELD row, which for a ceiling click is the
-        // sibling of the row actually written — either way it is one of
-        // ours, and the mark belongs to the CELL.
         if d.is_spike(*block) {
             mark_placed(*pos);
         }
@@ -227,24 +170,10 @@ fn is_placed(pos: [i32; 3]) -> bool {
     section_kv_get(pos, PLACED_KEY).is_some()
 }
 
-/// Whether a run hung from `support` drips: a water source sits directly
-/// over the block the run hangs from. ANY block — water seeps through a
-/// ceiling, so what matters is that there is water up there.
-///
-/// It used to demand that the block be a dripstone block specifically (the
-/// reference game's rule). Nothing in the world could tell a player that,
-/// and it cost two playtests: a stone ceiling with water on top is the
-/// obvious thing to build, it looks exactly like a working farm, and it did
-/// nothing. A requirement a player cannot discover is not a rule, it is a
-/// trap.
 fn drips(d: &Dripstone, support: [i32; 3]) -> bool {
     get_block([support[0], support[1] + 1, support[2]]) == Some(d.water)
 }
 
-/// The cell a drip landing on `(c, b)` at distance `k` would raise a
-/// stalagmite into: the air above an existing stalagmite tip whose run is
-/// still short, or above any full surface. Nothing when the landing is
-/// right under the tip (no room) — the two would already be touching.
 fn stalagmite_target(d: &Dripstone, c: [i32; 3], b: BlockId, k: i32) -> Option<[i32; 3]> {
     if k < 2 {
         return None;
@@ -274,38 +203,25 @@ mod tests {
     const LAVA: BlockId = BlockId(205);
     const FILLED: BlockId = BlockId(204);
 
-    /// A synthetic world answering the host calls this behaviour makes, and
-    /// modelling the ONE engine rule it rides: a block write announces to the
-    /// written cell and its six neighbours, and those updates dispatch on the
-    /// NEXT tick — the running tick's batch was snapshotted before the write
-    /// (`World::game_tick` phase 2).
+    /// Fake world for this behavior's host calls. The one engine rule it copies: writing a block
+    /// pings that cell and its six neighbors on the next tick, because the current tick's batch
+    /// was snapshotted before the write (`World::game_tick` phase 2).
     #[derive(Default)]
     struct Fake {
         blocks: BTreeMap<[i32; 3], u16>,
-        /// Per-cell KV, cleared by a block write exactly as the engine
-        /// clears it — so a mark written BEFORE its block would be lost
-        /// here too.
         kv: BTreeMap<([i32; 3], String), Vec<u8>>,
         queued: BTreeSet<[i32; 3]>,
         launched: Vec<[i32; 3]>,
         dropped: Vec<[i32; 3]>,
-        /// Answers to `rng_u64`, consumed in order; empty answers 0.
         rolls: Vec<u64>,
-        /// The loaded region: a cell inside it with no entry is AIR, one
-        /// outside is UNLOADED (`get_block` answers `None`). Empty by
-        /// default, so a test that wants a streaming edge simply says
-        /// nothing.
         loaded: Option<([i32; 3], [i32; 3])>,
     }
 
     impl Fake {
-        /// Scene setup: no announcement (the world was generated this way).
         fn place(&mut self, pos: [i32; 3], block: BlockId) {
             self.blocks.insert(pos, block.0);
         }
 
-        /// An edit, announced exactly as the engine announces one — and
-        /// clearing the cell's KV, which every block write does.
         fn write(&mut self, pos: [i32; 3], block: BlockId) {
             self.blocks.insert(pos, block.0);
             self.kv.retain(|(cell, _), _| *cell != pos);
@@ -323,7 +239,6 @@ mod tests {
             }
         }
 
-        /// The next tick's update batch, snapshotted and cleared.
         fn take_batch(&mut self) -> Vec<[i32; 3]> {
             std::mem::take(&mut self.queued).into_iter().collect()
         }
@@ -332,13 +247,10 @@ mod tests {
             self.blocks.get(&pos).copied().map(BlockId)
         }
 
-        /// Everything in this box is loaded; unset cells there read as air.
         fn load_box(&mut self, min: [i32; 3], max: [i32; 3]) {
             self.loaded = Some((min, max));
         }
 
-        /// What a `get_block` sees: the written block, else air inside the
-        /// loaded region, else nothing at all.
         fn seen(&self, pos: [i32; 3]) -> Option<BlockId> {
             if let Some(id) = self.blocks.get(&pos) {
                 return Some(BlockId(*id));
@@ -349,7 +261,6 @@ mod tests {
                 .then_some(AIR)
         }
 
-        /// Mark a cell cultivated without going through a placement.
         fn mark(&mut self, pos: [i32; 3]) {
             self.kv.insert((pos, super::PLACED_KEY.to_owned()), vec![1]);
         }
@@ -373,8 +284,6 @@ mod tests {
     }
 
     static WORLD: Mutex<Option<Fake>> = Mutex::new(None);
-    /// Serialises the tests that share the one world behind the process-wide
-    /// native host; never held across a host call.
     static SERIAL: Mutex<()> = Mutex::new(());
 
     fn with<R>(f: impl FnOnce(&mut Fake) -> R) -> R {
@@ -390,9 +299,6 @@ mod tests {
         ]
     }
 
-    /// Route the SDK's host calls at [`WORLD`] so the REAL behaviour code
-    /// runs off-wasm. Any call this world does not model panics, so a future
-    /// edit that reaches for one is reported rather than silently answered.
     fn install_host() {
         thread_local! {
             static HOST: std::cell::RefCell<Option<mod_sdk::testing::HostGuard>> =
@@ -451,7 +357,6 @@ mod tests {
         });
     }
 
-    /// A fresh world with the host installed.
     fn fake() -> Fake {
         install_host();
         Fake::default()
@@ -471,8 +376,6 @@ mod tests {
         }
     }
 
-    /// Dispatch the pending update batch as one tick would, and answer how
-    /// many spike cells are left afterward.
     fn tick(d: &Dripstone) -> usize {
         for pos in with(|f| f.take_batch()) {
             on_hook(d, BlockHookKind::NeighborUpdate, pos);
@@ -480,12 +383,12 @@ mod tests {
         with(|f| f.spikes().len())
     }
 
-    /// A run that loses its support UNZIPS — one cell per tick, carried by
-    /// the engine's block-update cascade — and never vanishes whole. The hook
-    /// is handed one cell and must take only that one; what takes the next is
-    /// the update its own removal announced. Clearing the run here instead
-    /// would be a second way to sequence one break, and it would outrun the
-    /// cascade: the whole run went in a single tick.
+    /// An unsupported run unzips one cell per tick via the engine's block-update cascade; it never
+    /// vanishes whole.
+    /// The hook only takes the cell it's handed; the next cell goes when that removal fires an
+    /// update.
+    /// Clearing the whole run here would be a second way to sequence one break, and it would
+    /// outrun the cascade.
     #[test]
     fn a_falling_run_unzips_one_cell_per_tick() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -498,12 +401,10 @@ mod tests {
                 f.place([0, y, 0], STALACTITE);
             }
         });
-        // Mine the ceiling the run hangs from; the engine announces that.
         with(|f| f.write([0, 10, 0], AIR));
 
         let left: Vec<usize> = (0..4).map(|_| tick(&d)).collect();
         assert_eq!(left, vec![3, 2, 1, 0], "one segment per tick, top down");
-        // Every segment fell as a flying piece, from its own cell, in order.
         assert_eq!(
             with(|f| f.launched.clone()),
             vec![[0, 9, 0], [0, 8, 0], [0, 7, 0], [0, 6, 0]]
@@ -514,8 +415,6 @@ mod tests {
         );
     }
 
-    /// The same rule mirrored: a standing run unzips upward from the cell
-    /// that lost its floor, and crumbles instead of falling.
     #[test]
     fn a_standing_run_unzips_upward_and_crumbles() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -539,9 +438,6 @@ mod tests {
         assert!(with(|f| f.launched.is_empty()));
     }
 
-    /// A segment whose support is intact is left alone, and an unloaded
-    /// rootward cell counts as support — a streaming edge must never bring a
-    /// run down.
     #[test]
     fn a_held_segment_survives_its_neighbour_update() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -552,7 +448,6 @@ mod tests {
             f.place([0, 10, 0], ROCK);
             f.place([0, 9, 0], STALACTITE);
             f.place([0, 8, 0], STALACTITE);
-            // A second run whose ceiling is not loaded at all.
             f.place([5, 9, 5], STALACTITE);
             f.queued.insert([0, 9, 0]);
             f.queued.insert([0, 8, 0]);
@@ -562,15 +457,10 @@ mod tests {
         assert!(with(|f| f.launched.is_empty() && f.dropped.is_empty()));
     }
 
-    /// A roll that passes the growth gate and picks each branch: the gate is
-    /// `roll % 1000 < GROW_PER_MILLE`, the branch is bit 10.
     const EXTEND: u64 = 100;
     const RAISE: u64 = 1124;
-    /// Fails the gate outright.
     const IDLE: u64 = 500;
 
-    /// A player's farm: water over a dripstone block over a hanging tip,
-    /// with a stone floor five cells under the drip.
     fn farm(marked: bool) -> Dripstone {
         let d = dripstone();
         with(|f| {
@@ -592,10 +482,6 @@ mod tests {
         on_hook(d, BlockHookKind::RandomTick, pos);
     }
 
-    /// BOTH growth directions must be reachable from one dripping tip: the
-    /// stalactite lengthens downward, and a stalagmite rises from the floor
-    /// the drip lands on. Which one a tick takes is the coin flip in the
-    /// roll, so a farm alternates and the two eventually meet.
     #[test]
     fn a_dripping_tip_both_grows_downward_and_raises_a_stalagmite() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -606,10 +492,8 @@ mod tests {
             Some(STALACTITE_WET),
             "the tip lengthened downward, still visibly dripping"
         );
-        // The new tip is cultivated too, or the farm stops after one segment.
         assert!(with(|f| f.placed([0, 9, 0])), "growth carries the mark");
 
-        // From the new tip, the other branch raises a stalagmite off the floor.
         random_tick(&d, [0, 9, 0], RAISE);
         assert_eq!(
             with(|f| f.block([0, 6, 0])),
@@ -618,13 +502,10 @@ mod tests {
         );
         assert!(with(|f| f.placed([0, 6, 0])));
 
-        // And it keeps rising on later drips, from its own tip upward.
         random_tick(&d, [0, 9, 0], RAISE);
         assert_eq!(with(|f| f.block([0, 7, 0])), Some(STALAGMITE));
     }
 
-    /// A tick that fails the chance gate changes nothing — growth is rare,
-    /// not guaranteed.
     #[test]
     fn an_idle_roll_grows_nothing() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -633,9 +514,6 @@ mod tests {
         assert_eq!(with(|f| f.block([0, 9, 0])), None);
     }
 
-    /// THE CAVE KEEPS ITS SHAPE. A spike the world generated carries no
-    /// cultivated mark, so however long it drips it never grows — only what
-    /// a player placed does.
     #[test]
     fn a_naturally_generated_spike_never_grows() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -647,10 +525,6 @@ mod tests {
         assert_eq!(with(|f| f.spikes()), vec![[0, 10, 0]], "nothing grew");
     }
 
-    /// A NATURAL spike's drip still fills a vessel under it. The cultivated
-    /// gate exists to keep a generated cave's SHAPE, and a pot filling
-    /// changes the player's pot, not the cave — so finding a wild drip and
-    /// putting something under it has to work.
     #[test]
     fn a_natural_drip_still_fills_a_vessel() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -669,8 +543,6 @@ mod tests {
         assert_eq!(with(|f| f.spikes()), vec![[0, 10, 0]], "and grew nothing");
     }
 
-    /// Placing a spike is what marks it, and the mark dies with the block —
-    /// so a cultivated spike that falls and regenerates comes back wild.
     #[test]
     fn placing_marks_the_cell_and_a_block_write_clears_it() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -691,36 +563,23 @@ mod tests {
         );
     }
 
-    /// THE DRIP MEANS WATER. A tip hanging under a dripstone block with a
-    /// water source over it wears the emitter row; take the water away and it
-    /// sheds it. Before this the emitter sat on every hanging row, so a spike
-    /// hung from bare stone visibly dripped while the simulation saw no water
-    /// at all — the feedback said "this farm is live" about a farm that could
-    /// never grow (Rachel's playtest).
     #[test]
     fn a_tip_wears_the_drip_only_while_it_is_really_dripping() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let d = farm(true);
-        // The farm is built dry-skinned; one tick of its own hook dresses it.
         on_hook(&d, BlockHookKind::NeighborUpdate, [0, 10, 0]);
         assert_eq!(
             with(|f| f.block([0, 10, 0])),
             Some(STALACTITE_WET),
             "water over a dripstone block means the tip drips"
         );
-        // The cultivated mark must survive the swap, or the farm quietly
-        // stops being a farm.
         assert!(with(|f| f.placed([0, 10, 0])), "the swap carried the mark");
 
-        // Take the water away: the tip sheds the drip.
         with(|f| f.place([0, 12, 0], AIR));
         on_hook(&d, BlockHookKind::NeighborUpdate, [0, 10, 0]);
         assert_eq!(with(|f| f.block([0, 10, 0])), Some(STALACTITE));
     }
 
-    /// What makes a tip drip is WATER over its run, whatever the ceiling is
-    /// made of — a stone ceiling with water on top is the obvious thing to
-    /// build and has to work.
     #[test]
     fn any_ceiling_with_water_over_it_drips() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -736,7 +595,6 @@ mod tests {
         assert_eq!(with(|f| f.block([0, 10, 0])), Some(STALACTITE_WET));
     }
 
-    /// A spike with nothing wet above it never drips, however long it hangs.
     #[test]
     fn a_spike_with_no_water_over_it_never_drips() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -754,8 +612,6 @@ mod tests {
         assert_eq!(with(|f| f.block([0, 9, 0])), None, "and grows nothing");
     }
 
-    /// Wet and dry are one RUN, not two: a wet tip under dry segments is
-    /// held by them, and a run that loses its ceiling still unzips whole.
     #[test]
     fn a_wet_tip_belongs_to_the_run_above_it() {
         let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -768,13 +624,11 @@ mod tests {
             f.place([0, 10, 0], STALACTITE);
             f.place([0, 9, 0], STALACTITE_WET);
         });
-        // Nothing falls: the wet tip's support is the dry segment above it.
         for pos in [[0, 11, 0], [0, 10, 0], [0, 9, 0]] {
             on_hook(&d, BlockHookKind::NeighborUpdate, pos);
         }
         assert_eq!(with(|f| f.spikes().len()), 3, "a mixed run stands");
 
-        // Cut the ceiling: the whole run unzips, wet segment included.
         with(|f| f.write([0, 12, 0], AIR));
         let left: Vec<usize> = (0..3).map(|_| tick(&d)).collect();
         assert_eq!(left, vec![2, 1, 0]);

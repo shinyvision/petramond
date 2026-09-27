@@ -6,12 +6,6 @@ use crate::bbmodel::display_euler_quat;
 
 use super::{models, BlockModelKind};
 
-/// One Blockbench `display` transform (rotation degrees, translation in 1/16-block
-/// units, scale multiplier, plus the optional rotation/scale pivots in block units) —
-/// how the author wants the model posed in a given context (in-hand, in the GUI, …).
-/// Cached in the `.llblock` so the held item + inventory icon can pose the model
-/// exactly as designed. Default = identity (no display entry). A NEGATIVE scale
-/// component is Blockbench's "mirror" checkbox (the sign is saved into the scale).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DisplayTransform {
     pub rotation: [f32; 3],
@@ -34,15 +28,6 @@ impl Default for DisplayTransform {
 }
 
 impl DisplayTransform {
-    /// The COMPLETE display transform `T(translation) · R(rotation) · S(scale)` with the
-    /// pivot position-corrections, in BLOCK units — element-for-element the matrix
-    /// Blockbench's display preview builds in `updateDisplayBase` (display_mode.js) for
-    /// the right-hand / unmirrored contexts, so a pose renders exactly as authored.
-    /// Model points are expected relative to the authored display pivot (the block
-    /// centre — see `BlockModel::display_pivot` / `ModelInstance::display_from_unit`).
-    /// Translation is authored in pixels (16 per block); the pivots in blocks. A zero
-    /// scale component degrades to 0.001 exactly as Blockbench does; a negative one
-    /// mirrors that axis (the authored "mirror" flag).
     pub fn base_matrix(&self) -> Mat4 {
         let rot = display_euler_quat(Vec3::from(self.rotation));
         let s = Vec3::from(self.scale);
@@ -55,22 +40,13 @@ impl DisplayTransform {
         }
         let sp = Vec3::from(self.scale_pivot);
         if sp != Vec3::ZERO {
-            // Blockbench rotates the pivot FIRST, then damps it componentwise by
-            // (1 - scale) — replicated verbatim, quirks included.
+            // Blockbench rotates the pivot first, then damps it componentwise by
+            // (1 - scale). Copied verbatim, quirks and all.
             pos += (rot * sp) * (Vec3::ONE - s);
         }
         Mat4::from_translation(pos) * Mat4::from_quat(rot) * Mat4::from_scale(scale)
     }
 
-    /// The transform as Blockbench (and vanilla) apply it to a LEFT-hand
-    /// slot: the x-translation and the y/z rotations negate; scale and the
-    /// pivots stay authored (Blockbench feeds the negated euler with the
-    /// untouched pivots through the same pivot corrections —
-    /// display_mode.js `updateDisplayBase`, the `includes('lefthand')`
-    /// factors). Applied to WHICHEVER slot renders in the left hand,
-    /// authored `*_lefthand` values included — that is what Blockbench's
-    /// left-hand preview executes, so an author tuning the lefthand slot
-    /// sees exactly this.
     pub fn left_hand(&self) -> DisplayTransform {
         DisplayTransform {
             rotation: [self.rotation[0], -self.rotation[1], -self.rotation[2]],
@@ -104,31 +80,17 @@ impl DisplayTransform {
     }
 }
 
-/// The Blockbench `display` block: the per-context poses we use. Each defaults to
-/// identity when the source omits it, so a model with no `display` still renders.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct BlockDisplay {
-    /// First-person right-hand pose — the HELD item.
     pub firstperson_righthand: DisplayTransform,
-    /// First-person LEFT-hand pose — the OFF-hand held item. `None` when the
-    /// model authors no entry: the renderer then MIRRORS the right-hand pose
-    /// (the vanilla default), so `Option` distinguishes "author chose" from
-    /// "derive it".
     pub firstperson_lefthand: Option<DisplayTransform>,
-    /// Inventory / GUI pose — the slot ICON.
     pub gui: DisplayTransform,
-    /// Third-person right-hand pose (cached for completeness; not yet wired).
     pub thirdperson_righthand: DisplayTransform,
-    /// Third-person LEFT-hand pose (`None` = mirror the right, like
-    /// [`firstperson_lefthand`](Self::firstperson_lefthand)).
     pub thirdperson_lefthand: Option<DisplayTransform>,
-    /// On-the-ground pose (cached for completeness; the dropped item keeps its own pose).
     pub ground: DisplayTransform,
 }
 
 impl BlockDisplay {
-    /// Parse the `.bbmodel`'s `display` object (any context absent → identity;
-    /// the lefthand contexts stay `None` so the renderer can mirror instead).
     pub(super) fn parse(root: &Value) -> Self {
         let d = root.get("display");
         let ctx = |name: &str| {
@@ -148,8 +110,6 @@ impl BlockDisplay {
     }
 }
 
-/// The Blockbench `display` poses for `kind` (cached in the `.llblock`) — the held item
-/// reads `firstperson_righthand`, the inventory icon reads `gui`.
 #[inline]
 pub fn display(kind: BlockModelKind) -> &'static BlockDisplay {
     &models()[kind.0 as usize].display

@@ -1,16 +1,9 @@
-//! Grove territories: a smooth world-anchored lattice field, sampled per tree
-//! site, that decides whether a `Territory::Grove` rule claims the site.
-
 use crate::biome::trees::GroveLattice;
 use crate::rng::FeatureRng;
 use crate::salts;
 
-/// The detail lattice repeats this many times per broad period.
 const DETAIL_PERIODS_PER_BROAD: i32 = 3;
 
-/// Corner values of one `(salt, period)` lattice over a placement window, in
-/// a dense grid. Corners are pure functions of `(seed, salt, lattice x, z)`,
-/// so the grid only dedupes work — it can never change an answer.
 struct LatticeCorners {
     salt: u64,
     period: i32,
@@ -24,8 +17,6 @@ impl LatticeCorners {
     fn new(salt: u64, period: i32, window: Window) -> Self {
         let x0 = window.x_min.div_euclid(period);
         let z0 = window.z_min.div_euclid(period);
-        // The last in-window block lies in cell `max.div_euclid(period)`, whose
-        // far corner is one lattice step beyond.
         let nx = ((window.x_max - 1).div_euclid(period) + 1 - x0 + 1) as usize;
         let nz = ((window.z_max - 1).div_euclid(period) + 1 - z0 + 1) as usize;
         Self {
@@ -48,7 +39,6 @@ impl LatticeCorners {
     }
 }
 
-/// The world-coordinate rectangle a placement pass samples, `[min, max)`.
 #[derive(Copy, Clone)]
 pub(super) struct Window {
     pub(super) x_min: i32,
@@ -64,7 +54,6 @@ impl Window {
     }
 }
 
-/// Per-pass lattice corner memo for every grove rule the pass meets.
 pub(super) struct GroveField {
     seed: u32,
     window: Window,
@@ -80,15 +69,12 @@ impl GroveField {
         }
     }
 
-    /// Whether `lattice`'s territory claims the site at `(wx, wz)`.
     pub(super) fn claims(&mut self, lattice: &GroveLattice, wx: i32, wz: i32) -> bool {
         let chance = self.chance(lattice, wx, wz);
         FeatureRng::positional(self.seed, lattice.salt ^ salts::GROVE_CHOICE_XOR, wx, 0, wz)
             .chance(chance)
     }
 
-    /// The claim probability at a site: the blended field mapped through the
-    /// lattice's transition band onto its chance range.
     pub(super) fn chance(&mut self, lattice: &GroveLattice, wx: i32, wz: i32) -> f32 {
         let broad = self.sample(lattice.salt, lattice.period, wx, wz);
         let detail = self.sample(
@@ -103,8 +89,6 @@ impl GroveField {
         lattice.chance.0 + (lattice.chance.1 - lattice.chance.0) * blend
     }
 
-    /// Bilinear value noise on a `period`-block lattice. Integer lattice
-    /// coordinates keep negative and distant sites exact.
     pub(super) fn sample(&mut self, salt: u64, period: i32, wx: i32, wz: i32) -> f32 {
         debug_assert!(
             self.window.contains(wx, wz),

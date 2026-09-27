@@ -23,16 +23,12 @@ use std::sync::{Mutex, MutexGuard};
 use super::store::{self, SavedSignIn};
 use super::{api, AccountError, AccountIdentity};
 
-/// Held while the stored token is read and, when due, rotated — and while a
-/// dead-token refusal decides whether to clear it.
 static ROTATION: Mutex<()> = Mutex::new(());
 
 fn rotation() -> MutexGuard<'static, ()> {
     ROTATION.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
-/// An error a call spending the token can end in: whether it says the token
-/// is worthless, and how a sign-in problem found before the call reads.
 pub trait SpendError: From<AccountError> {
     fn clears_sign_in(&self) -> bool;
 }
@@ -59,10 +55,6 @@ impl SpendError for crate::service::ServiceError {
     }
 }
 
-/// Call an endpoint with the stored token, rotated first when due. A refusal
-/// that says the token is dead clears the stored sign-in — unless another
-/// worker rotated it meanwhile, in which case the call is made once more
-/// with the fresh token instead of signing the player out.
 pub fn spend<T, E: SpendError>(mut call: impl FnMut(&str) -> Result<T, E>) -> Result<T, E> {
     let mut retried = false;
     loop {
@@ -85,12 +77,10 @@ pub fn spend<T, E: SpendError>(mut call: impl FnMut(&str) -> Result<T, E>) -> Re
     }
 }
 
-/// The stored sign-in, whatever its freshness. `None` = nobody is signed in.
 pub fn current() -> Option<SavedSignIn> {
     store::load()
 }
 
-/// Sign in with a password and remember the result.
 pub fn sign_in(identifier: &str, password: &str) -> Result<AccountIdentity, AccountError> {
     let signed_in = api::sign_in(identifier, password)?;
     let saved = SavedSignIn::from_service("", &signed_in);
@@ -103,8 +93,6 @@ pub fn sign_in(identifier: &str, password: &str) -> Result<AccountIdentity, Acco
     remember(saved)
 }
 
-/// Forget the stored sign-in and tell the service to drop it. The local file is
-/// removed even when the call fails — the player asked to be signed out.
 pub fn sign_out() {
     if let Some(saved) = store::load() {
         api::sign_out(&saved.token);
@@ -112,23 +100,16 @@ pub fn sign_out() {
     store::clear();
 }
 
-/// Confirm the stored sign-in against the service and refresh what is displayed
-/// about it (a renamed account, a changed avatar). Rotates first when due.
 pub fn verify() -> Result<AccountIdentity, AccountError> {
     let (token, signed_in) = spend(|token| Ok((token.to_owned(), api::identity(token)?)))?;
     let _held = rotation();
     remember(SavedSignIn::from_service(&token, &signed_in))
 }
 
-/// A single-use credential for the server that offered `server_id`, rotating the
-/// stored token first if it is due.
 pub fn join_ticket_for(server_id: &str) -> Result<String, AccountError> {
     spend(|token| api::join_ticket(token, server_id))
 }
 
-/// The stored sign-in, rotated if due — the precondition of every call that
-/// spends the token. Read under the rotation lock, so a rotation another
-/// worker just made is what this one sees.
 fn usable() -> Result<SavedSignIn, AccountError> {
     let _held = rotation();
     let saved = store::load().ok_or_else(|| {
@@ -149,20 +130,11 @@ fn usable() -> Result<SavedSignIn, AccountError> {
         Ok(signed_in) => {
             let rotated = SavedSignIn::from_service(&saved.token, &signed_in);
             store::store(&rotated).unwrap_or_else(|e| {
-                // The service has already invalidated the old token, so a token
-                // we cannot write down is gone: say so rather than let the next
-                // launch present a credential the service has retired.
                 log::error!("could not store the rotated Petramond sign-in: {e}");
                 store::clear();
             });
             Ok(rotated)
         }
-        // Unreachable mid-rotation: the old token is still inside its hard
-        // expiry (checked above), so keep using it. If the rotation actually
-        // COMMITTED and only the reply was lost, the old token is already dead
-        // and the next call refuses with `SignInRequired` — one forced sign-in,
-        // which is the honest outcome of losing a rotation over a dropped
-        // connection, not a bug to chase.
         Err(AccountError::Unreachable(_)) => Ok(saved),
         Err(e) => Err(forget_if_dead(e)),
     }
@@ -176,7 +148,6 @@ fn remember(saved: SavedSignIn) -> Result<AccountIdentity, AccountError> {
     Ok(identity)
 }
 
-/// Clear the stored sign-in exactly for the refusals that mean it is worthless.
 fn forget_if_dead(e: AccountError) -> AccountError {
     if e.clears_sign_in() {
         store::clear();

@@ -125,7 +125,6 @@ fn a_dead_or_absent_attacker_ends_the_grudge() {
     let out = ai.tick(&mut ctx(&world, &mut rng, mob, &[], &corpse, grudge));
     assert_eq!(out.target, None, "no vengeance on a corpse");
 
-    // A player attacker who disconnected resolves to nothing the same way.
     let gone = Some((EntityRef::Player(PlayerId(7)), 0));
     let out = ai.tick(&mut ctx(
         &world,
@@ -147,7 +146,7 @@ fn a_player_attacker_is_chased_by_live_anchor_position() {
     let players = [PlayerAnchor {
         id: PlayerId(7),
         pos: WorldPos::new(9.5, 64.9, 2.5),
-        sneaking: true, // sneaking does not hide an attacker from their victim
+        sneaking: true,
         ..Default::default()
     }];
     let grudge = Some((EntityRef::Player(PlayerId(7)), 3));
@@ -177,10 +176,6 @@ fn the_warmup_delays_the_counter_and_rehits_cannot_rewind_it() {
         tags: Default::default(),
     }]);
 
-    // The hit tick and the following warmup window: the mob reels, no
-    // target — it cannot answer on the tick it was struck. The attacker
-    // re-hits midway (age snaps back to 0): the warmup clock is the
-    // node's own and must NOT rewind.
     for tick in 0..20u32 {
         let age = if tick < 10 { tick } else { tick - 10 };
         let grudge = Some((EntityRef::Mob(9), age));
@@ -201,7 +196,6 @@ fn the_warmup_delays_the_counter_and_rehits_cannot_rewind_it() {
         "the warmup elapsed exactly once despite the re-hit"
     );
 
-    // A DIFFERENT attacker restarts the warmup from zero.
     let out = ai.tick(&mut ctx(
         &world,
         &mut rng,

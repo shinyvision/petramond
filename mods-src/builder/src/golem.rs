@@ -1,6 +1,3 @@
-//! The golem's own panel: what it carries and what it has to say, opened by
-//! using the golem. A golem with its panel open stands still.
-
 use crate::host::prelude::*;
 
 use crate::jobs::Builder;
@@ -32,7 +29,6 @@ fn golem_of(viewer: &GuiViewerData) -> Option<u64> {
     }
 }
 
-/// Golems with their panel open this tick, and who has it open.
 pub fn asked(viewers: &[GuiViewerData]) -> Vec<(u64, PlayerId)> {
     viewers
         .iter()

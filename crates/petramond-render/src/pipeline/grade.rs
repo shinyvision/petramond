@@ -6,17 +6,11 @@ use super::builders::{
 #[cfg(test)]
 mod tests;
 
-/// Full-screen supersample resolve/colour-grade pipeline: one texture binding (the
-/// offscreen scene target, sampled for render-scale upsampling), no vertex
-/// buffers, no depth. Draws AFTER the world's hand pass and BEFORE the
-/// crosshair/UI passes so screen chrome stays ungraded.
 pub(super) fn create_grade_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
 ) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
     let shader = shader_module(device, "grade shader", super::GRADE_SHADER);
-    // Filterable texture (the grade pass bilinearly upscales when the scene
-    // renders below swapchain resolution) + the post-process controls.
     let mut entries = texture_sampler_layout_entries(0, wgpu::TextureViewDimension::D2).to_vec();
     entries.push(uniform_entry(2, wgpu::ShaderStages::FRAGMENT, 16));
     let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -40,9 +34,6 @@ pub(super) fn create_grade_pipeline(
     (pipe, bgl)
 }
 
-/// The grade pass's bind group over the current offscreen scene view and the
-/// post-process controls buffer. Rebuilt whenever the scene texture is
-/// recreated (init + every resize).
 pub(crate) fn create_grade_bind(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,

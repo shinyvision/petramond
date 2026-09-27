@@ -2,9 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::*;
 
-/// The ABI contract both sides rely on: every call/reply enum round-trips
-/// through postcard, including nested payloads. (No wire-byte pinning — the encoding is postcard's contract;
-/// ours is that encode∘decode is identity.)
 #[test]
 fn abi_roundtrip_host_and_guest_calls() {
     fn roundtrip<T>(v: T)
@@ -637,7 +634,6 @@ fn abi_roundtrip_host_and_guest_calls() {
 
 #[test]
 fn every_payload_kind_is_registerable() {
-    // kind() is the dispatch routing key: it must agree with the variant.
     let samples = [
         EventPayload::PlayerDied,
         EventPayload::ItemUsed {
@@ -654,9 +650,6 @@ fn every_payload_kind_is_registerable() {
     }
 }
 
-/// `PlayerAttribute::ALL` is dense and in declaration order — the invariant
-/// per-attribute claim storage indexes on. The exhaustive match is the
-/// tripwire: a new variant fails to compile here until `ALL` carries it.
 #[test]
 fn player_attribute_all_is_the_declaration_order() {
     for (at, attribute) in PlayerAttribute::ALL.into_iter().enumerate() {

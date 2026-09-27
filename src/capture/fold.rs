@@ -1,14 +1,12 @@
-//! Preparing an Apply: `pre ⊕ state ⊕ fold(events)`, computed off the
-//! presented world and handed over as a diff.
+//! Building an Apply: `pre ⊕ state ⊕ fold(events)`, diffed against the presented world.
 //!
-//! The state pieces are chosen last-wins per key, and PROVENANCE drops every
-//! piece the presented world already holds from that very range, unread.
-//! What remains is decoded (or found decoded in the piece cache). The
-//! stretch of events then folds over copies of the columns it touches, in a
-//! detached replica running the very write functions the presented one
-//! runs, and every resulting key is compared with what is presented: equal
-//! content drops out, so an unchanged key keeps its `Arc`, its mesh and its
-//! light. What lands is only what differs.
+//! State pieces are picked last-wins per key. PROVENANCE skips any piece the presented world
+//! already has from that range, unread. The rest gets decoded (or pulled from the piece cache).
+//!
+//! Events fold over copies of the touched columns, in a detached replica using the same write
+//! functions as the presented world. Each resulting key is compared against what's presented;
+//! equal content drops out, so an unchanged key keeps its `Arc`, mesh and light. Only the diffs
+//! make it out.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -25,34 +23,26 @@ use super::window::{Away, AwayColumn};
 use crate::net::protocol::ColumnPayload;
 use crate::world::{DetachedFold, PieceRange, SectionContent, TerrainEdit};
 
-/// One state piece an apply passes, after last-wins.
 #[derive(Clone, Debug)]
 pub struct StatePiece {
     pub key: ClientStateKey,
     pub range: PieceRange,
 }
 
-/// What the bytes at a state range's start turned out to be.
 #[derive(Clone, Debug)]
 pub enum Shape {
-    /// One piece, stating this key.
     Piece(StatePiece),
-    /// A state record: every piece its envelope lists.
     Record(Vec<StatePiece>),
 }
 
-/// Something an apply waits on before it can fold.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Need {
-    /// The head (and a record's envelope) at `offset` of incarnation `file`.
     Shape {
         incarnation: u64,
         offset: u64,
         len: u64,
     },
-    /// A piece decoded.
     Piece(PieceRange),
-    /// The frame record at `offset`, and the ones after it up to `end`.
     Frames {
         incarnation: u64,
         offset: u64,
@@ -60,7 +50,6 @@ pub enum Need {
     },
 }
 
-/// The state ranges as pieces, last occurrence of a key winning.
 pub fn resolve_state(
     ranges: &[FileRanges],
     shape: impl Fn(u64, u64) -> Option<Result<Shape, String>>,
@@ -116,8 +105,6 @@ pub fn resolve_state(
         .collect())
 }
 
-/// The stretch an apply folds in as state: every frame of `ranges` up to
-/// the one that releases batch `limit`, and the queue after it.
 pub fn resolve_stretch(
     ranges: &[FileRanges],
     limit: u64,
@@ -146,7 +133,6 @@ pub fn resolve_stretch(
     Ok((stretch, queue))
 }
 
-/// The columns a stretch's terrain writes.
 pub fn touched_columns(stretch: &[Arc<Frame>]) -> BTreeSet<ChunkPos> {
     let mut out = BTreeSet::new();
     for f in stretch {
@@ -161,34 +147,26 @@ pub fn touched_columns(stretch: &[Arc<Frame>]) -> BTreeSet<ChunkPos> {
     out
 }
 
-/// A column as presented before the apply, as the fold seeds it.
 #[derive(Clone, Debug, Default)]
 pub struct BaseColumn {
     pub column: Option<(Arc<ColumnPayload>, Option<PieceRange>)>,
     pub sections: BTreeMap<i32, (SectionContent, Option<PieceRange>)>,
-    /// Terrain released while it was away, still to apply over the above.
     pub pending: Vec<TerrainEdit>,
 }
 
-/// A decoded terrain state piece.
 #[derive(Clone, Debug)]
 pub enum TerrainBody {
     Section(SectionContent),
     Column(Arc<ColumnPayload>),
 }
 
-/// What changed for one key.
 #[derive(Clone, Debug)]
 pub enum KeyChange<T> {
-    /// Content unchanged; it now holds exactly this piece (or none).
     Origin(Option<PieceRange>),
-    /// New content, holding exactly this piece (or none).
     Set(T, Option<PieceRange>),
     Removed,
 }
 
-/// One folded column: what changed, and the whole column as it now stands
-/// (for a column that lands away).
 #[derive(Clone, Debug)]
 pub struct ColumnOutcome {
     pub pos: ChunkPos,
@@ -197,27 +175,21 @@ pub struct ColumnOutcome {
     pub whole: Folded,
 }
 
-/// Everything an apply's fold needs, owned, so it can run on a worker.
 pub struct FoldJob {
     pub id: u64,
     pub at: f64,
-    /// Terrain pieces for folded columns, decoded, in last-wins order.
     pub terrain: Vec<(ClientStateKey, PieceRange, TerrainBody)>,
-    /// The columns folded, as presented.
     pub base: BTreeMap<ChunkPos, BaseColumn>,
     pub presence: Option<Arc<PresenceIndex>>,
     pub population: Option<ClientPopulation>,
-    /// Moment pieces, decoded, in last-wins order.
     pub moment_pieces: Vec<StateBody>,
     pub moment: Moment,
     pub stretch: Vec<Arc<Frame>>,
     pub rest: Queue,
     pub released_through: Option<u64>,
-    /// Terrain pieces for away columns nothing else folds: only re-indexed.
     pub index_only: Vec<StatePiece>,
 }
 
-/// A fold's result, ready to land.
 pub struct Prepared {
     pub id: u64,
     pub at: f64,
@@ -230,8 +202,6 @@ pub struct Prepared {
     pub index_only: Vec<StatePiece>,
 }
 
-/// A whole-world terrain statement, indexed by column once, so asking it
-/// about every resident key costs O(resident keys).
 pub struct PresenceIndex {
     presence: ClientPresence,
     columns: FxHashMap<[i32; 2], usize>,
@@ -267,7 +237,6 @@ fn same_column(a: &ColumnPayload, b: &ColumnPayload) -> bool {
     a == b
 }
 
-/// Run the fold. `Err` fails the whole apply.
 pub fn fold(job: FoldJob) -> Result<Prepared, String> {
     let FoldJob {
         id,
@@ -284,7 +253,6 @@ pub fn fold(job: FoldJob) -> Result<Prepared, String> {
         index_only,
     } = job;
 
-    // The moment: pieces, then the whole-world statement, then the stretch.
     moment.previous = None;
     for body in &moment_pieces {
         moment.restate(body);
@@ -301,13 +269,10 @@ pub fn fold(job: FoldJob) -> Result<Prepared, String> {
             }
         }
     }
-    // The newest batch the world now holds is the moment's, wherever the
-    // apply moved it.
     let released = moment.clock.map(|(tick, _)| tick).or(released_through);
     let keep_from = views.iter().rposition(|v| v.at <= at).unwrap_or(0);
     views.drain(..keep_from);
 
-    // The terrain: seed what is presented, restate, remove, fold the stretch.
     let mut detached = DetachedFold::new();
     for (&pos, col) in &base {
         if let Some((payload, origin)) = &col.column {
@@ -324,8 +289,6 @@ pub fn fold(job: FoldJob) -> Result<Prepared, String> {
             detached.apply(edit.clone());
         }
     }
-    // What the presented columns hold before this apply, pending included:
-    // the base every key is compared against.
     let pre: BTreeMap<ChunkPos, Folded> = base
         .keys()
         .map(|&pos| (pos, Folded::of(&detached, pos)))
@@ -362,7 +325,6 @@ pub fn fold(job: FoldJob) -> Result<Prepared, String> {
         }
     }
 
-    // Compare with the base: equal content drops out.
     let columns = pre
         .into_iter()
         .map(|(pos, before)| {
@@ -407,7 +369,6 @@ pub fn fold(job: FoldJob) -> Result<Prepared, String> {
     })
 }
 
-/// A column's keys as a fold left them, each with the piece it holds exactly.
 #[derive(Clone, Debug, Default)]
 pub struct Folded {
     pub column: Option<(Arc<ColumnPayload>, Option<PieceRange>)>,
@@ -426,7 +387,6 @@ impl Folded {
         }
     }
 
-    /// The away index's form: a key holding a piece exactly is that range.
     pub fn into_away(self) -> AwayColumn {
         AwayColumn {
             column: self.column.map(|(p, o)| away_of(p, o)),
@@ -440,7 +400,6 @@ impl Folded {
     }
 }
 
-/// How one key moved from `before` to `after`; `None` = not at all.
 fn change<T: Clone>(
     before: Option<&(T, Option<PieceRange>)>,
     after: Option<&(T, Option<PieceRange>)>,
@@ -457,8 +416,6 @@ fn change<T: Clone>(
     }
 }
 
-/// A key's content in the form the away index keeps it: its range when it
-/// holds one exactly, else the content.
 fn away_of<T>(content: T, origin: Option<PieceRange>) -> Away<T> {
     match origin {
         Some(r) => Away::Range(r),

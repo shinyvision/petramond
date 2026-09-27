@@ -1,6 +1,3 @@
-//! What a plan that produced no step is waiting on.
-
-/// A search or probe that ran out of budget before it had an answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Probe {
     ClimbSealing,
@@ -30,7 +27,6 @@ pub enum Waiting {
 }
 
 impl Waiting {
-    /// The wait as the trace names it.
     pub fn label(self) -> &'static str {
         match self {
             Waiting::Nothing => "",
@@ -56,8 +52,6 @@ impl Waiting {
         }
     }
 
-    /// What a golem standing still is waiting for, in the owner's words. `None`
-    /// for a wait of a tick or two that says nothing useful.
     pub fn told(self) -> Option<&'static str> {
         Some(match self {
             Waiting::Resupply | Waiting::FetchingTools => "Waiting for materials",
@@ -69,7 +63,6 @@ impl Waiting {
         })
     }
 
-    /// The planner's shorter pauses, which the table never showed.
     pub fn pondering(self) -> Option<&'static str> {
         Some(match self {
             Waiting::FetchingScaffold => "Going for blocks to stand on",

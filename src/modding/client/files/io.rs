@@ -16,7 +16,6 @@ use super::{now_ms, paths, shared, Chunk, FileRef};
 
 type Hook<T> = Box<dyn FnOnce(Result<T, String>) + Send>;
 
-/// One page of a listing: its entries and whether more remain.
 pub type Listing = (Vec<ClientFileEntry>, bool);
 
 pub(super) enum At {
@@ -25,22 +24,16 @@ pub(super) enum At {
 }
 
 pub(super) enum Job {
-    /// An append, a positioned write, or an engine record (`bytes` is `None`
-    /// until the record is filled).
     Put {
         file: FileRef,
         at: At,
         bytes: Option<Result<Vec<Chunk>, String>>,
-        /// An engine record: it fails unwritten once one queued ahead of it
-        /// in its file failed (`poisoned`), so a file never holds a record
-        /// past a hole.
         record: bool,
         poisoned: Option<String>,
         done: Hook<[u64; 2]>,
     },
     Sync {
         file: FileRef,
-        /// Skip the fsync when nothing was written since the last one.
         if_dirty: bool,
         done: Hook<()>,
     },
@@ -65,12 +58,10 @@ pub(super) enum Job {
         max_bytes: u64,
         done: Hook<Listing>,
     },
-    /// The second half of a delete: the hidden trash goes.
     Unlink(PathBuf),
 }
 
 impl Job {
-    /// End the job unrun, answering `why`.
     pub(super) fn fail(self, why: String) {
         match self {
             Job::Put { done, .. } => done(Err(why)),
@@ -204,8 +195,6 @@ fn put(
         }
     });
     let at_end = matches!(at, At::End);
-    // Where an append began once it did: a failed one is cut back to there,
-    // so the file ends at its last whole write.
     let mut began: Option<(Arc<File>, u64)> = None;
     let result = (|| -> Result<([u64; 2], Arc<File>, u64), String> {
         let chunks = bytes.unwrap_or_else(|| Err("the engine never wrote this record".into()))?;
@@ -252,8 +241,6 @@ fn put(
             (Err(why.clone()), Err((why, cut)))
         }
     };
-    // A failure is told before the queue moves on: whoever wrote this
-    // record stops before a later one of theirs could be queued and run.
     let done = match &range {
         Err(_) => {
             done(range.clone());
@@ -371,8 +358,6 @@ fn rename(id: OpId, from: &FileRef, to: &FileRef) -> Result<(), String> {
     result
 }
 
-/// Hidden trash names are unique within this process; the process id keeps
-/// them apart from what an earlier run left.
 static TRASH: AtomicU64 = AtomicU64::new(0);
 
 fn delete(id: OpId, file: &FileRef) -> Result<(), String> {
@@ -425,7 +410,6 @@ fn list(dir: &FileRef, after: Option<&str>, max_bytes: u64) -> Result<Listing, S
     let path = dir.path();
     let entries = match std::fs::read_dir(&path) {
         Ok(entries) => entries,
-        // The bucket's root exists before its first file does.
         Err(error) if dir.rel.is_empty() && error.kind() == std::io::ErrorKind::NotFound => {
             return Ok((Vec::new(), false))
         }
@@ -441,7 +425,6 @@ fn list(dir: &FileRef, after: Option<&str>, max_bytes: u64) -> Result<Listing, S
         entries: Vec::new(),
         more: true,
     }));
-    // Everything but the entries and their count, which grows as a varint.
     let base = mod_api::encode(&empty).map_or(0, |bytes| bytes.len() as u64) - 1;
     let mut entries_len = 0;
     let mut page = Vec::new();
@@ -475,7 +458,6 @@ pub(super) fn modified_ms(meta: &std::fs::Metadata) -> u64 {
         .map_or(0, |since| since.as_millis() as u64)
 }
 
-/// Make a rename or a create in `path`'s directory durable.
 fn sync_dir(path: &Path) {
     #[cfg(unix)]
     if let Some(dir) = path.parent() {

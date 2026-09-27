@@ -1,7 +1,3 @@
-//! World-coordinate scene fixtures shared by the snapshot and parity suites:
-//! a [`Scene`] answers every neighbour read a section mesh makes, and
-//! [`Scene::mesh`] meshes one section of it through the production build.
-
 use super::*;
 use crate::builder::{build_section_mesh_with, WorldReads};
 use petramond_world::block::ShapeState;
@@ -13,7 +9,6 @@ use std::rc::Rc;
 
 type Reads<T> = Box<dyn Fn(i32, i32, i32) -> T>;
 
-/// Every world read a section mesh depends on, by world coordinate.
 pub(super) struct Scene {
     pub block: Reads<u16>,
     pub cell_state: Reads<ShapeState>,
@@ -39,22 +34,15 @@ impl Scene {
         }
     }
 
-    /// Mesh the section at `pos` of this scene through the production build:
-    /// its one-cell pad is sampled from the scene's reads, then meshed with
-    /// the exposure-mask fast path.
     pub(super) fn mesh(&self, section: &Section, pos: SectionPos) -> ChunkMesh {
         build_section_mesh_with(section, pos, test_ctx(), &self.reads(), true)
     }
 
-    /// [`Self::mesh`] with every cube face culled by asking its front cell —
-    /// the reference the fast path must reproduce byte for byte.
     pub(super) fn mesh_per_face(&self, section: &Section, pos: SectionPos) -> ChunkMesh {
         build_section_mesh_with(section, pos, test_ctx(), &self.reads(), false)
     }
 }
 
-/// `section` alone at the origin: air around it, full sky, all loaded, its
-/// own tint map as the dye exclusions.
 pub(super) fn standalone(section: &Section) -> Scene {
     let s = Rc::new(section.clone());
     let (b, c, f, d) = (s.clone(), s.clone(), s.clone(), s);
@@ -82,11 +70,6 @@ pub(super) fn standalone(section: &Section) -> Scene {
     }
 }
 
-/// The hand-built showcase: one of nearly every cube-path feature on a stone
-/// floor (grass, leaves, a plant, water reaching the pad's top face, a lit
-/// furnace, cactus, stairs, every slab stacking, glass, panes, snow over a
-/// cube and over the floor, transitions across the section seam with a dyed
-/// donor), under patterned coloured light.
 pub(super) fn showcase() -> (Section, Scene) {
     use petramond_world::furnace::Furnace;
     let mut section = floor_section(Block::Stone);
@@ -94,11 +77,7 @@ pub(super) fn showcase() -> (Section, Scene) {
     section.set_block(3, 1, 2, Block::OakLeaves);
     section.set_block(4, 1, 2, Block::ShortGrass);
     section.set_fluid(5, 1, 2, Block::Water, 4);
-    // Top-of-section water: the pad-local fill probe reads the neighbour
-    // ABOVE (one past the top pad face for that neighbour) — must not OOB.
     section.set_fluid(5, SECTION_SIZE - 1, 2, Block::Water, 0);
-    // A BURNING furnace is the `furnace_lit` row; the machine state rides
-    // along as it does in the live world (the mesher only reads the row).
     section.set_block(6, 1, 2, Block::FurnaceLit);
     section.insert_furnace(
         6,
@@ -113,8 +92,6 @@ pub(super) fn showcase() -> (Section, Scene) {
     section.set_block(7, 1, 2, Block::Cactus);
     section.set_block(8, 1, 2, Block::OakStairs);
     section.set_stair_facing(8, 1, 2, Facing::South);
-    // Slabs: single layer, same-material full stack (cube fast path), mixed full
-    // stack, and an opaque cube against the mixed stack (both-way culling).
     section.set_block(9, 1, 2, Block::OakSlab);
     section.set_slab_state(9, 1, 2, SlabState::single(SlabSplit::Y, 0, Block::OakSlab));
     section.set_block(10, 1, 2, Block::StoneSlab);
@@ -138,13 +115,10 @@ pub(super) fn showcase() -> (Section, Scene) {
         },
     );
     section.set_block(12, 1, 2, Block::Stone);
-    // Glass pair (same-block cull on the per-face path) and a connected pane run.
     section.set_block(13, 1, 2, Block::Glass);
     section.set_block(14, 1, 2, Block::Glass);
     section.set_block(2, 1, 4, Block::GlassPane);
     section.set_block(3, 1, 4, Block::GlassPane);
-    // Snow layers over a full cube (grass: snowy sides + culled top) and over
-    // the bare floor — the floor-flush SEAL cull of the exposure masks.
     section.set_block(2, 2, 2, Block::SnowLayer);
     section.set_block(12, 1, 4, Block::SnowLayer);
 
@@ -153,13 +127,9 @@ pub(super) fn showcase() -> (Section, Scene) {
     section.set_block(8, 2, 7, Block::ShortGrass);
     section.set_block(8, 1, 8, Block::Sand);
     section.set_block(8, 2, 8, Block::PebblesSmall);
-    // Transitions across the section seam: a dyed neighbour cell excludes
-    // itself as a donor, an undyed one does not.
     section.set_block(15, 1, 3, Block::Dirt);
     section.set_block(15, 1, 5, Block::Dirt);
 
-    // Resolve stored shape states (stair corners, pane masks) the way the
-    // world's edit cascade would have — the fixture wrote raw cells.
     let section = refined(&section);
     let s = Rc::new(section.clone());
     let (b, c, f) = (s.clone(), s.clone(), s);
@@ -171,10 +141,8 @@ pub(super) fn showcase() -> (Section, Scene) {
             } else if wy == 0 && (-1..=n).contains(&wx) && (-1..=n).contains(&wz) {
                 Block::Stone.id()
             } else if wy == 1 && wx == n && (wz == 3 || wz == 5) {
-                // Grass donors in the east neighbour; the one at z = 3 is dyed.
                 Block::Grass.id()
             } else if wy == n && wx == 5 && wz == 2 {
-                // Water column continuing above the section (pad top face).
                 Block::Water.id()
             } else {
                 Block::Air.id()
@@ -204,8 +172,6 @@ pub(super) fn showcase() -> (Section, Scene) {
                 (18 + (wx * 3 + wy * 5 + wz * 7).rem_euclid(13)) as u8
             }
         }),
-        // A COLOURED per-cell light, so every channel of the gather is pinned,
-        // not just brightness.
         blocklight: Box::new(|wx, wy, wz| {
             LightRgb::new(
                 ((wx + wy * 2 + wz * 3).rem_euclid(5) * 2) as u8,
@@ -219,9 +185,6 @@ pub(super) fn showcase() -> (Section, Scene) {
     (section, scene)
 }
 
-/// The generated columns around the origin with their baked skylight: every
-/// surface section of the centre column, each with the neighbour columns
-/// answering its pad reads.
 pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
     struct LitColumn {
         chunk: Chunk,
@@ -307,9 +270,6 @@ pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
         .collect()
 }
 
-/// Every registered block (air aside) on a lattice over a stone floor, as
-/// many sections as the registry needs: each render family's geometry for
-/// its default placement, refined as the world would store it.
 pub(super) fn catalog_sections() -> Vec<Section> {
     let slots: Vec<(usize, usize, usize)> = (1..SECTION_SIZE)
         .step_by(2)

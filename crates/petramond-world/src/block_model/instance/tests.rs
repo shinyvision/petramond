@@ -12,14 +12,13 @@ fn solid_cube(cull: [Option<u8>; 6]) -> ModelCube {
     }
 }
 
-/// A cullface is authored in MODEL space but tested against the WORLD
-/// neighbour, so the template bake must rotate it exactly like the
-/// geometry: under a 90°-about-Y base transform the authored -Z cull
-/// becomes a -X world test, and under identity it stays -Z.
+/// Cullface is authored in model space but tested against the world neighbour, so bake has to
+/// rotate it with the geometry. 90°-about-Y turns the authored -Z cull into a -X world test;
+/// identity leaves it -Z.
 #[test]
 fn cullface_directions_rotate_with_the_facing_bake() {
     let mut cull = [None; 6];
-    cull[5] = Some(5); // the north face culls against the north neighbour
+    cull[5] = Some(5);
     let cubes = [solid_cube(cull)];
     let ao = [[[1.0; 4]; 6]];
     let draw = [[true; 6]];
@@ -67,15 +66,13 @@ fn cullface_directions_rotate_with_the_facing_bake() {
     assert_eq!(ungated, 20, "the other five faces stay ungated");
 }
 
-/// A face whose texture rect holds partial-alpha texels bakes into a
-/// blend-routed segment of its own; everything else stays opaque.
 #[test]
 fn partial_alpha_faces_bake_into_blend_segments() {
     let cubes = [solid_cube([None; 6])];
     let ao = [[[1.0; 4]; 6]];
     let draw = [[true; 6]; 1];
     let mut blend = [[false; 6]; 1];
-    blend[0][2] = true; // the up face's rect holds semi-transparent texels
+    blend[0][2] = true;
     let t = bake_cell_template(
         Mat4::IDENTITY,
         &cubes,
@@ -103,14 +100,11 @@ fn partial_alpha_faces_bake_into_blend_segments() {
     assert_eq!(opaque, 20);
 }
 
-/// The model pipelines cull back faces, so the one kept face of a
-/// zero-thickness plane bakes a second, reversed copy of itself — a decal
-/// stays visible from both sides while solid cubes stay single-sided.
 #[test]
 fn flat_planes_bake_their_kept_face_twice_with_reversed_winding() {
     let mut plane = solid_cube([None; 6]);
     plane.from = Vec3::new(0.0, 0.0, 0.5);
-    plane.to = Vec3::new(1.0, 1.0, 0.5); // flat on Z
+    plane.to = Vec3::new(1.0, 1.0, 0.5);
     let cubes = [plane];
     let ao = [[[1.0; 4]; 6]];
     let draw = [[true; 6]; 1];
@@ -128,23 +122,17 @@ fn flat_planes_bake_their_kept_face_twice_with_reversed_winding() {
     );
     let total: u32 = t.segments.iter().map(|s| s.run.vert_len).sum();
     assert_eq!(total, 8, "one kept face, emitted front + reversed back");
-    // The second quad is the first reversed: same corner positions in
-    // [0, 3, 2, 1] order, i.e. the opposite winding over the same plane.
     for i in 0..4 {
         assert_eq!(t.verts[4 + i].pos, t.verts[[0, 3, 2, 1][i]].pos);
     }
 }
 
-/// A face whose atlas rect is fully transparent discards every fragment at
-/// mip 0 — so the bake drops it outright. Left in, the cutout mip chain
-/// would promote its texels to opaque with the neighbouring artwork's
-/// colour, and an invisible sliver face would render as a bright line.
 #[test]
 fn fully_transparent_faces_are_dropped_from_the_bake() {
     let cubes = [solid_cube([None; 6])];
     let ao = [[[1.0; 4]; 6]];
     let mut draw = [[true; 6]; 1];
-    draw[0][3] = false; // the down face's rect is fully transparent
+    draw[0][3] = false;
     let blend = [[false; 6]; 1];
     let t = bake_cell_template(
         Mat4::IDENTITY,

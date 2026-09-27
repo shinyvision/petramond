@@ -1,32 +1,18 @@
-//! TCP frame codec: `[u32 LE len][u8 flags][body]`,
-//! body = postcard. Flag bit 0 marks a zlib-compressed body — applied when the
-//! serialized body exceeds `COMPRESS_MIN` and compression actually shrinks
-//! it (terrain `SectionData`/`ColumnData` mainly; tick batches stay raw).
-//!
-//! Frames are bounded by [`MAX_FRAME`] in BOTH directions and on BOTH sides of
-//! the compressor (an oversize length is a protocol error; the caller drops
-//! the connection). No legitimate message is anywhere near the cap — sections
-//! are ~20 KiB — so the bound only exists to stop hostile/corrupt streams.
-
 use std::io::{self, Read, Write};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-/// Hard cap on a frame body (and on its decompressed size): 8 MiB.
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 
-/// Bodies larger than this are candidates for zlib compression.
 const COMPRESS_MIN: usize = 1024;
 
-/// Frame flag bit 0: the body is zlib-compressed.
 const FLAG_ZLIB: u8 = 1;
 
 fn invalid<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
-/// Encode `msg` as one complete frame (header + body).
 pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     let body = postcard::to_allocvec(msg).map_err(invalid)?;
     if body.len() > MAX_FRAME {
@@ -51,13 +37,10 @@ pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     Ok(frame)
 }
 
-/// Encode `msg` as one frame and write it with a single `write_all` (one
-/// packet under NODELAY). Flushing is the caller's concern.
 pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
     w.write_all(&encode_frame(msg)?)
 }
 
-/// Frame header: `[u32 LE len][u8 flags]`.
 const HEADER_LEN: usize = 5;
 
 fn parse_header(header: &[u8], max_body: usize) -> io::Result<(usize, u8)> {
@@ -68,14 +51,10 @@ fn parse_header(header: &[u8], max_body: usize) -> io::Result<(usize, u8)> {
     Ok((len, header[4]))
 }
 
-/// Decode one frame body, inflating it when flagged — the decompressed size
-/// is capped at `max_body` as well (zlib-bomb guard).
 fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> io::Result<T> {
     if flags & FLAG_ZLIB == 0 {
         return postcard::from_bytes(body).map_err(invalid);
     }
-    // Read at most one byte past the cap so overflow is detected, never
-    // materialized.
     let mut dec = flate2::read::ZlibDecoder::new(body).take(max_body as u64 + 1);
     let mut out = Vec::new();
     dec.read_to_end(&mut out)?;
@@ -85,18 +64,10 @@ fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> 
     postcard::from_bytes(&out).map_err(invalid)
 }
 
-/// Read one frame and decode it. Errors are terminal for the connection:
-/// `InvalidData` for oversize/undecodable frames, the underlying I/O error for
-/// EOF/timeout/reset. Reads exactly the frame's bytes (no over-read), so a
-/// handshake over the raw stream can hand off to a buffered reader safely.
 pub fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {
     read_msg_bounded(r, MAX_FRAME).map(|(msg, _)| msg)
 }
 
-/// [`read_msg`] under a tighter cap: frames (and decompressed bodies) larger
-/// than `max_body` are `InvalidData` as soon as the header arrives. Also
-/// reports the frame's size on the wire, for a caller metering a peer's
-/// byte rate.
 pub fn read_msg_bounded<T: DeserializeOwned, R: Read>(
     r: &mut R,
     max_body: usize,
@@ -110,13 +81,6 @@ pub fn read_msg_bounded<T: DeserializeOwned, R: Read>(
     Ok((decode_body(flags, &body, max_body)?, HEADER_LEN + len))
 }
 
-/// Decode the first frame at the front of `buf` without blocking — the
-/// incremental twin of [`read_msg`] for sockets read in nonblocking chunks.
-/// `Ok(None)` = the frame is still incomplete; `Ok(Some((msg, used)))` also
-/// reports how many bytes of `buf` the frame occupied. Frames (and their
-/// decompressed bodies) larger than `max_body` are `InvalidData` as soon as
-/// the header arrives, so a hostile peer can never make the caller buffer
-/// more than `max_body` bytes.
 pub fn decode_frame<T: DeserializeOwned>(
     buf: &[u8],
     max_body: usize,
@@ -159,7 +123,6 @@ mod tests {
         let back: ClientToServer = read_msg(&mut &frame[..]).expect("decodes");
         assert_eq!(back, msg);
 
-        // Two frames back-to-back read in order without over-reading.
         let second = ClientToServer::KeepAlive;
         let mut stream = frame.clone();
         stream.extend(frame_of(&second));
@@ -194,8 +157,6 @@ mod tests {
 
     #[test]
     fn oversize_frames_are_rejected_on_both_sides() {
-        // Write side: a body beyond MAX_FRAME is a protocol error before any
-        // compression could hide it.
         let huge = ServerToClient::Disconnect {
             reason: "x".repeat(MAX_FRAME + 1),
         };
@@ -204,7 +165,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
         assert!(out.is_empty(), "nothing was written");
 
-        // Read side: an oversize length rejects on the header alone.
         let mut header = Vec::new();
         header.extend_from_slice(&((MAX_FRAME as u32) + 1).to_le_bytes());
         header.push(0);
@@ -236,7 +196,6 @@ mod tests {
             .expect("complete");
         assert_eq!(second, ClientToServer::KeepAlive);
 
-        // A header announcing more than the cap fails before its body exists.
         let mut header = 65u32.to_le_bytes().to_vec();
         header.push(0);
         let err = decode_frame::<ClientToServer>(&header, 64).expect_err("capped");

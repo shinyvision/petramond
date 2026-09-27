@@ -50,8 +50,6 @@ fn join_profile() {
     let mut game = Game::new(cam, &world, 0x312, rd);
     let t_new = t_click.elapsed();
 
-    // Pump production frames at 240 fps cadence until the spawn
-    // neighbourhood is meshed (or we give up).
     let input = GameInput::default();
     let dt = (1.0 / fps) as f32;
     let mut frames = 0u64;
@@ -92,9 +90,6 @@ fn join_profile() {
     print_summary(rd, t_new, t_first_mesh, t_playable, frames);
 }
 
-/// The PACING-FREE floor: the same pipeline pumped synchronously (loopback,
-/// no server thread, no frame sleeps) as fast as results land. The gap
-/// between this and [`join_profile`] is pure scheduling/pacing latency.
 #[test]
 #[ignore]
 fn join_profile_sync() {
@@ -122,14 +117,11 @@ fn join_profile_sync() {
     let input = GameInput::default();
     let mut frames = 0u64;
     let mut t_first_mesh = None;
-    // Stage marks, all relative to the click.
     let mut t_first_server_install = None;
     let mut t_server_spawn_light_final = None;
     let mut t_first_client_install = None;
     let mut last = Instant::now();
     let t_playable = loop {
-        // Real elapsed dt: a fixed dt at spin speed would run fixed ticks at
-        // many times real time and burn the main thread we are measuring.
         let now = Instant::now();
         let dt = (now - last).as_secs_f32();
         last = now;

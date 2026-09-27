@@ -11,16 +11,10 @@ use super::cell_change::{CellChange, ChangeKind};
 use super::store::SkyCoverChange;
 
 impl<S: WorldSide> World<S> {
-    /// Cells a player break at `pos` clears: every member of the compound
-    /// block it belongs to (a door's two halves, a model's footprint), or the
-    /// single cell. Used by optimistic client clears and server corrective-cell
-    /// sync so deny restores the full footprint.
     pub fn break_footprint_cells(&self, pos: IVec3) -> Vec<IVec3> {
         self.compound_cells(pos).unwrap_or_else(|| vec![pos])
     }
 
-    /// Every cell of the compound block `pos` belongs to (see
-    /// [`Block::compound_members`]), or `None` for a single-cell block.
     pub fn compound_cells(&self, pos: IVec3) -> Option<Vec<IVec3>> {
         let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         let state = petramond_world::block::ShapeNeighborhood::shape_state(&self.data, pos);
@@ -28,17 +22,13 @@ impl<S: WorldSide> World<S> {
         Some(members.into_iter().map(|(cell, _)| cell).collect())
     }
 
-    /// Break the whole compound block `pos` belongs to: set every member cell
-    /// to air (clearing its state) and relight + remesh the region once.
-    /// Returns the removed cells (for drops/particles — the compound is one
-    /// object and drops once), or `None` for a single-cell block.
     pub fn remove_compound(&mut self, pos: IVec3) -> Option<Vec<IVec3>> {
         let cells = self.compound_cells(pos)?;
         let mut changes = Vec::with_capacity(cells.len());
         for &c in &cells {
             if let Some((chunk, lx, ly, lz)) = self.data.chunk_at_world_mut(c.x, c.y, c.z) {
                 let old = chunk.block(lx, ly, lz);
-                chunk.set_block(lx, ly, lz, Block::Air); // also clears the cell state
+                chunk.set_block(lx, ly, lz, Block::Air);
                 chunk.modified = true;
                 changes.push(CellChange::new(c, old, ChangeKind::Place));
             }
@@ -47,10 +37,6 @@ impl<S: WorldSide> World<S> {
         Some(cells)
     }
 
-    /// Snapshot previous block ids for `break_footprint_cells`, then clear
-    /// the footprint the same way the server's break funnel does (door /
-    /// model / single air). No drops. Returns `(broken_block, cells_with_prev)`
-    /// or `None` when the cell is already air / unbreakable.
     pub fn clear_broken_block(&mut self, pos: IVec3) -> Option<(Block, Vec<(IVec3, u16)>)> {
         let block = Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
         if block.hardness() < 0.0 {
@@ -62,35 +48,20 @@ impl<S: WorldSide> World<S> {
             .map(|c| (c, self.data.chunk_block(c.x, c.y, c.z)))
             .collect();
         if self.remove_compound(pos).is_none() {
-            // Same residue rule as the server's authoritative break, so a
-            // predicted ice break leaves the same water the server will.
             let below = Block::from_id(self.data.chunk_block(pos.x, pos.y - 1, pos.z));
             let _ = self.set_block_world(pos.x, pos.y, pos.z, block.break_residue(below));
         }
         Some((block, cells))
     }
 
-    /// Set a block at world coords. Updates the column's visible surface and
-    /// direct-sky cover, marks light dirty across the change's exact influence
-    /// reach and queues a remesh of every section whose mesh samples the cell,
-    /// so the next `tick_mesh_budget` refreshes cached light and rebuilds
-    /// meshes. Returns false if the section is not loaded or `wy` is out of
-    /// range. In-memory only.
     pub fn set_block_world(&mut self, wx: i32, wy: i32, wz: i32, b: Block) -> bool {
         let Some((pos, lx, ly, lz)) = WorldData::split_world(wx, wy, wz) else {
             return false;
         };
-        // Streaming-finality guard: a section whose gen result or saved overlay is
-        // still in flight must not change — the landing result would clobber the
-        // write, or the write would be persisted over the player's on-disk record
-        // (see `world::sim_guard`). The blocked state resolves within a few frames.
         if !self.data.stream_writable(pos) {
             return false;
         }
         if !self.data.sections.contains_key(&pos) {
-            // Building into absent sky materializes an empty section. Editing an absent
-            // generated-solid/water section materializes its generated base first, so the
-            // write changes one cell instead of replacing the whole section with air.
             let summary = self.data.section_summary(pos);
             let absent_air = matches!(summary, SectionSummary::Empty | SectionSummary::Unknown);
             if (b == Block::Air && absent_air) || !self.materialize_section(pos) {
@@ -105,21 +76,11 @@ impl<S: WorldSide> World<S> {
             let was_light_dirty = s.light_dirty;
             s.set_block(lx, ly, lz, b);
             s.modified = true;
-            // The raw setter flagged this section's light; the invalidation
-            // below re-marks exactly what the edit can influence (possibly
-            // nothing at all), so hand the decision back to it. The setter's
-            // revision bump stands — an in-flight bake of the pre-edit blocks
-            // must still be rejected.
             if !was_light_dirty {
                 s.mark_light_clean();
             }
             old
         };
-        // Every consequence of the write — indexes, the cell's draw set (a
-        // mod's drawing belongs to the block that submitted it, and the write
-        // above already cleared the cell's per-cell state and mod KV for that
-        // reason), heightmaps, remesh, shape bakes and refinement, the
-        // bounded relight and the announce — runs in the one pipeline.
         self.apply_cell_changes(&[CellChange::new(
             IVec3::new(wx, wy, wz),
             old,
@@ -128,16 +89,6 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// Swap a placed cube block's id in place while PRESERVING everything else
-    /// the cell owns — the sibling block-entity maps (machine state, container;
-    /// `set_block` never touches them) and the cell's per-cell STATE + mod KV
-    /// (which `set_block` clears, so both are carried across the raw write —
-    /// the facing of a lit-flipping furnace is cell state now). The cube
-    /// sibling of [`World::swap_model_block`]: the same placed machine
-    /// changing costume (`furnace` ⇄ `furnace_lit`), announced through the
-    /// cell-change pipeline as a costume change, so the machine keeps its
-    /// draw set. Refused (like any write) while the section's streamed
-    /// content is still in flight.
     pub fn swap_block_skin(&mut self, pos: IVec3, to: Block) -> bool {
         let Some((sp, ..)) = WorldData::split_world(pos.x, pos.y, pos.z) else {
             return false;
@@ -187,14 +138,12 @@ impl<S: WorldSide> World<S> {
                 .max(self.data.blocklight_at_world(x, y, z)) as i32
         };
         let v = if old.is_opaque() && new == Block::Air {
-            // Opening a cell: whatever enters comes through the six faces.
             petramond_math::math::FACE_NEIGHBORS
                 .into_iter()
                 .map(|d| value_at(wx + d.x, wy + d.y, wz + d.z))
                 .max()
                 .unwrap_or(0)
         } else if old == Block::Air && new.is_opaque() {
-            // Closing a cell: only paths that ran through its own value die.
             value_at(wx, wy, wz)
         } else {
             return Self::LIGHT_REACH;
@@ -214,8 +163,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Place a single-cell log and record its axis before relighting/remeshing.
-    /// Missing/vertical axes are represented sparsely, so normal trees keep no extra state.
     pub fn place_log(&mut self, pos: IVec3, block: Block, axis: LogAxis) -> bool {
         if !block.is_log() || !self.materialize_section_at(pos) {
             return false;
@@ -231,11 +178,6 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// Keep the visible surface and direct-skylight cover exact after one block
-    /// change. Clear blocks may raise the visible surface without moving sky
-    /// cover; removing either current top rescans downward for its next match.
-    /// Returns the vertical cover-change envelope used to invalidate loaded
-    /// sections whose bake can observe the move.
     pub(super) fn update_column_heights_after_set(
         &mut self,
         wx: i32,
@@ -259,7 +201,6 @@ impl<S: WorldSide> World<S> {
                 new_surface = wy;
                 surface_payload_changed = true;
             } else if wy == old_surface {
-                // Same-height replacement can change the map's visible material.
                 surface_payload_changed = true;
             }
         } else if wy == old_surface {

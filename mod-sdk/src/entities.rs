@@ -1,7 +1,3 @@
-//! Sim-scoped entity calls: mob spawn/query/damage/despawn, keyed particle
-//! emitters, riding, kinematic drive, named animations, and dropped-item
-//! spawns.
-
 use mod_api::{
     ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData, MobKinematicData,
     MobRidersData, MobSnapshot, PlayerId,
@@ -11,167 +7,108 @@ use crate::__rt::host_fn;
 use crate::__rt::try_host_fn;
 
 try_host_fn! {
-    /// Drive a population, returning a batch-size refusal so callers can split it.
     pub fn try_mob_drive_many(drives: Vec<MobDriveData>) -> Vec<bool>
         => MobDriveMany { drives } => Bools
 }
 
 try_host_fn! {
-    /// Place a population, returning a batch-size refusal so callers can split it.
     pub fn try_mob_kinematic_many(poses: Vec<MobKinematicData>) -> Vec<bool>
         => MobKinematicMany { poses } => Bools
 }
 
 try_host_fn! {
-    /// Apply animations, returning a batch-size refusal so callers can split it.
     pub fn try_mob_anim_many(ops: Vec<MobAnimOp>) -> Vec<bool>
         => MobAnimMany { ops } => Bools
 }
 
 try_host_fn! {
-    /// Read riders, returning a batch-size refusal so callers can split it.
     pub fn try_mob_riders_many(mob_ids: Vec<u64>) -> Vec<Option<MobRidersData>>
         => MobRidersMany { mob_ids } => RidersMany
 }
 
 try_host_fn! {
-    /// Apply conditions, returning a batch-size refusal so callers can split it.
     pub fn try_entity_conditions_many(ops: Vec<ConditionOp>) -> Vec<bool>
         => EntityConditionsMany { ops } => Bools
 }
 
 host_fn! {
-    /// Drive a population in request order; one success flag per intent.
     pub fn mob_drive_many(drives: Vec<MobDriveData>) -> Vec<bool>
         => MobDriveMany { drives } => Bools
 }
 
 host_fn! {
-    /// Place a population kinematically in one host call.
     pub fn mob_kinematic_many(poses: Vec<MobKinematicData>) -> Vec<bool>
         => MobKinematicMany { poses } => Bools
 }
 
 host_fn! {
-    /// Apply named animation commands in request order.
     pub fn mob_anim_many(ops: Vec<MobAnimOp>) -> Vec<bool>
         => MobAnimMany { ops } => Bools
 }
 
 host_fn! {
-    /// Read rider lists for many mobs in one host call.
     pub fn mob_riders_many(mob_ids: Vec<u64>) -> Vec<Option<MobRidersData>>
         => MobRidersMany { mob_ids } => RidersMany
 }
 
 host_fn! {
-    /// Apply body condition commands in request order.
     pub fn entity_conditions_many(ops: Vec<ConditionOp>) -> Vec<bool>
         => EntityConditionsMany { ops } => Bools
 }
 
-/// The horizontal direction a mob yaw faces — MOB convention: yaw `0` faces
-/// `-Z`. The frame [`mob_drive`] velocities/yaws and `mobs.json` seat offsets
-/// speak. (Player yaw is π apart: yaw `0` faces `+Z` — see
-/// [`crate::player_facing_xz`].)
 pub fn mob_facing_xz(yaw: f32) -> [f32; 2] {
     let (s, c) = yaw.sin_cos();
     [-s, -c]
 }
 
 host_fn! {
-    /// Nearest live item entities in a sphere, by distance then stable id.
-    /// `radius` is in `0..=64`, `limit` at most [`crate::SIM_BATCH_MAX`].
-    /// Terrain-frozen entities are omitted; zero limit returns nothing.
     pub fn item_entities_in_radius(pos: [f64; 3], radius: f32, limit: u32) -> Vec<mod_api::ItemEntityData>
         => ItemEntitiesInRadius { pos, radius, limit } => ItemEntities
 }
 
 host_fn! {
-    /// Add velocity deltas (m/s) to item entities in request order, at most
-    /// [`crate::SIM_BATCH_MAX`] entries. Returns one success flag per entry.
-    /// Missing, lodged, pickup-reserved, terrain-frozen and unsafe-speed
-    /// entries are refused. Non-finite input rejects the whole batch.
     pub fn item_impulses(impulses: Vec<(u64, [f32; 3])>) -> Vec<bool>
         => ItemImpulses { impulses } => Bools
 }
 
 host_fn! {
-    /// Spawn a mob by species key at `pos` (feet) facing `yaw`, unconditionally
-    /// (site fitness is your business — see [`spawn_mob_checked`]). Returns the
-    /// newborn's STABLE id — tag/configure it immediately through the ordinary
-    /// mob calls. `None` = unknown species or the mob cap is reached.
     pub fn spawn_mob(key: &str, pos: [f64; 3], yaw: f32) -> Option<u64>
         => SpawnMob { key: key.into(), pos, yaw, checked: false } => SpawnedMob
 }
 
 host_fn! {
-    /// [`spawn_mob`] that spawns only if the whole declared body fits loaded,
-    /// stream-final world state at `pos`/`yaw`, including exact terrain collision
-    /// shapes and other live solid mobs. `None` also covers unknown terrain or
-    /// species and the mob cap.
-    /// Use this for player-placed vehicles and other solid entities; a failed call
-    /// mutates nothing, so the caller can safely retain or refund its item.
     pub fn spawn_mob_checked(key: &str, pos: [f64; 3], yaw: f32) -> Option<u64>
         => SpawnMob { key: key.into(), pos, yaw, checked: true } => SpawnedMob
 }
 
 host_fn! {
-    /// Snapshot the live mobs within `radius` of `pos` (3-D, feet positions), in
-    /// the deterministic live-set storage order. Address a mob by its stable
-    /// `id`; the snapshot `index` is only an intra-tick join key.
     pub fn mobs_in_radius(pos: [f64; 3], radius: f32) -> Vec<MobSnapshot>
         => MobsInRadius { pos, radius } => Mobs
 }
 
 host_fn! {
-    /// Snapshot ONE live mob by its stable id — for a handler that already
-    /// holds an id (an event payload, a stored tag) and needs the mob's
-    /// current pose/species. `None` = no such live mob.
     pub fn mob_info(mob_id: u64) -> Option<MobSnapshot> => MobInfo { mob_id } => Mob
 }
 
 host_fn! {
-    /// Whether the live mob `mob_id` can genuinely NAVIGATE from where it
-    /// stands to `cell` (a bounded engine pathfinding probe with the mob's
-    /// real body). Ask this before committing the mob to any PICKED
-    /// walk-target cell — an unreachable goal walks the mob into the
-    /// obstacle between them and parks it there (the pathfinder crowds
-    /// partial routes on purpose, for chases). `false` = unreachable, no
-    /// such live mob, or the mob is airborne (retry later).
     pub fn mob_can_reach(mob_id: u64, cell: [i32; 3]) -> bool
         => MobCanReach { mob_id, cell } => Bool
 }
 
 host_fn! {
-    /// Whether `cell` is somewhere a body of species `key` could stand and
-    /// still ROAM — a navigation foothold whose reachable ground is open
-    /// world, not a closed-off region (a pen). The positional twin of
-    /// [`mob_can_reach`]: it needs no live mob, so a mod's own spawner can
-    /// judge a site BEFORE putting anything on it.
-    ///
-    /// [`spawn_mob_checked`] only proves the BODY FITS, which still admits a
-    /// site over a hole, buried in rock, or inside somebody's fenced
-    /// pasture. `false` = no footing, confined, unknown species, or unloaded
-    /// terrain — every one of them "don't spawn here".
     pub fn site_open(key: &str, cell: [i32; 3]) -> bool
         => SiteOpen { key: key.into(), cell } => Bool
 }
 
 host_fn! {
-    /// Damage a live mob (STABLE id) through the `mob_damage_pre` pipeline
-    /// with the species' resolved `damage_feedback` (applied at the next
-    /// in-tick drain point; a mob gone by then is a silent no-op).
+    /// Damages a live mob (STABLE id) via `mob_damage_pre`, using the species' resolved
+    /// `damage_feedback`. Applied at the next in-tick drain, so a mob that's already gone just
+    /// no-ops.
     ///
-    /// `attacker` is WHO the hit lands for. `None` is the mod's own damage
-    /// (`DamageSource::Mod`): not an attack, so no default knockback and no
-    /// retaliation memory, and `origin` is spatial context for handlers
-    /// only. `Some(EntityRef::Player(..))` lands it as that player's melee
-    /// strike (`DamageSource::PlayerAttack` — the victim remembers them and,
-    /// with an `origin`, the species' knockback shoves away from it), which
-    /// is how a mod that took the player's `attack_attempt` lands the hit
-    /// it owes; the id must be a connected session (a mod bug otherwise).
-    /// `Some(EntityRef::Mob(..))` is that mob's strike.
+    /// `attacker` decides credit. `None` is the mod's own damage, so no knockback and no
+    /// retaliation memory. A player makes it their melee strike: the victim remembers them and
+    /// `origin` drives the knockback direction. Forward a hit owed from `attack_attempt` this way.
+    /// The id has to be a connected session or it's a mod bug. A mob makes it that mob's strike.
     pub fn damage_mob(
         mob_id: u64,
         amount: f32,
@@ -182,10 +119,6 @@ host_fn! {
 }
 
 host_fn! {
-    /// [`damage_mob`] with an explicitly composed damage pipeline for THIS
-    /// request. Compose from [`crate::MobDamageFeedbackComponent`]; a pipeline
-    /// without the `Immunity` component is damage on its own clock: neither
-    /// blocked by the victim's active i-frame window nor granting one.
     pub fn damage_mob_with_feedback(
         mob_id: u64,
         amount: f32,
@@ -197,31 +130,16 @@ host_fn! {
 }
 
 host_fn! {
-    /// Toggle one KEYED particle-emitter bundle (a `particle_emitters.json` catalog
-    /// row: particle rows + optional body tint; engine `petramond:*` and pack keys
-    /// alike) on a live mob (STABLE id). Presentation-only, replicated, already-
-    /// active sets survive death, not persisted — re-derive it from your own
-    /// per-mob state. `false` = unknown/dead mob, unregistered key, or the mob's
-    /// active set (4) is full.
     pub fn mob_emitter_set(mob_id: u64, key: &str, active: bool) -> bool
         => MobEmitterSet { mob_id, key: key.into(), active } => Bool
 }
 
 host_fn! {
-    /// Fire a ONE-SHOT particle burst at `pos`: `key` names a
-    /// `particle_emitters.json` BURST bundle (the core `petramond:water_splash`
-    /// included). `intensity` scales the particle count through the bundle's
-    /// `count_per_intensity`. Fire-and-forget presentation for every client, like
-    /// `emit_sound`. `false` = unknown key or not a burst bundle.
     pub fn emitter_burst(key: &str, pos: [f64; 3], intensity: f32) -> bool
         => EmitterBurst { key: key.into(), pos, intensity, direction: None, texture: None } => Bool
 }
 
 host_fn! {
-    /// [`emitter_burst`] with the event's own push and look: `direction`
-    /// feeds the bundle's `along_speed`, and `texture` is what the particles
-    /// are cut from instead of the bundle's own — a tile slice, or a block's
-    /// look as mining it would shed it.
     pub fn emitter_burst_of(
         key: &str,
         pos: [f64; 3],
@@ -233,160 +151,81 @@ host_fn! {
 }
 
 host_fn! {
-    /// Toggle a NAMED model animation on a live mob (STABLE id) — the animation
-    /// sibling of [`mob_emitter_set`]: presentation-only, ≤ 4 active per mob,
-    /// replicated, never persisted. Each active animation LAYERS over the
-    /// walk/idle/rest base pose with its OWN phase (activation starts at phase
-    /// 0, rate 1 — drive playback with [`mob_anim_rate`]); names the model
-    /// doesn't have draw nothing. `false` = unknown mob or full active set.
     pub fn mob_anim_set(mob_id: u64, anim: &str, active: bool) -> bool
         => MobAnimSet { mob_id, anim: anim.into(), active } => Bool
 }
 
 host_fn! {
-    /// Set an ACTIVE named animation's playback rate: `1.0` plays, `0.0` FREEZES
-    /// mid-stroke exactly where it is (an oar pauses in place, never snaps
-    /// home), negative reverses — code-driven playback over an authored clip.
-    /// Cancels an in-flight [`mob_anim_seek`]. `false` = unknown mob or the anim
-    /// is not active.
     pub fn mob_anim_rate(mob_id: u64, anim: &str, rate: f32) -> bool
         => MobAnimRate { mob_id, anim: anim.into(), rate } => Bool
 }
 
 host_fn! {
-    /// SEEK an active named animation to the absolute `phase` at `|rate|`
-    /// anim-seconds per second: the phase approaches the target DIRECTLY (no
-    /// modulo — pick the nearest-cycle target yourself for a shortest-path
-    /// return), lands on it EXACTLY, then holds at rate 0. How an oar settles
-    /// gently back onto its authored pose from wherever the stroke stopped. A
-    /// [`mob_anim_rate`] call cancels the seek. `false` = unknown mob or the
-    /// anim is not active.
     pub fn mob_anim_seek(mob_id: u64, anim: &str, phase: f32, rate: f32) -> bool
         => MobAnimSeek { mob_id, anim: anim.into(), phase, rate } => Bool
 }
 
 host_fn! {
-    /// Read the engine's authoritative playback state for an ACTIVE named
-    /// animation. `None` = the mob is missing/dead or the animation is inactive.
-    /// Use this phase when choosing absolute seek targets; do not mirror the
-    /// engine's fixed-tick stepping in guest state.
     pub fn mob_anim_state(mob_id: u64, anim: &str) -> Option<MobAnimStateData>
         => MobAnimState { mob_id, anim: anim.into() } => MobAnimState
 }
 
 host_fn! {
-    /// Drive a live mob (STABLE id) kinematically for THIS tick: `vel` is a
-    /// horizontal world-space velocity `[x, z]` (m/s) replacing the brain's wish
-    /// locomotion; `yaw`, when present, sets the absolute facing (mob convention —
-    /// see [`mob_facing_xz`]). Vertical physics (gravity, water buoyancy) and
-    /// collision stay engine-owned. An INTENT, not a state: re-issue every tick;
-    /// friction and steering feel are your policy. `false` = unknown or dead mob.
-    /// For the vertical axis see [`mob_drive_vertical`]; the raw `MobDrive`
-    /// call composes all three parts at once.
     pub fn mob_drive(mob_id: u64, vel: [f32; 2], yaw: Option<f32>) -> bool
         => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw, while_walking: false, gait: false } => Bool
 }
 
 host_fn! {
-    /// [`mob_drive`] as the body walking itself: a step sideways or a shuffle
-    /// within its block reads as `moving` (walk clip paced to the speed,
-    /// footsteps), which a plain drive — something carrying the body —
-    /// deliberately does not. `false` = unknown or dead mob.
     pub fn mob_step(mob_id: u64, vel: [f32; 2]) -> bool
         => MobDrive { mob_id, horizontal: Some(vel), vertical: None, yaw: None, while_walking: false, gait: true } => Bool
 }
 
 host_fn! {
-    /// Drive all velocity axes in one intent. A later drive replaces the whole
-    /// intent, so compose horizontal and vertical motion before submitting it.
     pub fn mob_drive_velocity(mob_id: u64, vel: [f32; 3], yaw: Option<f32>) -> bool
         => MobDrive { mob_id, horizontal: Some([vel[0], vel[2]]), vertical: Some(vel[1]), yaw, while_walking: false, gait: false } => Bool
 }
 
 host_fn! {
-    /// AUTHOR a live mob's (STABLE id) transform for THIS tick: `pos` is the
-    /// feet position, `yaw` the facing (mob convention — see
-    /// [`mob_facing_xz`]), `pitch` the body's nose-up tilt and `roll` its
-    /// right-side-up tilt (radians, both inside the yaw). The engine runs
-    /// none of its own motion for the body that tick (no gravity, buoyancy,
-    /// terrain sweep or knockback) and presents the pose as given — the seam
-    /// for a body whose path is a constraint only the mod knows (a cart on a
-    /// rail, a hull on a swell). An INTENT like [`mob_drive`]: re-issue every
-    /// tick; a body left unplaced is airborne with the velocity its
-    /// placements implied, falls by the engine's own physics and eases back
-    /// to level. `false` = unknown or dead mob.
     pub fn mob_kinematic(mob_id: u64, pos: [f64; 3], yaw: f32, pitch: f32, roll: f32) -> bool
         => MobKinematic { mob_id, pos, yaw, pitch, roll } => Bool
 }
 
 host_fn! {
-    /// Set a live mob's VERTICAL velocity (m/s) for THIS tick, leaving the
-    /// brain's own walking untouched — gravity resumes next tick, water
-    /// buoyancy stays engine-owned, and an upward value from the ground is a
-    /// launch (the walking gait carries through the arc, and the walk clip
-    /// re-phases onto a cycle boundary). The engine's own navigation step
-    /// jump keeps priority on a tick both fire. This is how a pack authors a
-    /// gait — a hop, a pounce, a lunge — from generic velocity access: read
-    /// the snapshot's `moving` + `on_ground` to decide when.
+    /// Sets a live mob's vertical velocity (m/s) for this tick only, without touching the
+    /// brain's own walking. Gravity resumes next tick, and water buoyancy is still engine-owned.
+    /// An upward value from the ground counts as a launch - the walk gait carries through the arc
+    /// and the clip re-phases onto a cycle boundary. The engine's own nav-step jump wins if it
+    /// fires the same tick. This is how a pack builds gaits (hop, pounce, lunge) on top of raw
+    /// velocity. Check the snapshot's `moving` and `on_ground` to time it.
     ///
-    /// `while_walking` carries the intent's PREMISE: pass `true` for a GAIT
-    /// launch so the engine drops the intent if the walk it was premised on
-    /// ended before consumption (a latched intent is decided from LAST
-    /// tick's state — arrival or an abandoned route in between otherwise
-    /// fires one stale in-place bounce at the destination). Pass `false`
-    /// for an unconditional launch (a startle jump from standstill). An
-    /// INTENT like [`mob_drive`]: re-issue per launch. `false` = unknown or
-    /// dead mob.
+    /// Pass `true` for `while_walking` on a gait launch, so the engine drops it if the walk ended
+    /// before the intent got consumed. Latched intents go off last tick's state, so an arrival in
+    /// between would cause a stale bounce at the destination. Pass `false` for an unconditional
+    /// launch, like a startle jump.
+    ///
+    /// Re-issue per launch, like [`mob_drive`]. Returns `false` if the mob's unknown or dead.
     pub fn mob_drive_vertical(mob_id: u64, vel: f32, while_walking: bool) -> bool
         => MobDrive { mob_id, horizontal: None, vertical: Some(vel), yaw: None, while_walking, gait: false } => Bool
 }
 
 host_fn! {
-    /// Seat a player in `seat` of a live mob (STABLE id). The engine validates
-    /// mechanism (live mob, declared free seat, unmounted player) and slaves the
-    /// rider from this tick; WHO may sit WHERE is your policy — usually decided
-    /// in an `interact_attempt` handler. Every detach path (your [`mob_dismount`],
-    /// the engine's sneak gesture, death, despawn, leave) announces the
-    /// `player_dismounted` event.
     pub fn mob_mount(mob_id: u64, player_id: PlayerId, seat: u8) -> bool
         => MobMount { mob_id, player_id, seat } => Bool
 }
 
 host_fn! {
-    /// Pin a player in a named POSE at the world-space `anchor` (rider feet
-    /// origin), body facing `yaw` (player convention: yaw `0` faces `+Z`) —
-    /// the static-seat primitive behind chairs/benches/sofas. YOUR policy is
-    /// where poses exist (your own seat layout) and who takes one; the engine
-    /// owns mechanism: one pose per player, no two players on one exact
-    /// anchor, replication and every release valve (sneak gesture, death,
-    /// spectator, leave). Read occupancy back from the roster
-    /// ([`crate::players`] → `pose_anchor`), never from mirrored mod state.
-    /// Poses are transient and not tied to any block — release sitters
-    /// yourself when your furniture breaks ([`mob_dismount`]). Pose
-    /// vocabulary: [`mod_api::pose`].
     pub fn player_pose_set(player_id: PlayerId, anchor: [f64; 3], yaw: f32, pose: u8) -> bool
         => PlayerPoseSet { player_id, anchor, yaw, pose } => Bool
 }
 
 host_fn! {
-    /// Unseat a player from whatever holds them — a mob seat or a pose
-    /// anchor. `false` = they were not mounted or posed.
     pub fn mob_dismount(player_id: PlayerId) -> bool => MobDismount { player_id } => Bool
 }
 
 host_fn! {
-    /// Read a live mob's declared seat capacity and current riders (in player-id
-    /// order). `None` means the mob is missing/dead; a present zero capacity is a
-    /// live non-rideable mob.
     pub fn mob_riders(mob_id: u64) -> Option<MobRidersData> => MobRiders { mob_id } => Riders
 }
 
-/// Map a point from a placed model group's unrotated FOOTPRINT space (origin
-/// at the footprint min corner, the space `models.json` seats/geometry are
-/// authored in) into world space — the exact transform the engine places
-/// model geometry with, so a computed pose anchor lands on the authored seat
-/// cushion under every facing. `base`/`facing` come from
-/// [`crate::block_model_group`]; `footprint` is your model's declared `cells`.
 pub fn footprint_local_to_world(
     base: [i32; 3],
     footprint: [u8; 3],
@@ -408,9 +247,6 @@ pub fn footprint_local_to_world(
     ]
 }
 
-/// The PLAYER-convention body yaw (yaw `0` faces `+Z`) that faces the same
-/// way as a placed model's `facing` — what a seat computed with
-/// [`footprint_local_to_world`] passes to [`player_pose_set`].
 pub fn facing_player_yaw(facing: Facing) -> f32 {
     use std::f32::consts::{FRAC_PI_2, PI};
     match facing {
@@ -425,10 +261,9 @@ pub fn facing_player_yaw(facing: Facing) -> f32 {
 mod tests {
     use super::*;
 
-    /// Pinned against the ENGINE's `placement_transform_fp` convention
-    /// (North identity; South mirrors X and Z; East/West swap axes with one
-    /// mirror). If this drifts, computed pose anchors leave the authored
-    /// seat cushions on rotated placements.
+    /// Same convention as the engine's `placement_transform_fp`. North is identity, South mirrors
+    /// X and Z, and East/West swap axes with one mirror. Keep them in sync, or seated poses end up
+    /// off the cushions on rotated placements.
     #[test]
     fn footprint_mapping_matches_the_engine_placement_transform() {
         let fp = [1, 2, 1];
@@ -454,28 +289,15 @@ mod tests {
 }
 
 host_fn! {
-    /// Remove a live mob (STABLE id) from the world immediately (no death, no
-    /// loot, not saved). `false` = no such live mob.
     pub fn despawn_mob(mob_id: u64) -> bool => DespawnMob { mob_id } => Bool
 }
 
 host_fn! {
-    /// Spawn `count` of an item (by registry NAME) as a dropped-item entity at
-    /// `pos`. `false` = unknown name or zero count.
     pub fn spawn_item(item: &str, count: u8, pos: [f64; 3]) -> bool
         => SpawnItem { item: item.into(), count, pos, data: Vec::new() } => Bool
 }
 
 host_fn! {
-    /// Launch ONE `item` (by registry NAME, `data` as its instance data) as
-    /// an item entity IN FLIGHT from `pos` at `vel` (m/s) for `owner`. It
-    /// flies per the row's `petramond:projectile` data and STRIKES what it
-    /// meets — a mob, a player, a collidable block — raising
-    /// [`EventKind::ProjectileHit`](mod_api::EventKind::ProjectileHit) for
-    /// the launcher's handler to act on; the engine itself only lodges (a
-    /// `sticks` row) or drops the item. `owner` is named as the attacker
-    /// on the hit and spared its own shot for a few ticks. Answers the
-    /// entity's stable id (`0` = unknown item).
     pub fn launch_item(
         item: &str,
         pos: [f64; 3],
@@ -493,17 +315,11 @@ host_fn! {
 }
 
 host_fn! {
-    /// Snapshot ONE item entity by its stable id — what a `projectile_hit`
-    /// handler reads to learn what struck (the stack, its data, who launched
-    /// it), or any rule tracking a drop it spawned. `None` = no such live
-    /// entity.
     pub fn item_entity(entity: u64) -> Option<Box<mod_api::ItemEntityData>>
         => ItemEntity { entity } => ItemEntity
 }
 
 host_fn! {
-    /// [`spawn_item`] carrying per-stack instance data (same rules as
-    /// `give_item_data`).
     pub fn spawn_item_data(item: &str, count: u8, pos: [f64; 3], data: &[(&str, &[u8])]) -> bool
         => SpawnItem {
             item: item.into(),
@@ -513,63 +329,36 @@ host_fn! {
         } => Bool
 }
 
-// Body conditions address players and mobs through the same entity reference.
 host_fn! {
-    /// Grant `ticks` of `condition` at `stage` (a stage index; resolve names
-    /// with [`resolve_condition`](crate::resolve_condition)). Fuel extends,
-    /// stages only upgrade, and a running damage clock is never reset.
-    /// `false` when the body is gone or refuses the grant (its species
-    /// tolerates the condition, or it touches a fluid that clears it).
     pub fn entity_condition_apply(entity: EntityRef, condition: mod_api::ConditionId, stage: u8, ticks: u32) -> bool
         => EntityConditionApply { entity, condition, stage, ticks } => Bool
 }
 host_fn! {
-    /// Consume `ticks` of a condition without changing its damage cadence;
-    /// `u32::MAX` clears it.
     pub fn entity_condition_cool(entity: EntityRef, condition: mod_api::ConditionId, ticks: u32) -> bool
         => EntityConditionCool { entity, condition, ticks } => Bool
 }
 
 host_fn! {
-    /// Whether a body of species `key` standing at foothold `from` can walk to
-    /// foothold `to`, treating every `blocked` cell as solid (a wall planned
-    /// but not yet built). `Undecided` = `max_nodes` ran out first; `None` =
-    /// this tick's route budget cannot cover `max_nodes` (ask again next tick)
-    /// or an unknown species. Server only.
     pub fn path_probe(key: &str, from: [i32; 3], to: [i32; 3], blocked: Vec<[i32; 3]>, max_nodes: u32) -> Option<mod_api::Route>
         => PathProbe { key: key.into(), from, to, blocked, max_nodes } => Route
 }
 
 host_fn! {
-    /// Every foothold inside the inclusive box `min..=max` a body of species
-    /// `key` walks to from `from` without leaving the box (`toward`: every one
-    /// that walks to `from`), each `blocked` cell treated as solid, breadth
-    /// first. `Deferred` = this tick's route budget cannot cover `max_nodes`;
-    /// `Exceeded` = the box holds more footholds than that. Server only.
     pub fn walk_region(key: &str, from: [i32; 3], min: [i32; 3], max: [i32; 3], blocked: Vec<[i32; 3]>, toward: bool, max_nodes: u32) -> mod_api::Flood
         => WalkRegion { key: key.into(), from, min, max, blocked, toward, max_nodes } => Flood
 }
 
 host_fn! {
-    /// Which `cells` a body of species `key` could stand in, parallel to
-    /// `cells` (at most [`crate::SIM_BATCH_MAX`]). Server only.
     pub fn footholds(key: &str, cells: Vec<[i32; 3]>) -> Vec<bool>
         => Footholds { key: key.into(), cells } => Bools
 }
 
 host_fn! {
-    /// Draw item `main` in the live mob's main hand and `off` in its off hand
-    /// (registry names; `None` = empty). Presentation only, never persisted.
-    /// `false` = no such live mob or an unknown item.
     pub fn mob_held_display(mob_id: u64, main: Option<String>, off: Option<String>) -> bool
         => MobHeldDisplay { mob_id, main, off } => Bool
 }
 
 host_fn! {
-    /// Replace the retained draw set a live mob wears (empty clears it). Prim
-    /// space has its origin at the mob's feet centre; `turns` = it turns with
-    /// the body's yaw, otherwise it keeps the world's axes. Replicated, never
-    /// saved. `false` = no such live mob.
     pub fn set_mob_draw(mob_id: u64, frame: mod_api::DrawFrame, prims: Vec<mod_api::DrawPrim>) -> bool
         => SetMobDraw { mob_id, frame, prims } => Bool
 }

@@ -1,24 +1,3 @@
-//! Load block definitions from `assets/blocks.json` (serde).
-//!
-//! Every block's data row lives on disk (like `recipes.json`), so block
-//! properties are editable — and moddable — without a rebuild. Rows reference
-//! blocks/items by their registry names, tags/materials by their snake_case
-//! serde names, tiles by their atlas asset names, and behaviours by their
-//! [`BlockBehavior::key`] names.
-//!
-//! Two kinds of row (see [`crate::registry`]): a row whose key is an ENGINE
-//! block name overrides that block's def (a pack states only the rows it
-//! changes); a row with a NAMESPACED key (`mod_id:name`) REGISTERS a new
-//! dynamic block at the next free id. A new bare name is an error.
-//!
-//! Unlike recipes (where a malformed row is skipped), the block table is
-//! load-bearing for the whole engine — world gen, meshing, lighting, and save
-//! decode all index it by block id — so the loader validates that the file
-//! covers EVERY registered block exactly once and fails loudly at startup on
-//! any mismatch, rather than limping on with a partial table.
-//!
-//! [`BlockBehavior::key`]: super::behavior::BlockBehavior::key
-
 use serde::{Deserialize, Serialize};
 
 use crate::facing::Facing;
@@ -34,176 +13,71 @@ use super::shape_kind::{
 };
 use super::{behavior, Aabb, Block, BlockInteraction, BlockTag};
 
-/// One block row as written in `blocks.json`: a field-for-field mirror of
-/// [`BlockDef`] with names in place of ids/pointers (the block itself, drops'
-/// items, tiles, behaviour) and owned `Vec`s in place of `'static` slices.
-/// Floats ride as `f64` (JSON's native width); converting narrows back to the
-/// exact `f32` the shortest decimal representation denotes.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawBlockDef {
-    /// Registry name: an engine block name (override) or a namespaced
-    /// `mod_id:name` key (dynamic registration). Resolved against the name
-    /// table, NOT through `Block` serde, so the loader stays the one place
-    /// ids are assigned.
     pub block: String,
     pub shape: RawShape,
     pub flags: Vec<RawFlag>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contained_fluid: Option<String>,
-    /// The fluid block a broken cell leaves behind where it can rest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub melts_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fluid: Option<crate::fluid::load::RawFluid>,
-    /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
-    /// (interned at load — see [`BlockTag::resolve`]).
     pub tags: Vec<String>,
-    /// Whether this box-set shape resolves CORNER forms from perpendicular
-    /// same-kind neighbours, the way stairs do (`"corners": true`); see
-    /// `shape_kind::BoxSetParams`.
-    ///
-    /// A ROW field rather than a key inside `shape`, like `front` and
-    /// `collision`: `{"boxes": [...]}` is externally tagged with an array
-    /// payload, so it has no room for sibling keys, and half of what this
-    /// declares is a row-level question anyway. Its two legality rules are
-    /// therefore split by necessity — `RawShape::resolve` rejects it on a
-    /// non-`boxes` shape (only a box set can compose corner forms), and
-    /// [`convert`] rejects it without `directional_view` (a corner is a
-    /// meeting of two FACINGS, so with no stored facing the rule never fires
-    /// and the flag would be dead data). Both are load errors.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub corners: bool,
     pub behavior: String,
     pub interaction: RawInteraction,
     pub collision: Vec<Aabb>,
-    /// RANGE of the block light this row radiates, on the engine's ×2 scale
-    /// (`0` = not an emitter). Legal on any row, `opaque` full cubes included:
-    /// a cell's own matter blocks light passing THROUGH it, never the light it
-    /// makes itself.
     pub emission: u8,
-    /// HUE of the block light this row radiates: linear RGB, each channel
-    /// `0.0..=1.0`, as a fraction of [`emission`](Self::emission). Optional and
-    /// WHITE by default, so a row that says nothing keeps the colourless light
-    /// every row had before the field existed.
-    ///
-    /// `emission` alone stays the light's RANGE (the flood decays 2 per step
-    /// from it, per channel), so a colour only ever DIMS channels relative to
-    /// it — `[1, 0.42, 0.27]` reaches as far in red as a white light of the
-    /// same emission would, and runs out of blue much sooner. NOTE that the
-    /// hue resolution is `emission` steps on the ×2 scale, so a subtle tint on
-    /// a bright row has few values to choose from. Only legal on an emitter row:
-    /// a hue with no light behind it is dead data, and the mistake it catches
-    /// is colouring `furnace` instead of `furnace_lit`.
     #[serde(default = "white_light", skip_serializing_if = "is_white_light")]
     pub light_color: [f64; 3],
     #[serde(default)]
     pub particle_emitter: Option<RawEmitterRef>,
     pub tiles: [String; 3],
-    /// Per-slot UV rotation in degrees (`0`, `90`, `180`, `270` — clockwise on
-    /// the face), keyed by tile slot: `{"top": 90, "bottom": 90}`. How one
-    /// tile serves differently oriented faces (a bricks row whose top/bottom
-    /// courses run across instead of along). Tile-slot families only
-    /// (cube/stair/slab) — a box row rotates per box instead, so declaring it
-    /// anywhere else is a load error, never a silent no-op.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv_rotation: Option<std::collections::BTreeMap<String, u16>>,
-    /// Tile shown on the placed entity-facing face (furnace/chest fronts).
-    /// Only valid together with the `directional_view` flag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub front: Option<String>,
-    /// Side compositing: `{"base": tile, "overlay": tile}` — side faces draw
-    /// the base with the overlay tinted by its atlas tint class (grass).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_overlay: Option<RawSideOverlay>,
-    /// Side tile swapped in while a `snow_cover` block sits directly above.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub covered_side: Option<String>,
-    /// The ANIMATED strip a fluid cell's flowing state draws (the still tile is
-    /// `tiles[0]`). Fluid rows only; a flow tile anywhere else is dead data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_tile: Option<String>,
     pub material: BlockMaterial,
     pub hardness: f64,
     pub drops: Vec<RawDrop>,
-    /// Sapling stage chain: the registry name of the block this row advances
-    /// to on a successful growth roll. Required on every NON-final `sapling`
-    /// behaviour row, forbidden anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_stage: Option<String>,
-    /// The tree(s) a FINAL sapling stage grows: a `features.json` key, or a
-    /// weighted list of them. Required on every final `sapling` behaviour row,
-    /// forbidden anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grows_into: Option<RawGrowsInto>,
-    /// A ladder-shaped row's fixed wall facing (`"north"` / `"south"` /
-    /// `"west"` / `"east"`): the direction the panel front points, away from
-    /// its supporting wall. Required on every `ladder`-shaped row, forbidden
-    /// anywhere else — facing is block identity, one row per facing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub panel_facing: Option<String>,
-    /// The facing → sibling-row map of a wall-panel family's placeable row
-    /// (all four directions required); placement commits the sibling matching
-    /// the clicked face's normal. Only valid on `ladder`-shaped rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub facing_rows: Option<RawFacingRows>,
-    /// For a `{"run": ...}` row: the registry name of the sibling row rooted
-    /// the other way. Only valid on run rows; the target must be a run row
-    /// with the opposite root that names this row back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flipped: Option<String>,
-    /// An `animated_models.json` key: the moving model this row draws
-    /// outside the chunk mesh (a chest's lid, a door's swing). Required on
-    /// every row whose shape draws nothing itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animated_model: Option<String>,
-    /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the block
-    /// interop surface, exactly the item rows' `data` field — a consuming
-    /// system's key, an opaque JSON value that consumer parses. Attachable to
-    /// EXISTING rows via `{"patch": ..., "data": ...}` rows.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub data: serde_json::Map<String, serde_json::Value>,
-    /// Which neighbouring cell holds this block up: `"below"` (the default —
-    /// the ground a plant roots in) or `"above"` (the ceiling a hanging block
-    /// grows down from). Read by the `fragile` break rule and by the
-    /// placement substrate gate, so a row that hangs breaks with its ceiling
-    /// and cannot be placed into thin air. A row that says nothing keeps the
-    /// ground rule every row had before the field existed.
     #[serde(default, skip_serializing_if = "SupportDir::is_default")]
     pub support: SupportDir,
-    /// Ground tag names this block may be PLACED on, any one of which
-    /// satisfies the gate (`["soil", "mymod:ashes"]`). The OPEN half of the
-    /// substrate rule: a pack invents its own ground category by tagging the
-    /// rows it owns and naming that tag here. Unions with the `RootsIn*` tags;
-    /// a row that names a tag no loaded block carries is a load error, since
-    /// that typo would otherwise be a plant that can never be placed anywhere.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub roots_on: Vec<String>,
-    /// What the support cell's face toward this block must look like:
-    /// `"any"` (the default — no shape requirement) or `"full_cube"` (a
-    /// complete opaque cube face, so partial shapes and air refuse it).
-    /// Independent of the `RootsIn*` tags, which gate the support's MATERIAL;
-    /// a row may declare either, both, or neither.
     #[serde(default, skip_serializing_if = "RootsFace::is_default")]
     pub roots_face: RootsFace,
 }
 
-/// The `petramond:harvest` data entry: the mining tier a tool of this block's
-/// [`preferred_tool`](crate::block::Block::preferred_tool) kind must meet for
-/// the break to yield the row's drops.
-///
-/// It rides the interop `data` map rather than a dedicated row field so a PACK
-/// can retune it on rows it does not own — `{"patch": "petramond:oak_log",
-/// "data": {"petramond:harvest": {"tier": 0}}}` is the whole of "in my pack,
-/// fists break wood again". A row that says nothing is tier `0`:
-/// hand-harvestable, which is what the absent field always meant.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawHarvest {
     pub tier: u8,
 }
 
-/// A row's `petramond:construction` data: how paid construction builds it.
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum RawConstruction {
@@ -212,7 +86,6 @@ enum RawConstruction {
     Unsupported(String),
 }
 
-/// A row's `facing_rows` field: the four facing-sibling registry names.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawFacingRows {
@@ -222,7 +95,6 @@ pub(super) struct RawFacingRows {
     pub east: String,
 }
 
-/// A row's `side_overlay` field: the two tiles of a composited side face.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawSideOverlay {
@@ -230,9 +102,6 @@ pub(super) struct RawSideOverlay {
     pub overlay: String,
 }
 
-/// A row's `grows_into` field: one feature key, or a weighted choice list
-/// (`[{"feature": "petramond:oak_big", "weight": 1}, ...]`; `weight` defaults
-/// to 1).
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub(super) enum RawGrowsInto {
@@ -240,7 +109,6 @@ pub(super) enum RawGrowsInto {
     Weighted(Vec<RawGrowthChoice>),
 }
 
-/// One weighted `grows_into` entry.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawGrowthChoice {
@@ -253,9 +121,6 @@ fn default_growth_weight() -> f64 {
     1.0
 }
 
-/// The `light_color` a row that names none carries: WHITE, the one canonical
-/// colourless value. It reproduces the pre-colour behaviour exactly — all three
-/// channels land back on `emission` with no rounding.
 fn white_light() -> [f64; 3] {
     [1.0, 1.0, 1.0]
 }
@@ -264,21 +129,7 @@ fn is_white_light(c: &[f64; 3]) -> bool {
     *c == white_light()
 }
 
-/// Resolve a row's `emission` + `light_color` into the PER-CHANNEL emission the
-/// light flood seeds, on the same x2 integer scale as `emission` itself.
-///
-/// White is exact by construction (`emission * 1.0` needs no rounding), and no
-/// channel can exceed `emission` — the flood's reach, and with it the batch
-/// bake's halo-width invariant, stays bounded by the scalar the emitter scan
-/// already gates on.
-///
-/// Light a row cannot possibly radiate is a LOAD error, not a quiet nothing:
-/// every way of writing one is caught here.
 fn resolve_emission_rgb(emission: u8, color: [f64; 3]) -> Result<[u8; 3], String> {
-    // A light CELL holds five bits per channel, exactly covering the engine's
-    // 0..=SKY_FULL scale. A row brighter than that does not clamp, it WRAPS —
-    // `emission: 32` would seed zero and the lamp would silently go out — so it
-    // is rejected here, before any of it reaches the flood.
     if emission > crate::chunk::SKY_FULL {
         return Err(format!(
             "emission {emission} exceeds the maximum light level {} — brighter than full daylight",
@@ -309,21 +160,13 @@ fn resolve_emission_rgb(emission: u8, color: [f64; 3]) -> Result<[u8; 3], String
     Ok(rgb)
 }
 
-/// A row's `particle_emitter` field: a `particle_emitters.json` bundle KEY
-/// (`"petramond:torch_flame"` — the reusable, mob-shareable form), or one inline
-/// anonymous row for a block-local one-off. A referenced bundle contributes all
-/// its particle rows; its `tint` is mob-body data and blocks ignore it.
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub(super) enum RawEmitterRef {
     Key(String),
-    /// Boxed: the row is a couple of hundred bytes beside a key's string.
     Inline(Box<ParticleEmitter>),
 }
 
-/// A row's `interaction` field: a bare engine action name (`"none"`,
-/// `"open_furnace"`, ...) or `{"open_gui": "mod_id:name"}` opening a
-/// mod-defined GUI kind. Resolved to [`BlockInteraction`] in [`convert`].
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub(super) enum RawInteraction {
@@ -336,8 +179,6 @@ impl RawInteraction {
         match self {
             RawInteraction::Named(name) => Ok(match name.as_str() {
                 "none" => BlockInteraction::None,
-                // The named engine openers are vocabulary sugar: they resolve
-                // to the same unified shape mod `open_gui` rows use.
                 "open_crafting_table" => {
                     BlockInteraction::OpenGui(crate::gui_state::GuiKind::CraftingTable)
                 }
@@ -355,8 +196,6 @@ impl RawInteraction {
                 other => return Err(format!("unknown interaction '{other}'")),
             }),
             RawInteraction::OpenGui { open_gui } => {
-                // Mod GUI kinds must be namespaced (engine screens carry
-                // session/slot semantics an open_gui row cannot provide).
                 if !crate::registry::is_namespaced(open_gui) {
                     return Err(format!(
                         "open_gui '{open_gui}' must be a namespaced 'mod_id:name' GUI kind"
@@ -370,7 +209,6 @@ impl RawInteraction {
     }
 }
 
-/// A [`BlockFlags`] bit by name — rows list the flags they carry.
 #[derive(Copy, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RawFlag {
@@ -399,8 +237,6 @@ impl RawFlag {
     }
 }
 
-/// One entry of a row's `drops` list (mirror of [`Drop`]; `item` is the
-/// dropped item's registry name).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawDrop {
@@ -410,57 +246,20 @@ pub(super) struct RawDrop {
     pub chance: f64,
 }
 
-/// The loaded block table: id-indexed defs plus the dense per-id flag and
-/// emission copies the mesher/light hot loops read (see `data::flags` /
-/// `data::emission`).
 pub(crate) struct Registry {
     pub defs: &'static [BlockDef],
-    /// Every registered block in id order (`all[id] == Block(id)`).
     pub all: Box<[Block]>,
-    /// Session-local shape-kind table (see [`shape_kind`]); every
-    /// `BlockDef::shape_kind` indexes it.
     pub shape_kinds: &'static [ShapeKindDef],
-    /// Every dense per-id table below is sized to `defs.len()`, NOT to the id
-    /// ceiling: block ids are `u16` now, so a fixed-size array would be 64 Ki
-    /// entries of mostly nothing and would evict the hot rows it exists to
-    /// keep. `Block::from_id` clamps out-of-range ids to air, and every id
-    /// that reaches a section has already crossed a validating boundary
-    /// (palette, net remap, mod write guard), so indexing is direct.
     pub flags: Box<[BlockFlags]>,
     pub emission: Box<[u8]>,
-    /// Dense per-id PER-CHANNEL emission (`emission` scaled by the row's
-    /// `light_color`), same rationale as [`emission`](Self::emission): the
-    /// light flood's emitter gather reads it per cell over whole sections and
-    /// must never touch the big `BlockDef` table to do it.
     pub emission_rgb: Box<[[u8; 3]]>,
-    /// Dense per-id copy of [`ShapeKindDef::refines`] — the refine cascade's
-    /// and the load sweep's per-cell gate. The sweep walks whole sections' id
-    /// buffers looking for refining cells, so this MUST NOT cost the
-    /// `def()`→`shape_kind`→table chain per byte (same rationale as
-    /// [`flags`](Self::flags)).
     pub shape_refines: Box<[bool]>,
-    /// Dense per-id "resolves through a custom (baked) shape" — the section
-    /// install sweep's per-cell gate, same rationale as
-    /// [`shape_refines`](Self::shape_refines).
     pub shape_custom: Box<[bool]>,
-    /// Dense per-id TAG BITSET (bit `tag.0`). `Block::has_tag` is asked
-    /// several times per cell by the mesher (`is_log`, `is_leaves`,
-    /// `merges_with_self`, `is_snow_cover`) and once per neighbour by the
-    /// terrain rules, and the honest form of the answer — a `contains` scan
-    /// over the row's heap tag slice behind a big-table `def()` load — is a
-    /// pointer chase and a loop. Tag ids at or past 128 (only reachable with
-    /// an implausible number of mod tags) fall back to that scan.
     pub tag_bits: Box<[u128]>,
 }
 
-/// Highest tag id the dense [`Registry::tag_bits`] set can hold.
 pub(super) const TAG_BITS_MAX: u8 = 127;
 
-/// Load the registry from every `blocks.json` layer of `packs` (base + the
-/// enabled packs, later packs replacing rows by block — see
-/// [`PackSet::read_layers`](crate::assets::PackSet::read_layers)) — the
-/// content loader's blocks stage. `names` was built from these same layers,
-/// so every row key resolves and every dynamic id is already assigned.
 pub(crate) fn load_registry(
     packs: &crate::assets::PackSet,
     names: &ContentNames,
@@ -475,9 +274,6 @@ pub(super) fn parse(text: &str) -> Result<Registry, String> {
     parse_test_layers(&[text])
 }
 
-/// Test harness: parse synthetic layers against a name table built from those
-/// same layers (+ the shipped items for drop resolution), mirroring the real
-/// bootstrap without touching the global registries.
 #[cfg(test)]
 pub(super) fn parse_test_layers(texts: &[&str]) -> Result<Registry, String> {
     let (items, _) =
@@ -487,8 +283,6 @@ pub(super) fn parse_test_layers(texts: &[&str]) -> Result<Registry, String> {
 }
 
 pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Registry, String> {
-    // Every row's `shape` interns into this table during `convert`, deduping one
-    // shape-kind row per distinct family+params (see [`shape_kind`]).
     let mut interner = shape_kind::ShapeKindInterner::new();
     let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
@@ -530,8 +324,6 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
                      and quench.result to be nonfluid"
                 ));
             }
-            // Contact reactions resolve one direction per pair; a mutual pair
-            // would make the outcome depend on which cell updates first.
             if by.and_then(|f| f.quench).is_some_and(|q| q.by == row.block) {
                 return Err(format!(
                     "block '{name}' and '{}' quench each other; \
@@ -595,10 +387,6 @@ pub(super) fn parse_layers(texts: &[&str], names: &ContentNames) -> Result<Regis
     })
 }
 
-/// Cross-row sapling checks `convert` can't do alone: every `next_stage`
-/// target must itself be a sapling row, and every chain must terminate in a
-/// final (`grows_into`) stage — a cycle or a dead end would be a sapling that
-/// silently never grows.
 fn validate_stage_chains(defs: &[BlockDef]) -> Result<(), String> {
     let name = |d: &BlockDef| format!("{:?}", d.block);
     for d in defs {
@@ -616,7 +404,7 @@ fn validate_stage_chains(defs: &[BlockDef]) -> Result<(), String> {
             }
             match target.next_stage {
                 Some(next) => at = next,
-                None => break, // reached a final (grows_into) stage
+                None => break,
             }
         }
         if defs[at.id() as usize].next_stage.is_some() {
@@ -629,9 +417,6 @@ fn validate_stage_chains(defs: &[BlockDef]) -> Result<(), String> {
     Ok(())
 }
 
-/// A substrate tag nothing carries is a plant that can never be placed, and
-/// the tag vocabulary is open strings agreed between packs — so the ONE place
-/// a misspelt category can surface is here, at load, by name.
 fn validate_roots_on(defs: &[BlockDef]) -> Result<(), String> {
     for d in defs {
         for tag in d.roots_on {
@@ -646,10 +431,6 @@ fn validate_roots_on(defs: &[BlockDef]) -> Result<(), String> {
     Ok(())
 }
 
-/// Cross-row wall-panel checks `convert` can't do alone: every `facing_rows`
-/// target must be a ladder-shaped row whose own `panel_facing` matches the
-/// slot it fills, and the declaring row must map its own facing to itself —
-/// otherwise placement would commit a panel that doesn't hug the clicked wall.
 fn validate_facing_rows(defs: &[BlockDef]) -> Result<(), String> {
     for d in defs {
         let Some(rows) = d.facing_rows else {
@@ -670,7 +451,6 @@ fn validate_facing_rows(defs: &[BlockDef]) -> Result<(), String> {
                 ));
             }
         }
-        // Self-consistency: placing this row toward its own facing must keep it.
         let own = d.panel_facing.expect("ladder shape enforced in convert");
         if rows[own.to_u8() as usize] != d.block {
             return Err(format!(
@@ -683,10 +463,6 @@ fn validate_facing_rows(defs: &[BlockDef]) -> Result<(), String> {
     Ok(())
 }
 
-/// Cross-row run checks `convert` can't do alone: a `flipped` target must be
-/// a run row rooted the OPPOSITE way and must name this row back — otherwise
-/// a ceiling click would commit a row that stands on air, and the two items
-/// would disagree about which row the other one places.
 fn validate_flipped_rows(defs: &[BlockDef], kinds: &[ShapeKindDef]) -> Result<(), String> {
     let root_of = |d: &BlockDef| {
         kinds[d.shape_kind.0 as usize]
@@ -738,11 +514,6 @@ fn parse_facing(name: &str) -> Result<Facing, String> {
     }
 }
 
-/// A row's `uv_rotation` map as per-slot quarter turns `[top, bottom, side]`.
-/// Degrees must be quarter turns and the keys must name slots; only the
-/// tile-slot families (cube/stair/slab) may declare it — every other shape
-/// textures through its own UV vocabulary (a box set rotates per box), where
-/// a row-level map could only be a silent no-op.
 fn resolve_uv_turns(r: &RawBlockDef, sim: &dyn ShapeSim) -> Result<[u8; 3], String> {
     let Some(map) = &r.uv_rotation else {
         return Ok([0; 3]);
@@ -791,11 +562,7 @@ fn convert(
         Tile::from_name(name).ok_or_else(|| format!("unknown tile '{name}'"))
     };
     let tiles = [tile(&r.tiles[0])?, tile(&r.tiles[1])?, tile(&r.tiles[2])?];
-    // Resolve the composable shape kind once; its family/params drive every
-    // shape-keyed flag and validation below, and it interns into the table.
     let (family, params, shape_key) = r.shape.resolve(r.corners)?;
-    // The family's facets answer every shape-keyed rule, so this loader
-    // names no family.
     let (sim, render, _) = shape_kind::families::singletons(family);
     let uv_turns = resolve_uv_turns(&r, sim)?;
     let mut flags = BlockFlags::NONE;
@@ -833,7 +600,6 @@ fn convert(
     if flags.fluid() && (!sim.hosts_fluid() || flags.is_opaque() || flags.is_solid()) {
         return Err("fluid requires a nonopaque, nonsolid cube".into());
     }
-    // Derived, not row-listed: the shape classes the mesher needs as dense flags.
     flags = flags.with(sim.row_flags());
     if render.mesh_emitter(&params) == MeshEmitter::Boxes {
         flags = flags.with(BlockFlags::BOX_SHAPE);
@@ -854,9 +620,6 @@ fn convert(
                 .ok_or_else(|| format!("unknown animated_model '{key}'"))
         })
         .transpose()?;
-    // A shape that meshes nothing itself is only ever seen through its model,
-    // and the model's gather finds a cell by its stored state: a meshing
-    // shape stores one only for a `directional_view` row (its front).
     let draws_itself = render.mesh_emitter(&params) != MeshEmitter::Nothing;
     match animated_model {
         None if !draws_itself => {
@@ -895,11 +658,6 @@ fn convert(
         .iter()
         .map(|t| BlockTag::resolve(t))
         .collect::<Result<_, String>>()?;
-    // Sapling-ness has ONE membership definition: the `sapling` tag (what the
-    // block IS, what mods enumerate) and the `sapling` behaviour (what it
-    // DOES, the growth) must name the same rows — a tagged-but-inert row
-    // would be advertised as growable and never grow; a behaviour row without
-    // the tag would be invisible to tag-driven mod policy.
     let is_sapling = behavior.key() == "sapling";
     if is_sapling != tags.contains(&BlockTag::SAPLING) {
         return Err(if is_sapling {
@@ -908,9 +666,6 @@ fn convert(
             "the 'sapling' tag requires the 'sapling' behavior (tag and behavior must agree)".into()
         });
     }
-    // Growth stages are the block rows themselves: a sapling row is either a
-    // growing stage (`next_stage` names its successor) or the final stage
-    // (`grows_into` names its tree) — exactly one, and only on sapling rows.
     let next_stage = match &r.next_stage {
         None => None,
         Some(name) => Some(
@@ -962,13 +717,6 @@ fn convert(
             )
         }
     }
-    // A bed is a spawn anchor: the server's bed-spawn bookkeeping (set on the
-    // sleep click, verified at respawn, cleared on break) resolves the bed
-    // through its MODEL GROUP, and a spawn is only ever SET by a sleep
-    // interaction. A `bed`-tagged row that is not a sleepable model block
-    // would advertise a spawn anchor the bookkeeping can never set or
-    // resolve. The converse is deliberately open: `interaction: "sleep"`
-    // without the tag is a sleepable block that anchors no spawn.
     if tags.contains(&BlockTag::BED) {
         if params.model_kind().is_none() {
             return Err(
@@ -985,17 +733,12 @@ fn convert(
             );
         }
     }
-    // Derived, not row-listed: the physics climb/grip probes need these as
-    // dense flags (see `BlockFlags::CLIMBABLE` / `BlockFlags::SLIPPERY`).
     if tags.contains(&BlockTag::CLIMBABLE) {
         flags = flags.with(BlockFlags::CLIMBABLE);
     }
     if tags.contains(&BlockTag::SLIPPERY) {
         flags = flags.with(BlockFlags::SLIPPERY);
     }
-    // Row texture vocabulary beyond the plain [top, bottom, side] triple. The
-    // front is meaningless without a stored placement facing, which only
-    // `directional_view` rows record — refuse the dead data.
     let front = match &r.front {
         None => None,
         Some(name) => {
@@ -1005,10 +748,6 @@ fn convert(
             Some(tile(name)?)
         }
     };
-    // A wall panel's facing is meaningless off the ladder shape, and a
-    // ladder-shaped row without one would mesh/collide/climb some arbitrary
-    // default — facing is the shape's identity axis, so both directions of
-    // the pairing are load errors (mirroring front ⇔ directional_view).
     let panel_facing = match &r.panel_facing {
         None => {
             if sim.faces_by_row() {
@@ -1040,7 +779,6 @@ fn convert(
                     .map(Block)
                     .ok_or_else(|| format!("unknown facing_rows block '{name}'"))
             };
-            // Facing discriminant order: North, South, West, East.
             let rows: &'static [Block; 4] = Box::leak(Box::new([
                 resolve(&raw.north)?,
                 resolve(&raw.south)?,
@@ -1203,18 +941,10 @@ fn convert(
     })
 }
 
-/// Intern one `grows_into` feature key. The key is validated against the
-/// worldgen feature registry when THAT catalog loads (the worldgen layer sits
-/// above this one and cross-checks every block row's key — see
-/// `worldgen::data::features`): a final sapling stage naming a missing tree
-/// still fails loudly, just at the layer that owns the feature table.
 fn resolve_growth_feature(key: &str) -> Result<&'static str, String> {
     Ok(String::leak(key.to_owned()))
 }
 
-/// Shared strict validation for one particle-emitter row — used by block rows
-/// (`blocks.json` `particle_emitter`) and mob rows (`mobs.json`
-/// `particle_emitters` entries), which speak the same schema.
 pub fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), String> {
     let finite = |label: &str, value: f32| -> Result<(), String> {
         if value.is_finite() {
@@ -1315,9 +1045,6 @@ pub fn validate_particle_emitter(e: &ParticleEmitter) -> Result<(), String> {
     Ok(())
 }
 
-/// The table loads exactly once per process (a `LazyLock` in `data`), so its
-/// rows' slices may leak into `'static` — keeping every [`BlockDef`] consumer
-/// signature identical to the old compiled-in table.
 fn leak<T>(v: Vec<T>) -> &'static [T] {
     Box::leak(v.into_boxed_slice())
 }
@@ -1327,8 +1054,6 @@ mod tests {
     use super::*;
     use crate::block::ShapeFamily;
 
-    /// The shipped `assets/blocks.json` must load fully — the same gate the game
-    /// applies at startup, surfaced as a test so a bad edit fails CI, not a launch.
     #[test]
     fn shipped_blocks_json_loads_fully() {
         let (text, path) =
@@ -1341,37 +1066,24 @@ mod tests {
         );
     }
 
-    /// The `bed` tag is the spawn-anchor identity the server's bed bookkeeping
-    /// keys on; it resolves the bed through its model group and only a sleep
-    /// click ever sets a spawn — so a tagged row that is not a sleepable model
-    /// block must fail the load instead of silently never anchoring.
     #[test]
     fn bed_tagged_rows_must_be_sleepable_model_blocks() {
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
-        // A bed-tagged CUBE row: the bookkeeping could never resolve its group.
         let cube = r#"{ "blocks": [ { "block": "petramond:stone", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": ["bed"], "behavior": "inert", "interaction": "sleep", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"tier": 1}}, "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, cube])
             .err()
             .expect("bed tag on a cube refused");
         assert!(err.contains("model shape"), "{err}");
-        // A bed-tagged model row WITHOUT the sleep interaction: no click could
-        // ever set the spawn it advertises.
         let unsleepable = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": ["bed"], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, unsleepable])
             .err()
             .expect("unsleepable bed tag refused");
         assert!(err.contains("interaction 'sleep'"), "{err}");
-        // The open converse: `interaction: "sleep"` WITHOUT the tag is a
-        // sleepable block that anchors no spawn — legal.
         let sleep_only = r#"{ "blocks": [ { "block": "petramond:bed", "shape": {"model": "petramond:bed"}, "flags": ["solid", "directional_view"], "tags": [], "behavior": "inert", "interaction": "sleep", "collision": [], "emission": 0, "tiles": ["oak_planks", "oak_planks", "oak_planks"], "material": "wood", "hardness": 1, "drops": [] } ] }"#;
         parse_test_layers(&[&base, sleep_only]).expect("sleep without the bed tag loads");
     }
 
-    /// `uv_rotation` lands on the row's tile slots as quarter turns, and
-    /// anything it cannot mean — an unknown slot, a non-quarter turn, or a
-    /// shape that textures through its own per-face vocabulary — is a load
-    /// error rather than a silent no-op.
     #[test]
     fn uv_rotation_resolves_to_slot_turns_and_rejects_the_rest() {
         let (base, _) =
@@ -1397,7 +1109,6 @@ mod tests {
             .err()
             .expect("an unknown slot refused");
         assert!(err.contains("unknown uv_rotation slot"), "{err}");
-        // Box sets rotate per box: a row-level map there could only be dead data.
         let boxes_row = r#"{"blocks": [{"block": "mymod:slab", "shape": {"boxes": [{"to": [16, 8, 16]}]}, "flags": ["solid"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["stone", "stone", "stone"], "uv_rotation": {"top": 90}, "material": "stone", "hardness": 1, "drops": []}]}"#;
         let err = parse_test_layers(&[&base, boxes_row])
             .err()
@@ -1445,9 +1156,7 @@ mod tests {
             99.0,
             "the pack layer's stone row replaces the base row"
         );
-        // An override registers no new id.
         assert_eq!(reg.defs.len(), crate::block::ENGINE_BLOCK_NAMES.len());
-        // Rows the layer does not name are untouched.
         assert_eq!(
             reg.defs[Block::Dirt.id() as usize].hardness,
             base_reg.defs[Block::Dirt.id() as usize].hardness
@@ -1460,10 +1169,6 @@ mod tests {
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let base_reg = parse(&base).expect("base table loads");
         let shipped = base_reg.defs[Block::OakLog.id() as usize].harvest_tier;
-        // The whole point of the gate riding the data surface: a pack that
-        // wants fists to break wood again says so about a row it cannot
-        // otherwise touch. Aim at whichever side of the gate the shipped row
-        // is NOT on, so this pins the override and not the shipped value.
         let wanted = if shipped == 0 { 3 } else { 0 };
         let patch = format!(
             r#"{{ "blocks": [ {{ "patch": "petramond:oak_log", "data": {{"petramond:harvest": {{"tier": {wanted}}}}} }} ] }}"#
@@ -1474,7 +1179,6 @@ mod tests {
             wanted,
             "the patch layer's harvest entry drives the compiled gate"
         );
-        // A patch registers no id and leaves every other row alone.
         assert_eq!(reg.defs.len(), crate::block::ENGINE_BLOCK_NAMES.len());
         assert_eq!(
             reg.defs[Block::Stone.id() as usize].harvest_tier,
@@ -1490,8 +1194,6 @@ mod tests {
         let reg = parse_test_layers(&[&base, layer]).expect("unstated gate loads");
         let chalk = reg.defs.last().expect("the pack row registered");
         assert_eq!(chalk.harvest_tier, 0, "an absent entry means tier 0");
-        // A malformed entry is a load error — the engine parses its own
-        // vocabulary strictly, so a typo can never read as "no gate".
         let bad = r#"{ "blocks": [ { "block": "mymod:chalk", "shape": "cube", "flags": ["solid", "opaque", "ao_occluder"], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{"min": [0, 0, 0], "max": [1, 1, 1]}], "emission": 0, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {"petramond:harvest": {"teir": 2}}, "hardness": 1, "drops": [] } ] }"#;
         let err = parse_test_layers(&[&base, bad])
             .err()
@@ -1499,15 +1201,12 @@ mod tests {
         assert!(err.contains("petramond:harvest"), "{err}");
     }
 
-    /// One `mymod:lamp` row with the given `flags` / `emission` / `light_color`
-    /// fields, layered over the shipped table.
     fn lamp_layer(flags: &str, emission: u8, light_color: &str) -> String {
         format!(
             r#"{{ "blocks": [ {{ "block": "mymod:lamp", "shape": "cube", "flags": [{flags}], "tags": [], "behavior": "inert", "interaction": "none", "collision": [{{"min": [0, 0, 0], "max": [1, 1, 1]}}], "emission": {emission}{light_color}, "tiles": ["stone", "stone", "stone"], "material": "stone", "data": {{"petramond:harvest": {{"tier": 1}}}}, "hardness": 2, "drops": [] }} ] }}"#
         )
     }
 
-    /// The resolved per-channel emission of a glowing full cube.
     fn lamp_emission_rgb(emission: u8, light_color: &str) -> Result<[u8; 3], String> {
         let flags = r#""solid", "opaque", "ao_occluder""#;
         let (base, _) =
@@ -1516,15 +1215,6 @@ mod tests {
         Ok(reg.defs[crate::block::ENGINE_BLOCK_NAMES.len()].emission_rgb)
     }
 
-    /// A light COLOUR is a fraction of `emission`, never a second intensity:
-    /// `emission` alone stays the light's range, so the scalar the emitter scan
-    /// gates on remains an upper bound for every channel. A colour that could
-    /// raise a channel above it would let coloured light out-reach the halo the
-    /// batched bake sizes from that same scalar.
-    ///
-    /// Also pins the two ends the gate depends on: white is EXACT (no rounding
-    /// drift away from the pre-colour behaviour), and "emits nothing" is the
-    /// same answer scalar and per-channel.
     #[test]
     fn a_light_colour_rations_its_emission_and_never_exceeds_it() {
         let (base, _) =
@@ -1545,8 +1235,6 @@ mod tests {
                 d.block
             );
         }
-        // Absent and explicitly-white are the same canonical colourless light,
-        // and both reproduce the scalar exactly on all three channels.
         assert_eq!(lamp_emission_rgb(28, ""), Ok([28; 3]));
         assert_eq!(
             lamp_emission_rgb(28, r#", "light_color": [1.0, 1.0, 1.0]"#),
@@ -1558,30 +1246,19 @@ mod tests {
         );
     }
 
-    /// The three ways a `light_color` is data that cannot mean anything, each a
-    /// LOAD error rather than a silently odd light.
     #[test]
     fn a_meaningless_light_colour_fails_the_load() {
-        // Out of the 0..=1 fraction range: an intensity smuggled into the hue.
         let err = lamp_emission_rgb(28, r#", "light_color": [1.5, 1.0, 1.0]"#)
             .expect_err("out-of-range channel refused");
         assert!(err.contains("0.0..=1.0"), "{err}");
-        // A hue on a row with no light behind it — the mistake is colouring the
-        // UNLIT row of a lit/unlit pair.
         let err = lamp_emission_rgb(0, r#", "light_color": [1.0, 0.5, 0.0]"#)
             .expect_err("colour on a non-emitter refused");
         assert!(err.contains("emission 0"), "{err}");
-        // Scaled to nothing: `has_light_emitters` would count the cell and the
-        // flood would seed zero.
         let err = lamp_emission_rgb(1, r#", "light_color": [0.2, 0.2, 0.2]"#)
             .expect_err("colour that rounds every channel to zero refused");
         assert!(err.contains("zero on every channel"), "{err}");
     }
 
-    /// A light cell carries five bits per channel — exactly the engine's
-    /// `0..=SKY_FULL` range and not one level more. An `emission` above it
-    /// WRAPS rather than clamps (`32` seeds `0`, a lamp that silently emits
-    /// nothing), so the loader must refuse it, colour or no colour.
     #[test]
     fn an_emission_brighter_than_full_daylight_fails_the_load() {
         let over = crate::chunk::SKY_FULL + 1;
@@ -1606,22 +1283,14 @@ mod tests {
         );
         let def = &reg.defs[engine];
         assert_eq!(def.block, Block(engine as u16));
-        // The row's properties resolve like any engine row's.
         assert!(def.flags.is_solid() && def.flags.is_opaque());
         assert_eq!(def.behavior.key(), "inert");
         assert_eq!(def.emission, 28);
         assert_eq!(def.drop.drops.len(), 1);
         assert_eq!(def.drop.drops[0].item, ItemType::Cobblestone);
-        // Engine ids are untouched by the addition.
         assert_eq!(reg.defs[Block::Stone.id() as usize].block, Block::Stone);
     }
 
-    /// Support DIRECTION is row data with a silent-typo-proof contract: every
-    /// row that says nothing keeps `below` (so the whole shipped table is
-    /// unchanged by the field existing), `"above"` resolves, and a
-    /// misspelled direction fails the LOAD rather than quietly reverting the
-    /// row to the ground rule — which would look exactly like the hanging
-    /// support never having been implemented.
     #[test]
     fn a_row_declares_which_cell_holds_it_up() {
         let (base, _) =
@@ -1641,16 +1310,10 @@ mod tests {
             Ok(definition::SupportDir::Above)
         );
         assert!(dir(r#", "support": "sideways""#).is_err());
-        // Nothing in the shipped table opts in, so the field costs it nothing.
         let shipped = parse(&base).expect("base table loads");
         assert!(shipped.defs.iter().all(|d| d.support.is_default()));
     }
 
-    /// The OPEN half of the substrate gate. A pack names a ground category by
-    /// tag, so the contract that matters is the typo one: a tag string is
-    /// agreed between two packs and nothing else in the pipeline would ever
-    /// mention it again, so a misspelling has to fail the LOAD rather than
-    /// ship a plant that can be placed nowhere.
     #[test]
     fn roots_on_names_ground_tags_and_refuses_a_tag_nothing_carries() {
         let (base, _) =
@@ -1672,10 +1335,6 @@ mod tests {
         );
     }
 
-    /// A `{"custom": {...}}` shape parameterizes an existing family
-    /// (fence/pane) from JSON — no WASM. The loader resolves it to a
-    /// `Connection` shape kind with the declared post dimensions + rule, and
-    /// rejects out-of-range / unknown / unsupported combinations.
     #[test]
     fn custom_connection_shapes_load_resolve_and_validate() {
         use crate::block::ConnectionRule;
@@ -1688,8 +1347,6 @@ mod tests {
         };
         let engine = crate::block::ENGINE_BLOCK_NAMES.len();
 
-        // A fence-family wall with a thick centred post resolves to a Connection
-        // kind: offset (16-8)/2 = 4, so post 4/16..12/16, engine fence rule.
         let wall = row(
             "mymod:stone_wall",
             r#"{"custom": {"family": "fence", "post_thickness": 8}}"#,
@@ -1702,11 +1359,9 @@ mod tests {
         assert_eq!(c.post_lo, 4.0 / 16.0);
         assert_eq!(c.post_hi, 12.0 / 16.0);
         assert_eq!(c.rule, ConnectionRule::OpaqueOrSame);
-        // The box table's bare-post entry matches the declared post.
         let post = crate::connect::boxes_for_mask(c.boxes, 0)[0];
         assert_eq!(post.min, [4.0 / 16.0, 0.0, 4.0 / 16.0]);
 
-        // A pane-family bar with an explicit rule resolves to that rule.
         let bar = row(
             "mymod:iron_bars",
             r#"{"custom": {"family": "pane", "post_thickness": 2, "connection_rule": "same_family_only"}}"#,
@@ -1719,7 +1374,6 @@ mod tests {
             ConnectionRule::SameOnly
         );
 
-        // Validation failures.
         for (shape, needle) in [
             (
                 r#"{"custom": {"family": "bogus"}}"#,
@@ -1813,10 +1467,6 @@ mod tests {
         }
     }
 
-    /// Sapling-ness is ONE membership (D6) and the stage chain is validated
-    /// data (E3): tag ⇔ behavior must agree, a sapling row carries exactly one
-    /// of `next_stage`/`grows_into`, `grows_into` must name a real worldgen
-    /// feature, and a chain must terminate in a final stage.
     #[test]
     fn sapling_rows_validate_tag_behavior_and_stage_chain() {
         let (base, _) =
@@ -1828,7 +1478,6 @@ mod tests {
         };
         let sapling_tags = r#""fragile", "roots_in_soil", "sapling""#;
 
-        // A valid pack sapling: final stage, weighted grows_into.
         let good = row(
             "mymod:sap",
             sapling_tags,
@@ -1836,7 +1485,6 @@ mod tests {
             r#""grows_into": [{"feature": "petramond:oak_big", "weight": 1}, {"feature": "petramond:oak_small"}],"#,
         );
         parse_test_layers(&[&base, &good]).expect("a valid final-stage sapling row loads");
-        // ... and a growing stage chaining into an engine row.
         let chained = row(
             "mymod:sap",
             sapling_tags,
@@ -1914,9 +1562,6 @@ mod tests {
         }
     }
 
-    /// A run's `flipped` sibling is what a ceiling click commits for a floor
-    /// item, so the load proves the pair: opposite roots, naming each other,
-    /// on run rows only — and a run never carries a stored facing.
     #[test]
     fn run_rows_validate_the_flipped_sibling_and_refuse_a_facing() {
         let (base, _) =
@@ -1983,9 +1628,6 @@ mod tests {
         }
     }
 
-    /// A landing particle needs something to carry it down, and gravity only
-    /// ever pulls down — both are authoring errors a silent default would
-    /// turn into a drip that never falls or one that floats upward.
     #[test]
     fn landing_emitters_need_a_downward_motion() {
         let row = |extra: &str| {
@@ -2003,10 +1645,6 @@ mod tests {
         assert!(validate_particle_emitter(&row(r#", "gravity": -1"#)).is_err());
     }
 
-    /// Wall-panel facing is block identity (one ladder row per facing), so the
-    /// load enforces the pairing both ways and cross-validates the placeable
-    /// row's `facing_rows` map — a mismatched sibling would place a panel that
-    /// doesn't hug the clicked wall.
     #[test]
     fn wall_panel_rows_validate_facing_identity_and_sibling_map() {
         let (base, _) =
@@ -2017,8 +1655,6 @@ mod tests {
             )
         };
 
-        // A pack's single-facing panel row loads (no sibling map needed —
-        // placement then keeps its declared facing).
         let single = row("mymod:vine_panel", "ladder", r#""panel_facing": "south","#);
         parse_test_layers(&[&base, &single]).expect("a single-facing wall panel loads");
 
@@ -2043,7 +1679,6 @@ mod tests {
                 "unknown facing",
             ),
             (
-                // The engine ladder's map re-pointed at a wrong-facing sibling.
                 row(
                     "petramond:ladder",
                     "ladder",
@@ -2059,8 +1694,6 @@ mod tests {
             assert!(err.contains(needle), "{why}: {err}");
         }
 
-        // Every slot's facing matches, but the row maps its OWN facing to a
-        // different row: placing it toward its own facing would swap blocks.
         let stranger = row("mymod:north_panel", "ladder", r#""panel_facing": "north","#);
         let bad_self = row(
             "petramond:ladder",
@@ -2087,9 +1720,6 @@ mod tests {
         );
     }
 
-    /// `interaction: {"open_gui": "mod:kind"}` resolves to
-    /// `OpenGui` with a registered kind; a bare (un-namespaced) open_gui
-    /// key and an unknown named interaction are load errors.
     #[test]
     fn open_gui_interaction_parses_namespaced_and_rejects_bare() {
         let (base, _) =
@@ -2113,10 +1743,8 @@ mod tests {
 
     #[test]
     fn loader_rejects_incomplete_or_unknown_rows() {
-        // A single valid row is not a full table: the error names a missing block.
         let partial = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "inert", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "hardness": -1, "drops": [] } ] }"#;
         assert!(parse(partial).err().unwrap().contains("missing row"));
-        // Unknown behavior name (the full base table with one row broken).
         let (base, _) =
             crate::assets::read_base_text("blocks.json").expect("assets/blocks.json must ship");
         let bad_behavior = r#"{ "blocks": [ { "block": "petramond:air", "shape": "cube", "flags": [], "tags": [], "behavior": "bogus", "interaction": "none", "collision": [], "emission": 0, "tiles": ["dirt", "dirt", "dirt"], "material": "none", "hardness": -1, "drops": [] } ] }"#;
@@ -2124,7 +1752,6 @@ mod tests {
             .err()
             .unwrap()
             .contains("unknown behavior"));
-        // Unknown tile name.
         let bad_tile = bad_behavior.replace("\"bogus\"", "\"inert\"").replace(
             "\"dirt\", \"dirt\", \"dirt\"",
             "\"dirt\", \"dirt\", \"bogus_tile\"",
@@ -2133,7 +1760,6 @@ mod tests {
             .err()
             .unwrap()
             .contains("unknown tile"));
-        // Unknown drop item name.
         let bad_drop = bad_behavior.replace("\"bogus\"", "\"inert\"").replace(
             "\"drops\": []",
             "\"drops\": [{\"item\": \"bogus_item\", \"min\": 1, \"max\": 1, \"chance\": 1.0}]",

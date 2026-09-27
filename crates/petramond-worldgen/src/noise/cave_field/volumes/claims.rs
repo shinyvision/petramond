@@ -1,5 +1,3 @@
-//! Excavations may claim a habitat column without requiring its block tiles.
-
 use std::sync::Arc;
 
 use super::{site, CaveField, FieldShape, Site};
@@ -124,9 +122,6 @@ fn column(field: &CaveField, pos: [i32; 2]) -> Claims {
     })
 }
 
-/// Whether any of `sites` admits any cell of the 16×16 column at `origin`
-/// within its bounds: the union of the members' margins, sampled on the
-/// same lattice the tiles carve on, is positive somewhere in the chunk.
 fn reaches(
     field: &CaveField,
     shape: &FieldShape,

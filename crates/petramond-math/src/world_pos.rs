@@ -1,20 +1,7 @@
-//! Absolute world positions.
-
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 use glam::{DVec3, IVec3, Vec3};
 
-/// An absolute position in the world, in blocks.
-///
-/// Double precision, so a position stays exact to far below a micrometre
-/// anywhere inside the world border — a single-precision coordinate already
-/// rounds to 1/256 block 34k blocks out. Everything RELATIVE stays `Vec3`:
-/// velocities, offsets, extents, and the difference of two positions.
-///
-/// There is deliberately no conversion to an absolute `Vec3`. A consumer that
-/// works in single precision (a vertex, a shader, a sound emitter) takes the
-/// position [`relative_to`](Self::relative_to) an integer anchor near where it
-/// is used, so the large part of the coordinate never enters `f32` math.
 #[derive(Copy, Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WorldPos {
     pub x: f64,
@@ -45,18 +32,14 @@ impl WorldPos {
         DVec3::new(self.x, self.y, self.z)
     }
 
-    /// The minimum corner of block `b`.
     pub fn block_min(b: IVec3) -> WorldPos {
         WorldPos::new(f64::from(b.x), f64::from(b.y), f64::from(b.z))
     }
 
-    /// The centre of block `b`.
     pub fn block_center(b: IVec3) -> WorldPos {
         WorldPos::block_min(b) + Vec3::splat(0.5)
     }
 
-    /// The block containing this position. `floor`, not truncation: `-0.5`
-    /// lies in block `-1`.
     pub fn block(self) -> IVec3 {
         IVec3::new(
             self.x.floor() as i32,
@@ -65,8 +48,6 @@ impl WorldPos {
         )
     }
 
-    /// This position as an offset from `anchor`, in single precision. Exact to
-    /// `f32` resolution near the anchor however far out both are.
     pub fn relative_to(self, anchor: IVec3) -> Vec3 {
         Vec3::new(
             (self.x - f64::from(anchor.x)) as f32,
@@ -133,8 +114,6 @@ impl SubAssign<Vec3> for WorldPos {
     }
 }
 
-/// The offset from `rhs` to `self`. Computed in double precision, so it is
-/// exact to single-precision resolution however far out the two positions are.
 impl Sub for WorldPos {
     type Output = Vec3;
 

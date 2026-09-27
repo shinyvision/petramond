@@ -15,7 +15,6 @@ fn shore_probe_inner() {
 
 const JUMP_SPEED: f32 = 8.0;
 
-/// A brine surface at `y = 1` over the cell row `y = 0`.
 fn brine_surface() -> Immersion {
     Immersion {
         fluid: block(BRINE).fluid_def().unwrap(),
@@ -44,7 +43,6 @@ fn stone_at(cells: &'static [[i32; 3]]) -> impl Fn(i32, i32, i32) -> &'static [A
     }
 }
 
-/// The ledge lies beside the centre line but under the body's leading edge.
 fn a_ledge_under_the_leading_edge_counts_off_the_centre_line() {
     let body = swimmer(WorldPos::new(0.6, -0.5, 0.8));
     let boxes = stone_at(&[[1, 0, 1]]);
@@ -68,8 +66,6 @@ fn a_ledge_without_headroom_is_no_shore() {
     );
 }
 
-/// The server's claim envelope trusts a launch no faster than the jump
-/// take-off plus the shared slack, however tall the ledge.
 fn a_launch_stays_inside_the_velocity_slack() {
     let body = swimmer(WorldPos::new(0.6, -0.7, 0.5));
     let boxes = stone_at(&[[1, 0, 0], [1, 1, 0]]);

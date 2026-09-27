@@ -1,8 +1,3 @@
-//! The captured view: the local first-person view as a frame presents it
-//! (what an events log's `View` piece carries), and read back —
-//! interpolated at the position — as the captured player's first person and
-//! HUD when a presentation presents them as the view subject.
-
 use std::collections::VecDeque;
 
 use petramond::capture::view::{CueHand, CueMotion, CueShake, ViewCue};
@@ -16,12 +11,8 @@ use super::replicated::SelfView;
 use super::Game;
 use crate::animation::{AimTarget, LocalMotion};
 
-/// The captured view near the position: the samples from the one before it
-/// on, the captured player's own state, and the view they resolve to this
-/// frame.
 pub(super) struct ViewCues {
     cues: VecDeque<ViewCue>,
-    /// Events up to here were already presented.
     events_through: f64,
     pub(super) own: Option<SelfView>,
     presented: Option<CapturedView>,
@@ -38,7 +29,6 @@ impl Default for ViewCues {
     }
 }
 
-/// The captured player's first person at the position, as they saw it.
 pub(super) struct CapturedView {
     pub subject: mod_api::PlayerId,
     pub pos: WorldPos,
@@ -54,15 +44,10 @@ pub(super) struct CapturedView {
 }
 
 impl Game {
-    /// The fractional replicated tick this frame presents: the committed row
-    /// pair's closing tick less one, plus the interpolation alpha. A
-    /// presentation's position is on the same scale.
     fn presented_tick(&self) -> f64 {
         self.replica.entities.committed_tick() as f64 - 1.0 + f64::from(self.tick_alpha())
     }
 
-    /// The local first-person view as this frame presents it: the eye (not
-    /// whatever camera a claim put up), the hands and rig claims of `frame`.
     pub fn eye_view_cue(
         &self,
         hands: [&ClientHeldItem; 2],
@@ -88,8 +73,6 @@ impl Game {
         }
     }
 
-    /// A view sample arrives ahead of its frame, and again with it: keep it
-    /// once.
     pub(super) fn receive_view_cue(&mut self, cue: ViewCue) {
         let cues = &mut self.presenting.view.cues;
         if cues.back().is_none_or(|last| last.at < cue.at) {
@@ -97,8 +80,6 @@ impl Game {
         }
     }
 
-    /// Resolve the captured player's view at the position, once a frame
-    /// before the view claims present.
     pub(super) fn present_captured_view(&mut self) {
         let (Some(at), Some(subject)) = (self.presentation_position(), self.captured_player())
         else {
@@ -108,7 +89,6 @@ impl Game {
         };
         let view = &mut self.presenting.view;
         view.presented = None;
-        // Opened or sought back: what was before the playhead already played.
         if at < view.events_through || view.events_through == f64::NEG_INFINITY {
             view.events_through = at;
         }
@@ -163,7 +143,6 @@ impl Game {
         });
     }
 
-    /// The captured player's view this frame, when they are the subject.
     pub(super) fn captured_subject_view(&self) -> Option<&CapturedView> {
         let subject = self.view_subject()?;
         self.presenting
@@ -173,7 +152,6 @@ impl Game {
             .filter(|view| view.subject == subject)
     }
 
-    /// The captured hurt shake, when the captured player's eye presents.
     pub fn captured_shake(&self) -> Option<CueShake> {
         if self.camera_claimed() || self.third_person_enabled() {
             return None;
@@ -181,8 +159,6 @@ impl Game {
         self.captured_subject_view().map(|view| view.shake)
     }
 
-    /// The captured eye as a camera — the local eye's lens with the
-    /// captured pose and field of view.
     pub(super) fn captured_eye_camera(&self) -> Option<Camera> {
         let view = self.captured_subject_view()?;
         let mut cam = self.local.cam.clone();
@@ -194,9 +170,6 @@ impl Game {
         Some(cam)
     }
 
-    /// The self view the HUD shows: the local player's; in a presentation
-    /// that presents another player's view, the captured player's own state
-    /// for them and nothing for anyone else (no stream carries it).
     pub fn hud_view(&self) -> Option<&SelfView> {
         if !self.in_presentation() {
             return Some(&self.replica.self_view);

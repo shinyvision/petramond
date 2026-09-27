@@ -1,24 +1,11 @@
 use std::num::NonZeroU64;
 
-/// Polygon offset for the break-overlay decal: nudge the crack toward the camera
-/// (depth is standard near=0/far=1, so negative = closer) so it reliably wins the
-/// `LessEqual` depth tie against the coincident block face despite the mesher's
-/// per-AO triangulation flip. The `constant` term covers head-on faces (depth slope
-/// ~0); the `slope_scale` term covers glancing angles. A few ULP — far too
-/// small to overcome a genuinely closer surface or to read as parallax.
 const BREAK_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: -10,
     slope_scale: -1.0,
     clamp: 0.0,
 };
 
-// The break-overlay crack cube is COINCIDENT with the block faces, so it wins the
-// depth `LessEqual` tie only via a polygon offset toward the camera. Depth is
-// standard (near=0/far=1, closer = smaller), so both offset terms MUST be negative
-// — a positive or zero bias would leave the decal at/behind the surface and the
-// crack would z-fight or vanish. Guard the sign at COMPILE TIME so a future
-// "cleanup" can't silently break it. (The magnitude is intentionally unchecked: the
-// float-depth bias unit is implementation-defined per the WebGPU/Vulkan spec.)
 const _: () = assert!(
     BREAK_DEPTH_BIAS.constant < 0,
     "constant bias must be negative (toward camera)"
@@ -28,11 +15,6 @@ const _: () = assert!(
     "slope-scaled bias must be negative (toward camera)"
 );
 
-/// Polygon offset for the model→terrain contact-shadow stamp, which is
-/// coincident with the top face of the supporting block. Its OWN named bias —
-/// initially equal to the break overlay's, but tuned independently: the stamp is
-/// a large mostly-horizontal decal seen at flatter angles than a crack cube, so
-/// its slope term may need to drift without touching the crack's.
 const CONTACT_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: -10,
     slope_scale: -1.0,
@@ -48,14 +30,8 @@ const _: () = assert!(
     "slope-scaled bias must be negative (toward camera)"
 );
 
-/// The render target's depth format. Every depth-tested pass shares one
-/// `Depth32Float` attachment, so the presets below all use this.
 pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// Polygon offset for depth-WRITING geometry drawn in exactly the planes of
-/// geometry already in the depth buffer (a schematic ghost over a cell that
-/// holds a different block). The bias makes the later draw win that tie
-/// everywhere instead of per pixel.
 const COPLANAR_WIN_DEPTH_BIAS: wgpu::DepthBiasState = wgpu::DepthBiasState {
     constant: -10,
     slope_scale: -1.0,
@@ -67,31 +43,13 @@ const _: () = assert!(
     "a bias that wins coplanar ties must be negative (toward camera)"
 );
 
-/// A named depth-stencil configuration for [`world_pipeline`]. The world passes
-/// only ever vary along three axes — whether depth is written, the compare
-/// function, and the polygon-offset bias — so each variant captures one real
-/// combination instead of re-spelling the `DepthStencilState` block per pipeline.
 #[derive(Copy, Clone)]
 pub(super) enum DepthPreset {
-    /// Depth test `Less` + WRITE. Opaque geometry (opaque fluids included),
-    /// particles, and the hand variants that self-sort against a cleared depth
-    /// buffer.
     WriteLess,
-    /// Depth test `LessEqual` + WRITE, with the coplanar-win polygon offset:
-    /// the geometry sorts against itself like opaque geometry and wins over
-    /// an already-drawn face it is coincident with.
     WriteLessEqualCoplanarBiased,
-    /// Depth test `Less`, NO write. Translucent fluids and emitter particles:
-    /// sort behind solid geometry without occluding the surfaces drawn after.
     ReadLess,
-    /// Depth test `LessEqual`, NO write, with the break-overlay polygon offset.
-    /// The crack decal is coincident with the block faces; the bias wins the tie.
     ReadLessEqualBiased,
-    /// Depth test `LessEqual`, NO write, with the contact-shadow polygon offset.
-    /// The stamp is coincident with the supporting block's top face.
     ReadLessEqualContactBiased,
-    /// Depth test `LessEqual`, NO write, no bias. The selection outline: hidden
-    /// behind terrain but its slightly-inflated front edges win the equal test.
     ReadLessEqual,
 }
 
@@ -135,8 +93,6 @@ impl DepthPreset {
     }
 }
 
-/// One color target with the given blend. `write_mask` is `ALL` for every pass
-/// except the crosshair (which writes COLOR only); pass that explicitly.
 pub(super) fn color_target(
     format: wgpu::TextureFormat,
     blend: Option<wgpu::BlendState>,
@@ -149,11 +105,6 @@ pub(super) fn color_target(
     })]
 }
 
-/// One labelled WGSL shader module (source from `include_str!`/`concat!`, or
-/// the shader pack's owned string), its `#import`s resolved through
-/// [`super::prelude`]. An engine source importing an unknown module is a
-/// build defect and panics here; pack sources are composed (and their import
-/// errors reported) by their callers before they reach this.
 pub(super) fn shader_module(
     device: &wgpu::Device,
     label: &str,
@@ -172,8 +123,6 @@ pub(super) fn shader_module(
     })
 }
 
-/// A pipeline layout over `bind_group_layouts`; no pass in this module uses
-/// push constants.
 pub(super) fn pipeline_layout(
     device: &wgpu::Device,
     label: &str,
@@ -186,7 +135,6 @@ pub(super) fn pipeline_layout(
     })
 }
 
-/// A whole-buffer uniform layout entry (no dynamic offset).
 pub(super) fn uniform_entry(
     binding: u32,
     visibility: wgpu::ShaderStages,
@@ -204,8 +152,6 @@ pub(super) fn uniform_entry(
     }
 }
 
-/// A bind group binding each buffer whole, at bindings `0..buffers.len()` in
-/// order.
 pub(super) fn buffer_bind_group(
     device: &wgpu::Device,
     label: &str,
@@ -227,8 +173,6 @@ pub(super) fn buffer_bind_group(
     })
 }
 
-/// The layout-entry pair of a fragment-sampled float texture (at `binding`)
-/// plus its filtering sampler (at `binding + 1`).
 pub(crate) fn texture_sampler_layout_entries(
     binding: u32,
     dim: wgpu::TextureViewDimension,
@@ -253,7 +197,6 @@ pub(crate) fn texture_sampler_layout_entries(
     ]
 }
 
-/// The bind-group entry pair matching [`texture_sampler_layout_entries`].
 pub(crate) fn texture_sampler_bind_entries<'a>(
     binding: u32,
     view: &'a wgpu::TextureView,
@@ -271,7 +214,6 @@ pub(crate) fn texture_sampler_bind_entries<'a>(
     ]
 }
 
-/// A single texture+sampler bind-group layout (bindings 0/1).
 pub(super) fn texture_sampler_bgl(
     device: &wgpu::Device,
     label: &str,
@@ -283,8 +225,6 @@ pub(super) fn texture_sampler_bgl(
     })
 }
 
-/// Layout + bind group over one texture view + sampler; labels derive from
-/// `label` (`"<label> bgl"` / `"<label> bg"`).
 pub(super) fn texture_sampler_bgl_bind(
     device: &wgpu::Device,
     label: &str,
@@ -302,15 +242,6 @@ pub(super) fn texture_sampler_bgl_bind(
     (bgl, bind)
 }
 
-/// A scene pipeline: compiled per sample count on first draw (see
-/// [`super::SampledPipeline`]). Shared descriptor defaults are filled here
-/// once; callers supply only what actually varies per pass: label, layout,
-/// shader + entry points, vertex buffer layouts, the color targets, the
-/// primitive state, and an optional [`DepthPreset`] (`None` = no depth
-/// attachment). `max_samples` is the device ceiling the scene mode is clamped to.
-///
-/// Vertex and fragment stages share one `shader` module — every pass in this
-/// module does.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn world_pipeline(
     device: &wgpu::Device,
@@ -342,10 +273,6 @@ pub(super) fn world_pipeline(
     super::SampledPipeline::new(device, spec, max_samples)
 }
 
-/// A pipeline that only ever draws at one sample per pixel: the screen passes
-/// (UI, crosshair, the scene resolve), the icon bakes, and the half-res
-/// environment passes. Same parameters as [`world_pipeline`] minus the device
-/// ceiling, compiled immediately.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn single_pipeline(
     device: &wgpu::Device,
@@ -374,7 +301,6 @@ pub(super) fn single_pipeline(
     )
 }
 
-/// The one `create_render_pipeline` call every pass goes through.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_pipeline(
     device: &wgpu::Device,
@@ -415,8 +341,6 @@ pub(super) fn render_pipeline(
     })
 }
 
-/// Back-face-culled primitive state shared by the block-vertex passes
-/// (opaque/transparent terrain, model3d, break overlay).
 pub(super) fn cull_back() -> wgpu::PrimitiveState {
     wgpu::PrimitiveState {
         cull_mode: Some(wgpu::Face::Back),

@@ -136,19 +136,11 @@ fn field(
     )
 }
 
-/// Every room the seed actually rolls over a wide box — the only honest
-/// population to sweep, since a hand-built `Room` cannot exercise the lobe
-/// roll and a lobe offset missing from a reach bound is a carve seam.
 fn rolled(f: &super::super::cave_field::CaveField) -> Vec<Room> {
     let g = f.chamber_field([-768, -64, -768], [768, -8, 768]);
     g.rooms.clone()
 }
 
-/// The invariant the whole module is arranged around: a corner's value may
-/// not depend on which box asked for it. A superset gather must add only
-/// exact zeros, and the surviving rooms must accumulate in the same order —
-/// f64 addition is not associative, so "close enough" is a seam. BOTH lanes
-/// are checked: the tunnel gain rides the same accumulation.
 #[test]
 fn a_chamber_corner_does_not_depend_on_the_box_it_was_gathered_for() {
     let table = underground::test_table(&[PACK]);
@@ -161,8 +153,6 @@ fn a_chamber_corner_does_not_depend_on_the_box_it_was_gathered_for() {
             ([-256, -60, 128], [-240, -44, 144]),
         ] {
             let small = f.chamber_field(lo, hi);
-            // A box grown by two whole lattice cells of the chamber grid
-            // gathers a strict superset of the candidates.
             let big = f.chamber_field(
                 [lo[0] - 128, lo[1] - 128, lo[2] - 128],
                 [hi[0] + 128, hi[1] + 128, hi[2] + 128],
@@ -210,9 +200,6 @@ fn a_rolled_room_is_exactly_zero_past_its_declared_reach() {
         for r in rolled(&f) {
             rooms += 1;
             let c = r.center;
-            // The kneading field reaches about +-0.54; the reach must hold
-            // for every value it can take, including the ones that widen
-            // the ramp.
             let kneads = [-0.55, -0.2, 0.0, 0.2, 0.55];
             assert_eq!(
                 r.at(c[0], c[1], c[2], 0.0).0,
@@ -239,8 +226,6 @@ fn a_rolled_room_is_exactly_zero_past_its_declared_reach() {
                         );
                     }
                 }
-                // `rise` is taken over every radius the ROW can roll, so it
-                // bounds this room whatever its lobes came out as.
                 let rise = ch.extent_y().1;
                 for d in [rise, rise + 1, rise + 97] {
                     assert_eq!(
@@ -250,7 +235,6 @@ fn a_rolled_room_is_exactly_zero_past_its_declared_reach() {
                     );
                 }
             }
-            // and it must actually blend, not step
             for k in 1..ch.feather as i32 {
                 let v = r.at(c[0] + ch.r_min + k, c[1], c[2], 0.0).0;
                 if v > 0.0 && v < ch.strength {
@@ -267,13 +251,6 @@ fn a_rolled_room_is_exactly_zero_past_its_declared_reach() {
     assert_eq!(rims, rooms, "some room's rim is a step, not a blend");
 }
 
-/// Three things a room may never do: appear outside the territory its own
-/// row declares (or a pack's cathedral turns up in another pack's biome),
-/// stick out of that row's DEPTH band (or its roof is unlined, undressed,
-/// and impossible to attribute to this file), or reach BELOW the carvable
-/// floor — where it is sliced by bedrock into a dead-flat plane of bare
-/// rock instead of tapering to its own sill. The last one is one `max()`
-/// that a refactor loses in silence.
 #[test]
 fn a_room_stays_inside_its_row_territory_band_and_the_carvable_range() {
     let table = underground::test_table(&[PACK]);
@@ -301,7 +278,6 @@ fn a_room_stays_inside_its_row_territory_band_and_the_carvable_range() {
             "room {:?} sticks out of the band {band:?}",
             r.center
         );
-        // and the profile agrees with the extents the band test used
         for k in [-0.55, 0.0, 0.55] {
             assert_eq!(r.at(r.center[0], band.0 - 1, r.center[2], k), (0.0, 0.0));
             assert_eq!(r.at(r.center[0], band.1 + 1, r.center[2], k), (0.0, 0.0));
@@ -310,11 +286,6 @@ fn a_room_stays_inside_its_row_territory_band_and_the_carvable_range() {
     assert!(rooms > 0, "no room rolled; the test proves nothing");
 }
 
-/// A satellite lobe that clears the primary entirely leaves a detached
-/// bubble: a sealed pocket, which is the exact failure the attachment work
-/// exists to remove. The loader bounds `lobe_spread` against
-/// `lobe_scale[0]` for that, and this is the roll actually obeying it —
-/// the offsets are drawn per axis, so the diagonal is the case to check.
 #[test]
 fn no_rolled_satellite_lobe_can_detach_from_its_room() {
     let table = underground::test_table(&[PACK]);
@@ -324,9 +295,6 @@ fn no_rolled_satellite_lobe_can_detach_from_its_room() {
         let p = r.lobes[0];
         for l in &r.lobes[1..r.n_lobes] {
             satellites += 1;
-            // Normalised against the PRIMARY, both lobes are spheres: the
-            // satellite is a sphere of radius `l.rx / p.rx` at this
-            // distance from the origin.
             let d =
                 ((l.off[0] / p.rx).powi(2) + (l.off[1] / p.ry).powi(2) + (l.off[2] / p.rx).powi(2))
                     .sqrt();

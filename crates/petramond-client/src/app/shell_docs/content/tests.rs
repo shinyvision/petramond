@@ -60,8 +60,6 @@ fn record(id: &str, kind: Kind, sha: char, content_id: Option<i64>) -> InstallRe
     }
 }
 
-/// Run `f` on the browser's screen context as a frame does, then carry out
-/// what it queued.
 fn in_ctx<R>(app: &mut App, f: impl FnOnce(&mut ScreenCtx) -> R) -> R {
     let now = app.now();
     let mut ctx = ScreenCtx::new(
@@ -80,7 +78,6 @@ fn in_ctx<R>(app: &mut App, f: impl FnOnce(&mut ScreenCtx) -> R) -> R {
     out
 }
 
-/// The scratch dir the app's content session installs into, and the app.
 fn app_with(tag: &str, locals: Vec<Local>, signed_in: bool) -> (TestScratchDir, App) {
     let root = TestScratchDir::new(&format!("content-browser-{tag}"));
     let mut app = App::new(Camera::new(WorldPos::new(0.0, 80.0, 0.0), 16.0 / 9.0), 1);
@@ -115,7 +112,6 @@ fn entry_for(app: &App, key: &str) -> Entry {
     view.entry(slot, &app.content, Instant::now()).unwrap()
 }
 
-/// Show `tab`, its rows laid out.
 fn show(app: &mut App, tab: Tab) {
     app.content.view.as_mut().unwrap().show_tab(tab);
     assert!(in_ctx(app, prepare));
@@ -152,7 +148,6 @@ fn content_packs_are_never_listed_and_only_addons_wear_the_sheep() {
     assert!(!entry_for(&app, "tweaks").is_addon);
     assert!(entry_for(&app, "tweaks").can_delete);
 
-    // Not even the site listing a content pack's id puts it in Browse.
     app.content.listing_arrived(Ok(vec![
         listing_row("forge_ok", "Anvil", Kind::Addon, 'a', 4096),
         listing_row("studio", "Studio", Kind::Addon, 'a', 4096),
@@ -175,7 +170,6 @@ fn a_row_shows_its_job_before_its_pending_change_update_or_refusal() {
         4096,
     )]));
 
-    // An update may be the fix for a refusal, so it wins over it.
     let entry = entry_for(&app, "studio");
     assert_eq!(entry.action, Action::Update);
     assert_eq!(entry.detail, "Not loaded · update");
@@ -423,7 +417,6 @@ fn a_replace_over_a_folder_named_otherwise_shows_as_pending() {
     )]));
     assert_eq!(entry_for(&app, "lanterns").action, Action::Replace);
 
-    // Installs are filed under the pack id, whatever the folder is called.
     app.content.pending.push(Pending {
         dir: "lanterns".to_owned(),
         change: PendingKind::Install {
@@ -446,7 +439,6 @@ fn an_update_is_decided_by_the_archive_hash_never_the_version() {
     dev.record = Some(record("dev", Kind::Addon, 'a', None));
     let loose = local("hand", "Hand", Tier::Mod);
     let (_root, mut app) = app_with("update", vec![same_version, dev, loose], true);
-    // Signed in but nothing fetched: no row may claim anything about the site.
     assert_eq!(entry_for(&app, "studio").action, Action::None);
     assert!(entry_for(&app, "studio").detail.starts_with("Installed · "));
 
@@ -507,14 +499,11 @@ fn merges_never_add_move_or_drop_a_row_until_a_refresh() {
         listing_row("sky", "Sky Tools", Kind::Mod, 'c', 4096),
         listing_row("studio", "Studio", Kind::Addon, 'd', 4096),
     ];
-    // The open's first listing rebuilds; the content pack is never there.
     show(&mut app, Tab::Browse);
     app.content.listing_arrived(Ok(first));
     assert!(in_ctx(&mut app, prepare));
     assert_eq!(keys(&app), ["sky", "studio"]);
 
-    // A listing a download re-fetched merges: a row it drops stays put, a
-    // row it adds waits for a refresh.
     app.content
         .listing_arrived(Ok(vec![listing_row("new", "New", Kind::Mod, 'e', 4096)]));
     assert!(in_ctx(&mut app, prepare));
@@ -544,7 +533,6 @@ fn keyboard_selection_walks_entries_only_and_a_double_click_never_flickers() {
     in_ctx(&mut app, |ctx| key(ctx, NavKey::Down, false));
     assert_eq!(view(&app).selected.as_deref(), Some("zebra"));
 
-    // Browse, signed out: its one row is the sign-in message.
     show(&mut app, Tab::Browse);
     in_ctx(&mut app, |ctx| {
         handle(
@@ -628,7 +616,6 @@ fn quitting_with_downloads_running_asks_first_and_can_wait_for_them() {
     assert_eq!(app.screen, AppScreen::Content);
     assert!(view(&app).confirm.is_some());
 
-    // "Quit when done" arms the exit; the queue draining fires it.
     in_ctx(&mut app, |ctx| {
         handle(
             ctx,
@@ -645,11 +632,8 @@ fn quitting_with_downloads_running_asks_first_and_can_wait_for_them() {
     assert!(app.take_quit_requested());
 }
 
-// ---- the real copy at the smallest viewport --------------------------------
-
 const VIEWPORT: (i32, i32) = (320, 240);
 
-/// Solve the browser's document with the controller's own state.
 fn solve_state(
     state: &UiState,
     hover: Option<&str>,
@@ -681,7 +665,6 @@ fn solve_kind_at(
         item: None,
     });
     let tree = InstTree::expand_form_hover(&doc.doc, state, false, hover.as_ref());
-    // Gui scale 1: `small` text has no smaller step, the worst case.
     let env = ThemeEnv {
         theme: &theme,
         gui_scale: 1,
@@ -698,8 +681,6 @@ fn state_of(app: &mut App) -> UiState {
     state
 }
 
-/// Everything outside a scroll stays inside its parent's box: the bottom
-/// rows are what fall off.
 fn assert_fits(kind: GuiKind, state: &UiState, hover: Option<&str>, what: &str) {
     let mut overflowing = Vec::new();
     solve_kind(kind, state, hover, |tree, solved, env| {
@@ -735,8 +716,6 @@ fn assert_fits(kind: GuiKind, state: &UiState, hover: Option<&str>, what: &str) 
     assert!(overflowing.is_empty(), "{}", overflowing.join("\n"));
 }
 
-/// The natural width of every shown instance of label `id`, against the box
-/// it was solved into.
 fn shrunk_labels(state: &UiState, id: &str) -> Vec<String> {
     let theme = petramond::gui::doc_theme::theme();
     let mut shrunk = Vec::new();
@@ -846,7 +825,6 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
     );
     assert_fits(GuiKind::Content, &state, None, "list page");
 
-    // Staged changes, their undo and the world notes, expanded.
     app.content.jobs.cancel_all();
     for (dir, change) in [
         (
@@ -882,7 +860,6 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
             .expanded
             .insert(key.into());
     }
-    // "hand" stages a removal on Installed; the rest are Browse rows.
     state = state_of(&mut app);
     assert!(shrunk_labels(&state, "detail").is_empty());
     assert_fits(GuiKind::Content, &state, None, "staged installed");
@@ -907,8 +884,6 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
     assert!(notes.contains(&rows::WORLD_NOTE_TOUCHES.to_owned()));
     assert!(notes.contains(&rows::WORLD_NOTE_PRESENTATION.to_owned()));
 
-    // Apply now names three packs however many wait, so its tooltip stays
-    // on the screen.
     for i in 0..20 {
         app.content.pending.push(Pending {
             dir: format!("more_{i}"),
@@ -1003,8 +978,6 @@ fn the_messages_and_confirm_pages_fit_the_smallest_viewport_with_their_real_copy
         app.content.view.as_mut().unwrap().confirm = Some(page.clone());
         let state = state_of(&mut app);
         assert_fits(GuiKind::Content, &state, None, &page.question);
-        // The confirm buttons' copy is authored by the controller: it must
-        // never ellipsize.
         let theme = petramond::gui::doc_theme::theme();
         solve_state(&state, None, |tree, solved, _| {
             for i in 0..tree.len() {
@@ -1073,9 +1046,6 @@ fn the_title_notice_fits_under_the_menu_with_its_real_copy() {
     }
 }
 
-/// The list's rows stack: whatever a row holds (a wrapped summary, a
-/// two-line failure), it holds all of it and the next row starts below, at
-/// every window size and scale, a list taller than its scroll included.
 #[test]
 fn the_list_rows_never_overlap() {
     use crate::app::content::ListingState as L;
@@ -1119,8 +1089,6 @@ fn the_list_rows_never_overlap() {
             let list = (0..tree.len() as u32)
                 .find(|&i| tree.get(i).key.as_ref().is_some_and(|k| k.id == "content"))
                 .expect("the list");
-            // A row holds what it draws: a row squeezed shorter than its content
-            // spills over the rows after it.
             fn bottom(tree: &InstTree<'_>, solved: &petramond_ui::Solved, i: u32) -> i32 {
                 let r = solved.rects[i as usize];
                 tree.get(i)

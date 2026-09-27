@@ -1,18 +1,3 @@
-//! Mod-driven per-block DRAW SETS: retained presentation geometry a mod
-//! submits for a placed block, redrawn every frame and costing no re-mesh.
-//!
-//! This is the seam under anything a mod SIMULATES rather than stages. A block
-//! row swap or a parts mask picks between pictures that were authored in
-//! advance; a draw set IS a picture, computed by the mod this tick — liquid
-//! running down a channel, a level rising, a needle moving. Because nothing
-//! here touches chunk geometry, submitting a new set every tick is the
-//! intended use, where a parts change at that rate would re-mesh a section
-//! twenty times a second.
-//!
-//! Lifecycle is the same as every other per-block record: the set dies when
-//! the cell's block changes, and it replicates as a whole-set delta (they are
-//! a handful of prims, and a partial set is never meaningful).
-
 use crate::world::{ReplicaWorld, ServerWorld, World, WorldSide};
 use std::sync::Arc;
 
@@ -66,17 +51,12 @@ impl<'de> serde::Deserialize<'de> for DrawPrims {
     }
 }
 
-/// The draw set a live body wears: the same prims a block's set holds, in a
-/// space whose origin is the body's feet centre. `turns` = the space turns
-/// with the body's yaw; otherwise it keeps the world's axes.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BodyDraw {
     pub prims: DrawPrims,
     pub turns: bool,
 }
 
-/// One resolved prim, ready for the renderer: names have become ids, so the
-/// per-frame bake never touches a registry.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BlockDrawPrim {
     Cuboid {
@@ -109,9 +89,6 @@ pub enum BlockDrawPrim {
 }
 
 impl BlockDrawPrim {
-    /// Resolve an ABI prim's names. `None` = a name this world does not know,
-    /// which drops that prim rather than the whole set: a pack referencing one
-    /// missing tile should lose one box, not its whole machine.
     pub fn resolve(prim: &DrawPrim) -> Option<BlockDrawPrim> {
         match prim {
             DrawPrim::Cuboid {
@@ -122,8 +99,6 @@ impl BlockDrawPrim {
                 emissive,
             } => {
                 let tile = petramond_world::tile::Tile::from_name(tile)?;
-                // Degenerate, inverted, or non-finite: a box with an infinite
-                // corner passes an ordering test and reaches the vertex buffer.
                 let sane =
                     (0..3).all(|a| max[a] > min[a] && min[a].is_finite() && max[a].is_finite());
                 sane.then_some(BlockDrawPrim::Cuboid {
@@ -193,16 +168,10 @@ impl BlockDrawPrim {
     }
 }
 
-/// One block's retained draw set: the prims AS SUBMITTED (what the wire
-/// ships — names, like every other replicated identity) beside the resolved
-/// form the renderer bakes, so the per-frame path never touches a registry.
 #[derive(Debug, Default, PartialEq)]
 pub struct BlockDrawSet {
     pub wire: DrawPrims,
     pub resolved: Vec<BlockDrawPrim>,
-    /// Everything above, bounded, in prim space — computed once here so the
-    /// per-frame gather can cull a set against the view without walking its
-    /// prims. Empty sets bound to nothing and are culled by that.
     pub bounds: Option<DrawBox>,
 }
 
@@ -222,10 +191,6 @@ impl BlockDrawSet {
     }
 }
 
-/// A block's own authored space placed in the world: an integer anchor cell
-/// and the transform from block space into space relative to that anchor. The
-/// anchor never becomes a float translation, so a machine far from the origin
-/// keeps its sub-texel detail.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct BlockLocalFrame {
     pub anchor: IVec3,
@@ -233,22 +198,17 @@ pub struct BlockLocalFrame {
 }
 
 impl BlockLocalFrame {
-    /// A block-space point in the world.
     pub fn to_world(&self, p: petramond_math::math::Vec3) -> petramond_math::world_pos::WorldPos {
         petramond_math::world_pos::WorldPos::block_min(self.anchor)
             + self.transform.transform_point3(p)
     }
 
-    /// The transform from block space into space relative to `origin`.
     pub fn relative_to(&self, origin: IVec3) -> petramond_math::math::Mat4 {
         petramond_math::math::Mat4::from_translation((self.anchor - origin).as_vec3())
             * self.transform
     }
 }
 
-/// A prim-space box in world axes: the bounds of its transformed corners.
-/// The transform is a yaw plus a translation, so that is exact rather than
-/// conservative.
 pub fn world_bounds(
     frame: &BlockLocalFrame,
     lo: [f32; 3],
@@ -276,8 +236,6 @@ pub fn world_bounds(
     (base + mn.into(), base + mx.into())
 }
 
-/// The prim-space AABB of a whole set. An item prim is a cube of side `scale`
-/// about its point AT ANY rotation, so the bound holds however it is turned.
 fn prim_bounds(prims: &[BlockDrawPrim]) -> Option<DrawBox> {
     let mut mn = [f32::MAX; 3];
     let mut mx = [f32::MIN; 3];
@@ -301,7 +259,6 @@ fn prim_bounds(prims: &[BlockDrawPrim]) -> Option<DrawBox> {
                 );
             }
             BlockDrawPrim::Item { at, scale, .. } => {
-                // The diagonal, so a spin about any axis stays inside.
                 let r = scale * 0.87;
                 grow(
                     [at[0] - r, at[1] - r, at[2] - r],
@@ -315,65 +272,29 @@ fn prim_bounds(prims: &[BlockDrawPrim]) -> Option<DrawBox> {
 
 pub type BlockDraw = Arc<BlockDrawSet>;
 
-/// An axis-aligned `(min, max)` box, in whichever space the holder documents.
 pub type DrawBox = ([f32; 3], [f32; 3]);
 
-/// A stored set together with its PLACEMENT: the block-space frame
-/// and the world box that transform puts its prims in.
-///
-/// Both are resolved when the set is stored (and re-resolved by every path
-/// that writes the anchor cell — see
-/// [`refresh_block_draw_placement`](World::refresh_block_draw_placement)),
-/// because the alternative is what this replaced: the per-frame gather built a
-/// transform out of three chunk lookups and transformed eight corners for
-/// EVERY loaded set before it could ask whether the set was on screen — cost
-/// proportional to what is loaded, which is the one thing a presentation
-/// gather may never be.
 pub(in crate::world) struct PlacedDraw {
     pub(in crate::world) set: BlockDraw,
     pub(in crate::world) frame: BlockLocalFrame,
-    /// [`BlockDrawSet::bounds`] in world axes; `None` for a set that resolved
-    /// to no prims and can therefore never be visible.
     pub(in crate::world) world: Option<(
         petramond_math::world_pos::WorldPos,
         petramond_math::world_pos::WorldPos,
     )>,
 }
 
-/// One placed block's draw set to draw this frame, with the light at its cell.
-///
-/// This ONE row type travels from the gather to the renderer's bake unchanged —
-/// presentation, scene and renderer each hold a `Vec` of it. It used to be
-/// spelled three times, and each re-spelling cost a struct copy and an atomic
-/// refcount pair per visible set per frame for nothing: the layers disagreed
-/// about the type's name, not about its contents.
 #[derive(Clone, Debug)]
 pub struct BlockDrawInstance {
     pub pos: IVec3,
-    /// Shared with the world — a frame copies a refcount, never the prims.
     pub set: BlockDraw,
-    /// Prim space placed in the world. For a model block this is its
-    /// footprint space turned by the placed facing, so a mod's geometry
-    /// follows the model it was authored against instead of the world axes.
     pub frame: BlockLocalFrame,
     pub skylight: u8,
     pub blocklight: petramond_world::light::BlockLight6,
 }
 
-/// The draw sets anchored inside ONE section, plus their union bound.
-///
-/// The index exists because every other operation on this store is
-/// section-shaped — a section payload carries its own sets, an evicted section
-/// drops them, a frame gathers the visible ones — and each of those used to
-/// walk the WHOLE map. The union bound then makes the frame gather reject a
-/// section's worth of sets on one test.
 #[derive(Default)]
 pub(in crate::world) struct SectionDraws {
     cells: Vec<IVec3>,
-    /// Union of the members' world boxes. GROWN on insert and recomputed
-    /// exactly on removal: a machine redrawing itself inside its authored
-    /// envelope must not pay an O(members) refold every tick, and a bound that
-    /// is too big only costs a section that could have been rejected.
     lo: petramond_math::world_pos::WorldPos,
     hi: petramond_math::world_pos::WorldPos,
 }
@@ -409,21 +330,8 @@ impl SectionDraws {
 }
 
 impl<S: WorldSide> World<S> {
-    /// Replace the draw set at `pos`. An empty set clears it.
-    ///
-    /// It answers nothing on purpose: "is anything stored now" is a question
-    /// no caller has, and the ABI's `bool` is about whether the SUBMISSION was
-    /// accepted — a distinction that read backwards for a clear, which is a
-    /// perfectly successful call that stores nothing.
     pub fn set_block_draw(&mut self, pos: IVec3, prims: DrawPrims) {
-        // Keyed at the group ANCHOR, exactly like the block's container and its
-        // parts mask: a mod addresses a multi-cell machine by whichever cell it
-        // has to hand, and a set stored under a non-anchor cell would never be
-        // hit-tested and never forgotten on break.
         let pos = self.container_anchor(pos);
-        // Resubmitting the same picture is the COMMON case — a machine at rest
-        // redraws itself every tick — so it is answered by comparing the
-        // submitted form, before any name resolves or allocation.
         if self
             .draws
             .block_draws
@@ -435,8 +343,6 @@ impl<S: WorldSide> World<S> {
         self.store_draw(pos, prims);
     }
 
-    /// The one place a set is stored; an empty submission takes the record
-    /// with it.
     fn store_draw(&mut self, pos: IVec3, wire: DrawPrims) {
         if wire.is_empty() {
             if self.remove_draw(pos) {
@@ -448,8 +354,6 @@ impl<S: WorldSide> World<S> {
         self.log_block_draw(pos);
     }
 
-    /// The block-space frame and the world box a set's prims land in
-    /// under it — resolved once, here, for every path that stores a set.
     fn draw_placement(
         &self,
         pos: IVec3,
@@ -466,10 +370,7 @@ impl<S: WorldSide> World<S> {
         (frame, world)
     }
 
-    /// Store `set` at `pos`, keeping the per-section index and its bound.
     fn insert_draw(&mut self, pos: IVec3, set: BlockDraw) {
-        // Outside the world's vertical range there is no section to index it
-        // under, and an unindexed record is one nothing can gather or forget.
         let Some(sp) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z) else {
             return;
         };
@@ -490,8 +391,6 @@ impl<S: WorldSide> World<S> {
         entry.grow(world);
     }
 
-    /// Drop the set at `pos`, refolding its section's bound exactly (a removal
-    /// is rare, and a grow-only bound would otherwise never shrink).
     fn remove_draw(&mut self, pos: IVec3) -> bool {
         if self.draws.block_draws.remove(&pos).is_none() {
             return false;
@@ -516,13 +415,6 @@ impl<S: WorldSide> World<S> {
         true
     }
 
-    /// Re-resolve the cached placement of the set at `pos`, if there is one.
-    ///
-    /// Called from every path that writes a cell's block or model state
-    /// without dropping its set: a machine changing COSTUME (`swap_model_block`
-    /// → `apply_cell_changes`) keeps what it owns, and a replica's corrective delta
-    /// restores a cell's state under a set the server has not cleared. A stale
-    /// transform would draw the machine's liquid where it used to face.
     pub(in crate::world) fn refresh_block_draw_placement(&mut self, pos: IVec3) {
         if self.draws.block_draws.is_empty() {
             return;
@@ -541,19 +433,12 @@ impl<S: WorldSide> World<S> {
         self.draws.block_draws.get(&pos).map(|p| &p.set)
     }
 
-    /// Every live draw set with the light at its cell, for the frame's
-    /// presentation gather. Sparse: almost every world has none, so this is an
-    /// `is_empty` test in the common case rather than a walk.
     pub fn collect_block_draws(
         &self,
         view: &petramond_math::view_volume::ViewVolume,
         out: &mut Vec<BlockDrawInstance>,
     ) {
         out.clear();
-        // Section-first: a whole section's sets are rejected on ONE box test,
-        // and only a section the view keeps costs a per-set test. Both boxes
-        // were resolved at store time, so a set that is not on screen costs no
-        // transform, no eight-corner fold and no light sample.
         for entry in self.draws.block_draw_sections.values() {
             if !view.aabb_visible(entry.lo, entry.hi) {
                 continue;
@@ -583,17 +468,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// The space a block's OWN geometry is authored in, as a world transform.
-    ///
-    /// For a MODEL block that is its FOOTPRINT space — the same coordinates
-    /// the `.bbmodel` is authored in, turned by the placed facing — so a mod
-    /// computes geometry against the model it can see in Blockbench and a
-    /// furnace facing east puts its metal where its spout is. For anything
-    /// else it is the cell, `0..1`.
-    ///
-    /// ONE rule with two consumers: the draw-set gather below, and the ABI's
-    /// `BlockLocalToWorld`, which is what lets a mod ask for a world point off
-    /// its own model instead of writing this transform out a second time.
     pub fn block_local_frame(&self, pos: IVec3) -> BlockLocalFrame {
         let block =
             petramond_world::block::Block::from_id(self.data.chunk_block(pos.x, pos.y, pos.z));
@@ -611,14 +485,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Drop the set at `pos` — called from the sweep that forgets a cell's
-    /// other block-entity records (so a broken machine takes its drawing with
-    /// it) and from the ordinary block write (so a cell that became something
-    /// ELSE does too; the write cleared the cell's KV for the same reason).
-    ///
-    /// The early return is what makes it free to call from the write path: in
-    /// a world with no draw sets at all — nearly every world — it costs a
-    /// length check rather than a hash.
     pub(in crate::world) fn forget_block_draw(&mut self, pos: IVec3) {
         if self.draws.block_draws.is_empty() {
             return;
@@ -628,9 +494,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Every draw set whose anchor cell lies in `sp`, as wire rows — the
-    /// INITIAL state a streaming-in section carries, beside the per-tick
-    /// delta lane that carries changes to it.
     pub fn section_block_draws(
         &self,
         sp: petramond_world::chunk::SectionPos,
@@ -656,9 +519,6 @@ impl<S: WorldSide> World<S> {
         out
     }
 
-    /// Drop every draw set inside an unloading section. Unlike a break this
-    /// logs NOTHING: the cells are gone from the recipient's view too, and a
-    /// delta for a section nobody holds is filtered out anyway.
     pub(in crate::world) fn forget_block_draws_in_section(
         &mut self,
         pos: petramond_world::chunk::SectionPos,
@@ -671,8 +531,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// Note a changed draw set for the server's replication batch; a replica
-    /// (or a server with capture off) logs nothing.
     fn log_block_draw(&mut self, pos: IVec3) {
         if let Some(server) = self.side.server_mut() {
             if server.replication.replication_capture {
@@ -683,8 +541,6 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ServerWorld {
-    /// Drain this tick's changed draw sets as whole-set wire rows, sorted so
-    /// the batch is deterministic.
     pub fn take_block_draw_deltas(&mut self) -> Vec<crate::world::replication::BlockDrawDelta> {
         let mut out: Vec<_> = self
             .side
@@ -705,7 +561,6 @@ impl ServerWorld {
 }
 
 impl ReplicaWorld {
-    /// Apply one replicated row on the REPLICA.
     pub fn apply_remote_block_draw(&mut self, pos: IVec3, prims: DrawPrims) {
         if let Some(section) = petramond_world::chunk::SectionPos::from_world(pos.x, pos.y, pos.z)
             .filter(|s| self.data.sections.contains_key(s))
@@ -750,7 +605,7 @@ mod tests {
     /// The frame gather reads a CACHED prim→world transform (that is what
     /// makes it cost nothing per off-screen set), so every path that rewrites
     /// a cell WITHOUT dropping its set has to re-read it. A stale one draws a
-    /// machine's contents where the machine used to face, and culls it against
+    /// machine's contents at a stale facing, and culls it against
     /// a box it no longer occupies.
     #[test]
     fn a_stored_draws_placement_follows_its_cell() {
@@ -766,8 +621,6 @@ mod tests {
         let before = w.draws.block_draws[&anchor].frame;
         assert_eq!(before, w.block_local_frame(anchor), "stored fresh");
 
-        // The cell turns under a surviving set — exactly what a costume swap
-        // does to a machine that keeps its drawing.
         let cells = w.model_group(base).expect("a placed group").2;
         let mut changes = Vec::new();
         for c in &cells {
@@ -788,12 +641,6 @@ mod tests {
         assert_eq!(after, w.block_local_frame(anchor), "refreshed");
     }
 
-    /// A delta lane is filtered PER RECIPIENT, so what a machine's redraw
-    /// costs is multiplied by the player count. The prims therefore have to be
-    /// SHARED with the stored set rather than copied out of it — with a `Vec`
-    /// inside, twenty players watching one forge paid twenty deep copies of
-    /// its prim list (heap `String` tile name per prim) every tick, and the
-    /// section payload paid another on every stream-in.
     #[test]
     fn a_replicated_draw_set_is_shared_with_the_stored_one() {
         let mut w = world();
@@ -816,9 +663,6 @@ mod tests {
         );
     }
 
-    /// The per-cell map and the per-section index are two views of one store;
-    /// a cell left in one and not the other is either a set that draws forever
-    /// or a section payload that ships a machine the world has forgotten.
     #[test]
     fn the_section_index_stays_in_step_with_the_cell_map() {
         let mut w = world();
@@ -838,8 +682,6 @@ mod tests {
         assert_eq!((w.draws.block_draws.len(), indexed(&w)), (3, 3));
         assert_eq!(w.section_block_draws(sp).len(), 3);
 
-        // Resubmitting a DIFFERENT set replaces in place — no duplicate index
-        // entry, no second wire row in the section payload.
         let mut other = prims().as_slice().to_vec();
         if let DrawPrim::Cuboid { max, .. } = &mut other[0] {
             max[1] = 0.9;
@@ -847,7 +689,6 @@ mod tests {
         w.set_block_draw(cells[0], other.into());
         assert_eq!((w.draws.block_draws.len(), indexed(&w)), (3, 3));
 
-        // A clear, then a block change, then the section going away.
         w.set_block_draw(cells[0], DrawPrims::default());
         assert_eq!((w.draws.block_draws.len(), indexed(&w)), (2, 2));
         w.set_block_world(cells[1].x, cells[1].y, cells[1].z, Block::Air);

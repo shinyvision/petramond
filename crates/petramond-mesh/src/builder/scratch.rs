@@ -22,15 +22,9 @@ use super::super::boxset::BoxSetScratch;
 use super::super::greedy::GreedyScratch;
 use super::super::vertex::{ContactShadowVertex, ModelVertex, Vertex};
 
-/// Every vertex stream one section build fills.
 #[derive(Default)]
 pub(super) struct Streams {
     pub(super) opaque: Vec<Vertex>,
-    /// Leaf faces that sit against another cell of the SAME leaves. They are
-    /// the ONLY thing the far (simplified-canopy) LOD drops, so they are
-    /// emitted into their own buffer and appended to `opaque` last — which
-    /// makes the far LOD exactly the opaque stream's leading prefix, built in
-    /// this one traversal instead of a second whole-section pass.
     pub(super) leaf_interior: Vec<Vertex>,
     pub(super) transparent: Vec<Vertex>,
     pub(super) transparent_two_sided: Vec<Vertex>,
@@ -42,7 +36,6 @@ pub(super) struct Streams {
 }
 
 impl Streams {
-    /// Empty every stream, keeping its capacity.
     fn clear(&mut self) {
         self.opaque.clear();
         self.leaf_interior.clear();
@@ -56,28 +49,19 @@ impl Streams {
     }
 }
 
-/// The box-set emitter's reusable buffers.
 #[derive(Default)]
 pub(super) struct BoxBuffers {
     pub(super) scratch: BoxSetScratch,
-    /// The cell's own resolved boxes.
     pub(super) cell: Vec<ShapeBox>,
-    /// The snow blanket a `snow_bedded` cell is drawn standing in.
     pub(super) bed: Vec<ShapeBox>,
 }
 
-/// The neighbourhood queries' scratch, borrowed shared by the
-/// [`Neighbourhood`](super::neighbourhood::Neighbourhood) (its queries take
-/// `&self`).
 #[derive(Default)]
 pub(super) struct NeighbourScratch {
-    /// A neighbour's resolved occupancy boxes.
     pub(super) occupancy: RefCell<Vec<ShapeBox>>,
-    /// A cell's boxes and the subtraction scratch for the floor-seal test.
     pub(super) seal: RefCell<(Vec<ShapeBox>, BoxSetScratch)>,
 }
 
-/// Everything a section build reuses. See the module doc.
 #[derive(Default)]
 pub(super) struct MeshScratch {
     pub(super) greedy: GreedyScratch,
@@ -90,13 +74,9 @@ thread_local! {
     static SCRATCH: Cell<Option<Box<MeshScratch>>> = const { Cell::new(None) };
 }
 
-/// This thread's [`MeshScratch`], out of its slot for the length of one
-/// build and put back on drop.
 pub(super) struct ScratchLease(Option<Box<MeshScratch>>);
 
 impl ScratchLease {
-    /// Take this thread's scratch (a fresh one on first use, or if a build on
-    /// this thread already holds it), with the streams emptied for a new build.
     pub(super) fn take() -> Self {
         let mut scratch = SCRATCH.with(Cell::take).unwrap_or_default();
         scratch.out.clear();
@@ -125,8 +105,6 @@ impl DerefMut for ScratchLease {
 impl Drop for ScratchLease {
     fn drop(&mut self) {
         if let Some(scratch) = self.0.take() {
-            // `try_with`: a lease dropped during thread teardown has nowhere
-            // to return to, and the scratch is simply freed.
             let _ = SCRATCH.try_with(|slot| slot.set(Some(scratch)));
         }
     }
@@ -145,14 +123,12 @@ mod tests {
             lease.greedy.begin();
             lease.out.opaque.capacity()
         };
-        // The next build on this thread gets the same buffers back, emptied.
         let lease = ScratchLease::take();
         assert!(lease.out.opaque.is_empty());
         assert_eq!(lease.out.opaque.capacity(), grown);
         assert!(!lease.greedy.faces.is_empty(), "greedy scratch kept");
         drop(lease);
 
-        // A panicking build still puts the scratch back while unwinding.
         let caught = std::panic::catch_unwind(|| {
             let mut lease = ScratchLease::take();
             lease.out.transparent.reserve(512);

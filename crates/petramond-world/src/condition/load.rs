@@ -94,7 +94,6 @@ fn resolve_stages(raw: Vec<RawStage>, check_emitters: bool) -> Result<&'static [
         let (cools_to, cools_after) = match (&s.cools_to, s.cools_after) {
             (None, None) => (None, 1.0),
             (Some(to), Some(after)) => {
-                // Only an EARLIER (weaker) stage keeps cooling chains finite.
                 let target = raw[..index]
                     .iter()
                     .position(|earlier| &earlier.stage == to)

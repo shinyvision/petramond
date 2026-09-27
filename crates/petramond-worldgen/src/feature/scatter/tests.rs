@@ -19,8 +19,6 @@ fn cells(section: &Section) -> Vec<u16> {
     section.blocks_iter().collect()
 }
 
-/// Sampled sections across the whole vein depth come out identical from the
-/// loaded `ores.json` and from the compiled table it replaced.
 #[test]
 fn loaded_table_places_the_same_veins_as_the_compiled_table() {
     let compiled = OreTable::new(legacy_veins().leak());
@@ -41,8 +39,6 @@ fn loaded_table_places_the_same_veins_as_the_compiled_table() {
     assert!(ores_seen > 0, "the sampled sections must hold veins");
 }
 
-/// A vein only overwrites its hosts: a tuff-hosted row lands in the tuff
-/// half of a section and leaves the stone half untouched.
 #[test]
 fn veins_overwrite_only_their_hosts() {
     const TUFF: &[Block] = &[Block::Tuff];

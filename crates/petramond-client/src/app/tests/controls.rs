@@ -7,7 +7,7 @@ use petramond_input::controls::{Control, Modifiers, TextKey, TextShortcut};
 use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 use petramond_world::gui_state::PointerButton;
-#[cfg(feature = "audio")] // only the engine-gated ui-click test reads it
+#[cfg(feature = "audio")]
 use petramond_world::sound_registry::Sound;
 
 #[test]
@@ -26,9 +26,6 @@ fn app_starts_on_title_without_loading_a_game() {
     );
 }
 
-/// World Settings is gated on a selection (the document binds `has_selection`),
-/// and it hosts the delete-world flow: settings → Delete World → confirmation,
-/// whose Cancel returns to world select with the selection intact.
 #[test]
 fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     use petramond_world::gui_state::GuiKind;
@@ -37,13 +34,11 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     app.shell.set_worlds_for_test(test_worlds(1));
     let screen = (1280, 720);
 
-    // No selection: the (disabled) Settings button routes no click.
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.0);
     click_doc_id(&mut app, "settings");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.1);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
 
-    // With a selection it opens World Settings for that world.
     app.shell.select_world(Some(0));
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
     click_doc_id(&mut app, "settings");
@@ -54,13 +49,11 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
         Some("world-0")
     );
 
-    // Its Delete World button opens the confirmation…
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.4);
     click_doc_id(&mut app, "delete_world");
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.5);
     assert_eq!(app.screen, crate::app::AppScreen::DeleteWorld);
 
-    // …and Cancel returns to world select without losing the selection.
     app.drive_doc_ui(GuiKind::DeleteWorld, screen, 0.6);
     click_doc_id(&mut app, "cancel");
     app.drive_doc_ui(GuiKind::DeleteWorld, screen, 0.7);
@@ -68,10 +61,6 @@ fn world_settings_requires_selection_and_hosts_the_delete_flow() {
     assert_eq!(app.shell.selected_world(), Some(0));
 }
 
-/// End-to-end plumbing for the document-backed create-world screen: platform
-/// text entry points route into the petramond-ui runtime, the focused editor
-/// applies them, and the controller mirrors the text into bound state.
-/// (Editor semantics themselves are tested in petramond-ui's text_edit suite.)
 #[test]
 fn create_world_document_input_types_selects_and_uses_clipboard() {
     use petramond_world::gui_state::GuiKind;
@@ -83,7 +72,6 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
         .set_clipboard(Box::new(SharedClipboard(shared.clone())));
     let drive = |app: &mut App, now: f64| app.drive_doc_ui(GuiKind::CreateWorld, screen, now);
 
-    // Solve one frame so the name input has a rect, then click to focus it.
     drive(&mut app, 0.0);
     let rect = app.ui.out().rect("create_name").expect("name input rect");
     app.set_cursor_position((rect.x + rect.w / 2) as f32, (rect.y + rect.h / 2) as f32);
@@ -97,7 +85,6 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
         "typed text mirrors into bound state"
     );
 
-    // Shift+arrow selection replaced by typing, same as the legacy editor.
     app.handle_text_key(TextKey::ArrowLeft);
     app.handle_text_key(TextKey::ArrowLeft);
     app.set_modifiers(Modifiers {
@@ -112,8 +99,6 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
     drive(&mut app, 0.2);
     assert_eq!(app.ui.state_mut().get_str("create_name"), Some("abXYef"));
 
-    // Clipboard shortcuts through the injected shared clipboard (AppUi owns
-    // the clipboard; the platform threads none through).
     app.set_modifiers(Modifiers {
         ctrl: true,
         shift: false,
@@ -136,7 +121,6 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
         Some("Pasted $#@!^{}")
     );
 
-    // Tab cycles focus to the next text input on the form.
     assert!(app.handle_text_key(TextKey::Tab));
     drive(&mut app, 0.6);
     assert!(app.handle_text_input("42"));
@@ -149,10 +133,6 @@ fn create_world_document_input_types_selects_and_uses_clipboard() {
     );
 }
 
-/// The document shell flow end-to-end through real pointer plumbing:
-/// title → (click Start Game) → world select → keyboard select → settings →
-/// back — every transition driven by the same App entry points the platform
-/// calls, resolved by the document runtime's hit-testing.
 #[test]
 fn document_shell_screens_flow_via_pointer_and_keys() {
     use petramond_world::gui_state::GuiKind;
@@ -166,7 +146,6 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     app.drive_doc_ui(GuiKind::Title, screen, 0.1);
     assert_eq!(app.screen, crate::app::AppScreen::WorldSelect);
 
-    // World select with two stub worlds: keyboard selection enables Play.
     app.shell.set_worlds_for_test(test_worlds(2));
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.2);
     app.handle_text_key(TextKey::ArrowDown);
@@ -176,7 +155,6 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.4);
     assert_eq!(app.shell.selected_world(), Some(1));
 
-    // Create → cancel round-trips; Back returns to the title.
     click_id(&mut app, "create");
     app.drive_doc_ui(GuiKind::WorldSelect, screen, 0.5);
     assert_eq!(app.screen, crate::app::AppScreen::CreateWorld);
@@ -190,8 +168,6 @@ fn document_shell_screens_flow_via_pointer_and_keys() {
     assert_eq!(app.screen, crate::app::AppScreen::Title);
 }
 
-// Asserts the playback engine's play record; the featureless (headless-server)
-// build's silent stub records nothing by design.
 #[cfg(feature = "audio")]
 #[test]
 fn shell_button_and_toggle_activations_play_ui_click_sound() {
@@ -225,9 +201,6 @@ fn document_game_menu_clicks_do_not_play_shell_ui_click_sound() {
     assert!(app.sound.take_played_for_test().is_empty());
 }
 
-/// Renaming a world changes ONLY its display name; playing it must open the
-/// original save directory. (Regression: play once keyed on display name,
-/// silently starting a fresh world after a rename.)
 #[test]
 fn play_after_rename_opens_the_original_save_directory() {
     let dir_name = "rename-regress-test";
@@ -248,7 +221,7 @@ fn play_after_rename_opens_the_original_save_directory() {
     app.play_selected_world();
     assert!(app.has_session(), "world opened");
     app.save_on_exit();
-    drop(app); // joins the save I/O thread; everything queued hits disk
+    drop(app);
 
     assert!(
         petramond::save::world_dir(dir_name)
@@ -263,9 +236,6 @@ fn play_after_rename_opens_the_original_save_directory() {
     let _ = petramond::save::delete_world(dir_name);
 }
 
-/// The tabbed World Settings screen: the Mods page is dropped entirely while
-/// the World tab is active and swaps in through the bound selection; the
-/// Back/Delete footer is shared chrome present on both tabs.
 #[test]
 fn world_settings_tabs_swap_pages() {
     use crate::app::shell_state::SettingsTab;
@@ -285,7 +255,6 @@ fn world_settings_tabs_swap_pages() {
         "the Mods page is dropped while the World tab is active"
     );
 
-    // Keyboard Right switches to the Mods tab (no editor focused).
     app.handle_text_key(TextKey::ArrowRight);
     app.drive_doc_ui(GuiKind::WorldSettings, screen, 0.1);
     assert_eq!(
@@ -299,8 +268,6 @@ fn world_settings_tabs_swap_pages() {
         "the footer is shared chrome on every tab"
     );
 
-    // Pointer: a click inside the FIRST tab cell (cells lay out from the
-    // bar's left edge) selects the World tab again.
     let bar = app.ui.out().rect("tabs").expect("tab bar solves");
     app.set_cursor_position((bar.x + 10) as f32, (bar.y + bar.h / 2) as f32);
     app.set_pointer_button(PointerButton::Primary, true);
@@ -314,10 +281,6 @@ fn world_settings_tabs_swap_pages() {
     assert!(app.ui.out().rect("mod_scroll").is_none());
 }
 
-/// Mod choices made on the Create World screen are written as the NEW world's
-/// `settings.json` when Create fires — the world's first open must already
-/// see them. (The screen buffers a session; nothing exists on disk before
-/// Create.)
 #[test]
 fn create_world_writes_buffered_settings_at_create() {
     use petramond_world::gui_state::GuiKind;
@@ -337,8 +300,6 @@ fn create_world_writes_buffered_settings_at_create() {
         "create opens with a session"
     );
 
-    // Type the name through the document's focused input, then let the
-    // controller mirror it into bound state so Create enables.
     app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.2);
     let r = app.ui.out().rect("create_name").expect("name input rect");
     app.set_cursor_position((r.x + r.w / 2) as f32, (r.y + r.h / 2) as f32);
@@ -348,8 +309,6 @@ fn create_world_writes_buffered_settings_at_create() {
     app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.3);
     app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.4);
 
-    // A disabled pack in the buffered session (the Mods-tab toggles edit this
-    // set; installed packs vary per environment, so seed it directly).
     app.shell
         .create_world_mut()
         .expect("session while the screen is open")
@@ -370,8 +329,6 @@ fn create_world_writes_buffered_settings_at_create() {
     let _ = petramond::save::delete_world(&dir_name);
 }
 
-/// In-memory clipboard shared with the app's document UI (tests never touch
-/// the OS clipboard).
 struct SharedClipboard(std::rc::Rc<std::cell::RefCell<Option<String>>>);
 
 impl petramond_ui::TextClipboard for SharedClipboard {
@@ -619,8 +576,6 @@ fn test_worlds(count: usize) -> Vec<WorldInfo> {
         .collect()
 }
 
-/// Queue a primary click on the document instance `id`, using the last solved
-/// frame's rect. The next `drive_doc_ui` frame resolves it.
 pub(super) fn click_doc_id(app: &mut App, id: &str) {
     let r = app
         .ui
@@ -676,7 +631,6 @@ fn options_opens_from_title_and_esc_walks_back_out() {
         );
     }
 
-    // Leaving during a drag discards its preview.
     let r = app.ui.out().rect("anti_aliasing").unwrap();
     app.set_cursor_position((r.x + 1) as f32, (r.y + r.h / 2) as f32);
     app.set_pointer_button(PointerButton::Primary, true);
@@ -684,7 +638,6 @@ fn options_opens_from_title_and_esc_walks_back_out() {
     let applied = app.options.settings.anti_aliasing;
     assert!(app.options.anti_aliasing_preview.is_some());
 
-    // ESC: category → root → title (the flow began there).
     app.handle_control(Control::CloseScreen, true);
     assert_eq!(app.options.anti_aliasing_preview, None);
     assert_eq!(app.options.settings.anti_aliasing, applied);
@@ -698,7 +651,7 @@ fn options_opened_from_pause_returns_to_pause() {
     use petramond_world::gui_state::GuiKind;
     let mut app = app();
     let screen = (1280, 720);
-    app.handle_control(Control::CloseScreen, true); // pause
+    app.handle_control(Control::CloseScreen, true);
 
     app.drive_doc_ui(GuiKind::Pause, screen, 0.0);
     click_doc_id(&mut app, "options");
@@ -715,9 +668,6 @@ fn options_opened_from_pause_returns_to_pause() {
     );
 }
 
-/// The remap loop: click a binding button to arm it, the next raw key becomes
-/// the binding, and the rebound key drives the control. ESC cancels an armed
-/// remap; clicking a different action's button switches the armed action.
 #[test]
 fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     use petramond_input::controls::{BindableAction, Binding, BoundInput};
@@ -728,15 +678,11 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     let screen = (1280, 720);
     app.screen = crate::app::AppScreen::OptionsControls;
 
-    // Arm Strafe Right for remapping. Use rows near the TOP: the list scroll
-    // takes what the panel has left over, so at 720p only the first four
-    // action rows are inside the viewport and clickable.
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.0);
     click_bind_row(&mut app, "strafe_right");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.1);
     assert_eq!(app.options.remap(), Some("strafe_right"));
 
-    // ESC cancels without touching the binding.
     assert!(app.remap_capture_key(KeyCode::Escape, true));
     assert_eq!(app.options.remap(), None);
     assert_eq!(
@@ -747,7 +693,6 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
         Binding::key(KeyCode::KeyD)
     );
 
-    // Clicking one action then another switches the armed remap.
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.2);
     click_bind_row(&mut app, "strafe_right");
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.3);
@@ -755,7 +700,6 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     app.drive_doc_ui(GuiKind::OptionsControls, screen, 0.4);
     assert_eq!(app.options.remap(), Some("strafe_left"));
 
-    // Capture K (no chord): binding lands, remap disarms.
     assert!(app.remap_capture_key(KeyCode::KeyK, true));
     assert_eq!(app.options.remap(), None);
     assert_eq!(
@@ -766,17 +710,14 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
         Binding::key(KeyCode::KeyK)
     );
 
-    // The rebound key drives the control through the raw-key path...
     assert!(app.handle_raw_key(KeyCode::KeyK, true));
     assert!(app.take_game_input().movement.left);
     assert!(app.handle_raw_key(KeyCode::KeyK, false));
     assert!(!app.take_game_input().movement.left);
-    // ...and the old default no longer does (StrafeLeft moved off A).
     assert!(app.handle_raw_key(KeyCode::KeyA, true));
     assert!(!app.take_game_input().movement.left);
     let _ = app.handle_raw_key(KeyCode::KeyA, false);
 
-    // A tapped modifier binds ITSELF (chord starters bind on release).
     app.options.begin_remap("sprint");
     assert!(app.remap_capture_key(KeyCode::AltLeft, true));
     assert_eq!(app.options.remap(), Some("sprint"), "hold = chord start");
@@ -791,9 +732,6 @@ fn controls_screen_remaps_a_key_and_esc_or_reclick_cancels() {
     );
 }
 
-/// Queue a primary click on the binding button of the controls-list row for
-/// `action_id`, resolved through the same row list the controller uses (the
-/// list interleaves category headers, so indexes are never hardcoded).
 fn click_bind_row(app: &mut App, action_id: &str) {
     let index =
         crate::app::shell_docs::controls_action_row_index(&app.controls.action_table, action_id)
@@ -811,9 +749,6 @@ fn click_bind_row(app: &mut App, action_id: &str) {
     app.set_pointer_button(PointerButton::Primary, false);
 }
 
-/// Attack/interact are rebindable: the default mouse buttons land in the
-/// pointer break/use state through the raw-mouse path, and a key rebind
-/// drives the same state.
 #[test]
 fn attack_rebinds_from_mouse_to_key() {
     use petramond_input::controls::{BindableAction, Binding};
@@ -841,7 +776,6 @@ fn attack_rebinds_from_mouse_to_key() {
     assert!(app.handle_raw_key(KeyCode::KeyF, false));
     let input = app.take_game_input();
     assert!(!input.break_held);
-    // The unbound left button no longer mines...
     app.controls.pointer.clear_edges();
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, true);
     let input = app.take_game_input();
@@ -852,9 +786,6 @@ fn attack_rebinds_from_mouse_to_key() {
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, false);
 }
 
-/// Mod-registered key actions join the remappable table under their pack's
-/// category (the bundled minimap registers two), and their rows resolve
-/// through the same list the engine actions use.
 #[test]
 fn mod_key_actions_join_the_controls_table_with_their_own_category() {
     let app = app();
@@ -871,14 +802,10 @@ fn mod_key_actions_join_the_controls_table_with_their_own_category() {
     );
 }
 
-/// Pressing a mod action's bound key dispatches to the owning client mod:
-/// the bundled minimap opens its world-map canvas on M (and the canvas
-/// screen releases the pointer like any modal).
 #[test]
 fn mod_bound_key_dispatches_to_the_client_mod() {
     use petramond_input::keycode::KeyCode;
     let mut app = app();
-    // A couple of frames so the client mod publishes its canvas scene.
     app.update_frame((1280, 720));
     assert!(app.handle_raw_key(KeyCode::KeyM, true));
     let _ = app.handle_raw_key(KeyCode::KeyM, false);
@@ -890,10 +817,6 @@ fn mod_bound_key_dispatches_to_the_client_mod() {
     );
 }
 
-/// A key action fires only where it was registered to: the minimap's M
-/// (gameplay AND its own map canvas) closes the map it opened, while N
-/// (gameplay only) does nothing over the map. And what a mod reads back as
-/// the action's label is the player's CURRENT binding.
 #[test]
 fn mod_key_actions_fire_only_in_their_contexts_and_report_their_binding() {
     use petramond_input::controls::Binding;
@@ -937,10 +860,6 @@ fn mod_key_actions_fire_only_in_their_contexts_and_report_their_binding() {
     assert_eq!(label(&app).as_deref(), Some("F9"));
 }
 
-/// Wheel travel over an open client canvas routes to the owning mod
-/// (coalesced per frame) instead of the gameplay scroll bindings: the bundled
-/// minimap zooms around the cursor, which re-anchors its retained scene view.
-/// With the cursor off the canvas the travel is dropped.
 #[test]
 fn canvas_wheel_scroll_reaches_the_client_mod() {
     use petramond_input::keycode::KeyCode;
@@ -957,24 +876,16 @@ fn canvas_wheel_scroll_reaches_the_client_mod() {
             .offset
     };
     let before = view(&app);
-    // The canvas display rect is computed in the render path; compose once
-    // like a drawn frame would so the scroll's inside-rect check can pass.
     app.compose_client_overlays((1280, 720));
-    // Off-center cursor inside the canvas: the cursor-anchored zoom must
-    // shift the pan, which shows up in the published view offset.
     app.set_cursor_position(420.0, 130.0);
-    app.add_scroll_delta(-1.0); // one wheel notch up (app-internal + = down)
+    app.add_scroll_delta(-1.0);
     app.update_frame((1280, 720));
     let zoomed = view(&app);
     assert_ne!(before, zoomed, "the wheel notch reached the minimap");
-    // Cursor outside the canvas rect: wheel travel is dropped.
     app.set_cursor_position(10.0, 360.0);
     app.add_scroll_delta(-1.0);
     app.update_frame((1280, 720));
     assert_eq!(zoomed, view(&app), "off-canvas wheel travel is dropped");
-    // Ride the wheel down to the outermost level (1 px per 2×2 blocks, the
-    // HSL-averaging raster) and let the progressive loads and budgeted
-    // rasters run: a guest fault would disable the mod and stop publishing.
     app.set_cursor_position(640.0, 360.0);
     for _ in 0..3 {
         app.add_scroll_delta(1.0);
@@ -986,21 +897,12 @@ fn canvas_wheel_scroll_reaches_the_client_mod() {
     let _ = view(&app);
 }
 
-/// A click whose press lands on a MENU and whose release lands in GAMEPLAY
-/// (the screen flips in between — double-clicking a world to join it, or
-/// clicking RESUME) must not leave the attack/mine state held: the release
-/// routes through the binding engine, which never saw the press, so the
-/// gameplay transition itself has to shed menu-held buttons.
 #[test]
 fn menu_click_that_enters_gameplay_leaves_no_mining_held() {
     let mut app = app();
-    app.handle_control(Control::CloseScreen, true); // pause menu
-                                                    // Physical press over the menu: recorded in the pointer state, routed to
-                                                    // the UI (this is the double-click's second press).
+    app.handle_control(Control::CloseScreen, true);
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, true);
-    // The controller flips to gameplay between press and release.
     app.resume_game();
-    // The release lands in gameplay and resolves through the binding engine.
     app.handle_raw_mouse(petramond_input::keycode::MouseButton::Left, false);
     let input = app.take_game_input();
     assert!(
@@ -1040,9 +942,8 @@ fn the_screen_shake_checkbox_toggles_the_setting_and_reaches_the_renderer() {
 /// Sprint defaults to Left Ctrl and tool adjust to Ctrl + wheel, so EVERY
 /// notch taken while sprinting resolves to the more specific tool chord. The
 /// two pairs are bound independently, so when a player binds tool adjust the
-/// opposite way round from the hotbar the old fallback (reusing the tool
-/// step's own sign) ran their hotbar backwards for as long as they held
-/// sprint. The bindings here are set explicitly rather than relying on the
+/// opposite way round from the hotbar, the bindings must be resolved
+/// independently. They are set explicitly rather than relying on the
 /// shipped defaults: the rule under test is "the hotbar's binding decides",
 /// not any particular default.
 #[test]
@@ -1058,7 +959,6 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
         input: BoundInput::Scroll(dir),
     };
     for (adjust_next, adjust_prev) in [
-        // Tool adjust agreeing with the wheel, and opposed to it.
         (ScrollDir::Down, ScrollDir::Up),
         (ScrollDir::Up, ScrollDir::Down),
     ] {
@@ -1088,7 +988,6 @@ fn a_tool_adjust_with_nothing_to_adjust_steps_the_hotbar_the_way_the_wheel_does(
             let plain = app.controls.input.take_hotbar_steps();
             assert_ne!(plain, 0, "the bare wheel steps the hotbar");
 
-            // Sprinting holds Ctrl, so this notch matches the tool chord.
             app.handle_raw_key(petramond_input::keycode::KeyCode::ControlLeft, true);
             app.set_modifiers(Modifiers {
                 ctrl: true,

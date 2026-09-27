@@ -56,8 +56,6 @@ macro_rules! graph_id {
                 self.0 as usize
             }
 
-            /// The id at `index` in its graph — for ids carried as plain
-            /// numbers (a wire row, a name table).
             pub fn from_index(index: u16) -> Self {
                 $name(index)
             }
@@ -65,18 +63,9 @@ macro_rules! graph_id {
     };
 }
 
-graph_id!(
-    /// A graph param, in name order (`params` is an object; its keys sort).
-    ParamId
-);
-graph_id!(
-    /// A graph event, in `events` list order.
-    EventId
-);
-graph_id!(
-    /// A montage slot, in `slots` list order.
-    SlotId
-);
+graph_id!(ParamId);
+graph_id!(EventId);
+graph_id!(SlotId);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct NodeId(pub(crate) u32);
@@ -84,7 +73,6 @@ pub(crate) struct NodeId(pub(crate) u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ExprId(pub(crate) u32);
 
-/// How a fade's 0..1 progress maps to blend weight.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Ease {
     Linear,
@@ -114,7 +102,6 @@ impl Ease {
     }
 }
 
-/// Where the expression inputs live in an animator's variable array.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct VarLayout {
     pub events: usize,
@@ -123,7 +110,6 @@ pub(crate) struct VarLayout {
     pub len: usize,
 }
 
-/// Per slot: weight, time, progress, playing clip.
 pub(crate) const SLOT_VARS: usize = 4;
 pub(crate) const BUILTIN_DT: usize = 0;
 pub(crate) const BUILTIN_TIME: usize = 1;
@@ -145,8 +131,6 @@ pub struct Graph {
     pub(crate) rules: Vec<Rule>,
     pub(crate) gates: Vec<Gate>,
     pub(crate) templates: Vec<ClipTemplate>,
-    /// Per clip, `[as authored, mirrored]`: the event each of its markers
-    /// fires. Empty when the document maps no markers.
     pub(crate) marker_events: Vec<[Box<[Option<EventId>]>; 2]>,
     pub(crate) vars: VarLayout,
     pub(crate) expr_state: usize,
@@ -171,7 +155,6 @@ pub(crate) struct ClipNode {
     pub clip: ClipId,
     pub time: ClipTime,
     pub looping: bool,
-    /// This node's index into the runtime's clip clocks.
     pub clock: usize,
 }
 
@@ -184,11 +167,8 @@ pub(crate) enum ClipTime {
 
 pub(crate) struct BlendNode {
     pub by: ExprId,
-    /// Ascending thresholds.
     pub points: Vec<(f32, NodeId)>,
-    /// Phase-synced children advance one shared phase at this rate formula.
     pub sync: Option<ExprId>,
-    /// This node's index into the runtime's blend phases.
     pub phase: usize,
 }
 
@@ -200,7 +180,6 @@ pub(crate) struct MachineNode {
 }
 
 pub(crate) struct Transition {
-    /// `None` = from any state other than `to`.
     pub from: Option<usize>,
     pub to: usize,
     pub when: ExprId,
@@ -225,25 +204,20 @@ pub(crate) struct BoneDrive {
 pub(crate) struct Rule {
     pub event: EventId,
     pub when: ExprId,
-    /// The gates that name this rule; it fires only while all are open.
     pub gates: Vec<usize>,
     pub cooldown: f32,
-    /// Keep matching later rules for the same event after this one fires.
     pub fallthrough: bool,
     pub play: Option<PlayRule>,
     pub stop: Option<(SlotId, f32)>,
-    /// The document's `hitstop`: freeze a slot's clips for this many seconds.
     pub freeze: Option<(SlotId, f32)>,
 }
 
-/// A gate's formula; which rules it names is resolved into each rule.
 pub(crate) struct Gate {
     pub when: ExprId,
 }
 
 pub(crate) struct PlayRule {
     pub slot: SlotId,
-    /// Alternatives for the first segment.
     pub first: Vec<SegmentDef>,
     pub pick: Pick,
     pub then: Vec<SegmentDef>,
@@ -259,9 +233,7 @@ pub(crate) struct PlayRule {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pick {
-    /// In order, back to the first once `reset` seconds pass without a fire.
     Cycle { reset: f32 },
-    /// At random, never the same clip twice running when there is a choice.
     Random,
 }
 
@@ -272,35 +244,25 @@ pub(crate) struct SegmentDef {
     pub rate: Option<ExprId>,
 }
 
-/// A rule segment's clip: named outright, or a [`ClipTemplate`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ClipRef {
     Fixed(ClipId),
     Template(usize),
 }
 
-/// A clip name with one param in it (`fp_swing_{main.tool}`), resolved at
-/// compile into every clip it can name.
 pub(crate) struct ClipTemplate {
-    /// The param's index in the animator's variables.
     pub param: usize,
-    /// The interned value's bits → the clip that value names.
     pub clips: FxHashMap<u32, ClipId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Until {
-    /// Plays through once.
     Once,
-    /// Loops while the formula holds, then leaves now or at the cycle's end.
     While { cond: ExprId, finish_cycle: bool },
-    /// Loops until the slot is stopped.
     Forever,
 }
 
 impl Graph {
-    /// Compile `source` against `rig`'s bones, taking ownership of the clip
-    /// library the graph names clips from.
     pub fn compile(source: &str, rig: &Model, clips: ClipLibrary) -> Result<Graph, String> {
         parse::compile(source, rig, clips)
     }
@@ -341,13 +303,10 @@ impl Graph {
         &self.slots
     }
 
-    /// The value a param holds when nothing sets it.
     pub fn param_default(&self, param: ParamId) -> f32 {
         self.params.get(param.index()).map_or(0.0, |(_, v)| *v)
     }
 
-    /// The event marker `marker` of `clip` fires, if the document maps one;
-    /// `mirrored` reads the marker under its other side's name.
     pub fn marker_event(&self, clip: ClipId, marker: usize, mirrored: bool) -> Option<EventId> {
         self.marker_events.get(clip.index())?[usize::from(mirrored)]
             .get(marker)
@@ -356,7 +315,6 @@ impl Graph {
     }
 }
 
-/// The id of `name` in a declared name list.
 fn declared(names: &[String], name: &str) -> Option<u16> {
     names.iter().position(|n| n == name).map(|i| i as u16)
 }

@@ -1,7 +1,3 @@
-//! What this build, this machine and its clock are: `ClientEngineFacts`,
-//! `ClientPacks`, `ClientWallClock`. Read-only facts any mod may need; the
-//! wall clock exists for client instances only, and sim mods stay clockless.
-
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -9,7 +5,6 @@ use mod_api::{ClientCall, ClientEngineFactsData, ClientPackInfo, ClientWallTime,
 
 use crate::modding::client::state::ClientStoreData;
 
-/// This build's id vocabulary, as a capture piece names it.
 fn vocabulary() -> u64 {
     static VOCABULARY: OnceLock<u64> = OnceLock::new();
     *VOCABULARY.get_or_init(|| {

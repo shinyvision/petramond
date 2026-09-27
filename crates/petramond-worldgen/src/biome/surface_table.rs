@@ -1,14 +1,9 @@
-//! The compiled surface biome table builder — the TEST REFERENCE the shipped
-//! `assets/climate_table.json` was generated from (the live table loads from
-//! that file, see [`crate::data::climate_table`]).
+//! Builds the surface biome table. The live game loads `assets/climate_table.json` instead (see
+//! [`crate::data::climate_table`]); this code is the test reference that file was generated from,
+//! and the file has to match its rows exactly and in order.
 //!
-//! It tiles the five climate axes (temperature, humidity, continentality,
-//! erosion, variance) the way a well-studied reference generator does: a grid
-//! of base biomes selected by temperature/humidity, then sliced by erosion
-//! bands and mirrored across the variance ("low"/"high") fold, with
-//! coast/ocean/peak special cases layered on top. The shipped table must
-//! reproduce this builder's rows exactly, in order, so moving the table to
-//! data changed no generated biome.
+//! It follows the reference generator: base biomes on a temperature/humidity grid, sliced by
+//! erosion band and mirrored across the variance fold, with coast, ocean and peak cases on top.
 
 use petramond_world::biome::Biome;
 
@@ -16,21 +11,10 @@ use super::climate::{AxisRange, ClimateRect};
 
 type Row = (ClimateRect, Biome);
 
-// --- Axis bands -----------------------------------------------------------
-
 const FULL: AxisRange = AxisRange::new(-1.0, 1.0);
 
-/// Upper edge of the FROZEN temperature band (`T[0]`): everything colder is
-/// snowy-family land, frozen shallow water (the sea-ice pass reads the data
-/// table's `frozen` band), and river-instead-of-swamp behaviour. The reference
-/// partition put this at -0.45; widened to -0.3 (2026-07-16, a deliberate
-/// stylization like the spines/terraces) so snowy biomes are a meaningful
-/// share of the world — measured 10.6% → 15.0% of land over a 40-seed census.
-/// Do not push much further: the cool-temperate band `T[1]` above it is
-/// already down to (-0.3, -0.15).
 pub const FROZEN_TEMPERATURE_MAX: f32 = -0.3;
 
-/// Temperature bands, cold (index 0) to hot (index 4).
 const T: [AxisRange; 5] = [
     AxisRange::new(-1.0, FROZEN_TEMPERATURE_MAX),
     AxisRange::new(FROZEN_TEMPERATURE_MAX, -0.15),
@@ -39,7 +23,6 @@ const T: [AxisRange; 5] = [
     AxisRange::new(0.55, 1.0),
 ];
 
-/// Humidity bands, dry (index 0) to wet (index 4).
 const H: [AxisRange; 5] = [
     AxisRange::new(-1.0, -0.35),
     AxisRange::new(-0.35, -0.1),
@@ -48,7 +31,6 @@ const H: [AxisRange; 5] = [
     AxisRange::new(0.3, 1.0),
 ];
 
-/// Erosion bands, least eroded (index 0) to most eroded (index 6).
 const E: [AxisRange; 7] = [
     AxisRange::new(-1.0, -0.78),
     AxisRange::new(-0.78, -0.375),
@@ -59,7 +41,6 @@ const E: [AxisRange; 7] = [
     AxisRange::new(0.55, 1.0),
 ];
 
-// Continentality bands, ocean-ward to deep-inland.
 const MUSHROOM: AxisRange = AxisRange::new(-1.2, -1.05);
 const DEEP_OCEAN_C: AxisRange = AxisRange::new(-1.05, -0.455);
 const OCEAN_C: AxisRange = AxisRange::new(-0.455, -0.19);
@@ -70,8 +51,6 @@ const FAR_INLAND: AxisRange = AxisRange::new(0.3, 1.0);
 
 const UNFROZEN: AxisRange = span(T[1], T[4]);
 
-/// Variance slice edges; the inland builder walks adjacent pairs to form 13
-/// variance ranges that mirror around zero (the "low"/"high" fold).
 const VARIANCE_EDGES: [f32; 14] = [
     -1.0,
     -0.93333334,
@@ -89,21 +68,15 @@ const VARIANCE_EDGES: [f32; 14] = [
     1.0,
 ];
 
-/// A union span from the low edge of `a` to the high edge of `b`.
 const fn span(a: AxisRange, b: AxisRange) -> AxisRange {
     AxisRange::new(a.min, b.max)
 }
 
-/// The low side of the variance fold (the reference's negative-variance half).
 fn is_low(variance: AxisRange) -> bool {
     variance.max < 0.0
 }
 
-// --- Palette grids (temperature row, humidity column) ---------------------
-
 const CORE: [[Biome; 5]; 5] = [
-    // Cold row, dry → wet: open treeless snowfield, scattered-spruce tundra,
-    // then the spruce forests.
     [
         Biome::SNOWY_PLAINS,
         Biome::SNOWY_PLAINS,
@@ -221,7 +194,6 @@ const HILLS: [[Option<Biome>; 5]; 5] = [
     [None; 5],
 ];
 
-// Ocean by temperature: deep row (no deep variant of the warmest), shallow row.
 const OCEANS: [[Biome; 5]; 2] = [
     [
         Biome::DEEP_OCEAN,
@@ -238,8 +210,6 @@ const OCEANS: [[Biome; 5]; 2] = [
         Biome::OCEAN,
     ],
 ];
-
-// --- Pickers (temperature index `i`, humidity index `j`, variance slice `v`) --
 
 fn pick_core(i: usize, j: usize, v: AxisRange) -> Biome {
     if is_low(v) {
@@ -321,8 +291,6 @@ fn pick_slope(i: usize, j: usize, v: AxisRange) -> Biome {
 fn pick_hills(i: usize, j: usize, v: AxisRange) -> Biome {
     HILLS[i][j].unwrap_or_else(|| pick_core(i, j, v))
 }
-
-// --- Table assembly -------------------------------------------------------
 
 fn add(
     rows: &mut Vec<Row>,
@@ -542,17 +510,10 @@ fn add_low_slice(rows: &mut Vec<Row>, v: AxisRange) {
     }
 }
 
-/// The centre variance band (variance ≈ 0): the reference river slice. Faithful
-/// port of the reference `addValleys` — rivers across coast/inland by erosion
-/// band, swamps at the wettest erosion shoulder, and the ordinary middle biome at
-/// the driest mid/far-inland erosion (rivers do not cut the high-continentality,
-/// low-erosion uplands). The reference's stony-shore branch applies only to a
-/// wholly-negative-variance slice, so this centre slice (which straddles zero)
-/// never takes it. Reference `river`/`frozen_river` both map to our single
-/// `River`; `swamp`/`mangrove_swamp` both map to `Swamp`.
+/// Variance ≈ 0, where the reference puts its rivers. Ported from `addValleys`, so rivers follow
+/// erosion bands, swamps take the wettest shoulder, and the driest inland erosion keeps the normal
+/// middle biome. Stony shores never show up here since this slice straddles zero.
 fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
-    // Rivers. Frozen + unfrozen both map to River, so the reference temperature
-    // split collapses to FULL across these rows.
     add(rows, FULL, FULL, COAST, span(E[0], E[1]), v, Biome::RIVER);
     add(
         rows,
@@ -573,7 +534,6 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         Biome::RIVER,
     );
     add(rows, FULL, FULL, COAST, E[6], v, Biome::RIVER);
-    // Wettest erosion shoulder, inland: frozen → river, otherwise swamp.
     add(
         rows,
         T[0],
@@ -592,7 +552,6 @@ fn add_valley_slice(rows: &mut Vec<Row>, v: AxisRange) {
         v,
         Biome::SWAMP,
     );
-    // Driest mid/far-inland erosion keeps the ordinary middle biome.
     for (i, &t) in T.iter().enumerate() {
         for (j, &h) in H.iter().enumerate() {
             let mid = pick_core_or_arid_if_hot(i, j, v);
@@ -613,15 +572,10 @@ fn variance_slice(index: usize) -> AxisRange {
     AxisRange::new(VARIANCE_EDGES[index], VARIANCE_EDGES[index + 1])
 }
 
-/// The full `(rectangle, biome)` table for surface classification.
 pub fn surface_biome_table() -> Vec<Row> {
     let mut rows = Vec::new();
     add_off_coast(&mut rows);
 
-    // 13 variance slices, mirrored around zero: mid/high/peak/high/mid on the
-    // low side, then low/valley/low across the centre, then mid/high/peak/high/mid
-    // on the high side. The centre (valley) band carries the lowest relief and is
-    // the reference's river slice (`add_valley_slice`).
     let dispatch: [fn(&mut Vec<Row>, AxisRange); 13] = [
         add_mid_slice,
         add_high_slice,
@@ -648,10 +602,6 @@ pub fn surface_biome_table() -> Vec<Row> {
 mod tests {
     use super::*;
 
-    /// Rivers are assigned, and only in the centre variance band (the reference
-    /// river slice). Classification only ever returns a row's biome, so pinning
-    /// that River rows exist AND all sit in the centre variance slice guarantees
-    /// rivers appear at variance ≈ 0 and never leak into other bands.
     #[test]
     fn rivers_are_assigned_only_in_the_centre_variance_band() {
         use super::super::climate::ClimateAxis;

@@ -1,5 +1,3 @@
-//! Shared world lattice interpolation and conservative carving bounds.
-
 use super::*;
 
 impl<'a> Col<'a> {
@@ -70,7 +68,6 @@ impl<'a> Col<'a> {
         std::array::from_fn(|axis| self.get(lane::CLIMATE + axis, y))
     }
 
-    /// The lattice cell the cursor last read, in the per-cell arrays' order.
     #[inline]
     pub(super) fn cell(&self) -> usize {
         let (mx, mz) = (self.lat.nx - 1, self.lat.nz - 1);
@@ -137,8 +134,6 @@ impl CaveLattice {
                             )))
                             < bounds(&self.noodle_width, cx, cy, cz).1 + shell;
                     let walks = self.walks.is_some() && self.walk_cells[(cy * mz + cz) * mx + cx];
-                    // A placed field is a cut of its own: its cells are visited
-                    // like any cell the natural sources may open.
                     let field = self.volumes.touched([
                         self.lx0 + cx as i32,
                         self.ly0 + cy as i32,

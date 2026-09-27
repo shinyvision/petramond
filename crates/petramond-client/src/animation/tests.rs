@@ -1,6 +1,3 @@
-//! The animation stage driven headlessly, the way the presentation gather and
-//! the app drive it — no renderer, no GPU.
-
 use glam::IVec3;
 use petramond::player::AnimatorClaims;
 use petramond_math::view_volume::{Frustum, ViewVolume};
@@ -31,7 +28,6 @@ fn remote(key: u32, pos: WorldPos) -> RemoteBody {
     }
 }
 
-/// A view that sees everything within `reach` blocks of the origin.
 fn view_within(reach: f32) -> ViewVolume {
     ViewVolume::new(
         Frustum::permissive(),

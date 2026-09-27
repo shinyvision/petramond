@@ -1,4 +1,3 @@
-//! Portable creative items for registered blocks without an ordinary item.
 use std::collections::{HashMap, HashSet};
 pub(crate) const PREFIX: &str = "petramond:creative/";
 

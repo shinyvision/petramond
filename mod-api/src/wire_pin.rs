@@ -1,25 +1,3 @@
-//! Wire-format pin: one canonical sample of every ABI enum variant, encoded
-//! and compared against recorded bytes.
-//!
-//! postcard encodes enum variants by DECLARATION INDEX and struct fields
-//! positionally, so reordering variants, inserting one anywhere but the end,
-//! or reshaping a variant's fields silently changes the wire format — a
-//! refactor that only *moves* code can break every compiled `mod.wasm`
-//! without any test noticing (round-trips still pass, both sides re-derive
-//! the new dialect together).
-//!
-//! This pin makes wire changes DELIBERATE, never accidental. When you mean
-//! to change the ABI, bump `ABI_VERSION` by the crate-docs rules (major for a
-//! changed encoding, minor for an append), run this test, paste the printed
-//! replacement block over `PINS` in the same change, and rebuild the mods
-//! (`make mods`). When you did NOT
-//! mean to change it, this failure is the only thing standing between you
-//! and a silently re-numbered protocol.
-//!
-//! Appending a NEW variant at the end never disturbs existing pins (that is
-//! exactly why append is the safe evolution) — add a sample for it in
-//! [`samples`] so the next refactor covers it too.
-
 mod pins;
 mod samples;
 

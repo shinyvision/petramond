@@ -1,13 +1,8 @@
-//! Clips: keyframes, tracks and markers, sampled by Blockbench's own
-//! interpolation rules, plus the bone transform a sampled pose resolves through.
-
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use super::Bone;
 
-/// How a keyframe travels toward the NEXT key: Blockbench's four
-/// interpolation modes, sampled by Blockbench's own rules (`anim.rs`).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Interpolation {
     #[default]
@@ -17,8 +12,6 @@ pub enum Interpolation {
     Step,
 }
 
-/// A keyframe's per-axis Bezier handles: time offsets in seconds, value
-/// offsets in the channel's units.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct BezierHandles {
     pub left_time: Vec3,
@@ -28,8 +21,6 @@ pub struct BezierHandles {
 }
 
 impl BezierHandles {
-    /// Blockbench's defaults, which also shape a Bezier segment through a key
-    /// that is not itself `bezier` (a saved file drops its handles).
     pub const DEFAULT: Self = Self {
         left_time: Vec3::splat(-0.1),
         left_value: Vec3::ZERO,
@@ -38,24 +29,17 @@ impl BezierHandles {
     };
 }
 
-/// One keyframe: the channel's value at `time` seconds — euler degrees on a
-/// rotation track, a model-unit offset on a position track. `pre` is the
-/// value arriving from the previous key and `post` the value leaving toward
-/// the next; they differ only on a key authored with two data points (a cut).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Keyframe {
     pub time: f32,
     pub pre: Vec3,
     pub post: Vec3,
-    /// Authored with two data points. Blockbench's Catmull-Rom borrows the far
-    /// neighbour only through a single-point key.
     pub split: bool,
     pub interpolation: Interpolation,
     pub bezier: Option<BezierHandles>,
 }
 
 impl Keyframe {
-    /// A single-point key.
     pub fn new(time: f32, value: Vec3, interpolation: Interpolation) -> Self {
         Self {
             time,
@@ -68,7 +52,6 @@ impl Keyframe {
     }
 }
 
-/// A named instant in a clip, authored on Blockbench's Effects track.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Marker {
     pub time: f32,
@@ -78,23 +61,17 @@ pub struct Marker {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarkerKind {
-    /// One line of a timeline script — the engine reads each line as a name.
     Timeline,
-    /// A sound keyframe; the name is its effect.
     Sound,
-    /// A particle keyframe; the name is its effect.
     Particle,
 }
 
-/// The bone channel a track drives.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Channel {
     Rotation,
     Position,
 }
 
-/// One bone's keys in a clip, sorted by time per channel; a channel with no
-/// keys is unkeyed there.
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Track {
     pub bone: usize,
@@ -118,18 +95,11 @@ impl Track {
     }
 }
 
-/// A named animation: per-bone rotation and position tracks plus effect
-/// markers. Rotation rotates about the bone's pivot; position translates the
-/// bone (and its subtree) in its parent's frame. Scale channels are not read.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Animation {
     pub length: f32,
-    /// Blockbench `loop: "loop"`.
     pub looping: bool,
-    /// Blockbench `loop: "hold"` (bedrock `hold_on_last_frame`): a one-shot
-    /// that keeps its final frame instead of ending. Ignored when `looping`.
     pub hold: bool,
-    /// Sorted by bone; a bone keyed on neither channel has no entry.
     tracks: Vec<Track>,
     markers: Vec<Marker>,
 }
@@ -145,8 +115,6 @@ impl Animation {
         }
     }
 
-    /// Replace one bone channel's keys (sorted here; an empty list removes the
-    /// track).
     pub fn set_track(&mut self, bone: usize, channel: Channel, mut keys: Vec<Keyframe>) {
         keys.sort_by(|a, b| a.time.total_cmp(&b.time));
         match self.tracks.binary_search_by_key(&bone, |t| t.bone) {
@@ -174,12 +142,10 @@ impl Animation {
         self.markers.insert(at, marker);
     }
 
-    /// Markers in time order.
     pub fn markers(&self) -> &[Marker] {
         &self.markers
     }
 
-    /// Every keyed bone's track, in bone order.
     pub fn tracks(&self) -> &[Track] {
         &self.tracks
     }
@@ -189,14 +155,10 @@ impl Animation {
         Some(&self.tracks[i])
     }
 
-    /// Does this animation animate `bone` (have a rotation or position track for
-    /// it)? The mob baker uses this to suppress AI head-look while an animation
-    /// already drives the head bone.
     pub fn affects_bone(&self, bone: usize) -> bool {
         self.track(bone).is_some()
     }
 
-    /// Bones with a track on `channel`.
     pub fn keyed_bones(&self, channel: Channel) -> impl Iterator<Item = usize> + '_ {
         self.tracks
             .iter()
@@ -204,8 +166,6 @@ impl Animation {
             .map(|t| t.bone)
     }
 
-    /// Where playback `time` seconds lands inside the clip: wrapped for a
-    /// looping clip, clamped otherwise.
     pub fn clip_time(&self, time: f32) -> f32 {
         if self.length <= 0.0 {
             0.0
@@ -216,15 +176,11 @@ impl Animation {
         }
     }
 
-    /// One bone channel at clip-local `time`, or `None` when unkeyed.
     pub fn sample(&self, bone: usize, channel: Channel, time: f32) -> Option<Vec3> {
         let keys = self.track(bone)?.keys(channel);
         (!keys.is_empty()).then(|| sample_track(keys, time, self.looping))
     }
 
-    /// Every keyed channel's value at clip-local `t`, bone by bone in one
-    /// pass. `looping` decides whether Catmull-Rom neighbours wrap — the
-    /// clip's own flag, or a player's override of it.
     pub fn samples_at(
         &self,
         t: f32,
@@ -242,7 +198,6 @@ impl Animation {
     }
 }
 
-/// Two times this close are the same instant — Blockbench's `1/1200` s.
 const KEY_EPSILON: f32 = 1.0 / 1200.0;
 
 fn sample_track(kfs: &[Keyframe], t: f32, looping: bool) -> Vec3 {
@@ -308,7 +263,6 @@ fn catmull_rom(kfs: &[Keyframe], b: usize, a: usize, alpha: f32, looping: bool) 
     spline_point(&points[..n], (alpha + offset) / (n - 1) as f32)
 }
 
-/// three.js `SplineCurve.getPoint`, componentwise.
 fn spline_point(points: &[Vec3], t: f32) -> Vec3 {
     let n = points.len() as isize;
     let last = points.len() - 1;
@@ -330,10 +284,6 @@ fn spline_point(points: &[Vec3], t: f32) -> Vec3 {
         + p1
 }
 
-/// Blockbench's `getBezierLerp`, per axis: the cubic through each key's value
-/// and handles, with the handles' time clamped inside the segment, solved for
-/// x = `t`. (Blockbench approximates the solve over 200 samples; this solves
-/// it.)
 fn bezier(kb: &Keyframe, ka: &Keyframe, t: f32) -> Vec3 {
     let hb = kb.bezier.unwrap_or(BezierHandles::DEFAULT);
     let ha = ka.bezier.unwrap_or(BezierHandles::DEFAULT);
@@ -355,7 +305,6 @@ fn bezier(kb: &Keyframe, ka: &Keyframe, t: f32) -> Vec3 {
             let k = 1.0 - s;
             k * k * k * c[0] + 3.0 * k * k * s * c[1] + 3.0 * k * s * s * c[2] + s * s * s * c[3]
         };
-        // The clamped handles keep x monotone in s, so bisection converges.
         let (mut lo, mut hi) = (0.0f32, 1.0f32);
         for _ in 0..32 {
             let mid = 0.5 * (lo + hi);
@@ -369,16 +318,6 @@ fn bezier(kb: &Keyframe, ka: &Keyframe, t: f32) -> Vec3 {
     }))
 }
 
-/// Quaternion from an OUTLINER NODE's euler degrees — a `.bbmodel` cube tilt, a
-/// bone's rest rotation, an animation rotation channel. X turns first, then Y,
-/// then Z, which is Blockbench's `Format.euler_order` (`'ZYX'`, the default for
-/// every format it ships). Single-axis rotations are order-free, so this only
-/// shows on a cube or bone turned about two axes at once — and then it shows
-/// hugely: the weapons workbench's shield lands 10.7 px out under the other
-/// order, buried inside the board it hangs on.
-///
-/// NOT the order for a display transform or a pose offset — those are
-/// [`display_euler_quat`].
 pub fn euler_quat(deg: Vec3) -> Quat {
     Quat::from_rotation_z(deg.z.to_radians())
         * Quat::from_rotation_y(deg.y.to_radians())
@@ -394,9 +333,6 @@ pub fn display_euler_quat(deg: Vec3) -> Quat {
     )
 }
 
-/// A bone's local pose: the animated position offset translates the bone (and
-/// its subtree) in the parent's frame, then the rest + animated rotation turns
-/// it about its pivot — matching Blockbench's preview of both channels.
 pub(super) fn bone_transform(bone: &Bone, anim_rot: Vec3, anim_pos: Vec3) -> Mat4 {
     Mat4::from_translation(bone.pivot + anim_pos)
         * Mat4::from_quat(euler_quat(bone.rotation + anim_rot))

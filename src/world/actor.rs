@@ -1,9 +1,3 @@
-//! The rules an action a mob performs on the world must meet before anything
-//! changes: reach and a clear line from its eye, and what a dig or a
-//! construction placement needs of the world. The host call requesting the
-//! action and the drain committing it judge through these same functions, so
-//! a request that was valid is re-proven, never assumed, at its turn.
-
 use crate::world::ServerWorld;
 use mod_api::ActionRefusal;
 use petramond_math::facing::Facing;
@@ -21,20 +15,16 @@ use petramond_world::world::raycast::{RayFilter, RaycastHit};
 
 use super::construction::CellStatus;
 
-/// A live mob resolved for one action.
 #[derive(Clone, Copy, Debug)]
 pub struct Actor {
     pub id: u64,
     pub eye: WorldPos,
     pub eye_height: f32,
     pub reach: f32,
-    /// Where it is looking, head and all. `None` for a body only imagined
-    /// somewhere, which may turn as the work asks.
     pub gaze: Option<Vec3>,
 }
 
 impl Actor {
-    /// The same actor with its feet at `feet` instead, free to look anywhere.
     pub fn standing_at(&self, feet: WorldPos) -> Actor {
         Actor {
             eye: feet + Vec3::new(0.0, self.eye_height, 0.0),
@@ -44,24 +34,17 @@ impl Actor {
     }
 }
 
-/// The click behind a placement: the point looked at and the way the
-/// placer faces, as the placement rules read a player's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Click {
     pub at: WorldPos,
     pub facing: Facing,
 }
 
-/// What the placement rules answered each distinct click of one judgement —
-/// the face hit and the way faced. Many aims, from many imagined feet, land
-/// on the same face looking the same way, and the rules are asked once.
 pub type JudgedClicks = Vec<(
     (IVec3, IVec3, Facing),
     Result<(PlacementPlan, ItemStack), ActionRefusal>,
 )>;
 
-/// What a click places: the write the placement rules answer it with, and
-/// the one item it lays.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     pub plan: PlacementPlan,
@@ -69,14 +52,12 @@ pub struct Placement {
     pub click: Click,
 }
 
-/// A dig that may proceed: the block and the tool stack (`None` = hands).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DigTarget {
     pub block: Block,
     pub tool: Option<ItemStack>,
 }
 
-/// What a construction placement request comes to.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlaceCheck {
     Ready(Placement),
@@ -85,7 +66,6 @@ pub enum PlaceCheck {
 }
 
 impl ServerWorld {
-    /// Resolve `mob_id` as an actor: a live mob.
     pub fn actor(&self, mob_id: u64) -> Result<Actor, ActionRefusal> {
         let mob = self.mobs().live(mob_id).ok_or(ActionRefusal::NoActor)?;
         let def = crate::mob::def(mob.kind);
@@ -98,7 +78,6 @@ impl ServerWorld {
         })
     }
 
-    /// Whether the nearest of `cells` lies within `actor`'s reach.
     fn within_reach(&self, actor: &Actor, cells: &[IVec3]) -> Result<(), ActionRefusal> {
         let nearest = cells
             .iter()
@@ -111,7 +90,6 @@ impl ServerWorld {
         Ok(())
     }
 
-    /// What a crosshair along `dir` from `actor`'s eye rests on.
     fn crosshair(&self, actor: &Actor, dir: Vec3) -> Option<(RaycastHit, f32)> {
         raycast::filtered(
             actor.eye,
@@ -122,8 +100,6 @@ impl ServerWorld {
         )
     }
 
-    /// The click on the block at `pos` itself (a dig, a use): where `actor`
-    /// is looking, or for an imagined body any seen point of the block.
     pub fn block_click(&self, actor: &Actor, pos: IVec3) -> Result<WorldPos, ActionRefusal> {
         self.within_reach(actor, &[pos])?;
         let lands = |dir: Vec3| {
@@ -154,12 +130,6 @@ impl ServerWorld {
             .ok_or(ActionRefusal::NoLineOfSight)
     }
 
-    /// The click that builds toward `want`, the object `record` anchors: a
-    /// face beside it (or matter standing in its cell that a placement
-    /// replaces) under the crosshair, clicked with one of the `paying` items
-    /// in hand, to which the placement rules every click meets answer with a
-    /// write the record asks for. The live actor clicks where it is looking;
-    /// an imagined one may make any click its eye allows.
     pub fn placement_click(
         &self,
         actor: &Actor,
@@ -208,7 +178,6 @@ impl ServerWorld {
                 other => other,
             });
         }
-        // Of the clicks that fail, the one nearest to placing says why.
         let mut worst = ActionRefusal::NoLineOfSight;
         let rank = |refusal: &ActionRefusal| match refusal {
             ActionRefusal::BodyInTheWay => 2,
@@ -228,8 +197,6 @@ impl ServerWorld {
         Err(worst)
     }
 
-    /// Whether the world holds up what `want` anchors, as its row declares:
-    /// named apart from the clicks, because no other click would help.
     fn holds_up(&self, want: &PlacementPlan) -> bool {
         want.writes
             .iter()
@@ -237,8 +204,6 @@ impl ServerWorld {
             .is_some_and(|w| self.data.placement_support_ok(w.block, want.anchor))
     }
 
-    /// What the placement rules make of one click toward `want`, with each
-    /// paying item in hand under each turn of the held rotation.
     fn click_outcome(
         &self,
         record: &Record,
@@ -251,11 +216,6 @@ impl ServerWorld {
         let Some(anchor) = want.writes.iter().find(|w| w.cell == want.anchor) else {
             return Err(ActionRefusal::NothingToDo);
         };
-        // A click the placement rules refuse is the wrong click: another may
-        // do. Support the row declares is judged before any click is tried.
-        // The aimed-at spot leads, so a click that lands first costs exactly
-        // what it always did; only a refused one pays for the other halves of
-        // the face (which is where a trapdoor's half comes from).
         let mut refusal = ActionRefusal::Misaligned;
         for spot in click_spots(hit.spot.to_array(), hit.normal) {
             for stack in paying {
@@ -292,8 +252,6 @@ impl ServerWorld {
         Err(refusal)
     }
 
-    /// Points, relative to the eye, worth a look when building `writes`: on
-    /// each face beside the object that is turned toward the eye.
     fn click_candidates(&self, actor: &Actor, writes: &PlacementPlan) -> Vec<Vec3> {
         const FACES: [IVec3; 6] = [
             IVec3::X,
@@ -310,8 +268,6 @@ impl ServerWorld {
             if placement::replaces_in_place(own) {
                 aims.push(centre);
             }
-            // Parts already standing in the cell are clicked on their own
-            // faces: the ones turned toward the eye.
             if w.augments {
                 if let Some((min, max)) = self.data.selection_box_at(w.cell.x, w.cell.y, w.cell.z) {
                     let (min, max) = (Vec3::from(min), Vec3::from(max));
@@ -336,7 +292,6 @@ impl ServerWorld {
                 {
                     continue;
                 }
-                // A hair past the face, so the ray crosses it.
                 let through = on_face + out * 0.02;
                 let (u, v) = (
                     IVec3::new(face.y, face.z, face.x),
@@ -355,8 +310,6 @@ impl ServerWorld {
         aims
     }
 
-    /// Whether `actor` may dig the block at `pos` with the tool in
-    /// `tool_slot` of its container.
     pub fn dig_check(
         &self,
         actor: &Actor,
@@ -391,8 +344,6 @@ impl ServerWorld {
         Ok(DigTarget { block, tool })
     }
 
-    /// Where `actor`, standing at each of `feet`, would look to build `record`
-    /// at `pos`: the click [`Self::place_check`] would accept from there.
     pub fn placement_aims(
         &self,
         actor: &Actor,
@@ -422,7 +373,6 @@ impl ServerWorld {
             .map(|&feet| {
                 let standing = actor.standing_at(feet);
                 self.within_reach(&standing, &cells)?;
-                // Bodies move on before the actor gets there.
                 let click = self.placement_click(
                     &standing,
                     record,
@@ -436,9 +386,6 @@ impl ServerWorld {
             .collect()
     }
 
-    /// Whether `actor` may build `record` at `pos` now. `occupied` answers
-    /// whether a body stands in given boxes at a cell; `pay` requires the
-    /// actor to carry the cost.
     pub fn place_check(
         &self,
         actor: &Actor,
@@ -489,8 +436,6 @@ impl ServerWorld {
 }
 
 impl ServerWorld {
-    /// Whether a living, non-spectating player (as the roster last published
-    /// them) or a live mob stands in `boxes` at `cell`.
     pub fn body_in_the_way(&self, cell: IVec3, boxes: &[Aabb]) -> bool {
         self.player_roster().iter().any(|p| {
             p.health > 0
@@ -505,10 +450,6 @@ impl ServerWorld {
     }
 }
 
-/// The row a click with `item` in hand hands the placement rules to build
-/// `wanted`: the item's own block, unless `wanted` is a row this item pays for
-/// that no click picks for it (a sampled variant, a row its construction rule
-/// names) — those are handed over already chosen, as a sampled variant is.
 fn clicked_row(item: petramond_world::item::ItemType, wanted: Block) -> Block {
     let Some(base) = item.as_block() else {
         return wanted;
@@ -527,15 +468,11 @@ fn clicked_row(item: petramond_world::item::ItemType, wanted: Block) -> Block {
     }
 }
 
-/// The point of `cell` nearest `actor`'s eye, relative to the eye: what its
-/// reach is measured to.
 fn nearest_point(actor: &Actor, cell: IVec3) -> Vec3 {
     let lo = WorldPos::block_min(cell) - actor.eye;
     Vec3::ZERO.clamp(lo, lo + Vec3::ONE)
 }
 
-/// The unit direction of a look turned `yaw` and tilted `pitch` (up is
-/// positive), in the mobs' `-Z`-forward convention.
 fn look_dir(yaw: f32, pitch: f32) -> Vec3 {
     Vec3::new(
         -yaw.sin() * pitch.cos(),

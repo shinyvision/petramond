@@ -1,9 +1,3 @@
-//! Multi-slot transport gestures and hovered-slot drops.
-//!
-//! Pointer hit testing stays app-side, but the resulting ordered slot list is
-//! applied here on the tick so mixed inventory/container drags remain one
-//! deterministic, no-loss mutation.
-
 use super::{ContainerMenu, ContainerTarget};
 use crate::world::ServerWorld;
 use petramond_world::gui_state::PointerButton;
@@ -14,11 +8,6 @@ use petramond_world::inventory::{
 use petramond_world::item::ItemStack;
 
 impl ContainerMenu {
-    /// Distribute the cursor stack across distinct compatible destinations in
-    /// first-hit order. Primary divides the original held count evenly and
-    /// gives the uneven remainder to the last destination; secondary places
-    /// one in each destination. Capacity limits leave the unplaced part on
-    /// the cursor, and take-only/virtual outputs are never destinations.
     pub fn drag_slots(
         &mut self,
         world: &mut ServerWorld,
@@ -46,9 +35,6 @@ impl ContainerMenu {
         }
     }
 
-    /// Remove one item or the whole stack from the hovered logical slot.
-    /// The returned concrete stack is queued into the ordinary world-drop
-    /// sink by the server menu stage.
     pub fn drop_slot(
         &mut self,
         world: &mut ServerWorld,
@@ -70,14 +56,6 @@ impl ContainerMenu {
         }
     }
 
-    /// Swap the off-hand with the named slot — the F gesture's decode, one
-    /// arm per slot identity like [`drop_slot`](Self::drop_slot). Inventory
-    /// slots swap plainly (this is also the gameplay-F path, so it needs no
-    /// open target); a container cell swaps through the spec-gated
-    /// ALL-OR-NOTHING rule (`Inventory::swap_off_hand_with_cell` — the
-    /// client's prediction runs the same method against its mirror).
-    /// Hovering the off-hand cell itself, a transient output, or a widget
-    /// swaps nothing.
     pub fn swap_off_hand(
         &mut self,
         world: &mut ServerWorld,
@@ -102,13 +80,8 @@ impl ContainerMenu {
         }
     }
 
-    /// Validate the slot's role identity against the open kind — a forged
-    /// role can never address another target's backing container.
     fn open_container_index(&self, slot: MenuSlot) -> Option<usize> {
         match (self.target.kind()?, slot) {
-            // Every anchor-backed container addresses its slots by plain index
-            // — engine chest, engine furnace, and a pack's alike. What each
-            // index MEANS is the document's `SlotSpec`, not a role name.
             (kind, MenuSlot::Container(i)) if ContainerTarget::kind_anchor_backed(kind) => Some(i),
             _ => None,
         }
@@ -133,10 +106,6 @@ impl ContainerMenu {
                 let Some(i) = self.open_container_index(slot) else {
                     return 0;
                 };
-                // A drag is the same deliberate placement a click is, so it
-                // asks the same question. Checking only `take_only` here made
-                // `accepts` a filter that any held button walked straight
-                // through — on both this path and the client's mirror of it.
                 if !self.slot_admits(i, Some(held.item), gui) {
                     return 0;
                 }
@@ -149,8 +118,6 @@ impl ContainerMenu {
         }
     }
 
-    /// Whether container slot `i` accepts `held` on a deliberate placement —
-    /// this menu's specs through the shared [`petramond_world::container::slot_admits`].
     fn slot_admits(
         &self,
         i: usize,

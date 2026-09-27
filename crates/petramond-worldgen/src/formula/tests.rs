@@ -129,9 +129,6 @@ fn seeded_samples_keep_their_seed_through_folding_and_batching() {
         .at::<3>(3.0, |_, value| assert_eq!(value, first));
 }
 
-/// A column scan is the point evaluation laid out per height: one operator
-/// dispatch per node instead of per cell, and a sampling operator answered
-/// once per run of equal operands. Every lane must still be the point's value.
 #[test]
 fn column_scans_match_point_samples_lane_for_lane() {
     let formula = Formula::compile(
@@ -155,7 +152,6 @@ fn column_scans_match_point_samples_lane_for_lane() {
     for (lane, &y) in ys.iter().enumerate() {
         assert_eq!(out[lane], formula.column_seeded(77, inputs).at::<2>(y));
     }
-    // A reused scan carries nothing over between columns or seeds.
     let other = Inputs([-2.0, 0.0, 9.0, 20.0, -4.0, 1.0, 12.0, 30.0, 70.0, 63.0]);
     scan.run(other, &ys[3..9], &mut out);
     for (lane, &y) in ys[3..9].iter().enumerate() {
@@ -163,9 +159,6 @@ fn column_scans_match_point_samples_lane_for_lane() {
     }
 }
 
-/// Heights a box's bounds prove no member can cut are dead; anything the
-/// bounds leave open stays alive, including a squared unknown offset,
-/// which is never negative but otherwise unbounded.
 #[test]
 fn dead_heights_follow_from_the_box_bounds_alone() {
     let formula = Formula::compile(
@@ -190,18 +183,13 @@ fn dead_heights_follow_from_the_box_bounds_alone() {
     let ys: Vec<f64> = (0..=20).map(f64::from).collect();
     let mut dead = Vec::new();
     scan.dead_lanes(&bounds, &ys, &mut dead);
-    // Reach is positive only within three of the centre height.
     let expected: Vec<bool> = (0..=20).map(|y| !(8..=12).contains(&y)).collect();
     assert_eq!(dead, expected);
-    // An unbounded radius could flip the comparison's sign: nothing is dead.
     bounds[6] = None;
     scan.dead_lanes(&bounds, &ys, &mut dead);
     assert!(dead.iter().all(|&d| !d));
 }
 
-/// A batch scan agrees with the per-member column, whole-column and lane
-/// by lane, and a predicate batch prunes a column only when its first
-/// output is exactly zero for every member at every height.
 #[test]
 fn batch_scans_match_members_and_prune_only_dead_predicates() {
     let formula = Formula::compile(
@@ -243,8 +231,6 @@ fn batch_scans_match_members_and_prune_only_dead_predicates() {
             );
         }
     }
-    // Land columns (surface above sea) make a shared conjunct false at every
-    // height: every member reads zero without being evaluated.
     let mut land = shared;
     land.0[8] = 70.0;
     let land_members: Vec<_> = members
@@ -259,7 +245,6 @@ fn batch_scans_match_members_and_prune_only_dead_predicates() {
     for m in 0..members.len() {
         assert_eq!(scan.output::<2>(m, 0), [0.0, 0.0]);
     }
-    // The plain batch never prunes, so its second output stays meaningful.
     let plain = formula.batch(&[3, 6]);
     let mut plain = plain.scan(9);
     plain.run(land, &land_members, &ys);

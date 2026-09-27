@@ -1,22 +1,5 @@
-//! Per-pass GPU timing for the frame graph, off unless asked for.
-//!
-//! `perf` hardware counters are unavailable on the development machine, so
-//! wgpu timestamp queries are the only instrument that can say which render
-//! pass a frame is actually spent in. The timer is opt-in
-//! (`PETRAMOND_GPU_TIMING=1`) and inert otherwise: with it off the renderer
-//! holds `None`, every pass descriptor takes `timestamp_writes: None`, and not
-//! one extra GPU command is recorded.
-//!
-//! Timestamps ride the render-pass descriptor (`TIMESTAMP_QUERY`), not encoder
-//! writes, so a pass is measured without changing what it records. Reading them
-//! back blocks on the submit, which serializes CPU and GPU — fine for the
-//! question it answers (which pass costs what), useless for whole-frame
-//! throughput, which is why it is opt-in.
-
 use std::cell::RefCell;
 
-/// Passes the timer can measure. Sized generously; a pass that does not run in
-/// a given frame simply writes no pair.
 const MAX_PASSES: u32 = 32;
 const MAX_QUERIES: u32 = MAX_PASSES * 2;
 
@@ -30,21 +13,13 @@ pub(crate) struct GpuTimer {
 
 #[derive(Default)]
 struct TimerState {
-    /// Labels of the passes that wrote a pair this frame, in write order.
     labels: Vec<&'static str>,
-    /// Queries written so far this frame.
     used: u32,
-    /// Accumulated per-label totals in nanoseconds and the frame count they
-    /// cover, so a caller can report a mean over many frames.
     totals: Vec<(&'static str, f64, u32)>,
-    /// The same accumulation for CPU stages of the frame, which the GPU
-    /// timestamps cannot see.
     cpu: Vec<(&'static str, f64, u32)>,
 }
 
 impl GpuTimer {
-    /// A timer over `device`, or `None` when GPU timing was not requested or
-    /// the adapter cannot do it. Call before `request_device` decides features.
     pub(crate) fn wanted() -> bool {
         std::env::var("PETRAMOND_GPU_TIMING").is_ok_and(|v| v != "0")
     }
@@ -79,8 +54,6 @@ impl GpuTimer {
         })
     }
 
-    /// Claim a begin/end query pair for `label`, or `None` once the frame has
-    /// used them all.
     pub(crate) fn pass<'a>(
         &'a self,
         label: &'static str,
@@ -99,8 +72,6 @@ impl GpuTimer {
         })
     }
 
-    /// Record the resolve + copy for this frame's queries. Must be the last
-    /// thing encoded.
     pub(crate) fn finish_frame(&self, enc: &mut wgpu::CommandEncoder) {
         let used = self.state.borrow().used;
         if used == 0 {
@@ -110,8 +81,6 @@ impl GpuTimer {
         enc.copy_buffer_to_buffer(&self.resolve, 0, &self.readback, 0, u64::from(used) * 8);
     }
 
-    /// After a submit: hand the frame's labels to the readback slot. The
-    /// previous frame's numbers (if any) are folded into the totals first.
     pub(crate) fn after_submit(&self, device: &wgpu::Device) {
         let mut st = self.state.borrow_mut();
         if st.used == 0 {
@@ -147,7 +116,6 @@ impl GpuTimer {
         self.readback.unmap();
     }
 
-    /// Fold one CPU stage sample into the report.
     pub(crate) fn cpu_stage(&self, label: &'static str, ns: f64) {
         let mut st = self.state.borrow_mut();
         match st.cpu.iter_mut().find(|(l, _, _)| *l == label) {
@@ -159,7 +127,6 @@ impl GpuTimer {
         }
     }
 
-    /// Accumulated nanoseconds and sample counts per pass, in first-seen order.
     pub(crate) fn report(&self) -> Vec<(&'static str, f64, u32)> {
         self.state.borrow().totals.clone()
     }

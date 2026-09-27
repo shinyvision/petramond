@@ -1,8 +1,3 @@
-//! Reachability questions asked of the world for a species rather than by a
-//! live mob's navigator: is a destination walked to, does one foothold walk
-//! to another with planned cells built, which footholds of a box are walked
-//! to, which cells are footholds at all.
-
 use mod_api::Route;
 use petramond_math::math::IVec3;
 
@@ -47,18 +42,11 @@ pub(in crate::mob) fn destination_reachable(
     let (out, nodes) =
         path::reachable_nav(start, dest, params, &solid, &support, &fluid, step_allowed);
     if let Some(b) = budget {
-        // Charged with its SETUP too: a probe that answers in twenty
-        // expansions still built a cursor, four closures and two memo tables,
-        // so expansions alone under-price a burst of cheap probes.
         b.spend(nodes);
     }
     Some(out.unwrap_or(false))
 }
 
-/// `destination_reachable` for a live mob instance: probes from the mob's
-/// current navigation cell with its real body. `false` when the mob is not on
-/// a foothold (airborne — nothing is provable, callers retry later). The
-/// `MobCanReach` HostCall's engine seam.
 pub fn mob_can_reach(world: &ServerWorld, mob: &Instance, dest: IVec3) -> bool {
     let d = super::def(mob.kind);
     let params = d.path_params();
@@ -76,10 +64,6 @@ pub fn mob_can_reach(world: &ServerWorld, mob: &Instance, dest: IVec3) -> bool {
         &fluid,
     )
     .unwrap_or_else(|| mob.pos.block());
-    // The mod ABI shares the tick's probe budget (a husbandry sweep can ask
-    // for dozens of probes in one tick); a refusal reads as "not reachable",
-    // which is what the asking policies already do with a spot they cannot
-    // prove — they re-roll on their next heartbeat.
     destination_reachable(
         world,
         start,
@@ -91,19 +75,10 @@ pub fn mob_can_reach(world: &ServerWorld, mob: &Instance, dest: IVec3) -> bool {
     .unwrap_or(false)
 }
 
-/// Expansions every [`route_probe`] in one game tick may spend between
-/// them. A route probe is asked positionally and at its asker's own cadence
-/// (would this foothold still walk home if that wall stood), over distances
-/// a wander probe never covers, so it spends from its own budget rather
-/// than starving the brains'.
 pub const ROUTE_PROBE_TICK_BUDGET: usize = 32_000;
 
-/// The most expansions one route probe may ask for: the navigator's own
-/// per-route search budget.
 pub const ROUTE_PROBE_MAX_NODES: usize = 4000;
 
-/// The world as a search walks it with `planned` cells read as built, its
-/// per-cell reads memoized on a kept box's lanes.
 struct PlannedWorld<'a, So, Su, Fl, St> {
     planned: &'a [IVec3],
     lanes: [Fact<'a>; 3],
@@ -132,21 +107,16 @@ where
         !self.planned.contains(&c) && self.lanes[2].get(c, &self.fluid)
     }
 
-    // The sweep itself reads the world as it stands: a planned cell is
-    // refused as a destination, not swept against.
     fn step_allowed(&self, from: IVec3, to: IVec3) -> bool {
         !self.planned.contains(&to) && (self.step)(from, to)
     }
 }
 
-/// A search to run over a [`path::BoxGraph`], whatever world it is built on.
 trait GraphSearch {
     type Found;
     fn run<W: NavWorld>(self, graph: &path::BoxGraph<'_, W>) -> Self::Found;
 }
 
-/// Run `search` over species `kind`'s moves through `kept`'s box, `planned`
-/// cells read as built.
 fn search_over<S: GraphSearch>(
     world: &ServerWorld,
     kind: Mob,
@@ -219,12 +189,10 @@ impl GraphSearch for FloodOver<'_> {
     }
 }
 
-/// Whether a body of species `kind` standing at foothold `from` can walk to
-/// foothold `to`, treating every cell of `blocked` as a solid block (planned,
-/// not built yet). A search that spends `max_nodes` first is `Undecided`,
-/// never `Closed`: a long detour is not a wall. `None` when this tick's route
-/// budget cannot cover `max_nodes` more expansions: unknown, ask again next
-/// tick. The `PathProbe` HostCall's engine seam.
+/// Can a `kind` body walk from `from` to `to`? Cells in `blocked` count as solid (planned, not
+/// built). Hitting `max_nodes` gives `Undecided`, never `Closed`, since a long detour isn't a
+/// wall. `None` means the route budget can't cover `max_nodes` more expansions this tick; ask
+/// again later. Engine seam for the `PathProbe` HostCall.
 pub fn route_probe(
     world: &ServerWorld,
     kind: Mob,
@@ -256,23 +224,14 @@ pub fn route_probe(
     })
 }
 
-/// A flood over a box: from where, which way, and with what read as built.
 pub struct FloodAsk<'a> {
     pub from: IVec3,
-    /// The inclusive box the flood stays in.
     pub span: (IVec3, IVec3),
-    /// Footholds that walk TO `from`, rather than from it.
     pub toward: bool,
     pub blocked: &'a [IVec3],
     pub max_nodes: usize,
 }
 
-/// Every foothold inside the ask's box that a body of species `kind` walks to
-/// from `from` without leaving the box (`toward`: that walks to `from`),
-/// every `blocked` cell treated as a solid block. One flood answers what a
-/// probe per cell would, and a detour inside the box is never cut short the
-/// way a capped search is: `Deferred` when this tick's route budget cannot
-/// cover `max_nodes`, `Exceeded` when the box holds more footholds.
 pub fn walk_region(world: &ServerWorld, kind: Mob, ask: FloodAsk<'_>) -> mod_api::Flood {
     let max_nodes = ask.max_nodes.min(ROUTE_PROBE_TICK_BUDGET);
     let budget = world.route_probe_budget();
@@ -306,9 +265,6 @@ pub fn walk_region(world: &ServerWorld, kind: Mob, ask: FloodAsk<'_>) -> mod_api
     }
 }
 
-/// The cells a body of species `kind` would walk from `from` to `to`, as the
-/// navigator plans them with no bodies in the way (a best-effort partial
-/// route when the goal is out of reach). A diagnostic seam.
 #[cfg(any(test, feature = "test-support"))]
 pub fn route_path(world: &ServerWorld, kind: Mob, from: IVec3, to: IVec3) -> Vec<IVec3> {
     let d = def(kind);
@@ -330,8 +286,6 @@ pub fn route_path(world: &ServerWorld, kind: Mob, from: IVec3, to: IVec3) -> Vec
     )
 }
 
-/// Which of `cells` a body of species `kind` could stand in: a navigation
-/// foothold with room for the body, not in a hazard.
 pub fn footholds(world: &ServerWorld, kind: Mob, cells: &[IVec3]) -> Vec<bool> {
     let d = def(kind);
     let params = d.path_params();
@@ -348,16 +302,6 @@ pub fn footholds(world: &ServerWorld, kind: Mob, cells: &[IVec3]) -> Vec<bool> {
         .collect()
 }
 
-/// Whether `cell` is somewhere a body of species `kind` could stand and still
-/// ROAM: a navigation foothold whose reachable ground is open world rather
-/// than a closed-off region (see [`crate::mob::confined`]). The `SiteOpen`
-/// HostCall's engine seam.
-///
-/// This is the question a spawner asks about a site it picked itself, and both
-/// halves matter: the foothold half is why a site over a hole or inside rock
-/// answers `false` instead of dropping a body into it, and the confinement
-/// half is why a pen someone built stays a pen — the engine's own confinement
-/// probe, asked positionally so the answer arrives BEFORE a mob exists.
 pub fn site_open(world: &ServerWorld, kind: Mob, cell: IVec3) -> bool {
     let d = def(kind);
     let params = d.path_params();

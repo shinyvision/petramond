@@ -1,16 +1,3 @@
-//! Optimistic client prediction for world edits: the P1 place ghost (the
-//! SHARED per-shape placement rule `World::placement_plan` evaluated against
-//! the replica), the full local break, the P0 use-click verdict, and the
-//! body-occupancy gate. Tick orchestration (when a click ships, what rides
-//! the wire) stays in [`tick`](super::tick); this module owns the prediction
-//! logic itself.
-//!
-//! The use-click verdict is the SHARED consumer walk
-//! (`petramond::rules::use_click`) — the server's own ladder and claim order
-//! — with each consumer's turn answered by the SHARED gate
-//! (`petramond::rules::item_use`, `builtin_claims_at`) evaluated against the
-//! replica and the predicted body. Nothing here restates a server rule.
-
 use super::prediction;
 use super::tick::{PlacePrediction, WorldEvent};
 use super::Game;
@@ -23,9 +10,6 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::inventory::Hand;
 use petramond_world::item::ItemStack;
 
-/// The predicted acting body as the shared item-use rules read it: the
-/// ACTING hand's stack from the replicated self view (the inventory the
-/// server confirms), the predicted spectator state, and the camera's ray.
 pub(super) struct PredictedActor<'a> {
     held: Option<&'a ItemStack>,
     spectator: bool,
@@ -51,18 +35,12 @@ impl ActorView for PredictedActor<'_> {
     }
 }
 
-/// The client's consumer registry as the shared walk sees it: every offer
-/// PREDICTS the kind's consumer against the replica. Placements claim with
-/// their [`PlacePrediction`]; a ghost opens its ledger entry only at the
-/// place rung's own turn, so at most one pass ever opens one.
 struct ClientConsumers<'a> {
     game: &'a mut Game,
     sneak: bool,
     use_mob: Option<u64>,
 }
 
-/// A place rung's verdict: anything but a known refusal claims the click
-/// (a `Plausible` placement still jabs).
 fn place_claim(place: PlacePrediction) -> Claim<PlacePrediction> {
     match place {
         PlacePrediction::No => Claim::Pass,
@@ -85,11 +63,8 @@ impl UseClickConsumers for ClientConsumers<'_> {
         let (sneak, use_mob) = (self.sneak, self.use_mob);
         let game = &mut *self.game;
         let claimed = match kind {
-            // The mod `interact_attempt` predictors, dispatched in the
-            // registry position the server dispatches the real event.
             ConsumerKind::Registered => game.predict_interact_claim(sneak, use_mob),
             ConsumerKind::Shear => game.predicts_shear(use_mob),
-            // Shears aimed at a chest still open it; food opens a door.
             ConsumerKind::BuiltinBlock => game.local.look.is_some_and(|l| {
                 use_click::builtin_claims_at(game.replica.world.data(), l.block, sneak)
             }),
@@ -102,7 +77,6 @@ impl UseClickConsumers for ClientConsumers<'_> {
             }
             ConsumerKind::Eat => item_rules::eat_claims(&game.predicted_actor()),
             ConsumerKind::ItemUse => game.predicts_item_use(sneak),
-            // A dual-natured item's placement already had its turn above.
             ConsumerKind::Place => {
                 return if game.holds_contextual_placeable() {
                     Claim::Pass
@@ -120,10 +94,6 @@ impl UseClickConsumers for ClientConsumers<'_> {
 }
 
 impl Game {
-    /// The ACTING hand's stack from the replicated self view — the read every
-    /// use-click prediction resolves through (`player.acting_hand` is the
-    /// dispatch context the two-pass verdict sets; outside a click it is
-    /// `Main`, so this is the selected hotbar stack).
     pub(super) fn predicted_held(&self) -> Option<&petramond_world::item::ItemStack> {
         self.replica
             .self_view
@@ -131,21 +101,12 @@ impl Game {
             .held_in(self.local.player.acting_hand)
     }
 
-    /// The acting player's snapshot for a client-mod PREDICTION dispatch —
-    /// the same `PlayerSnapshot` vocabulary a server handler queries, built
-    /// from the client's predicted local player + replicated self view.
-    /// `swing` is what this frame's hand triggers say (`Default` = idle; the
-    /// frame hook passes the real edges, prediction dispatches need only the
-    /// identity).
     pub(super) fn client_actor_snapshot(
         &self,
         sneak: bool,
         swing: mod_api::HandSwing,
     ) -> mod_api::PlayerSnapshot {
         mod_api::PlayerSnapshot {
-            // A client has exactly one addressable body, and naming it is
-            // what lets a mod use the SAME player-addressed calls its server
-            // half does.
             id: Some(mod_api::PlayerId(self.replica.entities.self_id().0)),
             pos: self.local.player.pos.to_array(),
             vel: self.local.player.vel.to_array(),
@@ -155,16 +116,10 @@ impl Game {
             on_ground: self.local.player.on_ground,
             spectator: self.local.player.is_spectator(),
             sneak,
-            // The ACTING hand's stack — the client twin of the server's
-            // `Player::held()`: during the off-hand prediction pass the mod
-            // predictors see the off-hand item as `held`, exactly like their
-            // authoritative halves will.
             held: self
                 .predicted_held()
                 .map(|st| mod_api::ItemId(st.item.id())),
             held_count: self.predicted_held().map_or(0, |st| st.count),
-            // The literal off-hand slot (the client twin of the server's
-            // snapshot field), so a predictor sees both hands at once.
             off_held: self
                 .replica
                 .self_view
@@ -172,7 +127,6 @@ impl Game {
                 .off_hand()
                 .map(|st| mod_api::ItemId(st.item.id())),
             use_held: self.local.intent_use_held,
-            // Patched per mod at the dispatch (each sees its own answer).
             holds_use: false,
             pose_anchor: self.replica.entities.own_mount().and_then(|m| match m {
                 petramond::net::protocol::PlayerMount::Anchor { pos, .. } => Some(pos.to_array()),
@@ -182,19 +136,11 @@ impl Game {
             half_width: petramond::player::HALF_W,
             height: petramond::player::HEIGHT,
             eye_height: petramond::player::EYE,
-            // The client predicts its own escape from geometry, so this is
-            // the predicted body's own answer, like `on_ground` above.
             entombed: self.local.player.entombed(),
-            // Condition timers are server-only; replication carries stages alone.
             conditions: Vec::new(),
         }
     }
 
-    /// Ask the client mod instances whether any PREDICTOR claims this
-    /// predicted pre event (see `ClientModRuntime::predict_claim`) — the mod
-    /// half of prediction parity: a mod consumer is exactly as predictable
-    /// as an engine one, through the same event vocabulary the server
-    /// dispatches, evaluated against the replica.
     pub(super) fn predict_mod_claim(
         &mut self,
         sneak: bool,
@@ -209,7 +155,6 @@ impl Game {
         )
     }
 
-    /// The predicted acting body for the shared item-use rules.
     pub(super) fn predicted_actor(&self) -> PredictedActor<'_> {
         PredictedActor {
             held: self.predicted_held(),
@@ -219,21 +164,12 @@ impl Game {
         }
     }
 
-    /// Whether the acting hand holds a dual-natured item (food AND
-    /// placeable) — the shared split between the contextual-place and
-    /// ordinary-place rungs.
     fn holds_contextual_placeable(&self) -> bool {
         self.predicted_held()
             .is_some_and(|st| item_rules::is_contextual_placeable(st.item))
     }
 
-    /// The ONE per-click dispatch of the predicted `interact_attempt` to the
-    /// client mod predictors (the registered rung). `true` = a mod consumer
-    /// is predicted to claim this click: the jab plays and NO ghost may
-    /// appear.
     fn predict_interact_claim(&mut self, sneak: bool, use_mob: Option<u64>) -> bool {
-        // A targeted mob BLANKS the block look, so a mob click has no cell —
-        // and it is still an attempt (the shared offer rule).
         if !use_click::registered_offered(self.local.look.map(|l| l.block), use_mob) {
             return false;
         }
@@ -246,10 +182,6 @@ impl Game {
         self.predict_mod_claim(sneak, payload)
     }
 
-    /// Whether the ENGINE's shear consumer will take this mob click: the
-    /// shared gate (shears in the acting hand, a coat the species can lose,
-    /// still on a live mob) over the replicated row, which carries all of it
-    /// (`kind_id`, `dead`, `shorn`).
     fn predicts_shear(&self, use_mob: Option<u64>) -> bool {
         let Some(id) = use_mob else {
             return false;
@@ -267,12 +199,6 @@ impl Game {
         })
     }
 
-    /// The item-use rung: the mod item-use consumers first (tilling, the
-    /// trough/compost fills — the predicted `item_use_pre`, in the registry
-    /// position the server runs it), then the engine's own use through the
-    /// SHARED rule (`rules::item_use`: bucket fill/pour targets) against the
-    /// replica. Mod `block_place_pre` cancels of a pour stay invisible to the
-    /// replica — the same over-optimism policy as the engine-block ghost.
     fn predicts_item_use(&mut self, sneak: bool) -> bool {
         let Some(item) = self.predicted_held().map(|st| st.item) else {
             return false;
@@ -287,12 +213,6 @@ impl Game {
         item_rules::engine_item_use_claims(&self.predicted_actor(), self.replica.world.data())
     }
 
-    /// The whole use click, predicted through the SHARED walk
-    /// (`rules::use_click::run_use_click`): the server's registry order and
-    /// main/off-hand ladder, each rung answered against the replica. Claims
-    /// only the server can see (a mod-cancelled `item_use_pre` or
-    /// `interact_attempt` the predictors cannot foresee) arrive through the
-    /// `used_unpredicted` echo instead.
     pub(super) fn predict_use_click(
         &mut self,
         sneak: bool,
@@ -305,9 +225,6 @@ impl Game {
         })
     }
 
-    /// One MAIN-hand pass of the shared walk, answering only what it placed
-    /// (`No` when another rung claimed the click or nothing did) — the place
-    /// prediction a production click runs, without the off-hand fallback.
     #[cfg(test)]
     pub(super) fn predict_main_hand_place(&mut self, sneak: bool) -> PlacePrediction {
         self.local.player.acting_hand = Hand::Main;
@@ -322,8 +239,6 @@ impl Game {
         }
     }
 
-    /// Full local break prediction at `pos`: clear the replica footprint, latch
-    /// hand + world event, open a ledger entry, and queue `BreakFinished`.
     pub(super) fn apply_predicted_break(
         &mut self,
         pos: IVec3,
@@ -350,8 +265,6 @@ impl Game {
                     for (c, _) in &cells {
                         self.prediction.mark_presented(*c);
                     }
-                    // Initial prediction blocks on the complete exact light ->
-                    // mesh footprint so the click exposes no stale shading.
                     self.replica.world.present_predicted_edit(&cells);
                     self.present_predicted_world_event(WorldEvent::BlockBroken {
                         pos,
@@ -361,15 +274,11 @@ impl Game {
                     });
                     (id, true)
                 }
-                // Cell already gone / unbreakable on the replica — still ask
-                // the server; track-only so we don't invent a restore.
                 None => (self.prediction.begin_track_only(), false),
             }
         } else {
             (self.prediction.begin_track_only(), false)
         };
-        // No duration claim rides the wire: the server validates the finish
-        // against ITS OWN observed mining window (breaking.rs).
         let tool_item_id = self
             .replica
             .self_view
@@ -439,7 +348,7 @@ impl Game {
             return PlacePrediction::No;
         };
         if look.normal == IVec3::ZERO {
-            return PlacePrediction::No; // eye inside the cell — the server never places
+            return PlacePrediction::No;
         }
         let Some(block) = self
             .predicted_held()
@@ -454,36 +363,24 @@ impl Game {
         {
             return PlacePrediction::Plausible;
         }
-        // A click the block's built-in consumer claims never reaches this
-        // rung: the shared walk offers it to the built-in rung first, exactly
-        // as the server registry does — so a chest/table/furnace click cancels
-        // a mod-block ghost exactly like an engine-block ghost.
         let target = petramond_world::block::Block::from_id(self.replica.world.data().chunk_block(
             look.block.x,
             look.block.y,
             look.block.z,
         ));
-        // A dual-natured item (both food and placeable — contextual placeable
-        // food, e.g. a plantable carrot) resolves place-vs-eat server-side
-        // through mod placement rules the replica cannot evaluate. Never
-        // ghost it: jab only, and a real placement arrives unpredicted.
+        // A dual-natured item (food and placeable, like a plantable carrot) picks place or eat
+        // on the server, through mod rules the replica can't evaluate. Jab only, never ghost.
         if self
             .predicted_held()
             .is_some_and(|s| s.item.food().is_some())
         {
             return PlacePrediction::Plausible;
         }
-        // A MOD-registered block's placement can be governed by mod law
-        // (`block_place_pre` — a crop plants only on farmland), so ask the
-        // mod's own CLIENT PREDICTOR first: the predicted pre event dispatched
-        // against the replica, the same vocabulary the server dispatches. A
-        // predicted cancel is a KNOWN refusal (no jab, no ghost). Everything
-        // AFTER that gate is deterministic on both sides: a CUSTOM
-        // shape runs the server's whole plan+bake pipeline and ghosts the
-        // exact write; every other mod block falls through to the shared
-        // placement ladder below like an engine block — a pack model block
-        // (the furniture chair) gets the same footprint/body-gate refusal
-        // prediction a bed or workbench does.
+        // Mod blocks can gate placement via `block_place_pre` (a crop needs farmland), so ask
+        // the mod's client predictor first with the same event the server dispatches. A predicted
+        // cancel is a known refusal: no jab, no ghost. Past that gate both sides are deterministic.
+        // Custom shapes run the full plan and bake pipeline and ghost the exact write; other mod
+        // blocks fall through to the shared ladder like engine blocks.
         if !block.is_engine() {
             let looked_at = petramond_world::block::Block::from_id(
                 self.replica
@@ -491,9 +388,6 @@ impl Game {
                     .data()
                     .chunk_block(look.block.x, look.block.y, look.block.z),
             );
-            // The server's pre-event position rule (minus slab stacking,
-            // which no mod row participates in): the shared build-position
-            // rule, so this cannot drift from the authority.
             let pre_pos =
                 petramond::world::placement::build_position(looked_at, look.block, look.normal);
             let facing =
@@ -519,16 +413,8 @@ impl Game {
                 {
                     return prediction;
                 }
-                // No reachable owner: the server falls through to the
-                // ordinary placement ladder — the shared ghost below does too.
             }
         }
-        // Replace-in-place (clicking short grass, a fern…): the server
-        // overwrites the CLICKED cell, which can never match the ghost
-        // convention (`target + normal`), so the request denies by design —
-        // plausible (jab), never ghosted. Replacing a block with ITSELF is a
-        // KNOWN refusal (the shared ladder rejects the no-op rewrite), so the
-        // click stays silent.
         if petramond::world::placement::replaces_in_place(target) {
             return if target == block {
                 PlacePrediction::No
@@ -549,19 +435,10 @@ impl Game {
         let player_facing =
             petramond::rules::placement::facing_from_forward(self.local.player.forward());
 
-        // The SHARED per-shape placement ladder (`World::placement_plan`, the
-        // same rule the server evaluates against its world), run against the
-        // replica: same validity checks, same state write. Only the
-        // body-occupancy answer is client-side (the predicted own body plus
-        // the replicated rows).
         let inputs = petramond::world::placement::PlaceInputs {
             hit: look.block,
             normal: look.normal,
-            // Through the wire's QUANTIZER, so the ghost resolves from the
-            // exact spot the server will read back off the click.
             spot: petramond::net::protocol::TargetRef::of_hit(&look).spot_fraction(),
-            // Replace-in-place classified Plausible above, so the build cell
-            // is always `hit + normal` here — the ghost convention's cell.
             place_pos,
             replacing_in_place: false,
             player_facing,
@@ -575,9 +452,6 @@ impl Game {
                 self.placement_blocked_by_body(cell, boxes)
             });
         let Some(plan) = plan else {
-            // A KNOWN refusal (unrooted substrate, unsupported mount, blocked
-            // footprint, a body in the cell — own body included): no ghost
-            // and no jab.
             return PlacePrediction::No;
         };
         // Placements the accept convention denies by design (accept ⇔ landed
@@ -600,8 +474,6 @@ impl Game {
         if !self.prediction.can_predict() {
             return PlacePrediction::TrackOnly(self.prediction.begin_track_only());
         }
-        // `cells` lists every replica cell the write touches, with its
-        // previous id — the deny-rollback footprint.
         let previous_cells: Vec<(IVec3, u16)> = plan
             .cells()
             .map(|c| (c, self.replica.world.data().chunk_block(c.x, c.y, c.z)))
@@ -611,14 +483,8 @@ impl Game {
             cells: previous_cells.clone(),
         };
         let id = self.prediction.begin(snapshot);
-        // The same World write the server commits (facing only for the engine
-        // containers — machine state is server-owned). Deny-rollback restores
-        // the previous block ids, which wipes each cell's sparse state, so a
-        // stale predicted state cannot leak.
         let _ = self.replica.world.commit_placement(&plan, false);
         self.predict_restore_carry(block, place_pos, plan.anchor_part());
-        // Same synchronous prediction presentation as breaking: exact local
-        // light and geometry are installed before the ghost is exposed.
         self.replica.world.present_predicted_edit(&previous_cells);
         let hand = self.local.player.acting_hand;
         if !self.local.player.is_creative() {
@@ -633,16 +499,11 @@ impl Game {
         PlacePrediction::Predicted(id)
     }
 
-    /// Full client prediction of a custom shape's placement — the SAME
-    /// pipeline the server runs (`try_place_custom_shape`), evaluated against
-    /// the replica: the owning mod's placement plan (its client instance — the
-    /// plan is deterministic), the SHARED plan validation, the replaceable
-    /// gate, and the body-occupancy gate fed by the shape's own sim bake of
-    /// the hypothetical cell. A refusal the server will also reach predicts
-    /// silent ([`PlacePrediction::No`]); an accepted plan ghosts the exact row
-    /// the authoritative delta will confirm — sibling-row orientation
-    /// override included. `None` = no reachable owner: the caller falls
-    /// through to the ordinary ghost, the server's fall-through twin.
+    /// Same steps the server uses in `try_place_custom_shape`: owner's plan,
+    /// shared validation, replaceable gate, body-occupancy gate from the
+    /// shape's sim bake. Refused is a silent `PlacePrediction::No`. Accepted
+    /// ghosts the exact row, sibling-row orientation and all. `None` is no
+    /// reachable owner; fall back to the ordinary ghost.
     fn try_predict_custom_place(
         &mut self,
         sneak: bool,
@@ -677,9 +538,6 @@ impl Game {
         ) else {
             return Some(PlacePrediction::No);
         };
-        // The replaceable gate (the server's `block_if_loaded` twin): an
-        // unread replica cell reads as air — optimistic, and a stale read
-        // rolls back like any engine ghost.
         let cur = petramond_world::block::Block::from_id(
             self.replica
                 .world
@@ -689,8 +547,6 @@ impl Game {
         if !cur.is_replaceable() || cur == write_block {
             return Some(PlacePrediction::No);
         }
-        // The written row's SUPPORT gate — the server's twin, run against the
-        // replica so the ghost refuses exactly what the server will refuse.
         if !self
             .replica
             .world
@@ -699,17 +555,7 @@ impl Game {
         {
             return Some(PlacePrediction::No);
         }
-        // The body-occupancy gate, fed by the shape's own bake of the
-        // hypothetical cell (collision AND render, installed eagerly so the
-        // ghost collides and draws exactly from frame 0), falling back to the
-        // replica's cached bake, then the row's static collision.
         let (sim_boxes, render_boxes) = {
-            // The hypothetical cell's bake input, from the SAME builder the
-            // server gate and both pumps use. The neighbours already carry
-            // their declared state; the anchor's own is whatever the placement
-            // will write (absent before commit, so the ghost bakes from
-            // neighbours + the default, then re-bakes on the authoritative
-            // state delta).
             let input = self
                 .replica
                 .world
@@ -734,8 +580,6 @@ impl Game {
         if self.placement_blocked_by_body(anchor, boxes) {
             return Some(PlacePrediction::No);
         }
-        // The ghost convention: only a plan landing exactly on the build cell
-        // ghosts — a shifted anchor arrives unpredicted (jab only).
         if anchor != place_pos {
             return Some(PlacePrediction::Plausible);
         }
@@ -756,18 +600,13 @@ impl Game {
         };
         let id = self.prediction.begin(snapshot);
         let _ = self.replica.world.commit_placement(&plan, false);
-        // A custom shape's placement is single-cell and whole: part 0.
         self.predict_restore_carry(block, anchor, 0);
-        // Install the eagerly baked geometry before presentation: the mesher
-        // and the local physics read the same boxes the delta will re-bake.
         if let Some(b) = &sim_boxes {
             self.replica.world.set_custom_bake(anchor, b);
         }
         if let Some(b) = render_boxes {
             self.replica.world.set_custom_render_bake(anchor, b);
         }
-        // Same synchronous prediction presentation as every ghost: exact
-        // local light and geometry are installed before the ghost is exposed.
         self.replica.world.present_predicted_edit(&previous_cells);
         let hand = self.local.player.acting_hand;
         if !self.local.player.is_creative() {
@@ -782,10 +621,6 @@ impl Game {
         Some(PlacePrediction::Predicted(id))
     }
 
-    /// The SHARED body gate (`rules::placement::placement_blocked_by_bodies`,
-    /// the server's own) fed the client's bodies: the predicted own body
-    /// (the placer always counts), every live replicated mob, and every
-    /// remote player in play.
     pub(super) fn placement_blocked_by_body(
         &self,
         cell: IVec3,
@@ -806,7 +641,6 @@ impl Game {
                 yaw: e.curr.yaw,
                 kind: petramond::mob::Mob(e.curr.kind_id),
             });
-        // `visible` is false exactly for spectators and the dead.
         let players = self
             .replica
             .entities

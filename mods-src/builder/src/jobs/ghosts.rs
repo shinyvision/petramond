@@ -1,6 +1,3 @@
-//! Ghosts are presentation: they follow the live, anchored projects and are
-//! set again after every restart.
-
 use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
@@ -10,31 +7,23 @@ use crate::fx::HashSet;
 use crate::jobs::admission::blueprint_tabled;
 use crate::project::{tag_of, Brief, Phase, ProjectId, Projects};
 
-/// How often a ghost's blueprint is looked for.
 const BLUEPRINT_CHECK: Cadence = Cadence::every(10);
 
-/// A ghost as set: placement, and whether it yields to positioning.
 type Placed = (SchematicId, [i32; 3], u8, bool);
 
 #[derive(Default)]
 pub struct Ghosts {
     shown: BTreeMap<ProjectId, Placed>,
-    /// The world has been told once this session: it keeps no ghosts over a
-    /// restart.
     restored: bool,
-    /// Whether each live project was last found planned.
     planned: BTreeMap<ProjectId, bool>,
 }
 
 impl Ghosts {
-    /// Refresh the full ghost view on load and once per blueprint check.
     pub fn due(&self, now: u64) -> bool {
         !self.restored || BLUEPRINT_CHECK.due(now, 0)
     }
 
     pub fn sync(&mut self, content: &Content, projects: &mut Projects, live: &[ProjectId]) {
-        // Whose blueprint is in a player's hand, asked once however many
-        // drafts want to know.
         let mut in_hand: Option<HashSet<ProjectId>> = None;
         let mut wanted = BTreeMap::new();
         for &id in live {
@@ -44,8 +33,6 @@ impl Ghosts {
             if !project.show_ghost && project.phase != Phase::Draft {
                 continue;
             }
-            // A ghost is a plan: with the table broken, or a draft's blueprint
-            // lying on the ground or put away, nothing is planned there.
             if let Some(planned) = planned(content, projects, &project, &mut in_hand) {
                 self.planned.insert(id, planned);
             }
@@ -56,7 +43,6 @@ impl Ghosts {
                 wanted.insert(id, (asset, origin, turns, !project.show_ghost));
             }
         }
-        // `live` comes sorted from its index.
         self.planned.retain(|id, _| live.binary_search(id).is_ok());
         if self.restored && wanted == self.shown {
             return;
@@ -85,10 +71,6 @@ impl Ghosts {
     }
 }
 
-/// Whether something is planned where `project`'s ghost stands: a draft whose
-/// blueprint is in its table or in a player's hand, or a started job whose
-/// table still stands (its golem carries the blueprint). `None` while the
-/// table's ground is not loaded (unknown, not gone).
 fn planned(
     content: &Content,
     projects: &Projects,

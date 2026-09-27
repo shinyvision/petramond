@@ -1,31 +1,22 @@
-//! The cauldron: the mod's second custom shape and the dyeing it hosts.
+//! The cauldron: the mod's second custom shape, plus the dyeing it hosts.
 //!
-//! Unoriented rows whose bakes all return [`CAULDRON_BOXES`] — a hollow
-//! slate pot the mesher carves from the row's `[top,bottom,side]` tiles.
-//! FILL STATE is block identity, exactly like the chain's axis rows:
-//! `furniture:cauldron_water` shares the shape kind, and only the RENDER
-//! bake adds [`WATER_SURFACE`] for it — a collisionless sheet whose top sits
-//! 1 px below the lip (the sim bake stays the empty pot, so a body stands
-//! THROUGH the surface). Filling is an act-based `interact_attempt`
-//! consumer: a held water bucket on the empty pot swaps block + bucket, an
-//! empty wooden bucket on the water pot scoops the water back out (the
-//! trough's symmetric swap); a water bucket on a pot holding water or dye is
-//! ABSORBED (else the engine pour ray dumps a source over the pot); anything
-//! else falls through. Both sides classify through ONE pure
-//! [`Furniture::cauldron_action`], and every classification input is
-//! replica-visible, so the client predictor is exact.
+//! Rows are unoriented and all bake to [`CAULDRON_BOXES`], a hollow slate pot carved from the
+//! row's `[top,bottom,side]` tiles. Fill state is block identity, like the chain's axis rows:
+//! `furniture:cauldron_water` shares the shape kind, and only the render bake adds
+//! [`WATER_SURFACE`], a collisionless sheet 1 px below the lip. The sim bake stays the empty pot,
+//! so a body stands through the surface.
 //!
-//! DYEING: a `furniture:pigment`-declaring item on a water or dye pot stirs
-//! its color in — water takes the pigment straight (`furniture:cauldron_dye`
-//! row), an existing dye mixes SUBTRACTIVELY ([`mix_dye`], Beer–Lambert:
-//! stains multiply transmittance so pigment ACCUMULATES — blue + yellows →
-//! green → black — and the white flowers DILUTE, halving absorbance back
-//! toward white). The color is per-cell KV under [`DYE_KEY`] — written
-//! server-side, replicated by the engine's cell-KV delta lane, and handed
-//! back to the RENDER bake as the shape's `state_key` input to tint
-//! [`WATER_SURFACE`] (the sim bake never reads it — purity holds). The dye
-//! top tile is deliberately desaturated/bright so the multiply tint carries
-//! the color.
+//! Filling is an act-based `interact_attempt` consumer. A water bucket on the empty pot swaps
+//! block and bucket, and an empty wooden bucket on the water pot scoops it back out. A water
+//! bucket on a pot holding water or dye is absorbed, or the engine's pour ray would dump a source
+//! over the pot. Anything else falls through. Both sides classify through one pure
+//! [`Furniture::cauldron_action`] over replica-visible inputs, so client prediction is exact.
+//!
+//! Dyeing: an item declaring `furniture:pigment` stirs its color into a water or dye pot. Water
+//! takes it straight (the `furniture:cauldron_dye` row); dye mixes subtractively ([`mix_dye`]).
+//! The color is per-cell KV under [`DYE_KEY`], written server-side, replicated by the cell-KV
+//! delta lane and passed to the render bake as `state_key` to tint [`WATER_SURFACE`]. The dye top
+//! tile is bright and desaturated so the multiply tint carries the color.
 
 use std::collections::HashMap;
 
@@ -33,7 +24,6 @@ use mod_sdk::*;
 
 use super::{keys, Furniture};
 
-/// Helper for the box tables: a [`ShapeAabb`] from authored 16ths.
 const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
     ShapeAabb {
         min: [min[0] / 16.0, min[1] / 16.0, min[2] / 16.0],
@@ -41,67 +31,49 @@ const fn px(min: [f32; 3], max: [f32; 3]) -> ShapeAabb {
     }
 }
 
-/// The cauldron: a hollow single-cell pot built from overlapping cuboids so
-/// the silhouette reads rounded — a pinwheel wall ring (butted contact faces
-/// stay fully buried), belly plates protruding past the walls with chamfered
-/// corners, and a slim overhanging LIP above a 2-px neck. The lip is a
-/// 2×2 cross-section ring (y 14..16, 2 thick) whose plan-view corners are
-/// cut 1×1 — the four side boxes each stop 1 short of the outline corners
-/// (they overlap in the corners instead of butting; the emitter's
-/// coincident-face tie-break draws each shared plane once) — so the rim
-/// reads rounded like the belly. The BOTTOM mirrors the same graduation:
-/// belly down to y 2, walls to y 1, and the inset floor slab (2 from every
-/// side) at y 0 — a rounded foot on all four corners. Cavity is x/z 3..13
-/// from y 3 up, open at the top, with a 1-px wall-top shelf visible inside
-/// the lip. ONE geometry source for the sim, render, and item bakes, like
-/// the chain's plates. Fluid states are sibling rows sharing this shape kind
-/// (block id = state, the ladder-row pattern) with their own tiles; the bake
-/// branches on the cell's block id.
+/// Hollow pot built from overlapping cuboids so the silhouette reads rounded.
+///
+/// Wall ring (butted faces stay buried), belly plates with chamfered corners, overhanging lip above
+/// a 2-px neck. Lip corners are cut 1x1 and overlap rather than butt, so the emitter's
+/// coincident-face tie-break draws each shared plane once and the rim reads rounded like the belly.
+/// Bottom mirrors the same graduation down to an inset floor slab at y 0, rounding all four
+/// corners. Cavity is x/z 3..13 from y 3 up, open at top, with a 1-px shelf visible inside the lip.
+///
+/// One geometry source for sim, render, and item bakes. Fluid states are sibling rows on this shape
+/// (block id = state); bake branches on the cell's block id.
 pub(super) const CAULDRON_BOXES: [ShapeAabb; 13] = [
-    px([2.0, 0.0, 2.0], [14.0, 3.0, 14.0]), // floor slab (cavity floor + inset foot)
-    px([1.0, 1.0, 1.0], [13.0, 14.0, 3.0]), // wall ring, pinwheel
+    px([2.0, 0.0, 2.0], [14.0, 3.0, 14.0]),
+    px([1.0, 1.0, 1.0], [13.0, 14.0, 3.0]),
     px([13.0, 1.0, 1.0], [15.0, 14.0, 13.0]),
     px([3.0, 1.0, 13.0], [15.0, 14.0, 15.0]),
     px([1.0, 1.0, 3.0], [3.0, 14.0, 15.0]),
     // Belly plates (the rounded bulge). Each is only the SLIVER that stands
     // proud of its wall, and stops exactly on the wall's outer face rather than
-    // reaching through it. The visible surface is unchanged — the part that
-    // used to continue inside the wall was never seen.
+    // reaching through it.
     //
-    // Interpenetrating cost a real artifact: `mesh::boxset` never culls a face
-    // that merely STRADDLES another box's plane, so the wall's outer face was
-    // retained half a texel behind the belly's, and two same-facing quads that
-    // close together fight as soon as the depth buffer stops separating them —
-    // i.e. with DISTANCE, which is why it read as "further down" and why no
-    // close-up ever showed it. Butted contact is the case the emitter culls.
+    // `mesh::boxset` does not cull a face that straddles another box's plane.
+    // Butted contact lets the emitter cull shared faces; interpenetration
+    // leaves nearby same-facing quads that can fight at distance.
     px([2.0, 2.0, 0.5], [14.0, 12.0, 1.0]),
     px([2.0, 2.0, 15.0], [14.0, 12.0, 15.5]),
     px([0.5, 2.0, 2.0], [1.0, 12.0, 14.0]),
     px([15.0, 2.0, 2.0], [15.5, 12.0, 14.0]),
-    px([1.0, 14.0, 0.0], [15.0, 16.0, 2.0]), // lip ring, corners cut 1×1
+    px([1.0, 14.0, 0.0], [15.0, 16.0, 2.0]),
     px([1.0, 14.0, 14.0], [15.0, 16.0, 16.0]),
     px([0.0, 14.0, 1.0], [2.0, 16.0, 15.0]),
     px([14.0, 14.0, 1.0], [16.0, 16.0, 15.0]),
 ];
 
-/// The water surface for the filled cauldron row — RENDER-ONLY (never in the
-/// sim bake, so it has no collision). A 1-px sheet spanning the lip's inner
-/// opening (2..14): its top plane sits at y 15, 1 px below the lip's top;
-/// its sides are buried in the lip ring's inner faces and its underside rim
-/// on the wall tops, so only the surface (and the enclosed cavity ceiling)
-/// ever draws. The water row's top tile paints this whole 2..14 window as
-/// water, covering the wall-top shelf.
+/// Water surface for the filled cauldron. Render only, not in the sim bake, no collision.
+///
+/// 1px sheet over the lip's inner opening (2..14). Top at y15, 1px below the lip top. Sides bury
+/// into the lip ring's inner faces, underside rim sits on wall tops, so only the surface and cavity
+/// ceiling draw. Water row's top tile paints the whole 2..14 window as water, covering the wall-top
+/// shelf.
 const WATER_SURFACE: ShapeAabb = px([2.0, 14.0, 2.0], [14.0, 15.0, 14.0]);
 
-/// AO strength (percent) on the fluid surface: the pot's lip would pocket
-/// the plane's whole rim into shadow at full strength, but a liquid surface
-/// reads flat and bright — keep only a hint of the corner darkening.
 const WATER_AO: u8 = 30;
 
-/// The cauldron family: the shared shape kind and its fill-state rows
-/// (block id = fill state, the chain-row pattern). The DYE row's color is
-/// per-cell KV under [`DYE_KEY`] — continuous state that cannot be block
-/// identity.
 pub(super) struct Cauldron {
     pub(super) shape: u16,
     pub(super) empty: BlockId,
@@ -109,32 +81,14 @@ pub(super) struct Cauldron {
     pub(super) dye: BlockId,
 }
 
-/// Cell KV key holding a dye cauldron's color: 3 raw bytes `[r, g, b]`.
-/// Written server-side beside the block flip; replicated to every client by
-/// the engine's cell-KV delta lane, where the render bake reads it back
-/// (the shape's `state_key` input) to tint [`WATER_SURFACE`]. Dies with the
-/// block.
 const DYE_KEY: &str = "furniture:dye";
 
-/// Cell KV key holding a dye pot's REMAINING USES: 1 raw byte, written beside
-/// [`DYE_KEY`] on the first fill (absent = a stale pre-uses pot, read as
-/// full). One wool dip = one use; at zero the pot empties (block flip, both
-/// keys die with it). Replicated like [`DYE_KEY`], so the render bake lowers
-/// the dye surface as the pot drains.
 const USES_KEY: &str = "furniture:dye_uses";
 
-/// A full pot dyes this many times.
 const DYE_USES: u8 = 8;
 
-/// Item-data key marking an item as pot-dyeable (`furniture:dyeable`,
-/// value ignored — presence is the declaration). Like pigments, this is
-/// DATA-SURFACE INTEROP: this pack patches the engine wool block/stairs/slab
-/// items, and any pack can opt its own items in the same way. The dyed
-/// give-back needs the item's registry NAME, resolved once at init.
 const DYEABLE_KEY: &str = keys::DYEABLE;
 
-/// Load every declared dyeable off the item-data surface, with its registry
-/// name (the `give_item_data` vocabulary).
 pub(super) fn load_dyeables() -> Vec<(ItemId, String)> {
     let ids: Vec<ItemId> = items_with_data(DYEABLE_KEY)
         .into_iter()
@@ -147,14 +101,8 @@ pub(super) fn load_dyeables() -> Vec<(ItemId, String)> {
         .collect()
 }
 
-/// One wool dip converts at most this many blocks from the held stack.
 const WOOL_DIP_MAX: u8 = 32;
 
-/// The ENGINE-consumed presentation key a dyed wool stack carries: the
-/// renderer multiply-tints anything whose instance data (or cell KV) holds
-/// it. The furniture pack's patch rows opt the engine wool rows into carrying
-/// it across break/place (`petramond:carry`) and crafting
-/// (`petramond:inherit`); this mod only ever WRITES the value.
 const TINT_KEY: &str = "petramond:tint";
 
 /// The dye surface for a draining pot: the full-pot sheet is [`WATER_SURFACE`]
@@ -165,32 +113,24 @@ fn dye_surface(uses: u8) -> ShapeAabb {
     px([2.0, top - 1.0, 2.0], [14.0, top, 14.0])
 }
 
-/// Pigments are DATA-SURFACE INTEROP, not a compiled table: any item whose
-/// row carries a `furniture:pigment` data entry —
-/// `{"color": [r, g, b], "dilute": true?}` — is a pigment, whoever ships it.
-/// This pack attaches the entry to the seven engine flowers via catalog
-/// `{"patch", "data"}` rows in its own `items.json`; a berries pack does the
-/// same on its rows with no furniture involvement. Loaded once at init
-/// ([`load_pigments`] — registry-only calls, so the CLIENT predictor builds
-/// the same set and stays exact); a malformed value is skipped with a log
-/// line. Stain colors should be deliberately SATURATED (high pass channels,
-/// low stop channels): under accumulation the stop channels do the mixing
-/// work, and a half-high pass channel darkens every brew it touches.
+/// Pigments aren't a compiled table, they're data interop: any item with a `furniture:pigment`
+/// data entry (`{"color": [r,g,b], "dilute": true?}`) counts as a pigment, no matter who ships
+/// it. This pack hangs the entry on the seven engine flowers via patch/data rows in its own
+/// `items.json`; a berries pack could do the same with no furniture code involved. Loaded once
+/// at init ([`load_pigments`], registry-only, so the client predictor matches exactly); bad
+/// values get skipped with a log line. Keep stain colors saturated (high pass, low stop
+/// channels). Stop channels do the mixing, and a half-high pass channel darkens every brew
+/// it touches.
 ///
-/// Mixing is genuinely SUBTRACTIVE ([`mix_dye`], Beer–Lambert): the pot's
-/// RGB is a per-channel TRANSMITTANCE, and a STAIN flower ADDS half a layer
-/// of its absorbance on top — transmittances multiply, they never average —
-/// so pigment ACCUMULATES: a blue pot plus yellow flowers turns GREEN (the
-/// blue's red-absorption stays in the pot forever while the yellow kills
-/// the blue channel), and stirring everything in keeps absorbing more light
-/// until the pot sits at (near) BLACK. A DILUTANT flower is the inverse:
-/// it thins the brew, HALVING the pot's absorbance per flower (plus its own
-/// faint half-layer), so whites brighten any dye — a near-black pot
-/// included — and repeated pure-white daisies converge to the mixing grid's
-/// white, `[248; 3]` (see [`mix_dye`]'s snap).
+/// Mixing is subtractive ([`mix_dye`], Beer-Lambert): pot RGB is per-channel transmittance, and
+/// a stain flower adds half a layer of absorbance on top. Transmittances multiply, never
+/// average, so pigment accumulates. A blue pot plus yellow flowers goes green (blue's
+/// red-absorption never leaves, yellow kills the blue channel), and stirring in more just
+/// pushes the pot toward black. Dilutant flowers work the opposite way: they halve the pot's
+/// absorbance per flower (plus their own faint half-layer), so whites brighten any dye, even
+/// near-black, and pure-white daisies converge on the mixing grid's white, `[248; 3]`.
 const PIGMENT_KEY: &str = keys::PIGMENT;
 
-/// Load every declared pigment off the item-data surface.
 pub(super) fn load_pigments() -> Vec<(ItemId, [u8; 3], bool)> {
     items_with_data_as::<PigmentSpec>(PIGMENT_KEY)
         .into_iter()
@@ -198,8 +138,6 @@ pub(super) fn load_pigments() -> Vec<(ItemId, [u8; 3], bool)> {
         .collect()
 }
 
-/// Parse one `furniture:pigment` value: `{"color": [r, g, b]}` with an
-/// optional `"dilute": bool` (default stain).
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PigmentSpec {
@@ -208,26 +146,6 @@ struct PigmentSpec {
     dilute: bool,
 }
 
-/// One flower stirred in, per channel on transmittance `t = value/255`:
-///
-/// - stain: `t · √t_pigment` — half a layer of pigment LAYERS ON TOP (the
-///   pot's own absorption is never washed out; hue accumulates and the brew
-///   only darkens), biased down (floor before the snap);
-/// - dilutant: `√t · √t_pigment` — the absorbance halves (thinning the
-///   brew) plus the flower's own faint half-layer, biased up (ceil before
-///   the snap) so brightening genuinely climbs.
-///
-/// The result then SNAPS to an 8-step per-channel grid clamped to `8..=248`
-/// (steps this size are visually indistinguishable), so mixing can only
-/// ever mint a BOUNDED palette — at most 31³ ≈ 29.8k distinct colors,
-/// comfortably inside the engine's 65,535-row variant table (every distinct
-/// tint interns one row). The floor keeps a channel off zero — a zero
-/// transmittance is multiplicatively ABSORBING and no amount of white could
-/// ever recover it — and the ceiling keeps the grid inside u8, so the fixed
-/// points are 8 ("black") and 248 ("white"): dilution converges to
-/// `[248; 3]`, never literal 255s. Within half a grid step of an extreme
-/// the snap can eat one mix's progress; the grid exists to bound the
-/// palette, not to make every single stir visible.
 fn mix_dye(pot: [u8; 3], pigment: [u8; 3], dilute: bool) -> [u8; 3] {
     let mut out = [0u8; 3];
     for c in 0..3 {
@@ -250,42 +168,18 @@ fn mix_dye(pot: [u8; 3], pigment: [u8; 3], dilute: bool) -> [u8; 3] {
     out
 }
 
-/// What a click on a cauldron does — the ONE classification the
-/// authoritative consumer and the client predictor share, a pure function of
-/// the cell's block, the actor snapshot, and the pot's dye color, so the
-/// gate cannot fork.
 enum CauldronSwap {
-    /// Not a cauldron / no matching held item / sneak-defer: fall through.
     None,
-    /// Water bucket on a pot already holding water or dye: claim with no
-    /// effect but suppressing the engine pour ray.
     Absorb,
-    /// A bucket exchange: a water bucket fills the empty pot
-    /// ([`BucketSwap::Pour`]), an empty bucket scoops the water pot back out
-    /// ([`BucketSwap::Scoop`]). (Dye is not scoopable — there is no dye
-    /// bucket; it belongs to the dyeing follow-ups.)
     Bucket(BucketSwap),
-    /// A pigment flower on a water or dye pot: stir the pigment in. Carries
-    /// the flower's item (the consume), its pigment, and whether it dilutes
-    /// (the white flowers) instead of staining.
     Dye(ItemId, [u8; 3], bool),
-    /// Wool blocks on a dye pot: dye up to [`WOOL_DIP_MAX`] of the held
-    /// stack in the pot's color. Carries the `Furniture::dyeables` index the
-    /// classification matched (so the action never re-derives the lookup it
-    /// already proved) and the dip count. One dip = one use.
     DyeWool { dyeable: usize, count: u8 },
 }
 
-/// Parse a cell's dye-KV bytes: exactly `[r, g, b]`, anything else is not a
-/// color (a foreign or truncated value reads as absent — the stale-pot path).
 fn parse_dye(v: Vec<u8>) -> Option<[u8; 3]> {
     <[u8; 3]>::try_from(v.as_slice()).ok()
 }
 
-/// Resolve the cauldron family at init: the shape kind and its fill-state
-/// rows. Registry-only, legal on any instance; `None` when the pack content
-/// didn't load — the rest of the mod keeps working and the cauldron falls
-/// back to a plain shape block with no fill interaction.
 pub(super) fn resolve_cauldron() -> Option<Cauldron> {
     Some(Cauldron {
         shape: resolve_shape(keys::CAULDRON_SHAPE)?,
@@ -296,19 +190,6 @@ pub(super) fn resolve_cauldron() -> Option<Cauldron> {
 }
 
 impl Furniture {
-    /// Classify a cauldron click — shared VERBATIM by the authoritative
-    /// consumer and the client predictor. Inputs are the cell's block, the
-    /// actor snapshot, and the pot's dye color (each side reads its own KV
-    /// view: `section_kv_get` / `client_cell_kv_at` — both replicated), so
-    /// prediction is exact. A sneak click holding a placeable item (flowers
-    /// are blocks!) defers to the placement consumer — the furniture
-    /// sneak-defer rule.
-    ///
-    /// THE stale-pot story, in one place: a dye-row cell whose color KV is
-    /// missing (a pre-dye save) refuses every dye interaction — no recolor,
-    /// no wool dip — and falls through unclaimed on BOTH sides; breaking the
-    /// pot is the recovery. Refusal here is what keeps the predictor exact
-    /// for stale pots too.
     fn cauldron_action(
         &self,
         cauldron: &Cauldron,
@@ -320,9 +201,6 @@ impl Furniture {
             return CauldronSwap::None;
         };
         if actor.held_count == 0 {
-            // `held` with a zero count never names a spendable stack; refuse
-            // up front so no arm can claim (and predict) a spend that the
-            // consume would fail.
             return CauldronSwap::None;
         }
         if let Some(buckets) = &self.buckets {
@@ -343,7 +221,7 @@ impl Furniture {
             if let Some(&(_, pigment, dilute)) = self.pigments.iter().find(|(id, _, _)| *id == held)
             {
                 if actor.sneak && held_item_places_block(Some(held)) {
-                    return CauldronSwap::None; // sneak-to-build against the pot
+                    return CauldronSwap::None;
                 }
                 return CauldronSwap::Dye(held, pigment, dilute);
             }
@@ -351,7 +229,7 @@ impl Furniture {
         if block == cauldron.dye && !stale_dye_pot {
             if let Some(dyeable) = self.dyeables.iter().position(|(id, _)| *id == held) {
                 if actor.sneak && held_item_places_block(Some(held)) {
-                    return CauldronSwap::None; // sneak-to-build against the pot
+                    return CauldronSwap::None;
                 }
                 return CauldronSwap::DyeWool {
                     dyeable,
@@ -369,9 +247,8 @@ impl Furniture {
         };
         match swap {
             CauldronSwap::None => false,
-            CauldronSwap::Absorb => true, // keep the pour ray off the full pot
+            CauldronSwap::Absorb => true,
             CauldronSwap::Bucket(swap) => {
-                // The classifier only offers a swap once the buckets resolved.
                 let Some(buckets) = &self.buckets else {
                     return false;
                 };
@@ -387,13 +264,7 @@ impl Furniture {
                 if !consume_held(flower, 1) {
                     return false;
                 }
-                // Water takes the pigment straight; an existing dye mixes it
-                // in. The block flip (water → dye) runs FIRST — a block write
-                // wipes the cell's KV on both sides, so the color must land
-                // after it (and the engine replicates them in that order).
                 let color = if block == cauldron.dye {
-                    // The classifier refuses a stale pot, so the color the
-                    // classification read is present.
                     let Some(old) = dye else {
                         return false;
                     };
@@ -403,9 +274,6 @@ impl Furniture {
                     pigment
                 };
                 section_kv_set(pos, DYE_KEY, color.to_vec());
-                // A FRESH fill (water → dye) starts at full capacity; stirring
-                // a pigment into an existing pot recolors WITHOUT refilling —
-                // capacity is the fluid, and no fluid was added.
                 if block != cauldron.dye {
                     section_kv_set(pos, USES_KEY, vec![DYE_USES]);
                 }
@@ -413,8 +281,6 @@ impl Furniture {
                 true
             }
             CauldronSwap::DyeWool { dyeable, count } => {
-                // The classification proved both: the pot's color (stale pots
-                // refuse) and the dyeable row the index names.
                 let Some(color) = dye else {
                     return false;
                 };
@@ -429,7 +295,6 @@ impl Furniture {
                     .and_then(|v| v.first().copied())
                     .unwrap_or(DYE_USES);
                 if uses <= 1 {
-                    // The pot is spent: the flip to empty wipes both keys.
                     set_block(pos, cauldron.empty);
                 } else {
                     section_kv_set(pos, USES_KEY, vec![uses - 1]);
@@ -440,10 +305,6 @@ impl Furniture {
         }
     }
 
-    /// Batch-read the remaining-uses KV for every dye-pot cell of a render
-    /// bake window, KEYED BY CELL so the read can't silently desync from the
-    /// per-cell loop (an absent/short value = a stale pot, drawn full).
-    /// Client-only — the uses ride the replica's cell KV.
     pub(super) fn cauldron_dye_uses(
         &self,
         shape_kind: u16,
@@ -468,13 +329,6 @@ impl Furniture {
             .collect()
     }
 
-    /// The render-only fluid sheet for a filled cauldron cell — the water
-    /// surface, or the dye surface lowered by its spent uses and tinted by
-    /// the cell's replicated color. The color rides the bake input itself:
-    /// the cauldron shape declares `state_key: "furniture:dye"` in
-    /// `shapes.json`, so the engine hands each cell its replicated dye bytes
-    /// as `cell.state` — the stateful-shape primitive, no bespoke host call.
-    /// `None` for the empty pot and every non-cauldron cell.
     pub(super) fn cauldron_fluid_box(
         &self,
         shape_kind: u16,
@@ -500,8 +354,6 @@ impl Furniture {
             return Some(ShapeRenderBox {
                 aabb: dye_surface(uses),
                 tint,
-                // The tint IS a dye color: sample the surface tile's
-                // dye-base twin so it can whiten too.
                 dyed: tint.is_some(),
                 ao: Some(WATER_AO),
             });
@@ -509,11 +361,6 @@ impl Furniture {
         None
     }
 
-    /// The cauldron consumer's claim GATE, run by both instances over their
-    /// own [`WorldView`]: the cell's block and, for a dye pot, its color KV
-    /// (the same replicated bytes on both sides), classified by
-    /// [`Self::cauldron_action`]. `None` = no cauldron rows, or a cell the
-    /// instance cannot read — never a claim.
     fn cauldron_gate(
         &self,
         world: &impl WorldView,
@@ -529,10 +376,6 @@ impl Furniture {
         Some((cauldron, block, dye, swap))
     }
 
-    /// Whether the cauldron consumer claims this click — the gate alone. The
-    /// client instance's whole prediction, and EXACT: fill state is block
-    /// identity, the held item rides the snapshot, and the dye color is
-    /// replicated — including the stale-pot refusal.
     pub(super) fn cauldron_claims(
         &self,
         world: &impl WorldView,
@@ -555,10 +398,8 @@ mod shape_tests {
     /// plane, so a box reaching through another leaves the buried face retained
     /// a fraction of a texel behind the visible one. Two same-facing quads that
     /// close together fight as soon as the depth buffer stops separating them —
-    /// i.e. with DISTANCE, so it is invisible in every close-up and reads as
-    /// "further away it starts sparkling". The cauldron's belly plates reached
-    /// half a texel through its walls and did exactly that (2026-07-30); they
-    /// are slivers that BUTT now, which is the case the emitter culls.
+    /// at distance. The cauldron's belly plates butt against its walls so the
+    /// emitter culls their shared faces.
     ///
     /// A full texel apart is a real step and fine — the floor slab sits inside
     /// the wall ring that way. It is the sub-texel offsets that fight.
@@ -611,9 +452,6 @@ mod shape_tests {
 mod tests {
     use super::mix_dye;
 
-    /// Every channel of every mix lands on the 8-step grid inside `8..=248` —
-    /// the invariant that BOUNDS the palette (and with it the engine's
-    /// variant table): 31 values per channel, ≤ 31³ colors ever mintable.
     #[test]
     fn mix_output_always_lands_on_the_bounded_grid() {
         let pots = [[8, 8, 8], [128, 33, 7], [248, 248, 248], [255, 0, 90]];
@@ -631,8 +469,6 @@ mod tests {
         }
     }
 
-    /// A channel can never reach 0: zero transmittance is multiplicatively
-    /// absorbing — no dilutant could ever recover it — so "black" is 8s.
     #[test]
     fn channels_never_collapse_to_zero() {
         let mut pot = [248u8; 3];
@@ -642,9 +478,6 @@ mod tests {
         assert_eq!(pot, [8; 3], "repeated max stain bottoms out at grid black");
     }
 
-    /// Dilution converges to the grid's white fixed point `[248; 3]` from
-    /// anywhere — including grid black — and staining with a full-pass
-    /// channel never brightens past it.
     #[test]
     fn dilution_converges_to_grid_white() {
         let mut pot = [8u8; 3];
@@ -659,14 +492,10 @@ mod tests {
         );
     }
 
-    /// Stains accumulate SUBTRACTIVELY: each low-channel stir keeps darkening
-    /// the channel it absorbs (monotone non-increasing, strictly down until
-    /// the floor), and a stain never raises any channel — the pot's own
-    /// absorption is never washed out.
     #[test]
     fn stains_accumulate_and_never_brighten() {
         let mut pot = [248u8, 248, 248];
-        let yellow = [255u8, 255, 16]; // absorbs blue
+        let yellow = [255u8, 255, 16];
         for _ in 0..32 {
             let next = mix_dye(pot, yellow, false);
             for c in 0..3 {
@@ -678,12 +507,9 @@ mod tests {
         assert!(pot[0] > 128 && pot[1] > 128, "pass channels stay bright");
     }
 
-    /// The classic subtractive story: blue pot + repeated yellow = GREEN
-    /// (the blue's red-absorption stays; the yellow kills blue), not an
-    /// additive average.
     #[test]
     fn blue_plus_yellow_mixes_green() {
-        let mut pot = [32u8, 64, 224]; // a blue pot
+        let mut pot = [32u8, 64, 224];
         let yellow = [240u8, 224, 16];
         for _ in 0..8 {
             pot = mix_dye(pot, yellow, false);

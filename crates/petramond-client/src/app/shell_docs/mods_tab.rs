@@ -1,15 +1,8 @@
-//! Shared Mods-tab behavior for the tabbed World Settings and Create World
-//! screens: pack-row binding against a `WorldSettings` disabled set. The
-//! rows' icons are the content library's normalized pack icons.
-
 use crate::app::shell_state::ModPackRow;
 use petramond::save::settings::WorldSettings;
 use petramond_ui::{UiMap, UiState, UiValue};
 use std::sync::Arc;
 
-/// Bind the Mods-tab rows: one entry per installed pack, enabled state read
-/// from `settings.disabled_mods`. `rows` is parallel to
-/// `petramond_world::assets::packs()` (both screens build it from pack discovery).
 pub(super) fn populate(
     rows: &[ModPackRow],
     settings: &WorldSettings,
@@ -61,7 +54,6 @@ pub(super) fn populate(
     state.set("mod_sel", UiValue::I32(selected as i32));
 }
 
-/// Bind the shared tab-bar state (`tab_sel` + the two page visibility keys).
 pub(super) fn populate_tabs(tab: crate::app::shell_state::SettingsTab, state: &mut UiState) {
     use crate::app::shell_state::SettingsTab;
     state.set("tab_sel", UiValue::I32(tab.index()));
@@ -69,7 +61,6 @@ pub(super) fn populate_tabs(tab: crate::app::shell_state::SettingsTab, state: &m
     state.set("tab_mods", UiValue::Bool(tab == SettingsTab::Mods));
 }
 
-/// Clamp-move a Mods-list keyboard selection by `step`.
 pub(super) fn move_selection(selected: &mut usize, rows: usize, step: i32) {
     if rows == 0 {
         return;

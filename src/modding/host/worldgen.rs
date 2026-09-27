@@ -1,19 +1,8 @@
-//! Worldgen calls: the init-window-gated gen hook registrations plus the
-//! UNDERGROUND-BIOME vocabulary. (Block/item name resolution lives in the
-//! `registry` domain.)
-//!
-//! The underground-biome query lives here rather than in `registry` because it
-//! needs the store's world seed: it is a pure function of (seed, position)
-//! reading the same cave field the carver reads, so it is legal on the
-//! DETACHED worldgen instances — no `SimCtx`, no loaded section.
-
 use mod_api::{ErrorCode, HostRet, WorldgenCall};
 
 use super::guards::batch_guard;
 use super::{ModStoreData, Registration};
 
-/// Worldgen-hook calls (the gen registrations) and the underground-biome
-/// vocabulary.
 pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: WorldgenCall) -> HostRet {
     match call {
         WorldgenCall::ResolveUndergroundBiome { key } => {

@@ -16,7 +16,6 @@ use crate::world_marks::{bake, MarkBatch, MarkTex, MarkVertex, WorldMarks};
 const SHADER: &str = include_str!("../../shaders/world_marks.wgsl");
 const DEPTH_SHADER: &str = include_str!("../../shaders/world_marks_depth.wgsl");
 const EYE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-/// `MarkParams`: `viewport` then `depth_size`, a `vec4<f32>` each.
 const PARAMS_BYTES: u64 = 32;
 const DEPTH_SIZE_OFFSET: u64 = 16;
 
@@ -25,7 +24,6 @@ pub(super) struct WorldMarksPass {
     gpu: Option<MarksGpu>,
     verts: Vec<MarkVertex>,
     batches: Vec<MarkBatch>,
-    /// Per batch, the image bind an `Image` batch samples.
     batch_images: Vec<Option<usize>>,
     vbuf: Option<wgpu::Buffer>,
     images: super::client_overlay::ClientImageBinds,
@@ -37,7 +35,6 @@ struct MarksGpu {
     pipe: wgpu::RenderPipeline,
     marks_bgl: wgpu::BindGroupLayout,
     params: wgpu::Buffer,
-    /// The eye-depth keepers by scene sample count: `[single, multisampled]`.
     keepers: [OnceLock<DepthKeeper>; 2],
     eye: Option<EyeDepth>,
 }
@@ -47,7 +44,6 @@ struct DepthKeeper {
     bgl: wgpu::BindGroupLayout,
 }
 
-/// The world's eye depth at the frame's size, and the marks' bind over it.
 struct EyeDepth {
     size: (u32, u32),
     view: wgpu::TextureView,
@@ -55,8 +51,6 @@ struct EyeDepth {
 }
 
 impl Renderer {
-    /// This frame's world marks. Call after [`update_uniforms`](Self::update_uniforms):
-    /// they are baked against the render origin it published.
     pub fn set_world_marks(&mut self, marks: &WorldMarks) {
         let Renderer {
             device,
@@ -124,8 +118,6 @@ impl Renderer {
         );
     }
 
-    /// Whether this frame keeps the world's eye depth for the marks: some
-    /// mark can be hidden, and the eye target matches the frame.
     pub(super) fn world_marks_keep_depth(&self) -> bool {
         let pass = &self.world_marks;
         pass.tests_depth
@@ -137,9 +129,6 @@ impl Renderer {
                 .is_some_and(|eye| eye.size == self.screen_size())
     }
 
-    /// WORLD MARKS DEPTH: the world's eye depth into the marks' eye target,
-    /// recorded after the world and before the hand pass, which clears the
-    /// depth buffer.
     pub(super) fn record_world_marks_depth(
         &self,
         rp: &mut wgpu::RenderPass<'_>,
@@ -180,8 +169,6 @@ impl Renderer {
         rp.draw(0..3, 0..1);
     }
 
-    /// Draw the marks onto `target`, where the frame occupies `rect`
-    /// (`x, y, w, h` pixels of it). Window side only: never before a capture.
     pub(super) fn encode_world_marks(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -225,8 +212,6 @@ impl Renderer {
 }
 
 impl WorldMarksPass {
-    /// The eye-depth target the marks' depth node draws into, once marks
-    /// that test depth have sized one.
     pub(super) fn eye_view(&self) -> Option<&wgpu::TextureView> {
         self.gpu.as_ref()?.eye.as_ref().map(|eye| &eye.view)
     }

@@ -1,9 +1,3 @@
-//! What the golem stands on to reach high work: ordinary blocks out of its
-//! own hands. Which block is a choice — what it carries already (earth it
-//! dug counts), else what the chests can best spare — and every one of them
-//! is paid for going up and dug back out, with a tool where one helps,
-//! coming down.
-
 use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
@@ -18,7 +12,6 @@ fn key(kind: &ScaffoldKind) -> ItemKey {
     (kind.item.clone(), Vec::new())
 }
 
-/// How many blocks of each scaffolding kind the golem carries.
 fn carried<'a>(ctx: &'a Ctx, slots: &[Option<ItemStackData>]) -> Vec<(&'a ScaffoldKind, u32)> {
     let totals = cargo::totals(slots);
     ctx.content
@@ -34,9 +27,6 @@ fn carried<'a>(ctx: &'a Ctx, slots: &[Option<ItemStackData>]) -> Vec<(&'a Scaffo
         .collect()
 }
 
-/// Blocks in hand the design does not want: what may go into scaffolding
-/// without borrowing from the build. Every block borrowed comes back, so
-/// with nothing spare the build's own are used all the same.
 fn spare(job: &Job, kind: &ScaffoldKind, held: u32) -> u32 {
     let owed = job
         .summary()
@@ -45,9 +35,6 @@ fn spare(job: &Job, kind: &ScaffoldKind, held: u32) -> u32 {
     held.saturating_sub(owed)
 }
 
-/// Scaffold blocks in hand beyond what the build still wants: the house's own
-/// cobblestone and planks are scaffolding kinds too, and must not count as
-/// spare.
 pub fn in_hand(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>]) -> u32 {
     carried(ctx, slots)
         .iter()
@@ -55,7 +42,6 @@ pub fn in_hand(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>]) -> u32 {
         .sum()
 }
 
-/// What the task a climb or a walkway is for is laid with: never stood on.
 fn spoken_for(job: &Job) -> Vec<ItemKey> {
     let task = job
         .crew
@@ -75,9 +61,6 @@ fn spoken_for(job: &Job) -> Vec<ItemKey> {
     }
 }
 
-/// The next scaffold's block, from what is carried: most to spare, softest to
-/// dig between equals. With nothing spare the build's own blocks are borrowed,
-/// never the ones the work up here waits for.
 pub fn pick<'a>(ctx: &'a Ctx, job: &Job, body: &Body) -> Option<&'a ScaffoldKind> {
     let spoken_for = spoken_for(job);
     carried(ctx, &body.slots)
@@ -91,8 +74,6 @@ pub fn pick<'a>(ctx: &'a Ctx, job: &Job, body: &Body) -> Option<&'a ScaffoldKind
         .map(|(kind, _)| kind)
 }
 
-/// The kind worth fetching from `stock` and how many, when the hands run
-/// low: the chests' most spare, softest between equals.
 pub fn to_fetch(
     ctx: &Ctx,
     job: &Job,
@@ -100,7 +81,6 @@ pub fn to_fetch(
     stock: &BTreeMap<ItemKey, u32>,
 ) -> Option<(ItemKey, u32)> {
     let have = in_hand(ctx, job, slots);
-    // A pillar taller than the usual stock asks for its own height.
     let target = SCAFFOLD_STOCK.max(job.crew.scaffolding.want);
     if have >= target {
         return None;
@@ -118,7 +98,6 @@ pub fn to_fetch(
                 .then(b.hardness.total_cmp(&a.hardness))
         })
         .map(|(kind, held, spare)| {
-            // Spare blocks first; the build's own only when nothing is spare.
             let from = if spare > 0 { spare } else { held };
             (key(kind), from.min(target - have))
         })
@@ -132,8 +111,6 @@ fn kind_of<'a>(ctx: &'a Ctx, stack: &ItemStackData) -> &'a ScaffoldKind {
         .expect("checked to be a scaffolding kind")
 }
 
-/// Whether `stack` is scaffolding the golem keeps on it between climbs. Past
-/// twice its stock (a hillside's worth of dug earth) it is spoil like any.
 pub fn keeps(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>], stack: &ItemStackData) -> bool {
     stack.data.is_empty()
         && ctx.content.scaffolding.iter().any(|k| k.item == stack.item)
@@ -141,8 +118,6 @@ pub fn keeps(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>], stack: &Item
         && in_hand(ctx, job, slots) <= SCAFFOLD_STOCK.max(job.crew.scaffolding.want) * 2
 }
 
-/// Stand a scaffold block in `cell`: an ordinary paid placement of whatever
-/// the golem picks to stand on.
 pub fn lay(ctx: &mut Ctx, job: &mut Job, body: &Body, cell: [i32; 3]) -> hands::Lay {
     let Some(kind) = pick(ctx, job, body).cloned() else {
         return hands::Lay::Refused(ActionRefusal::MissingItems);
@@ -150,21 +125,16 @@ pub fn lay(ctx: &mut Ctx, job: &mut Job, body: &Body, cell: [i32; 3]) -> hands::
     hands::lay(ctx, job, body, cell, kind.record(), true, Some(kind.item))
 }
 
-/// The record a look at a scaffold's place is judged with.
 pub fn record(ctx: &Ctx, job: &Job, body: &Body) -> Option<BlockRecord> {
     pick(ctx, job, body)
         .or(ctx.content.scaffolding.first())
         .map(ScaffoldKind::record)
 }
 
-/// Whether recorded scaffold cell `cell` still holds a block scaffolding is
-/// made of. `None` = unloaded.
 pub fn stands(content: &crate::content::Content, cell: [i32; 3]) -> Option<bool> {
     get_block(cell).map(|block| content.scaffold_kind(block).is_some())
 }
 
-/// The tool kinds that take the golem's scaffolding back down: of what it
-/// carries, and of `fetching`, the kind it is about to fetch.
 pub fn tools(
     ctx: &Ctx,
     slots: &[Option<ItemStackData>],

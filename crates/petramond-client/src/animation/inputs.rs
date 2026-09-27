@@ -30,12 +30,9 @@ use super::claims::{AnimatorInputs, ClaimDriver};
 
 type HandInput = fn(&HeldItemFrame) -> f32;
 
-/// One of a driver's own body params, read off its motion `M`.
 type Input<M> = fn(&M) -> f32;
 
-/// A body's motion as its driver reads it: the param table reads the rest.
 pub(crate) trait BodyMotion: Copy {
-    /// Seconds of hurt left; a rise is a fresh hit.
     fn hurt(&self) -> f32;
 }
 
@@ -48,11 +45,8 @@ const HAND: &[(&str, HandInput)] = &[
     ("jab_claim", |_| 0.0),
 ];
 
-/// The hold the fist takes follows the item whose art it carries, so a
-/// display stand-in rests in the fist like what it looks like.
 const KIND: &str = "kind";
 
-/// Facts about the held stack itself: a display changes only the look.
 const ITEM: [&str; 3] = ["item", "tool", "food"];
 
 pub(crate) fn flag(on: bool) -> f32 {
@@ -80,7 +74,6 @@ fn item_facts(item: Option<ItemType>) -> [f32; 3] {
     ]
 }
 
-/// One hand's resolved inputs on one graph, and the edges it tracks.
 pub(crate) struct HandInputs {
     params: Vec<(ParamId, HandInput)>,
     kind: Option<ParamId>,
@@ -88,14 +81,8 @@ pub(crate) struct HandInputs {
     equip: Option<EventId>,
     mine: Option<EventId>,
     eat: Option<EventId>,
-    /// The held stack the equip edge and the item facts last saw; `None`
-    /// inside is an empty hand, `None` outside means nothing seen yet.
     held: Option<Option<ItemType>>,
-    /// The drawn item the kind was last resolved for.
     drawn: Option<Option<ItemType>>,
-    /// The facts, interned when their item changes and written every frame
-    /// like every other engine input, so a released claim on one uncovers
-    /// the engine's value.
     kind_value: f32,
     item_values: [f32; 3],
     was_mining: bool,
@@ -103,7 +90,6 @@ pub(crate) struct HandInputs {
 }
 
 impl HandInputs {
-    /// The inputs `graph` declares under `prefix` (`"main"` or `"off"`).
     pub fn new(graph: &Graph, prefix: &str) -> Self {
         Self {
             params: HAND
@@ -175,9 +161,6 @@ impl HandInputs {
     }
 }
 
-/// The core every player animator driver embeds: the animator, the body's
-/// own param table over its motion `M`, the `hurt` edge, both hands and the
-/// claim driver. The two drivers differ only in their motion type and table.
 pub(crate) struct BodyDriver<M> {
     pub animator: Animator,
     body: Vec<(ParamId, Input<M>)>,
@@ -185,7 +168,6 @@ pub(crate) struct BodyDriver<M> {
     claims: ClaimDriver,
     hurt: Option<EventId>,
     last_hurt: f32,
-    /// The last motion published, which a frame with no body to read keeps.
     last: Option<M>,
 }
 
@@ -218,10 +200,6 @@ impl<M: BodyMotion> BodyDriver<M> {
         self.last = None;
     }
 
-    /// Open the frame: release last frame's claims, then publish the body's
-    /// params and its `hurt` edge (a rise is a fresh hit) from `motion` — or,
-    /// on a frame with no body to read (`None`), from the last motion seen,
-    /// so a released claim still uncovers the engine's value.
     pub fn begin(&mut self, motion: Option<&M>) {
         self.claims.release(&mut self.animator);
         if let Some(motion) = motion {
@@ -248,8 +226,6 @@ impl<M: BodyMotion> BodyDriver<M> {
         }
     }
 
-    /// Close the frame's inputs: this frame's claims and fired events, after
-    /// everything the engine wrote.
     pub fn claim(&mut self, inputs: AnimatorInputs<'_>) {
         self.claims.claim(&mut self.animator, inputs);
     }

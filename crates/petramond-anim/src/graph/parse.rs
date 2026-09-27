@@ -213,8 +213,6 @@ impl Compiler<'_> {
         Ok(())
     }
 
-    /// A mask weights each listed bone AND its descendants; a descendant
-    /// listed itself takes its own weight instead.
     fn mask(&mut self, value: &Value, path: &str) -> Result<usize, String> {
         let listed = match value {
             Value::String(name) => {

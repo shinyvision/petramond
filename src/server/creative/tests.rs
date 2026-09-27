@@ -37,7 +37,6 @@ fn server() -> ServerGame {
     }
     server
 }
-/// Run the session's multi-tick edit to completion.
 fn finish_edit(server: &mut ServerGame) {
     let mut events = TickEvents::default();
     while server.sessions[0].sim.creative.job.is_some() {

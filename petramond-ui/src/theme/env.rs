@@ -1,12 +1,7 @@
-//! The layout solver's window into a theme: widget natural sizes and the
-//! metrics the solver reads.
-
 use super::{default_style_key, FaceState, Theme};
 use crate::doc::{Node, NodeKind};
 use crate::layout::{LayoutEnv, SlotMetrics};
 
-/// The logical size of a wrapped label capped at `max_lines` — the same
-/// breaks [`crate::Painter::text_wrapped_lines`] draws.
 fn wrapped_lines_size(
     font: &crate::text::Font,
     text: &str,
@@ -31,16 +26,12 @@ fn wrapped_lines_size(
         .max()
         .unwrap_or(0);
     let h = font.line_h() + (kept as i32 - 1).max(0) * font.line_advance();
-    // A cut label's last line ellipsizes into the whole available width.
     let w = if cut { avail_w } else { down(w) };
     (w, down(h))
 }
 
-/// The solver's window into the theme + the host's document-image registry
-/// (image natural sizes live outside the theme).
 pub struct ThemeEnv<'a> {
     pub theme: &'a Theme,
-    /// The host's integer GUI scale — only `small` labels read it.
     pub gui_scale: i32,
     pub image_size: &'a dyn Fn(&str) -> Option<(i32, i32)>,
 }
@@ -103,8 +94,6 @@ impl LayoutEnv for ThemeEnv<'_> {
                 }
             }
             NodeKind::Button { icon, frames, .. } => {
-                // An image-backed button's natural size is ONE frame of its
-                // sheet, not the theme face's label metrics.
                 if let Some(name) = image {
                     let sheet = (self.image_size)(name).unwrap_or((0, 0));
                     return crate::paint_walk::frame_cell(sheet, *frames);
@@ -163,9 +152,6 @@ impl LayoutEnv for ThemeEnv<'_> {
                 (widths.iter().sum::<i32>() + gaps, m.tab_h)
             }
             NodeKind::Alert { .. } => {
-                // Icon cell + text inside the frame insets; the text wraps
-                // whenever the available width constrains it (an alert that
-                // overflows its own frame is never right).
                 let insets = self
                     .theme
                     .part_for(node)

@@ -1,7 +1,3 @@
-//! How a body gets about the fake world: where it stands, the moves from a
-//! foothold (along, a step up, a drop of up to three), searches between two
-//! cells and floods over a box, and where a look from an eye lands.
-
 use std::collections::VecDeque;
 
 use crate::fx::{HashMap, HashSet};
@@ -10,14 +6,10 @@ use crate::host::prelude::*;
 
 use super::State;
 
-/// The golem row's reach and eye height (pack `mobs.json`).
 pub const REACH: f64 = 4.5;
 pub const EYE: f64 = 1.3;
-/// The deepest drop a walk takes.
 const DROP: i32 = 3;
 
-/// The world as a body moving through it sees it, with `blocked` cells
-/// taken as built.
 pub struct Ground<'a> {
     pub state: &'a State,
     pub blocked: HashSet<[i32; 3]>,
@@ -31,8 +23,6 @@ impl<'a> Ground<'a> {
         }
     }
 
-    /// Whether a body passes through the cell: loaded, nothing it collides
-    /// with, no fluid.
     fn clear(&self, cell: [i32; 3]) -> bool {
         self.state.block_at(cell).is_some_and(|block| {
             let info = &self.state.row(block).info;
@@ -40,7 +30,6 @@ impl<'a> Ground<'a> {
         })
     }
 
-    /// Whether the cell holds up a body standing on it.
     fn floor(&self, cell: [i32; 3]) -> bool {
         self.state.block_at(cell).is_some_and(|block| {
             self.blocked.contains(&cell) || !self.state.row(block).info.collision.is_empty()
@@ -53,8 +42,6 @@ impl<'a> Ground<'a> {
             && self.floor(offset(cell, [0, -1, 0]))
     }
 
-    /// The footholds one move from `cell`: along, a step up with head room
-    /// over the step, or off an edge onto ground up to [`DROP`] below.
     pub fn moves(&self, cell: [i32; 3]) -> Vec<[i32; 3]> {
         let mut out = Vec::new();
         for side in SIDES {
@@ -84,7 +71,6 @@ impl<'a> Ground<'a> {
         out
     }
 
-    /// The footholds one move leads to `cell` from.
     fn sources(&self, cell: [i32; 3]) -> Vec<[i32; 3]> {
         let mut out = Vec::new();
         for side in SIDES {
@@ -98,7 +84,6 @@ impl<'a> Ground<'a> {
         out
     }
 
-    /// Whether `from` walks to `to`, expanding at most `nodes` cells.
     pub fn route(&self, from: [i32; 3], to: [i32; 3], nodes: u32) -> Route {
         if from == to {
             return Route::Open;
@@ -123,8 +108,6 @@ impl<'a> Ground<'a> {
         Route::Closed
     }
 
-    /// Every foothold of the box walked to from `from` (`toward`: that walks
-    /// to it), breadth first with its moves; `None` past `nodes` footholds.
     pub fn flood(
         &self,
         from: [i32; 3],
@@ -157,8 +140,6 @@ impl<'a> Ground<'a> {
         Some(reached)
     }
 
-    /// Where a look from an eye at `feet` lands on `pos`: to build `record`
-    /// there (against a face beside it), or to dig or use what is there.
     pub fn aim(
         &self,
         feet: [f64; 3],
@@ -186,7 +167,6 @@ impl<'a> Ground<'a> {
         Ok(centre)
     }
 
-    /// Whether a block beside `pos` gives a placement there a face.
     fn faced(&self, pos: [i32; 3]) -> bool {
         FACES.iter().any(|f| {
             self.state
@@ -195,7 +175,6 @@ impl<'a> Ground<'a> {
         })
     }
 
-    /// Whether nothing solid stands between `eye` and `to` short of `target`.
     fn sees(&self, eye: [f64; 3], to: [f64; 3], target: [i32; 3]) -> bool {
         let steps = 64;
         (1..steps).all(|k| {
@@ -211,7 +190,6 @@ impl<'a> Ground<'a> {
     }
 }
 
-/// Distance from `eye` to the nearest point of `cell`.
 fn reach(eye: [f64; 3], cell: [i32; 3]) -> f64 {
     (0..3)
         .map(|i| {

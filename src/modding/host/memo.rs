@@ -1,12 +1,10 @@
-//! The shared derived-fact memo calls: a process-wide, bounded, discardable
-//! store of values that are pure functions of `(mod, world seed, key)`.
+//! Process-wide bounded cache. Key is (mod, world seed, key), value must be pure.
 //!
-//! Generation instances are per thread and share no guest memory, so a mod's
-//! expensive positional decisions were re-derived by every worker that touched
-//! a cell. This is the seam that lets the first derivation serve the rest.
-//! Instance-neutral: it reads no simulation state, so it is legal on every
-//! runtime side, and entries are scoped by mod id and world seed so no mod can
-//! read another's facts and no world can read a previous world's.
+//! Generation threads do not share guest memory. The first worker to finish a
+//! positional result stores it for the other workers.
+//!
+//! No sim state here, works from any runtime side. Mod id and world seed live in the key, so no
+//! cross-mod or stale-world leaks.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
@@ -20,15 +18,8 @@ use super::guards::batch_guard;
 use super::ModStoreData;
 
 const SHARDS: usize = 64;
-/// Bytes the whole store retains before it evicts oldest-first, per shard.
 const SHARD_BUDGET_BYTES: usize = (128 << 20) / SHARDS;
-/// How long a claimant waits for a lease holder's value before being told it
-/// is pending. Nothing: a pending section parks until the holder publishes,
-/// so waiting here only idled workers — a millisecond per claim added up to
-/// a sixth of a habitat region's generation time.
 const CLAIM_WAIT: Duration = Duration::ZERO;
-/// A lease older than this belongs to a holder that trapped or never
-/// published; the next claimant takes it over instead of pending forever.
 const LEASE_EXPIRY: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
@@ -57,7 +48,6 @@ impl Shard {
     }
 }
 
-/// A missing entry some caller is deriving right now.
 struct Lease {
     started: std::time::Instant,
     published: Mutex<bool>,
@@ -97,9 +87,6 @@ impl Store {
         self.claim_with(key, CLAIM_WAIT, LEASE_EXPIRY)
     }
 
-    /// The value, the lease to derive it, or `Pending` while another caller
-    /// holds that lease past `wait`. A lease older than `expiry` passes to
-    /// this caller.
     fn claim_with(&self, key: &[u8], wait: Duration, expiry: Duration) -> MemoClaim {
         if let Some(value) = self.get(key) {
             return MemoClaim::Value(value);
@@ -147,8 +134,6 @@ impl Store {
         wake_parked(key);
     }
 
-    /// Block until `key` publishes or its lease is older than `expiry`, woken
-    /// by [`publish`](Self::publish). Returns at once when nobody leases it.
     fn wait_published(&self, key: &[u8], expiry: Duration) {
         let Some(lease) = self.leases().get(key).cloned() else {
             return;
@@ -172,29 +157,21 @@ impl Store {
 }
 
 thread_local! {
-    /// The key whose lease the most recent `Pending` claim on this thread
-    /// waited on: what a deferred generation job should wait for.
     static PENDING: RefCell<Option<Box<[u8]>>> = const { RefCell::new(None) };
 }
 
-/// Forget any pending key a previous dispatch on this thread left behind.
 pub(crate) fn clear_pending_key() {
     PENDING.with(|pending| *pending.borrow_mut() = None);
 }
 
-/// The key the current thread's most recent dispatch pended on, if any.
 pub(crate) fn take_pending_key() -> Option<Box<[u8]>> {
     PENDING.with(|pending| pending.borrow_mut().take())
 }
 
-/// Whether a dispatch on this thread has pended on a key not yet taken.
 pub(crate) fn has_pending_key() -> bool {
     PENDING.with(|pending| pending.borrow().is_some())
 }
 
-/// Block until the fact this thread's most recent dispatch pended on is
-/// published, or its lease lapses — how a caller that must finish a deferred
-/// section waits for it without polling. Returns at once when nothing pends.
 pub(crate) fn wait_for_pending() {
     if let Some(key) = take_pending_key() {
         STORE.wait_published(&key, LEASE_EXPIRY);
@@ -208,9 +185,6 @@ struct Parked {
     wake: Wake,
 }
 
-/// Work waiting for a fact under derivation, woken when it publishes: a
-/// section deferred on a pending lease sleeps here instead of being retried
-/// while the holder is still deriving.
 type ParkedByKey = HashMap<Box<[u8]>, Vec<Parked>>;
 static PARKED: LazyLock<Mutex<ParkedByKey>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -220,8 +194,6 @@ fn parked() -> std::sync::MutexGuard<'static, ParkedByKey> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Run `wake` once the fact under `key` publishes. Runs it at once when the
-/// fact is already there or nobody holds its lease any more.
 pub(crate) fn park(key: Box<[u8]>, wake: Wake) {
     {
         let mut parked = parked();
@@ -243,8 +215,6 @@ fn wake_parked(key: &[u8]) {
     }
 }
 
-/// Wake everything parked longer than a lease can live: its holder is gone,
-/// and the retry claims the lease itself.
 pub(crate) fn sweep_parked() {
     let mut stale = Vec::new();
     {
@@ -283,8 +253,6 @@ impl Store {
 
 static STORE: LazyLock<Store> = LazyLock::new(Store::new);
 
-/// The store key: the mod's own key under its id and the world seed, so a
-/// fact is unreachable from any other mod or world.
 fn scoped_key(mod_id: &str, seed: u32, key: &[u8]) -> Box<[u8]> {
     let mut out = Vec::with_capacity(mod_id.len() + 5 + key.len());
     out.extend_from_slice(mod_id.as_bytes());
@@ -389,8 +357,6 @@ mod tests {
             MemoClaim::Pending,
             "a slow holder pends its claimants"
         );
-        // A claimant still waiting when the holder publishes wakes with the
-        // value; the generous wait keeps a loaded test machine from timing out.
         let key = scoped_key("lease", 3, b"cell");
         std::thread::scope(|scope| {
             scope.spawn(|| {
@@ -416,9 +382,6 @@ mod tests {
         );
     }
 
-    /// Work parked on a pending fact runs when the fact publishes, at once
-    /// when nothing is deriving it, and after the lease expiry when its
-    /// holder never publishes.
     #[test]
     fn parked_work_wakes_on_publish_or_after_a_dead_lease() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -463,7 +426,6 @@ mod tests {
             3,
             "an unheld fact never parks"
         );
-        // The sweep only wakes work parked longer than a lease can live.
         let slow = scoped_key("park", 5, b"slow");
         assert_eq!(STORE.claim(&slow), MemoClaim::Lease);
         park(slow, wake(&woken));
@@ -476,9 +438,6 @@ mod tests {
         assert_eq!(woken.load(Ordering::SeqCst), 4);
     }
 
-    /// A caller that must finish a deferred section sleeps on the lease and
-    /// is woken by the publication — not by a poll — and never waits on a
-    /// fact nobody is deriving or on a lease that has lapsed.
     #[test]
     fn waiting_on_a_pending_fact_wakes_on_publish_and_skips_dead_leases() {
         let key = scoped_key("wait", 11, b"fact");
@@ -490,7 +449,6 @@ mod tests {
                 assert_eq!(put("wait", 11, b"fact", b"v"), HostRet::Bool(true));
             });
             let started = Instant::now();
-            // A generous expiry: only the publication can end this wait early.
             STORE.wait_published(&key, Duration::from_secs(30));
             assert!(started.elapsed() < Duration::from_secs(30));
         });
@@ -506,8 +464,6 @@ mod tests {
             "an unheld or lapsed fact must not be waited on"
         );
 
-        // The thread-level entry point waits on (and consumes) the key the
-        // last pending claim recorded.
         let data = ModStoreData::new("wait", 11);
         let claim = |key: &[u8]| handle_memo_call(&data, calls::MemoClaim { key: key.to_vec() });
         clear_pending_key();
@@ -533,7 +489,6 @@ mod tests {
         assert_eq!(put("evict", 9, b"big", &big), HostRet::Bool(false));
         assert_eq!(get("evict", 9, b"big"), None);
         let value = vec![1u8; MEMO_MAX_VALUE_BYTES];
-        // Fill well past one shard's budget; the first entry is the one to go.
         let n = SHARD_BUDGET_BYTES / MEMO_MAX_VALUE_BYTES * SHARDS + SHARDS;
         for i in 0..n as u32 {
             assert_eq!(

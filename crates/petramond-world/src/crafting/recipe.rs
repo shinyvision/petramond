@@ -1,9 +1,3 @@
-//! Resolved recipe data and catalog lookups.
-//!
-//! Player crafting is inventory-driven: recipes declare aggregate ingredient
-//! quantities and a minimum station, never a grid arrangement. Processing
-//! recipes remain separate because their interaction model differs.
-
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -13,12 +7,10 @@ use crate::item::{ItemStack, ItemTag, ItemType};
 
 pub const MAX_INGREDIENT_UNITS: u32 = crate::inventory::TOTAL_SLOTS as u32 * u8::MAX as u32;
 
-/// The furnace's processing-recipe class (see [`ProcessingRecipe::class`]).
 pub const SMELTING_CLASS: &str = "petramond:smelting";
 
 use super::station::CraftingStation;
 
-/// An exact item or an open, item-owned tag selector.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IngredientSelector {
     Item(ItemType),
@@ -34,9 +26,6 @@ impl IngredientSelector {
         }
     }
 
-    /// A deterministic icon for the recipe browser. Prefer an owned matching
-    /// item because that is what the planner can actually consume; otherwise
-    /// use the first registered tag member as the unavailable-row exemplar.
     pub fn display_item(self, inventory: &Inventory) -> Option<ItemType> {
         match self {
             Self::Item(item) => Some(item),
@@ -56,7 +45,6 @@ impl IngredientSelector {
     }
 }
 
-/// What one assigned ingredient unit does when CRAFT commits.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IngredientUse {
     Consume,
@@ -64,7 +52,6 @@ pub enum IngredientUse {
     Remainder(ItemType),
 }
 
-/// One aggregate player-crafting ingredient row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CraftingIngredient {
     pub selector: IngredientSelector,
@@ -72,24 +59,14 @@ pub struct CraftingIngredient {
     pub use_mode: IngredientUse,
 }
 
-/// One selectable player-crafting recipe.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CraftingRecipe {
     key: String,
     station: CraftingStation,
     ingredients: Vec<CraftingIngredient>,
     result: ItemStack,
-    /// The row's namespaced consumer-data entries (`(key, canonical JSON)`),
-    /// merged from the row's own `data` map and every patch row targeting it —
-    /// the recipe interop surface, same shape as item/block row data.
     data: Vec<(String, String)>,
-    /// Compiled `petramond:inherit` entry: per-stack instance-data keys the
-    /// crafted output copies from the consumed ingredients. Ingredients that
-    /// carry one of these keys must AGREE on its value or the recipe does not
-    /// match (see `plan`).
     inherit: Vec<String>,
-    /// Optional early discovery triggers. The ordinary ingredient gate still
-    /// applies; any item in this set can also reveal the recipe.
     unlock_on: crate::item::ItemSet,
 }
 
@@ -224,8 +201,6 @@ impl CraftingRecipe {
         self.result
     }
 
-    /// The row's consumer-data entry `key` as raw JSON text, or `None` — the
-    /// recipe interop surface (`"data"` in `recipes.json` + patch rows).
     pub fn data_value(&self, key: &str) -> Option<&str> {
         self.data
             .iter()
@@ -233,28 +208,18 @@ impl CraftingRecipe {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Instance-data keys the output inherits from consumed ingredients.
     pub fn inherit(&self) -> &[String] {
         &self.inherit
     }
 
-    /// Items that reveal this recipe before every ingredient has been held.
     pub fn unlock_on(&self) -> &crate::item::ItemSet {
         &self.unlock_on
     }
 
-    /// Whether the row joins the catalog — the engine's `petramond:enabled`
-    /// vocabulary ([`crate::registry::row_enabled`]). This is how a pack
-    /// RETIRES a recipe it does not own: it cannot restate
-    /// `petramond:iron_pickaxe` (namespace ownership) but it can attach data
-    /// to it with a patch row, so replacing a whole crafting route is the
-    /// retirement patch plus the pack's own replacement rows.
     pub fn row_enabled(data: &[(String, String)]) -> Result<bool, String> {
         crate::registry::row_enabled(data)
     }
 
-    /// Attach the row's compiled data entries, parsing the engine's
-    /// `petramond:inherit` and `petramond:unlock_on` vocabularies strictly.
     pub fn set_data(&mut self, data: Vec<(String, String)>) -> Result<(), String> {
         let inherit = match data.iter().find(|(k, _)| k == "petramond:inherit") {
             None => Vec::new(),
@@ -379,16 +344,12 @@ impl CraftingRecipe {
     }
 }
 
-/// Name-addressed immutable crafting catalog data sent once at join. Registry
-/// names, rather than session-local numeric ids, make this remap-free.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CraftingRecipeData {
     pub recipe: String,
     pub station: String,
     pub ingredients: Vec<CraftingIngredientData>,
     pub result: CraftingStackData,
-    /// The row's compiled consumer-data entries — shipped so a client
-    /// evaluates `petramond:inherit` (browser craftability) identically.
     #[serde(default)]
     pub data: Vec<(String, String)>,
 }
@@ -419,7 +380,6 @@ pub struct CraftingStackData {
     pub count: u8,
 }
 
-/// Ordered player-crafting recipes plus stable-key lookup.
 #[derive(Clone, Default)]
 pub struct CraftingCatalog {
     list: Vec<CraftingRecipe>,
@@ -486,9 +446,6 @@ impl CraftingCatalog {
     }
 }
 
-/// A machine-processing recipe, looked up by `(class, input)` and IDENTIFIED
-/// by its namespaced `recipe` key — the same identity a crafting row has, so
-/// the one patch surface reaches both kinds of row.
 #[derive(Clone, Debug)]
 pub struct ProcessingRecipe {
     pub key: String,
@@ -497,14 +454,9 @@ pub struct ProcessingRecipe {
     pub result: ItemStack,
 }
 
-/// Every loaded recipe interaction model.
 #[derive(Clone, Default)]
 pub struct Recipes {
     crafting: CraftingCatalog,
-    /// Keyed hash index over the processing rows (class → input → result) —
-    /// `process` runs per machine tick and per mod `RecipeResult` call,
-    /// never a linear scan. First row per `(class, input)` wins, like the
-    /// old scan.
     processing: std::collections::HashMap<String, std::collections::HashMap<ItemType, ItemStack>>,
 }
 

@@ -1,5 +1,3 @@
-//! Going up a pillar a level at a time, and coming down it again.
-
 use crate::host::prelude::*;
 
 use super::Pillar;
@@ -29,7 +27,6 @@ pub fn climb(
     job.crew.presence.animate(id, None);
     job.crew.aloft.descending = None;
     let [cx, cz] = pillar.column;
-    // Eyes on the column under its feet, where each level goes in.
     job.crew.presence.look_at(
         id,
         ctx.now,
@@ -37,8 +34,6 @@ pub fn climb(
         [f64::from(cx) + 0.5, body.pos[1] - 1.0, f64::from(cz) + 0.5],
     );
     let on_column = pillar.on_column(body.cell);
-    // `since` is the last level laid: only a climb that stops rising is given
-    // up, and that perch is not planned again for the same work.
     if ctx.now > since + CLIMB_STALL || !on_column {
         if let Some((task, _)) = job.crew.aloft.climbed_for {
             job.crew.deferrals.strike(task, [cx, pillar.top, cz]);
@@ -69,7 +64,6 @@ pub fn climb(
                 since,
             };
         }
-        // A jump with the head still coming down lays nothing.
         if ctx.now < job.crew.presence.gaze_since + SWING {
             return Step::Climb {
                 pillar,
@@ -78,8 +72,6 @@ pub fn climb(
                 since,
             };
         }
-        // Straight up: a sideways speed at the jump or the apex carries through
-        // the fall onto the scaffold, past the centre.
         legs::jump(body, JUMP);
         return Step::Climb {
             pillar,
@@ -89,8 +81,6 @@ pub fn climb(
         };
     }
     hold_still(body);
-    // `level` is the next level to fill under the rising golem: one per tick
-    // (each needs the one below it to stand on), as long as the feet clear it.
     if let Some(l) = level {
         if l < pillar.top && body.pos[1] >= f64::from(l) + 1.02 {
             let cell = [cx, l, cz];
@@ -109,8 +99,6 @@ pub fn climb(
                     };
                 }
                 hands::Lay::Turning | hands::Lay::Refused(ActionRefusal::BodyInTheWay) => {}
-                // Out of blocks part way up: down again, and the chests
-                // are asked before the next climb.
                 hands::Lay::Refused(ActionRefusal::MissingItems) => {
                     job.crew.scaffolding.want = (pillar.top - pillar.base).max(0) as u32;
                     job.crew.scaffolding.short = true;
@@ -150,21 +138,15 @@ pub fn descend(
         job.crew.presence.set_hold(id, false);
         return Step::Plan;
     };
-    // The column, not the cell the body floors to: a body nudged over the
-    // edge onto the roof beside it would dig and centre on the roof.
     let at = [perch.column[0], body.cell[1], perch.column[1]];
     let below = offset(at, [0, -1, 0]);
     let ours = projects
         .get(job.id)
         .is_some_and(|p| p.scaffolds.contains(&below))
         && scaffold::stands(ctx.content, below) == Some(true);
-    // One level at a time, digging only while standing, so every fall lands on
-    // the next scaffold a block down; digging in mid-air made falls that hurt.
     if !body.on_ground {
         return Step::Descend { since };
     }
-    // Nudged a little off the centre is still on the column: taking a body at
-    // z = x.99 for gone let the planner dig the pillar out from under it.
     let on_column = (body.pos[0] - (f64::from(perch.column[0]) + 0.5)).abs() < ON_COLUMN
         && (body.pos[2] - (f64::from(perch.column[1]) + 0.5)).abs() < ON_COLUMN;
     if !ours || !on_column || ctx.now > since + DESCENT_STALL {
@@ -173,8 +155,6 @@ pub fn descend(
         job.crew.presence.set_hold(id, false);
         return Step::Plan;
     }
-    // The level under the scaffold must hold the golem when this one goes:
-    // a pillar missing its lower part would drop it the whole way.
     let floor = offset(below, [0, -1, 0]);
     if get_block(floor).is_none_or(|b| open_block(ctx, b)) {
         hold_still(body);
@@ -183,9 +163,6 @@ pub fn descend(
         job.crew.presence.set_hold(id, false);
         return Step::Plan;
     }
-    // Centred over the column before the level under it goes: a body half
-    // over the roof beside it stays up there when the scaffold is dug, and
-    // the pillar is gone from under it.
     let off = (body.pos[0] - (f64::from(perch.column[0]) + 0.5))
         .abs()
         .max((body.pos[2] - (f64::from(perch.column[1]) + 0.5)).abs());
@@ -193,8 +170,6 @@ pub fn descend(
         centre_on(body, at);
         return Step::Descend { since };
     }
-    // A climb is dear and so is the way down: each level on the way is
-    // looked from once, and what it shows is laid before the level goes.
     if job
         .crew
         .aloft
@@ -208,8 +183,6 @@ pub fn descend(
         });
         return Step::Plan;
     }
-    // Still as the level goes: the fall keeps whatever sideways speed the
-    // body had.
     hold_still(body);
     match hands::dig(ctx, job, body, below, true) {
         hands::Dig::Breaking | hands::Dig::Nothing => {
@@ -224,8 +197,6 @@ pub fn descend(
     }
 }
 
-/// A pillar the golem is found standing on with no memory of climbing it
-/// (the world was reloaded mid-climb).
 pub fn recover(ctx: &mut Ctx, project: &Project, body: &Body) -> Option<Pillar> {
     let below = offset(body.cell, [0, -1, 0]);
     if !project.scaffolds.contains(&below) || scaffold::stands(ctx.content, below) != Some(true) {
@@ -235,8 +206,6 @@ pub fn recover(ctx: &mut Ctx, project: &Project, body: &Body) -> Option<Pillar> 
     while project.scaffolds.contains(&[below[0], base - 1, below[2]]) {
         base -= 1;
     }
-    // Only a column standing on something is a pillar: a scaffold step laid to
-    // climb down, or a walkway support, has nothing under it.
     let ground = [below[0], base - 1, below[2]];
     if get_block(ground).is_none_or(|b| open_block(ctx, b)) {
         return None;

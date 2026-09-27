@@ -81,9 +81,6 @@ pub use limits::*;
 pub use media::*;
 pub use protocol::*;
 pub use sched::*;
-/// Bulk byte payloads ride the wire as postcard bytes either way; this
-/// wrapper makes their (de)serialization a bulk copy instead of per-byte
-/// serde visits. Re-exported so the SDK and host name one type.
 pub use serde_bytes::ByteBuf;
 pub use shape::*;
 pub use wire::*;

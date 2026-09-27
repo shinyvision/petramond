@@ -1,32 +1,12 @@
-//! Presentation vocabulary shared by the chunk mesher, model instances, and
-//! the renderers: the face shade table, the per-face shade and normal codes
-//! packed into vertices, and the model contact-shadow vertex.
-//!
-//! It lives here rather than in `petramond-mesh` because model instances bake
-//! their cell templates (shade included) in this crate, below the mesher.
-
 use crate::face::Face;
 
-/// Face shade multipliers, index = [`FaceShading::shade_idx`] (mirrored in the
-/// shader).
 pub const SHADES: [f32; 4] = [1.00, 0.85, 0.75, 0.55];
 
-/// How a [`Face`] is shaded and encoded in the packed vertex formats: the
-/// terrain shader's codes, kept out of the geometry-only `Face` primitive.
 pub trait FaceShading: Sized {
-    /// Index into [`SHADES`] (and the shader's mirror) — packed into the
-    /// vertex instead of the raw float.
     fn shade_idx(self) -> u32;
 
-    /// Face-normal code for the packed vertex's normal lane (see
-    /// `petramond_mesh::vertex::pack_normal_code`): 1..=6 in `Face::ALL`
-    /// order. Code 0 is reserved for "neutral" geometry with no meaningful
-    /// world-space face direction (cross plants, torches, dynamic props) —
-    /// the shader falls back to the classic [`SHADES`] table for it instead
-    /// of sun N·L shading.
     fn normal_code(self) -> u32;
 
-    /// The face's [`SHADES`] multiplier.
     fn shade(self) -> f32 {
         SHADES[self.shade_idx() as usize]
     }
@@ -49,10 +29,6 @@ impl FaceShading for Face {
     }
 }
 
-/// One model contact-shadow vertex: mesh-space position (column-local XZ,
-/// world Y) + darken factor.
-/// Keeps blob-shadow identity through fog. 16 bytes, deliberately minimal —
-/// the stream is sparse (model cells only).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ContactShadowVertex {

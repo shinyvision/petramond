@@ -32,45 +32,31 @@ use mod_sdk::*;
 use super::{Dripstone, BIOME_TOP_Y};
 use crate::probe::{self, Pad, TerrainReads};
 
-/// Frozen positional-RNG salts (append-only in practice).
 const SALT_ROOT: u64 = 0x0E58_2000_0000_0001;
 const SALT_FORMATION: u64 = 0x0E58_2000_0000_0002;
 
-/// Longest plain run worldgen places. Growth may lengthen it later.
 const MAX_LEN: i32 = 6;
-/// Farthest a cone's core reaches for the opposite surface before it stays
-/// a cone.
 const COLUMN_REACH: i32 = 14;
-/// The run a cone ends in when it stays one.
 const CONE_RUN: i32 = 2;
-/// A cone's disc radii per layer from its root, by rolled width.
 const CONE_WIDE: [i32; 6] = [2, 2, 1, 1, 0, 0];
 const CONE_NARROW: [i32; 4] = [1, 1, 0, 0];
 
-/// Rows scanned past the section top and bottom, and columns past each
-/// side: how far a cone (with its column and mirrored foot) can reach in.
-/// Plain runs and clusters reach far less and are filtered per candidate.
 const MARGIN_CONE: i32 = COLUMN_REACH + CONE_WIDE.len() as i32 + CONE_RUN;
 const SIDE_MARGIN: i32 = 2;
-/// The biome gate's reach: every cell a root that can write into the section
-/// may sit on.
 const REACH_PAD: Pad = Pad {
     xz: SIDE_MARGIN,
     down: MARGIN_CONE,
     up: MARGIN_CONE,
 };
 
-/// Formations: one centre per lattice cell, each owning a disc of
-/// `FORMATION_R` blocks. Per-mille root density runs from the core value at
-/// the centre to the rim value at the edge; columns in no formation keep
-/// the stray value. The inner half of a formation is its CORE, where
-/// clusters and cones roll.
+/// One centre per lattice cell, owns a disc of `FORMATION_R` blocks. Root density per-mille goes
+/// from the core value at centre to the rim value at edge. Columns in no formation keep the stray
+/// value. Inner half of a formation is its CORE, where clusters and cones roll.
 const FORMATION_LATTICE: i32 = 32;
 const FORMATION_R: (i32, i32) = (7, 13);
 const CORE_PER_MILLE: i32 = 420;
 const RIM_PER_MILLE: i32 = 110;
 const STRAY_PER_MILLE: i32 = 30;
-/// The formation field over the constants above: every lattice cell seeds one.
 const FORMATIONS: ColonyField = ColonyField {
     salt: SALT_FORMATION,
     lattice: FORMATION_LATTICE,
@@ -82,30 +68,19 @@ const FORMATIONS: ColonyField = ColonyField {
 };
 const CLUSTER_ONE_IN: i32 = 4;
 const CONE_ONE_IN: i32 = 30;
-/// Of the cones, how many are wide, and how many try for a column.
 const CONE_WIDE_ONE_IN: i32 = 2;
 const COLUMN_ONE_IN: i32 = 2;
 
-/// Everything from the world floor to the habitat's top plus the margin a
-/// root above it reaches.
 pub const GEN_FILTER: GenFeatureFilter =
     GenFeatureFilter::y_band(i32::MIN, BIOME_TOP_Y + MARGIN_CONE);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Kind {
     Single,
-    /// The run plus four shorter arms off the same surface.
     Cluster,
-    /// A stepped mound of dripstone blocks ending in a run; `column` = it
-    /// reaches for the opposite surface first.
-    Cone {
-        wide: bool,
-        column: bool,
-    },
+    Cone { wide: bool, column: bool },
 }
 
-/// A rolled root cell: a formation hangs or stands from here, once the
-/// terrain says which (or neither).
 struct Root {
     p: [i32; 3],
     len: i32,
@@ -113,8 +88,6 @@ struct Root {
 }
 
 impl Root {
-    /// Farthest cell this root can write from `p`: along the axis, and to
-    /// the side.
     fn reach(&self) -> (i32, i32) {
         match self.kind {
             Kind::Single => (self.len, 0),
@@ -127,15 +100,12 @@ impl Root {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Space {
     Air,
-    /// Any fluid: a formation neither roots in nor grows through one.
     Fluid,
     Solid,
-    /// Outside the section and not among the probed cells.
     Unknown,
 }
 
 impl Space {
-    /// A positional answer, or UNKNOWN for a cell never probed.
     fn of(answer: Option<TerrainSpace>) -> Space {
         match answer {
             Some(TerrainSpace::Air) => Space::Air,
@@ -146,18 +116,12 @@ impl Space {
     }
 }
 
-/// A column's foot, resolved in the first pass, whose mirrored cone needs
-/// its own discs probed.
 struct Foot {
-    /// The first cell of the foot's cone, just off the opposite surface.
     base: [i32; 3],
-    /// Toward the column's root: which way the foot's cone tapers.
     up: i32,
     wide: bool,
 }
 
-/// What the dressing writes, by precedence: a block beats a hanging
-/// segment, which beats a standing one.
 #[derive(Default)]
 struct Writes {
     solid: BTreeSet<[i32; 3]>,
@@ -183,7 +147,6 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         return Vec::new();
     }
 
-    // --- ONE biome batch: a root grows only in the habitat ------------
     let Some(biomes) = probe::ask(roots.iter().map(|r| r.p).collect(), underground_biome_at) else {
         return Vec::new();
     };
@@ -197,9 +160,6 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         return Vec::new();
     }
 
-    // --- ONE terrain batch: every cell a root may read outside this
-    // section ----------------------------------------------------------------
-    // A refused batch leaves every cell unknown, and unknown grows nothing.
     let mut probes = TerrainReads::new();
     probes.ask_unseen(ctx, roots.iter().flat_map(cells_read));
     let snapshot = |c: [i32; 3]| -> Option<Space> {
@@ -214,7 +174,6 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         })
     };
 
-    // --- resolve, first pass ---------------------------------------------
     let mut w = Writes::default();
     let feet: Vec<Foot> = {
         let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
@@ -224,7 +183,6 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
             .collect()
     };
 
-    // --- second pass: a column's foot, once its floor is known -----------
     if !feet.is_empty() {
         probes.ask_unseen(
             ctx,
@@ -239,8 +197,6 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
     w.into_writes(d, ctx)
 }
 
-/// Resolve one root against the terrain into `w`: its run, cluster or cone.
-/// Returns the foot a column still has to grow once its floor is probed.
 fn place_root(space: &dyn Fn([i32; 3]) -> Space, w: &mut Writes, r: &Root) -> Option<Foot> {
     let down = orientation(space, r.p)?;
     let step = if down { -1 } else { 1 };
@@ -249,8 +205,6 @@ fn place_root(space: &dyn Fn([i32; 3]) -> Space, w: &mut Writes, r: &Root) -> Op
         Kind::Cluster => {
             place_run(space, w, r.p, step, r.len);
             for (i, arm) in arms(r.p).into_iter().enumerate() {
-                // Shorter than the centre by one or two, alternating by side
-                // so a cluster reads as a ragged crown.
                 if orientation(space, arm) == Some(down) {
                     let len = (r.len - 1 - (i as i32 & 1)).max(1);
                     place_run(space, w, arm, step, len);
@@ -279,8 +233,6 @@ fn place_root(space: &dyn Fn([i32; 3]) -> Space, w: &mut Writes, r: &Root) -> Op
 }
 
 impl Writes {
-    /// The cells this section owns, each with the block its precedence
-    /// gives it.
     fn into_writes(self, d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         let inside = |c: [i32; 3]| ctx.block(c).is_some();
         let mut out: Vec<GenWrite> = Vec::new();
@@ -303,9 +255,6 @@ impl Writes {
     }
 }
 
-/// Whether `root` hangs (`Some(true)`: open with solid above), stands
-/// (`Some(false)`: open with solid below), or is no root at all. A one-tall
-/// gap hangs — the same choice placement makes for a ceiling click.
 fn orientation(space: &dyn Fn([i32; 3]) -> Space, root: [i32; 3]) -> Option<bool> {
     if space(root) != Space::Air {
         return None;
@@ -319,8 +268,6 @@ fn orientation(space: &dyn Fn([i32; 3]) -> Space, root: [i32; 3]) -> Option<bool
     None
 }
 
-/// A run of `len` from `root` along `step`, stopping at the first cell that
-/// is not open air.
 fn place_run(
     space: &dyn Fn([i32; 3]) -> Space,
     w: &mut Writes,
@@ -350,9 +297,6 @@ fn cone_profile(wide: bool) -> &'static [i32] {
     }
 }
 
-/// Every cell of a cone rooted at `root` tapering along `step`: its disc
-/// layers, then (unless it is a column's foot, whose run is the shaft) the
-/// run it ends in.
 fn cone_cells(root: [i32; 3], step: i32, wide: bool, with_run: bool) -> Vec<[i32; 3]> {
     let profile = cone_profile(wide);
     let mut v = Vec::new();
@@ -378,9 +322,6 @@ fn cone_cells(root: [i32; 3], step: i32, wide: bool, with_run: bool) -> Vec<[i32
     v
 }
 
-/// Write a cone: dripstone blocks layer by layer while the core stays open
-/// (a disc cell the rock already holds is skipped), then the run its tip
-/// becomes — unless it is a column, whose core is the shaft.
 fn place_cone(
     space: &dyn Fn([i32; 3]) -> Space,
     w: &mut Writes,
@@ -412,10 +353,6 @@ fn place_cone(
     }
 }
 
-/// The distance from `root` along `step` to the opposite surface, when a
-/// column can be built: every core cell up to it open, the surface itself
-/// solid, and room for both cones with a cell of shaft between (a column
-/// shorter than that is two cones touching, which a plain cone already is).
 fn column_foot(space: &dyn Fn([i32; 3]) -> Space, root: [i32; 3], step: i32) -> Option<i32> {
     let room = 2 * CONE_NARROW.len() as i32 + 1;
     for g in 1..=COLUMN_REACH {
@@ -428,7 +365,6 @@ fn column_foot(space: &dyn Fn([i32; 3]) -> Space, root: [i32; 3], step: i32) -> 
     None
 }
 
-/// The four side neighbours a cluster's arms root in.
 fn arms(p: [i32; 3]) -> [[i32; 3]; 4] {
     [
         [p[0] + 1, p[1], p[2]],
@@ -438,10 +374,6 @@ fn arms(p: [i32; 3]) -> [[i32; 3]; 4] {
     ]
 }
 
-/// Every cell resolving `r` may read in its first pass: the root's own
-/// cell and both vertical neighbours (the orientation), and its whole
-/// footprint in BOTH directions, since which one applies is not known until
-/// the terrain answers.
 fn cells_read(r: &Root) -> Vec<[i32; 3]> {
     let mut v = Vec::new();
     let mut column = |root: [i32; 3], len: i32| {
@@ -454,8 +386,6 @@ fn cells_read(r: &Root) -> Vec<[i32; 3]> {
         Kind::Cluster => {
             column(r.p, r.len);
             for arm in arms(r.p) {
-                // An arm's run is at most `len - 1` long, and its orientation
-                // reads one cell either way of the root — never less.
                 column(arm, (r.len - 1).max(1));
             }
         }
@@ -472,11 +402,6 @@ fn cells_read(r: &Root) -> Vec<[i32; 3]> {
     v
 }
 
-/// Every rolled root whose formation can reach the section at `origin`.
-/// Pure: no host calls, so the roll filters the candidates before anything
-/// crosses the ABI. The window is the section plus the largest margin any
-/// kind reaches; a margin candidate is kept only when ITS kind's reach puts
-/// a cell inside the section.
 fn gather(seed: u32, origin: [i32; 3]) -> Vec<Root> {
     let mut roots = Vec::new();
     for lz in -SIDE_MARGIN..16 + SIDE_MARGIN {
@@ -509,7 +434,6 @@ fn gather(seed: u32, origin: [i32; 3]) -> Vec<Root> {
     roots
 }
 
-/// Which formation a root grows: only a core rolls clusters and cones.
 fn roll_kind(rng: &mut GenRng, core: bool) -> Kind {
     if !core {
         return Kind::Single;
@@ -527,7 +451,6 @@ fn roll_kind(rng: &mut GenRng, core: bool) -> Kind {
     }
 }
 
-/// Run length off the root's own stream: mostly short, occasionally long.
 fn run_len(rng: &mut GenRng) -> i32 {
     match rng.next_i32(0, 999) {
         r if r < 380 => 1,
@@ -539,9 +462,6 @@ fn run_len(rng: &mut GenRng) -> i32 {
     }
 }
 
-/// The root density (per mille) at a column and whether it lies in a
-/// formation's inner half — a [`ColonyField`] with a linear falloff, so
-/// spikes crowd into formations with sparse strays between.
 fn formation_at(seed: u32, wx: i32, wz: i32) -> (i32, bool) {
     let (density, owner) = FORMATIONS.densest(seed, wx, wz, |_| ());
     (density, owner.is_some_and(|f| 2 * f.distance <= f.radius))
@@ -551,9 +471,6 @@ fn formation_at(seed: u32, wx: i32, wz: i32) -> (i32, bool) {
 mod tests {
     use super::*;
 
-    /// A root's formation must be derived by every section it reaches: the
-    /// gather window has to admit a candidate exactly as far away as its
-    /// kind reaches, and no further.
     #[test]
     fn the_margin_admits_exactly_the_roots_whose_reach_touches_the_section() {
         let seed = 7;
@@ -586,8 +503,6 @@ mod tests {
         );
     }
 
-    /// Formations are what make the caves read as caves rather than a
-    /// uniform sprinkle: the density must be strongly bimodal over an area.
     #[test]
     fn formations_concentrate_the_roots() {
         let seed = 11;
@@ -606,8 +521,6 @@ mod tests {
         assert!(dense > 0, "some columns sit in a core");
     }
 
-    /// A one-tall gap is a ceiling, a cell with rock on neither side is no
-    /// root, and an unknown cell is never a surface.
     #[test]
     fn orientation_prefers_hanging_and_refuses_open_air() {
         let solid_above = |c: [i32; 3]| if c[1] >= 1 { Space::Solid } else { Space::Air };
@@ -628,9 +541,6 @@ mod tests {
         assert_eq!(orientation(&|_| Space::Fluid, [0, 0, 0]), None);
     }
 
-    /// A column is two cones joined by a shaft; where the gap is too short
-    /// for both it stays a cone, and a cone clipped by rock keeps only the
-    /// open cells.
     #[test]
     fn a_column_needs_room_for_both_cones_and_a_cone_clips_to_open_air() {
         let cave = |c: [i32; 3]| {
@@ -654,7 +564,6 @@ mod tests {
             "too short for two cones"
         );
         let mut w = Writes::default();
-        // A wall at x >= 1 clips the wide cone's east side.
         let walled = |c: [i32; 3]| {
             if c[0] >= 1 || c[1] >= 10 {
                 Space::Solid
@@ -674,9 +583,6 @@ mod tests {
         );
     }
 
-    /// Every cell a cone can write, in either direction, is a cell its
-    /// first-pass probe list asked about, and none lies past its declared
-    /// reach — the reach, the reads and the writes agree.
     #[test]
     fn a_cones_probe_list_covers_everything_it_can_write() {
         for wide in [false, true] {

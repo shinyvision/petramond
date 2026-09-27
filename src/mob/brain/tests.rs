@@ -1,7 +1,6 @@
 use super::*;
 use crate::mob::behavior::test_support::ctx;
 
-/// A behavior that always wants a fixed goal.
 struct Goal(IVec3);
 impl AiBehavior for Goal {
     fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
@@ -11,7 +10,6 @@ impl AiBehavior for Goal {
         }
     }
 }
-/// A behavior that only ever sets a head-look (never a goal).
 struct Look(HeadLook);
 impl AiBehavior for Look {
     fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
@@ -21,14 +19,12 @@ impl AiBehavior for Look {
         }
     }
 }
-/// A behavior that yields entirely.
 struct Yield;
 impl AiBehavior for Yield {
     fn tick(&mut self, _ctx: &mut AiCtx) -> BehaviorOutput {
         BehaviorOutput::default()
     }
 }
-/// A behavior that fills every channel a combat node would, and writes a tag.
 struct Combatant;
 impl AiBehavior for Combatant {
     fn tick(&mut self, _: &mut AiCtx) -> BehaviorOutput {
@@ -49,7 +45,6 @@ impl AiBehavior for Combatant {
         }
     }
 }
-/// A behavior that holds `claims` without filling anything.
 struct Hold(ChannelClaims);
 impl AiBehavior for Hold {
     fn tick(&mut self, _: &mut AiCtx) -> BehaviorOutput {
@@ -106,9 +101,6 @@ fn higher_priority_goal_wins_but_fields_compose() {
         yaw: 0.5,
         pitch: 0.1,
     };
-    // Wander (low) wants one goal, a high-priority behavior wants another + a
-    // head-look. The goal comes from the high-priority one; the head-look (set by
-    // nobody else) still composes in.
     let mut brain = Brain::new()
         .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(1, 0, 0))))
         .with_boxed(PRIORITY_EXPRESSION, Box::new(Look(look)))
@@ -139,7 +131,6 @@ fn yielding_behaviors_leave_fields_none() {
 fn lower_priority_fills_a_field_a_higher_one_left_unset() {
     let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
-    // The high-priority behavior only sets head_look; the low one supplies the goal.
     let mut brain = Brain::new()
         .with_boxed(PRIORITY_WANDER, Box::new(Goal(IVec3::new(2, 0, 0))))
         .with_boxed(

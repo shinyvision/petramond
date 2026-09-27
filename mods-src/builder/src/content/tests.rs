@@ -7,7 +7,6 @@ use crate::host::fake::{Deed, Fake};
 #[test]
 fn the_packs_rows_resolve_and_every_row_carrying_the_data_is_scaffolding() {
     let world = Rc::new(Fake::new());
-    // Bedrock carries the data too, but nothing places it: no scaffolding.
     world.state_mut().block_rows[usize::from(BEDROCK.0)]
         .data
         .push((SCAFFOLDING_DATA.into(), "true".into()));
@@ -60,9 +59,6 @@ fn a_pack_missing_the_golem_leaves_the_mod_idle_and_says_why() {
         .contains(&Deed::Logged(format!("mob '{GOLEM}' is not registered"))));
 }
 
-/// The golem's footprint is mirrored from its `mobs.json` row, because the
-/// worker plans stances before any golem exists to measure. Resizing the row
-/// without this constant would plan footholds for a body of another size.
 #[test]
 fn the_golem_footprint_matches_its_mobs_json_row() {
     use mod_sdk::json::Value;

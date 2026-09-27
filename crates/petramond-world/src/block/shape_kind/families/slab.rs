@@ -1,11 +1,5 @@
-//! The half-cell slab; state stores the split axis plus up to two layers.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A half-cell slab; state stores split axis + up to two layers.
 pub struct SlabFamily;
 
 impl ShapeSim for SlabFamily {
@@ -82,10 +76,6 @@ impl ShapeSim for SlabFamily {
             })
     }
 
-    /// A slab cell is composed of its filled layer slots, and the slot INDEX
-    /// is the part number — the same numbering `boxes` tags its boxes with and
-    /// the placement plan claims, so "the layer this click filled" and "the
-    /// layer this drop came from" address the same cell KV.
     fn parts(
         &self,
         _p: &ShapeParams,
@@ -134,8 +124,6 @@ impl ShapeRender for SlabFamily {
             crate::block_state::HeldBlockState::Slab(s) => crate::slab::normalize_state(b, s),
             _ => crate::slab::default_state(b),
         };
-        // Each occupied layer draws in its OWN material — a stacked two-tone
-        // slab's item shows both.
         for (slot, layer_block) in crate::slab::layer_slots(held) {
             let (min, max) = crate::shape_mesh::slab::slot_box(slot);
             let mut item = crate::block::ItemBox::solid(min, max);
@@ -148,18 +136,10 @@ impl ShapeRender for SlabFamily {
     }
 
     fn meshes_as_cube(&self, ctx: &ShapeCtx<'_>) -> bool {
-        // A same-material full stack IS the material's full cube: it falls to
-        // the cube path so it culls, lights, and GREEDY-MERGES like one (the
-        // merge is load-bearing for streaming perf). A mixed-material stack
-        // keeps the per-layer boxes so each layer shows its own texture.
         let state = crate::slab::normalize_state(ctx.block, slab_state_at(ctx.nb, ctx.pos));
         if !crate::slab::is_uniform_full_stack(state) {
             return false;
         }
-        // Same material, but the two layers may be DYED differently — then the
-        // cell is not one cube at all and the per-layer boxes have to draw it
-        // (the cube path has a single whole-cell tint). Only the family knows
-        // it has exactly these two parts to compare.
         (ctx.part_tint)(0) == (ctx.part_tint)(1)
     }
 
@@ -193,7 +173,6 @@ impl ShapeRender for SlabFamily {
 }
 
 impl ShapePlacement for SlabFamily {
-    /// The R key cycles a held slab through bottom, top and vertical.
     fn held_rotations(&self) -> u8 {
         3
     }
@@ -251,9 +230,6 @@ impl ShapePlacement for SlabFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A stack lands in the CLICKED cell when the clicked face fronts the
-        // half it would fill; otherwise a fresh layer builds into the
-        // adjacent cell.
         let rotation = inputs.held_rotation.slab_rotation(inputs.held);
         let (target, slot) = match w.slab_stack_slot_in_hit(
             block,
@@ -278,12 +254,6 @@ impl ShapePlacement for SlabFamily {
         if occupied(target, crate::slab::boxes_for_state(next)) {
             return PlacementOutcome::Refused;
         }
-        // The resulting stack is the write: representative block id + the
-        // full layer state, whether this creates the cell or fills a half.
-        // The write claims the slot it filled, so its carried data lands on
-        // that layer; stacking into a cell that already holds a layer AUGMENTS
-        // it, keeping the sitting layer's colour instead of handing it the
-        // newcomer's.
         PlacementOutcome::Plan(PlacementPlan::single_part(
             target,
             crate::slab::representative_block(next),

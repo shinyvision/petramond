@@ -1,30 +1,3 @@
-//! Minimal Blockbench (`.bbmodel`) loader for animated entity models.
-//!
-//! Parses the subset of the bedrock-format `.bbmodel` we render: cube elements
-//! (box + pivot + static rotation + per-face UVs), the bone hierarchy (groups +
-//! the `outliner` tree), named bone-rotation animations, and the embedded texture.
-//! This is GPU-agnostic data + pose math (no `wgpu`) — the engine's golden mob model,
-//! compiled from the `.bbmodel` once (see [`crate::asset_cache`]) and then shared: the
-//! renderer bakes geometry in `crate::render::mob_model` and uploads the texture in
-//! `crate::render::resources`, while the simulation derives its skeleton + idle metadata
-//! in `crate::mob::model_meta`. At runtime nothing reads the `.bbmodel`; this `Model` (and
-//! its `.llmob`) is authoritative.
-//!
-//! Coordinate notes:
-//! - Cube coords are in the model's own units (this owl is built feet-at-`y=0`),
-//!   scaled to metres by the caller.
-//! - Face UVs are divided by the texture's `uv_width`/`uv_height` so they index the
-//!   embedded sheet in `[0,1]`; the RAW corner order is kept (Blockbench encodes a
-//!   per-face flip by reversing the rect), so flips reproduce on render.
-//! - Bone/cube pivots are absolute model-space points; a bone's transform is
-//!   `T(pivot)·R·T(-pivot)`, composed parent-before-child down the hierarchy —
-//!   exactly Blockbench's nesting. Bone rotation from edit mode is the rest pose;
-//!   animation rotations are applied on top of that rest rotation.
-//!
-//! Rotation order: euler angles are applied XYZ. Every rotation in the bundled owl
-//! (static cube tilts and the walk keyframes) is single-axis, so the order is exact
-//! here; a future model with multi-axis keyframes would need Blockbench's order.
-
 use std::collections::HashMap;
 
 use glam::{Mat4, Quat, Vec3};
@@ -52,67 +25,32 @@ use anim::{bone_transform, head_look_transform};
 use parse::{arr3, num, parse_animations, parse_faces, walk_outliner};
 use texture::TextureSheet;
 
-/// One cube of the model: an axis-aligned box with a pivot + static rotation and a
-/// per-face UV rect (in `Face::ALL` order; `None` = the face is omitted).
 #[derive(Serialize, Deserialize)]
 pub struct Cube {
-    /// The authored Blockbench element name. Names carry gameplay meaning for some
-    /// models — a sheep's fleece cubes are all named `wool` so the renderer can hide
-    /// them while the sheep is shorn.
     pub name: String,
     pub from: Vec3,
     pub to: Vec3,
-    /// Pivot for this cube's STATIC `rotation` (the modelled tilt).
     pub origin: Vec3,
-    /// Static euler rotation in degrees, about `origin`.
     pub rotation: Vec3,
-    /// Owning bone index (animation transforms compose from here up to the root).
     pub bone: usize,
-    /// Per-face texture mapping, `Face::ALL` order (PosX, NegX, PosY, NegY,
-    /// PosZ, NegZ). `None` = the face is omitted.
     pub faces: [Option<FaceUv>; 6],
 }
 
-/// One face's texture mapping: the UV rect PLUS Blockbench's per-face
-/// `rotation`.
-///
-/// The rect alone cannot express a quarter turn — that swaps the u and v axes
-/// — so the rotation rides beside it and is applied in [`corner_uv`], the one
-/// place that knows the quad's corner order. Dropping it (which this parser
-/// did until 2026-08-22) mis-maps every authored face that has one, and the
-/// symptom is never "the texture is rotated": it is a seam that is not in the
-/// model, or a row of pixels that will not appear.
-///
-/// [`corner_uv`]: Self::corner_uv
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct FaceUv {
-    /// Normalized `[u0, v0_top, u1, v1_bottom]`. Raw corner order — a reversed
-    /// rect is an authored FLIP and reproduces on render.
     pub uv: [f32; 4],
-    /// Quarter turns CLOCKWISE on the face (`0..4`): Blockbench's per-face
-    /// `rotation` divided by 90.
     pub rot: u8,
 }
 
 impl FaceUv {
-    /// A face with no rotation — the plain rect.
     pub const fn new(uv: [f32; 4]) -> Self {
         Self { uv, rot: 0 }
     }
 
-    /// The same face with a remapped rect (atlas placement, half-texel inset),
-    /// keeping the rotation.
     pub const fn with_uv(self, uv: [f32; 4]) -> Self {
         Self { uv, ..self }
     }
 
-    /// The four corner UVs in the shared quad order — `p0` bottom-left, `p1`
-    /// bottom-right, `p2` top-right, `p3` top-left — with the rotation
-    /// applied.
-    ///
-    /// Rotating the TEXTURE clockwise moves what each corner shows one step
-    /// around the rect, which is why a quarter turn is a cyclic shift here and
-    /// not something the rect could have carried.
     pub fn corner_uv(self) -> [[f32; 2]; 4] {
         let [u0, v0, u1, v1] = self.uv;
         let c = [[u0, v1], [u1, v1], [u1, v0], [u0, v0]];
@@ -121,26 +59,19 @@ impl FaceUv {
     }
 }
 
-/// A bone: a named pivot in the hierarchy. Animation rotates geometry about
-/// `pivot`; `parent` chains the transform up to a root bone (`None`).
 #[derive(Serialize, Deserialize)]
 pub struct Bone {
     pub name: String,
     pub pivot: Vec3,
-    /// Static Blockbench group rotation in degrees. This is the bone's rest pose.
     pub rotation: Vec3,
     pub parent: Option<usize>,
 }
 
-/// A parsed model: bones, cubes, animations, and the embedded RGBA texture.
 #[derive(Serialize, Deserialize)]
 pub struct Model {
     pub bones: Vec<Bone>,
     pub cubes: Vec<Cube>,
     pub animations: HashMap<String, Animation>,
-    /// Names of `idle_*` animations, sorted, so a numeric idle index maps stably to
-    /// one (the sim picks an index; [`idle_animation`](Self::idle_animation) resolves
-    /// it here).
     idle_anim_names: Vec<String>,
     pub texture_rgba: Vec<u8>,
     pub tex_w: u32,
@@ -148,8 +79,6 @@ pub struct Model {
 }
 
 impl Model {
-    /// An empty placeholder (no cubes, a 1×1 transparent texture) so a parse
-    /// failure degrades to "no owls drawn" instead of crashing the renderer.
     pub fn empty() -> Self {
         Model {
             bones: Vec::new(),
@@ -162,27 +91,19 @@ impl Model {
         }
     }
 
-    /// Look up an animation by name.
     pub fn animation(&self, name: &str) -> Option<&Animation> {
         self.animations.get(name)
     }
 
-    /// The bone named `head`, if the model has one (gates AI head-look).
     pub fn head_bone(&self) -> Option<usize> {
         self.bones.iter().position(|b| b.name == "head")
     }
 
-    /// The `index`-th `idle_*` animation (name-sorted), or `None` if out of range.
     pub fn idle_animation(&self, index: usize) -> Option<&Animation> {
         let name = self.idle_anim_names.get(index)?;
         self.animations.get(name)
     }
 
-    /// Overwrite the `head` bone's posed transform with an AI head-look rotation
-    /// (`yaw` about the model's up axis, `pitch` about its right axis) about the
-    /// head's pivot, composed under the head's parent, and carry that same override
-    /// through all descendant bones. Call AFTER posing, only when the active animation
-    /// isn't itself driving the head.
     pub fn apply_head_look(&self, pose: &mut [Mat4], head_bone: usize, yaw: f32, pitch: f32) {
         let Some(bone) = self.bones.get(head_bone) else {
             return;
@@ -203,17 +124,10 @@ impl Model {
         }
     }
 
-    /// The bone with the given authored name, if the model has one.
     pub fn bone_named(&self, name: &str) -> Option<usize> {
         self.bones.iter().position(|b| b.name == name)
     }
 
-    /// COMPOSE `rot` onto `bone`'s posed transform, rotating about the bone's posed
-    /// pivot, and carry the same delta through all descendant bones — the layered
-    /// counterpart of [`apply_head_look`](Self::apply_head_look) (which REPLACES the
-    /// pose). Use it to stack a gameplay override (an arm swing) on top of whatever
-    /// animation is already posing the bone, so a punch composes with the walk cycle
-    /// instead of freezing it.
     pub fn apply_bone_rotation(&self, pose: &mut [Mat4], bone: usize, rot: Quat) {
         let Some(b) = self.bones.get(bone) else {
             return;
@@ -231,14 +145,6 @@ impl Model {
         }
     }
 
-    /// [`apply_bone_rotation`](Self::apply_bone_rotation) with a TRANSLATION
-    /// as well: rotate about the bone's posed pivot, then shift, and carry the
-    /// whole delta through the descendants. `translation` is in the bone's
-    /// posed frame, in model units.
-    ///
-    /// The rotation-only form stays because that is what every engine layer
-    /// wants; this is the form a claimed offset takes, where "move the bone"
-    /// is as reasonable a request as "turn it".
     pub fn apply_bone_offset(&self, pose: &mut [Mat4], bone: usize, rot: Quat, translation: Vec3) {
         let Some(b) = self.bones.get(bone) else {
             return;
@@ -257,16 +163,6 @@ impl Model {
         }
     }
 
-    /// HOLD `bone` at its rest pose plus `rot`/`translation`, DISCARDING
-    /// whatever animation posed it, and carry the change through its
-    /// descendants (which keep their own animation relative to it).
-    ///
-    /// The replacing counterpart of
-    /// [`apply_bone_offset`](Self::apply_bone_offset), built the same way
-    /// [`apply_head_look`](Self::apply_head_look) is: a stance is not a nudge
-    /// on top of a stride, it is instead of one. `rot` is in DEGREES and adds
-    /// to the bone's authored rest rotation, exactly as an animation channel
-    /// would — so a pose read off a posed `.bbmodel` transfers verbatim.
     pub fn hold_bone(&self, pose: &mut [Mat4], bone: usize, rot: Vec3, translation: Vec3) {
         let Some(b) = self.bones.get(bone) else {
             return;
@@ -286,7 +182,6 @@ impl Model {
         }
     }
 
-    /// The rig's bones, for a caller resolving a name to an index.
     pub fn bones(&self) -> &[Bone] {
         &self.bones
     }
@@ -304,18 +199,11 @@ impl Model {
         false
     }
 
-    /// Parse a `.bbmodel` (JSON) string into a [`Model`].
     pub fn load(src: &str) -> Result<Self, String> {
         let root: Value = serde_json::from_str(src).map_err(|e| format!("json: {e}"))?;
 
-        // Textures: EVERY embedded texture decoded and stacked vertically into one
-        // sheet, each face's UVs remapped through its own texture's band (a model may
-        // paint different elements from different textures — the bed's wood vs its
-        // sheets). A single-texture model reduces to the identity rect, so the sheet
-        // IS that texture.
         let sheet = TextureSheet::decode(&root)?;
 
-        // Bones from `groups`, indexed by uuid for the outliner walk + animators.
         let mut bones = Vec::new();
         let mut bone_by_uuid: HashMap<String, usize> = HashMap::new();
         if let Some(groups) = root.get("groups").and_then(Value::as_array) {
@@ -342,7 +230,6 @@ impl Model {
             }
         }
 
-        // Cubes from `elements`, indexed by uuid; bone assigned by the outliner walk.
         let mut cubes = Vec::new();
         let mut cube_by_uuid: HashMap<String, usize> = HashMap::new();
         if let Some(elements) = root.get("elements").and_then(Value::as_array) {
@@ -358,9 +245,6 @@ impl Model {
                 let mut from = arr3(e.get("from")).unwrap_or(Vec3::ZERO);
                 let mut to = arr3(e.get("to")).unwrap_or(Vec3::ZERO);
                 let origin = arr3(e.get("origin")).unwrap_or(from);
-                // Blockbench `inflate` grows every face outward by that amount
-                // (UVs unchanged) — how skin overlay layers (hat/jacket/sleeves)
-                // float slightly off the base cube instead of z-fighting it.
                 let inflate = e.get("inflate").and_then(num).unwrap_or(0.0);
                 if inflate != 0.0 {
                     from -= Vec3::splat(inflate);
@@ -386,8 +270,6 @@ impl Model {
             }
         }
 
-        // Walk the `outliner` tree: set each bone's parent and each cube's owning
-        // bone. Top-level nodes have no parent.
         if let Some(outliner) = root.get("outliner").and_then(Value::as_array) {
             for node in outliner {
                 walk_outliner(
@@ -401,8 +283,6 @@ impl Model {
             }
         }
 
-        // Any cube the outliner never placed (shouldn't happen for a well-formed
-        // model) gets a synthetic identity root bone so it still renders.
         if cubes.iter().any(|c| c.bone == usize::MAX) {
             let fallback = bones.len();
             bones.push(Bone {
@@ -417,7 +297,6 @@ impl Model {
         }
 
         let animations = parse_animations(&root, &bone_by_uuid);
-        // Stable, name-sorted index of the idle_* animations (matches the sim's count).
         let mut idle_anim_names: Vec<String> = animations
             .keys()
             .filter(|n| clips::is_idle(n))
@@ -436,9 +315,6 @@ impl Model {
         })
     }
 
-    /// The rest pose: the authored Blockbench group rotations composed down the bone
-    /// hierarchy. Cubes render at their modelled positions + static tilts, with any
-    /// rotated groups (ears, tails, etc.) included.
     pub fn rest_pose(&self) -> Vec<Mat4> {
         let local: Vec<Mat4> = self
             .bones
@@ -448,12 +324,6 @@ impl Model {
         self.resolve_pose(&local)
     }
 
-    /// Tight AABB over the rest-posed geometry, MODEL space (feet near y=0) —
-    /// every cube's box through its bone + static-tilt transform, the same
-    /// composition the render bake applies. Callers derive conservative cull
-    /// volumes from this (scaled to the world + slack for animation), instead
-    /// of guessing a species' extent from its collision size. An empty model
-    /// answers a zero box at the origin.
     pub fn rest_bounds(&self) -> (Vec3, Vec3) {
         let pose = self.rest_pose();
         let mut min = Vec3::splat(f32::INFINITY);
@@ -481,25 +351,12 @@ impl Model {
         (min, max)
     }
 
-    /// Per-bone world-within-model transforms posed by `anim` at `time` seconds
-    /// (looped over the animation length) — the single-animation form of
-    /// [`pose_layers`](Self::pose_layers). Index by `Cube::bone`. Apply to a
-    /// model-space cube vertex to get its posed model-space position (before the
-    /// caller's scale/yaw/translate to the world).
     #[cfg(any(test, feature = "test-support"))]
     pub fn pose(&self, anim: &Animation, time: f32) -> Vec<Mat4> {
         self.pose_layers(&[(anim, time, 1.0)])
     }
 
-    /// Pose blended from several `(animation, time, weight)` layers at once: each
-    /// bone rotates by the weight-scaled SUM of the layers' sampled eulers (the
-    /// multi-layer generalization of a single weighted animation — summing
-    /// weighted per-axis euler tracks is the same exactness argument). Weights
-    /// clamp to `[0, 1]` individually; layers totalling 1 cross-fade (the player
-    /// walk↔sneak blend), and an empty/zero-weight set is exactly the rest pose.
     pub fn pose_layers(&self, layers: &[(&Animation, f32, f32)]) -> Vec<Mat4> {
-        // Each bone's LOCAL transform: rotate about its pivot by the authored rest
-        // euler plus the summed, weighted animation eulers.
         let local: Vec<Mat4> = self
             .bones
             .iter()
@@ -527,20 +384,14 @@ impl Model {
         self.resolve_pose(&local)
     }
 
-    /// Bone transforms for per-bone local rotation (degrees) and position
-    /// deltas from rest, in bone order — a pose several clips and procedural
-    /// layers have already summed. A missing entry is rest.
     pub fn resolve_local(&self, rotations: &[Vec3], positions: &[Vec3]) -> Vec<Mat4> {
         let mut out = Vec::with_capacity(self.bones.len());
         self.resolve_local_into(rotations, positions, &mut out);
         out
     }
 
-    /// [`resolve_local`](Self::resolve_local) into `out`, reusing its storage.
     pub fn resolve_local_into(&self, rotations: &[Vec3], positions: &[Vec3], out: &mut Vec<Mat4>) {
         out.clear();
-        // NaN marks a bone not resolved yet: a model need not list parents
-        // before their children.
         out.resize(self.bones.len(), Mat4::NAN);
         for i in 0..self.bones.len() {
             self.resolve_local_bone(i, rotations, positions, out);
@@ -596,39 +447,17 @@ impl Model {
 }
 
 impl CompiledAsset for Model {
-    /// `LLMOB` — the compiled mob/entity model container (one file holds geometry, bones,
-    /// animations and the decoded texture).
     const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
-    /// v4: bones (including rest rotations) + cubes (per-face UV, element name) +
-    /// named rotation animations + the RGBA texture — since v4 the texture is the
-    /// combined multi-texture sheet with face UVs remapped into it. v5: element
-    /// `inflate` baked into the cube box (skin overlay layers stop z-fighting).
-    /// v6: animations carry `pos_tracks` (the 2026-07-20 position channels —
-    /// this bump is LATE: v5-era caches mis-decoded under the grown layout, and
-    /// an unlucky byte order decoded into valid-but-empty garbage instead of a
-    /// clean failure — the invisible-hushjaw bug).
-    /// v7: faces carry Blockbench's per-face `rotation` ([`FaceUv`]), which the
-    /// parser had been silently dropping.
-    /// v9: keyframes carry Blockbench's interpolation, pre/post data points and
-    /// Bezier handles; clips carry `hold` and effect markers.
-    /// v10: a clip's tracks are one bone-sorted table ([`Track`]) instead of
-    /// two maps.
-    /// Bump on any change to these fields or to [`Model::load`]'s output; the
-    /// `compiled_model_layout_change_requires_a_format_version_bump` guard
-    /// fails until you do.
     const FORMAT_VERSION: u32 = 10;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 
-    /// Compile = parse the authored `.bbmodel` (UTF-8 JSON) via [`Model::load`].
     fn compile(source: &[u8]) -> Result<Self, String> {
         let src = std::str::from_utf8(source).map_err(|e| format!("bbmodel utf-8: {e}"))?;
         Model::load(src)
     }
 }
 
-/// The four corners of cube face `f` over box `[from, to]`, in `quad_box` order
-/// (p0 bottom-left, p1 bottom-right, p2 top-right, p3 top-left).
 pub fn face_corners(f: Face, from: Vec3, to: Vec3) -> [[f32; 3]; 4] {
     f.quad_box(from.to_array(), to.to_array())
 }

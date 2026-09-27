@@ -1,10 +1,3 @@
-//! The per-section full light bake: one 48³ flood over a section's 3×3×3
-//! neighbourhood, clipped to its 16³. Streaming first-bakes, persisted-light
-//! repair and every relight the incremental path declines run through here or
-//! through its batched twin ([`super::batch`]); both gather their inputs with
-//! the same [`neighborhood::Snapshot`], so they cannot disagree on what a cell
-//! is.
-
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -18,8 +11,6 @@ use super::shape::LightCells;
 use super::skylight::{self, SkyPlan};
 use super::{flood, neighborhood, NBHD, NBHD_VOLUME};
 
-/// One section's freshly baked light cubes, tagged with the section revision
-/// the bake read (the installer drops a result whose revision moved on).
 pub struct LightBakeOutput {
     pub pos: SectionPos,
     pub revision: u64,
@@ -27,21 +18,15 @@ pub struct LightBakeOutput {
     pub blocklight: Arc<[LightRgb]>,
 }
 
-/// A self-contained per-section bake job: the sky plan plus cheap shared
-/// handles to the neighbourhood, gathered on the main thread.
 pub struct SectionBakeJob {
     pos: SectionPos,
     revision: u64,
     sky: SkyPlan,
-    /// Present only when a flood will actually run (a `Flood` sky plan or an
-    /// emitter in range).
     nbhd: Option<neighborhood::Snapshot>,
     emitters: Vec<(IVec3, LightRgb)>,
 }
 
 impl SectionBakeJob {
-    /// Snapshot `pos` for a bake when its light is dirty (`None` when it is
-    /// clean or absent).
     pub fn snapshot(
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
@@ -53,8 +38,6 @@ impl SectionBakeJob {
         Self::snapshot_unchecked(pos, sections, columns)
     }
 
-    /// [`Self::snapshot`] without the dirty gate — the parity and equivalence
-    /// tests rebake settled sections to compare other paths against.
     pub fn snapshot_unchecked(
         pos: SectionPos,
         sections: &FxHashMap<SectionPos, Arc<Section>>,
@@ -81,11 +64,6 @@ impl SectionBakeJob {
     }
 }
 
-/// Per-light-thread reusable bake scratch: the assembled 48³ neighbourhood block
-/// cube plus the flood working set. Streaming bakes run thousands of times across
-/// several threads; reusing these keeps ~220 KB of per-bake churn off the allocator
-/// (the returned per-section light cubes are still allocated fresh — they outlive
-/// the bake).
 struct BakeScratch {
     blocks: Box<[u16]>,
     flood: flood::FloodScratch,
@@ -98,7 +76,6 @@ thread_local! {
     });
 }
 
-/// Run one per-section bake to completion (on a light worker, or inline).
 pub fn bake_section(job: SectionBakeJob) -> LightBakeOutput {
     let SectionBakeJob {
         pos,

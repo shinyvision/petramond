@@ -1,9 +1,6 @@
 use super::super::*;
 use super::{lane_decoders, layout};
 
-/// Every `(<word> >> Nu) & 0xMu` / `<word> & 0xMu` extraction a WGSL source
-/// performs on the two packed vertex words. Prose mentioning `packed2` is
-/// skipped: only an immediately following shift-or-mask parses.
 fn shader_bit_reads(src: &str) -> Vec<(&'static str, u32, u32)> {
     let hex = |s: &str| -> Option<u32> {
         let end = s.find('u')?;
@@ -38,17 +35,8 @@ fn shader_bit_reads(src: &str) -> Vec<(&'static str, u32, u32)> {
     out
 }
 
-/// The generated module must decode every lane the Rust side defines, at the
-/// Rust side's shift and width, and nothing else. A lane carved out of the
-/// free bits shows up as an unknown `(shift, mask)` until it is listed here,
-/// and a lane dropped from the generator is a lane no shader can read.
 #[test]
 fn the_generated_module_decodes_exactly_the_rust_lanes() {
-    // (word, shift, mask, what it is) — the complete Rust-side lane map.
-    // `packed2` bits 20..32 hold three mutually exclusive tenants, so the
-    // overlay payload appears at three widths (a whole tile id, the two
-    // greedy-span nibbles, and both nibbles read at once by the T-junction
-    // nudge's "payload is nonzero" gate).
     let lanes: &[(&str, u32, u32, &str)] = &[
         ("packed", 0, TILE_MASK, "tile id"),
         ("packed", CORNER_SHIFT, 0x3, "corner"),
@@ -115,9 +103,6 @@ fn the_generated_module_decodes_exactly_the_rust_lanes() {
     }
 }
 
-/// The transition decode reassembles the payload `Transition::apply` spreads
-/// across both words; pin its generated arithmetic to the Rust mirror by
-/// checking the reads it performs are exactly the lanes `apply` writes.
 #[test]
 fn the_generated_transition_decode_reads_the_lanes_apply_writes() {
     let text = super::super::transition::wgsl();
@@ -142,8 +127,6 @@ fn the_generated_transition_decode_reads_the_lanes_apply_writes() {
     );
 }
 
-/// The module is self-contained WGSL: it parses and names every helper the
-/// engine shaders call.
 #[test]
 fn the_generated_module_declares_every_helper() {
     let text = layout();

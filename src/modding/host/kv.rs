@@ -1,15 +1,9 @@
-//! Persistent KV calls: world and per-section-cell surfaces (per-mob keyed
-//! data rides the typed TAG map — see `tags.rs`).
-//! Writes pass the namespace/size guard; reads cross namespaces.
-
 use mod_api::{ErrorCode, HostRet, KvCall};
 
 use petramond_math::math::IVec3;
 
 use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, sim_read, CELL_KV_MAX_KEYS};
 
-/// Run one KV write behind [`kv_write_guard`], handing the key back to the
-/// operation when the guard passes (deletes guard with `value_len` 0).
 fn guarded_write(
     mod_id: &str,
     key: String,
@@ -22,8 +16,6 @@ fn guarded_write(
     }
 }
 
-/// Persistent-KV calls (world / section-cell surfaces; writes pass
-/// [`kv_write_guard`]).
 pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
     match call {
         KvCall::SectionKvFind { section, key } => sim_read(|ctx| {
@@ -88,9 +80,6 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
             guarded_write(mod_id, key, value.len(), |key| {
                 sim_query(|ctx| {
                     let p = IVec3::from(pos);
-                    // Aggregate cap: a NEW key on a cell already at the limit
-                    // is an error (overwrites always pass) — see
-                    // `CELL_KV_MAX_KEYS` for why cells must stay small.
                     if ctx.world.data().cell_kv_get(p.x, p.y, p.z, &key).is_none()
                         && ctx.world.data().cell_kv_count(p.x, p.y, p.z) >= CELL_KV_MAX_KEYS
                     {
@@ -109,9 +98,6 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
                 HostRet::Bool(ctx.world.cell_kv_remove(p.x, p.y, p.z, &key))
             })
         }),
-        // ONE key across many cells: the shape a machine KIND reads and writes
-        // its state in, and the reason it exists is that the per-cell form
-        // made a mod's tick cost one crossing per placed machine.
         KvCall::SectionKvGetMany { key, positions } => {
             if let Some(err) = batch_guard("SectionKvGetMany position", positions.len()) {
                 return err;
@@ -135,8 +121,6 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
             if let Some(err) = batch_guard("SectionKvSetMany write", writes.len()) {
                 return err;
             }
-            // The value guard runs against the LARGEST write, so one oversized
-            // value fails the whole call exactly as it would alone.
             let widest = writes
                 .iter()
                 .map(|(_, v)| v.as_ref().map_or(0, Vec::len))

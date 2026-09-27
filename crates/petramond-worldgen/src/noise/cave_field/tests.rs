@@ -1,12 +1,10 @@
 use super::*;
 use crate::data::underground;
 
-/// The batched positional queries share ONE lattice across a whole box and
-/// walk a column through a single cursor; both are pure scheduling, so they
-/// must answer exactly what the one-voxel lattice answers, position for
-/// position, whatever the batch happens to contain. A drift here is
-/// invisible — a mod's structures shift by a cell somewhere deep — so it is
-/// pinned against the reference path directly, including habitat lining and regional selection and singleton batches.
+/// Batching is just scheduling, so batched queries must answer the same as the one-voxel
+/// lattice, position for position. A drift here is invisible: a mod's structures shift by a cell
+/// somewhere deep. So we pin batches directly against the reference, across habitat lining,
+/// regional selection, and singleton batches.
 #[test]
 fn batched_positional_queries_match_the_one_voxel_reference() {
     for pack in [None, Some(LINING_PACK), Some(REGION_PACK)] {
@@ -31,8 +29,6 @@ fn batched_positional_queries_match_the_one_voxel_reference() {
             };
             positions.push([next(-300, 300), next(CAVE_MIN_Y, 90), next(-300, 300)]);
         }
-        // Plus a dense column and a dense slab, the two shapes the
-        // subdivision is supposed to collapse into one lattice.
         for y in CAVE_MIN_Y..CAVE_MIN_Y + 60 {
             positions.push([7, y, -13]);
         }
@@ -63,7 +59,6 @@ fn batched_positional_queries_match_the_one_voxel_reference() {
     }
 }
 
-/// Regional habitat selection with an independent bounded excavation.
 const REGION_PACK: &str = r#"{
   "underground_biomes": [
     {
@@ -173,7 +168,6 @@ const LINING_PACK: &str = r#"{
   ]
 }"#;
 
-/// Narrow lining bands exercise conservative per-cell shell bounds.
 const BANDED_LINING_PACK: &str = r#"{
   "underground_biomes": [
     {
@@ -225,11 +219,6 @@ const BANDED_LINING_PACK: &str = r#"{
   ]
 }"#;
 
-/// A row declaring a CHAMBER: a term summed straight into the cavern carve
-/// threshold, so it arms a lattice lane the shipped table never allocates
-/// and widens the skip mask's cheese bound. Every carve invariant re-runs
-/// against it for exactly that reason — it is the newest way for the point
-/// and batch paths, and for the mask and the carver, to drift apart.
 const CHAMBER_PACK: &str = r#"{
   "underground_biomes": [
     {
@@ -317,10 +306,6 @@ const CHAMBER_PACK: &str = r#"{
   ]
 }"#;
 
-/// A chamber row banded to a rare field value AND a narrow depth, so most
-/// of any test box lies outside the lane's declared span. That is where a
-/// gate on the lane can be wrong in the dangerous direction — skipping it
-/// somewhere a room does reach.
 const BANDED_CHAMBER_PACK: &str = r#"{
   "underground_biomes": [
     {
@@ -383,7 +368,6 @@ const BANDED_CHAMBER_PACK: &str = r#"{
   ]
 }"#;
 
-/// Synthetic rooms provide floor and ceiling surfaces independently of habitats.
 const LINING_ROOMS: &str = r#"{"excavations":[
         {"excavation":"test:lining_rooms","placement":{"spacing":32,"y":[-48,32]},
          "chamber":{"radius":[5,7],"feather":8,"tunnel":1}}
@@ -412,11 +396,6 @@ fn tables() -> [(
     })
 }
 
-/// Boxes worth sweeping for a table: a fixed scatter, plus — when the table
-/// declares chambers — boxes straddling the RIM of every room the seed
-/// actually rolls nearby. The rim is where a room's term is neither zero
-/// nor saturated, i.e. the only place a bound or a lane gate can be wrong
-/// in a way that still produces plausible output.
 fn sweep_boxes(field: &CaveField, span: i32) -> Vec<[i32; 3]> {
     let mut boxes = vec![
         [-8, -40, 24],
@@ -427,11 +406,7 @@ fn sweep_boxes(field: &CaveField, span: i32) -> Vec<[i32; 3]> {
     ];
     if field.chamber_y_span.is_some() {
         let rooms = field.chamber_field([-768, -64, -768], [768, -8, 768]);
-        // A handful is enough; every extra room multiplies a cubic sweep.
         for c in rooms.centers().into_iter().take(3) {
-            // One box on the room's core, and four crossing its rim from
-            // different sides, so both the saturated and the dissolving
-            // part of the term are swept.
             boxes.push([c[0] - span / 2, c[1] - span / 2, c[2] - span / 2]);
             for (dx, dy, dz) in [(18, 0, 0), (-24, 0, 6), (0, 9, -20), (6, -11, 16)] {
                 boxes.push([c[0] + dx - span / 2, c[1] + dy, c[2] + dz - span / 2]);
@@ -445,17 +420,6 @@ fn sweep_boxes(field: &CaveField, span: i32) -> Vec<[i32; 3]> {
     boxes
 }
 
-/// The invariant everything hangs on: the point path (surface walks feeding
-/// column heightmaps) and the batch path (the actual block carve) must agree at
-/// every voxel, or heightmaps drift from carved blocks and skylight breaks.
-///
-/// With independent excavation this is also the hazard the sparse path is most
-/// prone to: the point query builds a PARTIAL lattice, so a producer that
-/// skips a field the consumer reads shows up here as a wrong answer (and in
-/// debug as the named lattice assertion) long before it can become a bounds
-/// panic in production. A CHAMBER lane raises the stakes: it is skipped for
-/// whole boxes, so producer and consumer must agree not only about how to
-/// read it but about when it is provably zero.
 #[test]
 fn point_and_batch_carve_decisions_agree() {
     const SPAN: i32 = 19;
@@ -538,8 +502,6 @@ fn may_cut_mask_never_skips_a_carved_cell() {
                                     "mask skipped ({x},{y},{z}) surf {surf_y} seed {seed:#x} \
                                          but the carver acts"
                                 );
-                                // Checking only y+1 would miss courses that
-                                // outgrow the mask's vertical dilation.
                                 if field.lining_faces {
                                     for d in 1..=table.lining_floor_depth_max {
                                         assert!(
@@ -564,12 +526,6 @@ fn may_cut_mask_never_skips_a_carved_cell() {
     }
 }
 
-/// A chamber lane is SKIPPED for boxes no declared room can reach, which is
-/// only sound if the term there is provably zero. Probe the depth span from
-/// both sides: just inside it the lane must be live somewhere, and just
-/// outside it every gathered room must contribute exactly nothing — a lane
-/// gate that is one block too tight deletes the top or bottom slice of
-/// every room in the world and nothing downstream can tell.
 #[test]
 fn the_chamber_lane_is_only_skipped_where_no_room_can_reach() {
     for (table, excavations) in tables() {
@@ -577,8 +533,6 @@ fn the_chamber_lane_is_only_skipped_where_no_room_can_reach() {
             continue;
         };
         let field = CaveField::with_tables(0x1D001, table, excavations);
-        // Outside the span the gather itself must come back empty over a
-        // wide box, whatever the field says.
         for y in [lo - 1, lo - 64, hi + 1, hi + 64] {
             let rooms = field.chamber_field([-512, y, -512], [512, y, 512]);
             for c in rooms.centers() {
@@ -590,8 +544,6 @@ fn the_chamber_lane_is_only_skipped_where_no_room_can_reach() {
                 );
             }
         }
-        // Inside it, the lane must be live for at least one real box, or
-        // the span is so loose that skipping never happens.
         let live = sweep_boxes(&field, 19).into_iter().any(|[x, y, z]| {
             field
                 .build_lattice(x, y, z, x + 19, y + 19, z + 19)
@@ -601,17 +553,11 @@ fn the_chamber_lane_is_only_skipped_where_no_room_can_reach() {
     }
 }
 
-/// The mod ABI's underground-biome query must answer exactly what the
-/// habitat lining reads at that cell — the contract a pack's
-/// content placement depends on ("place inside my biome, get my caves").
 #[test]
 fn abi_query_agrees_with_the_carver() {
     for (table, excavations) in tables() {
         let field = CaveField::with_tables(0xB10, table, excavations);
         let mut seen = std::collections::BTreeSet::new();
-        // Underground-biome regions span a few hundred blocks, so the
-        // sample is scattered boxes rather than one — a single small box
-        // would sit inside one biome and prove nothing about boundaries.
         for (x0, y0, z0) in [
             (-6, -50, 30),
             (-280, -20, 150),
@@ -645,13 +591,6 @@ fn abi_query_agrees_with_the_carver() {
     }
 }
 
-/// The box query is a REJECTION gate, so its only real contract is the one
-/// direction: whatever `underground_biome_at` answers anywhere in the box
-/// must appear in the box's set. A bound that tightens — a lattice cell
-/// missed at the box edge, a clamped depth window, a memo keyed too coarsely
-/// — silently deletes every mod feature that gates on it, and nothing else
-/// would notice. Boxes deliberately straddle the memo grid so the snap-out
-/// is exercised rather than the aligned happy path.
 #[test]
 fn the_box_query_never_omits_a_biome_the_point_query_answers() {
     for (table, excavations) in tables() {
@@ -689,8 +628,6 @@ fn the_box_query_never_omits_a_biome_the_point_query_answers() {
     }
 }
 
-/// Batch lattices are world-anchored, so two different boxes covering the same
-/// voxel interpolate identical values: section seams cannot show.
 #[test]
 fn overlapping_lattices_agree_at_shared_voxels() {
     let field = CaveField::new(0xC0FFEE);
@@ -713,12 +650,6 @@ fn overlapping_lattices_agree_at_shared_voxels() {
     }
 }
 
-/// Wall lining is a shell AROUND carved air, never a replacement for it: a
-/// voxel the carvers open can never simultaneously be lining, and lining only
-/// appears in a bounded band next to carve decisions (guards against a shell
-/// threshold inversion silently turning whole regions into lining). Re-run
-/// with a `lining.shell` multiplier so the knob a pack can turn is covered
-/// by the same ceiling, not just the engine's own shell widths.
 #[test]
 fn lining_shell_is_disjoint_from_carved_air() {
     for (table, excavations) in tables() {
@@ -756,21 +687,8 @@ fn lining_shell_is_disjoint_from_carved_air() {
     }
 }
 
-/// A declared FLOOR lining is a GUARANTEE, not a coverage percentage: the
-/// spawn rules a pack hangs off it are only as good as its worst cell, and
-/// a 95% floor is a hole a player finds and the author never does.
-///
-/// Swept over real carved sections, including the two places the rule has
-/// no memory to fall back on — the top voxel of a section (its air
-/// neighbour lives in the next section up) and the world-floor plane the
-/// carvers refuse to cut, which is the flattest, most walkable floor in the
-/// biome and sits in a section the carve otherwise skips outright.
 #[test]
 fn a_declared_floor_lining_paints_every_cave_floor_in_its_biome() {
-    // A wide band, so the sweep finds plenty of the row's own cells — but
-    // NARROWER rows still win inside it (marble does), which is why the
-    // assertion below is gated on who actually owns the cell rather than
-    // on the box.
     const FLOORED: &str = r#"{
   "underground_biomes": [
     {
@@ -819,8 +737,6 @@ fn a_declared_floor_lining_paints_every_cave_floor_in_its_biome() {
         );
         let mut floors = 0usize;
         for (cx, cz) in [(0, 0), (-3, 2), (7, -5), (11, 9), (-14, -8), (4, 17)] {
-            // Stack of sections over one column, so the voxel above a
-            // section's top voxel is a real neighbour and not a guess.
             let carved: Vec<Section> = (-4..=-2)
                 .map(|cy| {
                     let mut s = Section::new(cx, cy, cz);
@@ -868,9 +784,6 @@ fn a_declared_floor_lining_paints_every_cave_floor_in_its_biome() {
     }
 }
 
-/// A row lining three ORIENTATIONS with three different blocks. Weight-only
-/// fixtures are what let a ceiling-taken-for-a-wall live: the two rules
-/// then write the same block and differ only in how much of it there is.
 const ORIENTED: &str = r#"{
   "underground_biomes": [
     {
@@ -913,8 +826,6 @@ const ORIENTED: &str = r#"{
   ]
 }"#;
 
-/// A row layering a SUBSURFACE under its floor: moss on top, marble for
-/// the two courses below it.
 const LAYERED: &str = r#"{
   "underground_biomes": [
     {
@@ -999,7 +910,6 @@ fn a_layered_floor_course_has_one_surface_wherever_the_batch_splits_it() {
                     let wx = cx * SECTION_SIZE as i32 + x as i32;
                     let wz = cz * SECTION_SIZE as i32 + z as i32;
                     for wy in -63..-17 {
-                        // A course top: solid, carved air directly above.
                         let (Some(here), Some(above)) = (at(wy, x, z), at(wy + 1, x, z)) else {
                             continue;
                         };
@@ -1036,23 +946,14 @@ fn a_layered_floor_course_has_one_surface_wherever_the_batch_splits_it() {
         }
     }
     assert!(courses > 300, "only {courses} course tops swept");
-    // Vacuous unless the sweep actually crossed a course split by a
-    // section plane, which is the case the depth argument exists for.
     assert!(split > 0, "no course top swept on a section-floor plane");
 }
 
-/// A pool row certain in every cell of the layered fixture's band.
 const POOLS_EVERYWHERE: &str = r#"{"fluid_pools":[{"fluid_pool":"test:lava",
     "fluid":"petramond:lava","anchor_y":-40,"chance":1.0,"height_scale":1000.0,"max_y":0,
     "reach":16,"max_depth":10,"max_drop":24,"max_sink":16,"budget":2000,
     "surface_clearance":32}]}"#;
 
-/// Floors under `fluid` in the layered fixture — an aquifer's water, or a
-/// pool's lava beside a lining that lists only water — take the submerged
-/// surface exactly when the lining lists the fluid, and one subsurface,
-/// wherever a section plane splits the course: a course top on a section's
-/// TOP voxel is painted by the box below, which has to ask the cave model
-/// what the open cell above holds.
 fn floor_courses_under(fluid: Block, submerged: bool) {
     let mut pack: serde_json::Value = serde_json::from_str(LAYERED).unwrap();
     let row = pack["underground_biomes"]
@@ -1080,7 +981,6 @@ fn floor_courses_under(fluid: Block, submerged: bool) {
     let is_fluid = |b: u16| Block::from_id(b).is_fluid();
     let mut floors = 0;
     let (mut tops_on_floor_plane, mut tops_on_top_plane) = (0, 0);
-    // Widen the sweep until the split has been seen both ways.
     for seed in [0x312, 0x1d001, 0x2beef] {
         if floors > 0 && tops_on_floor_plane > 0 && tops_on_top_plane > 0 {
             break;
@@ -1214,8 +1114,6 @@ fn face_orientation_and_course_depth_do_not_depend_on_the_batch() {
                         let (Some(here), Some(below)) = (at(wy, x, z), at(wy - 1, x, z)) else {
                             continue;
                         };
-                        // A cell that is a floor too is repainted by the
-                        // floor rule, which outranks both side rules.
                         if here != air && below == air && at(wy + 1, x, z) != Some(air) && owned(wy)
                         {
                             ceilings += 1;
@@ -1250,9 +1148,6 @@ fn face_orientation_and_course_depth_do_not_depend_on_the_batch() {
         assert!(course > 400, "only {course} course cells (seed {seed:#x})");
         assert!(ceilings > 100, "only {ceilings} ceilings (seed {seed:#x})");
     }
-    // Coverage, not a shape pin: the assertions above are vacuous unless
-    // the sweep reached a ceiling standing on a section FLOOR, which is
-    // the only plane where the walk cannot remember what is under it.
     assert!(boundary > 0, "no ceiling swept on a section-floor plane");
 }
 

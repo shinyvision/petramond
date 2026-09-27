@@ -28,8 +28,6 @@ pub(super) fn create_mob_pipeline(
     let mob_shader = shader_module(
         device,
         "mob shader",
-        // The break-crack decal over a model block: same module, so it draws
-        // with the model's own vertex stage and texture sampling.
         mob_shader_source() + include_str!("../../shaders/model_break.wgsl"),
     );
     let mob_pipe = world_pipeline(
@@ -48,9 +46,6 @@ pub(super) fn create_mob_pipeline(
     (mob_pipe, mob_shader)
 }
 
-/// The mob module's shared body: the helpers `mob.wgsl` calls, then
-/// `mob.wgsl` itself (its uniforms, entity texture, `fs_mob`, the light-curve
-/// constants and the world-model stages).
 fn mob_shader_source() -> String {
     [
         include_str!("../../shaders/cel.wgsl"),
@@ -62,7 +57,6 @@ fn mob_shader_source() -> String {
     .concat()
 }
 
-/// `SkinVertex`: pos / uv / shade / bone / parts, stepped per vertex.
 const SKIN_VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x2,
@@ -71,8 +65,6 @@ const SKIN_VERTEX_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     4 => Uint32,
 ];
 
-/// `SkinInstance`: tint / self_lit / light / bone_base / hidden, stepped per
-/// instance (the trailing padding carries no attribute).
 const SKIN_INSTANCE_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     5 => Float32x3,
     6 => Float32,
@@ -81,8 +73,6 @@ const SKIN_INSTANCE_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array!
     9 => Uint32,
 ];
 
-/// The bone-palette group(2) layout: one read-only storage array of
-/// `mat4x4<f32>`, read by the vertex stage.
 pub(super) fn create_bone_palette_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("bone palette bgl"),
@@ -148,9 +138,6 @@ pub(super) fn create_skinned_pipeline(
     )
 }
 
-/// `ModelVertex`'s attributes: pos / uv / shade / packed light / packed tint.
-/// Shared, because the break-crack decal MUST draw the model stream with the
-/// same layout it was drawn with.
 const WORLD_MODEL_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x3,
     1 => Float32x2,
@@ -274,8 +261,6 @@ pub(super) fn create_model_break_pipeline(
 
 #[cfg(test)]
 mod tests {
-    /// The skinned module is `mob.wgsl` plus `skinned.wgsl`: it must parse
-    /// and validate as one module, with the entry points the pipeline names.
     #[test]
     fn skinned_shader_validates() {
         let source = super::mob_shader_source() + include_str!("../../shaders/skinned.wgsl");

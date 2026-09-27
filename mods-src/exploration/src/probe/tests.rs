@@ -4,14 +4,10 @@ use std::collections::HashMap;
 use super::*;
 
 thread_local! {
-    /// Crossings and their sizes, recorded by the fake queries below.
     static CALLS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
-    /// When set, the fake terrain answers one cell short.
     static SHORT: Cell<bool> = const { Cell::new(false) };
-    /// The fake memo's store and the claim it answers with.
     static STORE: RefCell<HashMap<Vec<u8>, Vec<u8>>> = RefCell::new(HashMap::new());
     static CLAIM: RefCell<Option<MemoClaim>> = const { RefCell::new(None) };
-    /// When set, the fake memo refuses every publication.
     static REFUSE: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -27,7 +23,6 @@ fn calls() -> Vec<usize> {
     CALLS.with(|c| c.borrow().clone())
 }
 
-/// Rock below y = 0, water in a pool at x = 5, air elsewhere.
 fn classify(p: [i32; 3]) -> TerrainSpace {
     if p[1] < 0 {
         TerrainSpace::Solid
@@ -47,7 +42,6 @@ fn fake_terrain(positions: Vec<[i32; 3]>) -> Vec<TerrainSpace> {
     out
 }
 
-/// Biome 7 owns every cell with x >= 100.
 fn fake_biomes_in_box(_lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
     if hi[0] >= 100 {
         vec![1, 7]
@@ -76,7 +70,6 @@ fn fake_put(key: &[u8], value: Vec<u8>) -> bool {
 
 fn fake_get_many(keys: Vec<Vec<u8>>) -> Vec<Option<Vec<u8>>> {
     CALLS.with(|c| c.borrow_mut().push(keys.len()));
-    // Answers every key but the last, the way a truncating host would.
     let n = keys.len().saturating_sub(1);
     keys.into_iter()
         .take(n)
@@ -122,11 +115,9 @@ fn reads_are_keyed_by_position_across_asks() {
     assert_eq!(reads.solid([0, -1, 0]), Some(true));
     assert!(reads.rock([0, -1, 0]) && !reads.free([0, -1, 0]));
     assert!(reads.free([0, 3, 0]) && reads.solid([0, 3, 0]) == Some(false));
-    // A fluid is neither rock nor room, and it is not solid.
     assert!(!reads.rock([5, 0, 0]) && !reads.free([5, 0, 0]));
     assert_eq!(reads.solid([5, 0, 0]), Some(false));
     assert_eq!(reads.space([5, 0, 0]), Some(TerrainSpace::Fluid));
-    // Never asked: unknown, not open.
     assert_eq!(reads.space([9, 9, 9]), None);
     assert!(!reads.rock([9, 9, 9]) && !reads.free([9, 9, 9]));
 }
@@ -213,7 +204,6 @@ fn settle_derives_once_publishes_and_defers_behind_a_lease() {
     assert_eq!(run(), Ok(42), "the published value is reused");
     assert_eq!(derived.get(), 1, "a published fact was derived again");
 
-    // A malformed publication is re-derived and republished, never trusted.
     STORE.with(|s| s.borrow_mut().insert(b"k".to_vec(), vec![1, 2, 3]));
     assert_eq!(run(), Ok(42));
     assert_eq!(derived.get(), 2);

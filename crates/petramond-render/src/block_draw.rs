@@ -25,20 +25,12 @@ use super::item_cube::{push_block_item_cube_lit, push_cell_local_face};
 use super::item_model::ItemVertex;
 use super::lighting::{DynLight, LightEnv};
 
-/// The instances a frame draws: the published list plus the INDICES this
-/// frame's camera kept. Indices rather than a filtered copy of the rows —
-/// re-culling used to clone every visible instance (an `Arc` refcount pair and
-/// ~96 bytes each, per frame) to say which ones survived.
 #[derive(Clone, Copy)]
 pub struct VisibleDraws<'a> {
     pub all: &'a [BlockDrawInstance],
     pub visible: &'a [u32],
-    /// The render origin the baked vertices are relative to.
     pub origin: glam::IVec3,
-    /// The viewer's visual clock (seconds), which moves spinning and bobbing
-    /// prims.
     pub time: f32,
-    /// The viewer's eye, relative to `origin`.
     pub eye: Vec3,
 }
 
@@ -49,9 +41,6 @@ impl<'a> VisibleDraws<'a> {
     }
 }
 
-/// The light one prim draws under: an `emissive` prim ignores the cell's own,
-/// because molten metal in a dark forge is a SOURCE and dimming it to the room
-/// would read as cold.
 fn prim_light(inst: &BlockDrawInstance, emissive: bool) -> DynLight {
     if emissive {
         DynLight::FULL
@@ -60,10 +49,6 @@ fn prim_light(inst: &BlockDrawInstance, emissive: bool) -> DynLight {
     }
 }
 
-/// A prim-space point in the world. Prims are authored in the BLOCK'S OWN
-/// space — for a model block, the footprint space its `.bbmodel` is authored
-/// in, turned by the placed facing — which is what lets a mod compute geometry
-/// against the model it can see and have it land right at any placement.
 fn at(inst: &BlockDrawInstance, origin: glam::IVec3, p: [f32; 3]) -> Vec3 {
     inst.frame
         .relative_to(origin)
@@ -97,10 +82,6 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
                     // past its own art.
                     let cell = [min[0].floor(), min[1].floor(), min[2].floor()];
                     let rel = |p: &[f32; 3]| [p[0] - cell[0], p[1] - cell[1], p[2] - cell[2]];
-                    // Built axis-aligned at its own cell corner, then carried
-                    // into prim space whole: a rotation of the box's CORNERS
-                    // keeps it a box, and the tile UVs come out the same
-                    // either way.
                     for face in Face::ALL {
                         push_cell_local_face(
                             verts,
@@ -142,9 +123,6 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
                         prim_light(inst, false),
                         false,
                     );
-                    // The prim's own rotation composes UNDER the block's, or a
-                    // mould lies flat at the right spot pointing the wrong way
-                    // for three of four placements.
                     let m = spin_of(inst, centre) * orient(centre, *yaw, *pitch);
                     for v in verts[start..].iter_mut() {
                         v.pos = m.transform_point3(Vec3::from(v.pos)).to_array();
@@ -157,8 +135,6 @@ pub fn build_block_draws(draws: VisibleDraws<'_>, verts: &mut Vec<Vertex>, indic
     }
 }
 
-/// One extruded sprite slab, whichever prim asked for it: an item drawn as
-/// its own sprite, or an authored sprite with its motion.
 struct SpriteSlab {
     at: [f32; 3],
     scale: f32,
@@ -172,13 +148,11 @@ struct SpriteSlab {
 
 #[derive(Clone, Copy)]
 struct SlabMotion {
-    /// Bob height and period in seconds; either zero = still.
     bob: [f32; 2],
     faces_viewer: bool,
 }
 
 impl SpriteSlab {
-    /// The slab `prim` draws at `time`, or `None` for a prim drawn another way.
     fn of(prim: &BlockDrawPrim, time: f32) -> Option<Self> {
         match *prim {
             BlockDrawPrim::Item {
@@ -229,12 +203,6 @@ impl SpriteSlab {
     }
 }
 
-/// The SPRITE half of item prims: the item's own extruded pixel slab, the same
-/// geometry it has in a hand or on the ground, scaled and yawed into place.
-///
-/// Drawing the ITEM — rather than an authored stand-in cube — is the point of
-/// this prim: a mould in a basin and the mould in your inventory cannot drift
-/// apart when the art changes, because they are the same sprite.
 pub fn build_block_draw_sprites(
     draws: VisibleDraws<'_>,
     env: LightEnv,
@@ -267,7 +235,6 @@ pub fn build_block_draw_sprites(
                     centre.y += height * (draws.time * std::f32::consts::TAU / seconds).sin();
                 }
                 if faces_viewer {
-                    // The slab's face is its ±Z; the viewer sees it square on.
                     let to = draws.eye - centre;
                     turn = Mat4::from_rotation_y(to.x.atan2(to.z));
                 }
@@ -291,7 +258,6 @@ pub fn build_block_draw_sprites(
     }
 }
 
-/// The BBMODEL half of item prims (their own atlas, so their own stream).
 pub fn build_block_draw_models(
     draws: VisibleDraws<'_>,
     env: LightEnv,
@@ -337,16 +303,12 @@ pub fn build_block_draw_models(
     }
 }
 
-/// The block's own rotation, with its translation dropped — an item prim is
-/// placed by `at()` and then TURNED by this, so it follows the model it sits
-/// in instead of the world axes.
 fn block_rotation(inst: &BlockDrawInstance) -> Mat4 {
     let mut m = inst.frame.transform;
     m.w_axis = glam::Vec4::new(0.0, 0.0, 0.0, 1.0);
     m
 }
 
-/// [`block_rotation`] applied about a world point.
 fn spin_of(inst: &BlockDrawInstance, centre: Vec3) -> Mat4 {
     Mat4::from_translation(centre) * block_rotation(inst) * Mat4::from_translation(-centre)
 }
@@ -359,9 +321,6 @@ fn tint_floats(tint: [u8; 3]) -> [f32; 3] {
     ]
 }
 
-/// Pitch then yaw, about `centre`. Pitch comes first so `pitch = PI/2` lays a
-/// standing item flat and `yaw` then turns it in the plane it is lying in —
-/// the order a person would describe it in.
 fn orient(centre: Vec3, yaw: f32, pitch: f32) -> Mat4 {
     Mat4::from_translation(centre)
         * Mat4::from_rotation_y(yaw)
@@ -369,9 +328,6 @@ fn orient(centre: Vec3, yaw: f32, pitch: f32) -> Mat4 {
         * Mat4::from_translation(-centre)
 }
 
-/// Multiply a straight RGB over the just-appended verts. Unlike the stack-dye
-/// path this does NOT set the dyed flag: a draw prim names its own tile and
-/// means the tint literally, where a dyed stack wants the desaturated twin.
 fn multiply_tint(verts: &mut [Vertex], tint: [u8; 3]) {
     if tint == [255, 255, 255] {
         return;

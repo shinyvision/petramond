@@ -1,5 +1,3 @@
-//! Payload structs and small vocabularies shared by calls and replies.
-
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{BlockId, ItemId, MobId, PlayerId};
@@ -12,38 +10,20 @@ pub use ai::*;
 pub use batch::*;
 pub use construction::*;
 
-/// Maximum UTF-8 byte length of a named mob animation crossing the mod API.
-/// The simulation stores and replicates active names, so the mechanism bounds
-/// them independently of whether the mob's model recognizes the name.
 pub const MAX_MOB_ANIM_NAME_BYTES: usize = 64;
 
-/// Largest absolute named-animation phase accepted from a mod, in authored
-/// animation seconds.
 pub const MAX_MOB_ANIM_PHASE_MAGNITUDE: f32 = 1_000_000.0;
 
-/// Largest absolute named-animation playback/seek rate accepted from a mod,
-/// in authored animation seconds per real second.
 pub const MAX_MOB_ANIM_RATE_MAGNITUDE: f32 = 1_000.0;
 
-/// One value of the open GUI session's state map. Written by mods
-/// on the tick ([`GuiCall::GuiStateSet`](crate::GuiCall::GuiStateSet)); read per frame by the renderer to
-/// drive `label` text, `rotimage` angles (radians, `F32`), and mod overlay
-/// fractions. Keys are mod-local: the map belongs to one GUI session (cleared
-/// on open/close), so no namespace prefix is enforced.
-///
-/// [`GuiCall::GuiStateSet`]: crate::GuiCall::GuiStateSet
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum GuiValue {
     F32(f32),
     I32(i32),
     Str(String),
-    /// Named rows for document list templates.
     List(Vec<std::collections::BTreeMap<String, Self>>),
 }
 
-/// One value in a live mob's tag map. Engine tags use the `petramond:`
-/// namespace (e.g., `petramond:confined`); mods may invent `mod_id:` keys.
-/// Tags persist with the mob and are visible to AI.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum MobTagValue {
     Bool(bool),
@@ -52,325 +32,136 @@ pub enum MobTagValue {
     Str(String),
 }
 
-/// The outcome of [`TagCall::MobTagGet`](crate::TagCall::MobTagGet): a mob
-/// that is GONE (dead, unloaded, never spawned) is told apart from a live mob
-/// simply not carrying the key — the two mean different things to a mod
-/// (retry vs. store), so they are never conflated.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum MobTagLookup {
-    /// No such LIVE mob (dead, unloaded, or never existed).
     MissingMob,
-    /// The mob is live but carries nothing under the key.
     Absent,
-    /// The mob carries this value under the key.
     Value(MobTagValue),
 }
 
-/// A live mob's snapshot for [`EntityCall::MobsInRadius`](crate::EntityCall::MobsInRadius) /
-/// [`TagCall::MobsWithTag`](crate::TagCall::MobsWithTag). The mob's ADDRESS is the stable
-/// [`id`](Self::id) — every mob call and event payload speaks it
-/// (see the mob-addressing note on [`HostCall`](crate::HostCall)). `index` is
-/// only an intra-tick JOIN key against other snapshots taken this tick; it is
-/// never accepted by a call and renumbers on any removal.
-///
-/// [`EntityCall::MobsInRadius`]: crate::EntityCall::MobsInRadius
-/// [`TagCall::MobsWithTag`]: crate::TagCall::MobsWithTag
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct MobSnapshot {
-    /// Live-set list position THIS TICK — an intra-tick join key only, never
-    /// an address (calls take [`id`](Self::id)).
     pub index: u32,
-    /// The species' session id, matching the `kind` in event payloads
-    /// ([`EventPayload::MobDied`] etc.). Deliberately the ONLY species field:
-    /// a snapshot carries no `"pack:species"` string, because a crowd query
-    /// answers dozens of snapshots per tick and a heap string per mob is the
-    /// most expensive thing in the whole marshalling. Resolve a key ONCE with
-    /// [`RegistryCall::ResolveMob`](crate::RegistryCall::ResolveMob) (or [`RegistryCall::MobNames`](crate::RegistryCall::MobNames) for the reverse)
-    /// and compare ids.
-    ///
-    /// [`EventPayload::MobDied`]: crate::EventPayload::MobDied
-    /// [`RegistryCall::ResolveMob`]: crate::RegistryCall::ResolveMob
-    /// [`RegistryCall::MobNames`]: crate::RegistryCall::MobNames
     pub kind: MobId,
-    /// Feet position.
     pub pos: [f64; 3],
     pub health: f32,
-    /// Stable session id for this live mob — THE mob address, held across
-    /// ticks. It survives unrelated removals; it is not a species id and is
-    /// not promised stable across save/load.
     pub id: u64,
-    /// Body facing, radians about +Y. MOB convention: yaw `0` faces `-Z`,
-    /// so the facing direction is `(-sin yaw, 0, -cos yaw)` — the same frame
-    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive) yaws speak.
-    ///
-    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub yaw: f32,
-    /// Body pitch, radians about the lateral axis inside the yaw, positive =
-    /// nose up. `0` for every body the engine moves itself; a body a mod
-    /// authors through [`EntityCall::MobKinematic`](crate::EntityCall::MobKinematic) reads back what it was
-    /// given, and a released body eases back to level.
-    ///
-    /// [`EntityCall::MobKinematic`]: crate::EntityCall::MobKinematic
     pub pitch: f32,
-    /// Body roll, radians about the facing axis inside the yaw and pitch,
-    /// positive = right side up. Level and authored exactly like `pitch`.
     pub roll: f32,
-    /// Current velocity (m/s). Read-only; steer through
-    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive).
-    ///
-    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub vel: [f32; 3],
-    /// Whether the body rests on the ground this tick (the same fact the
-    /// engine's own locomotion gates jumps on) — with
-    /// [`moving`](Self::moving), what a gait policy needs to decide a
-    /// [`EntityCall::MobDrive`](crate::EntityCall::MobDrive) launch.
-    ///
-    /// [`EntityCall::MobDrive`]: crate::EntityCall::MobDrive
     pub on_ground: bool,
-    /// Whether the brain's WALKING locomotion drove the body this tick — the
-    /// same fact that selects the walk pose. Deliberate motion only: shoves
-    /// from other bodies, knockback flights, and kinematic drives all read
-    /// `false`, while a ballistic arc that began as a walk stays `true`
-    /// through its unsteered descent. THE intent signal for a gait policy:
-    /// [`vel`](Self::vel) alone cannot distinguish a mob going somewhere
-    /// from a mob being pushed around.
     pub moving: bool,
-    /// Body extents — the same envelope the engine's collision, targeting
-    /// and riding use: a box `half_width` either side of the feet position,
-    /// `height` tall from the feet up. A LONG body (a hull) also has a
-    /// `half_length` ALONG its facing: it occupies a run of `half_width`
-    /// squares whose centres span `±(half_length - half_width)` along
-    /// `(-sin yaw, 0, -cos yaw)`. Square bodies answer `half_length ==
-    /// half_width`.
     pub half_width: f32,
     pub height: f32,
     pub half_length: f32,
-    /// Whether this body is ENTOMBED: standing inside collision geometry
-    /// with nowhere free to escape to within reach (walled in, buried,
-    /// grown into by a trunk). The engine reports the fact and holds the
-    /// body still; what should happen to it — suffocation, a rescue, a
-    /// slow crush — is a mod's decision.
     pub entombed: bool,
-    /// Active body conditions in condition-id order, separate from attached
-    /// particle bundles.
     pub conditions: Vec<ConditionData>,
 }
 
-/// One item entity's snapshot ([`EntityCall::ItemEntity`](crate::EntityCall::ItemEntity)): a stack loose in
-/// the world, in flight, or lodged in a block.
-///
-/// [`EntityCall::ItemEntity`]: crate::EntityCall::ItemEntity
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ItemEntityData {
-    /// Stable session id — THE item-entity address (event payloads, calls).
     pub id: u64,
-    /// What it is: item, count, instance data.
     pub stack: ItemStackData,
-    /// Who launched it ([`EntityCall::LaunchItem`](crate::EntityCall::LaunchItem)), while it is in flight;
-    /// `None` for a drop, or once it has come to rest.
-    ///
-    /// [`EntityCall::LaunchItem`]: crate::EntityCall::LaunchItem
     pub owner: Option<EntityRef>,
-    /// Centre, world space.
     pub pos: [f64; 3],
-    /// Velocity, m/s (zero once lodged).
     pub vel: [f32; 3],
     pub motion: ItemMotion,
 }
 
-/// How an item entity is moving ([`ItemEntityData::motion`]).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ItemMotion {
-    /// An ordinary drop: falling, settling, drifting to a reaching player.
     Loose,
-    /// Launched and flying ([`EntityCall::LaunchItem`](crate::EntityCall::LaunchItem)): pointed along its
-    /// velocity, striking what it meets.
-    ///
-    /// [`EntityCall::LaunchItem`]: crate::EntityCall::LaunchItem
     Flight,
-    /// Lodged in `cell`, heading kept, until that block goes.
     Stuck { cell: [i32; 3] },
 }
 
-/// A living thing a call can name as the ACTOR behind something — the
-/// attacker a damage request is landed on behalf of
-/// ([`EntityCall::DamageMob`](crate::EntityCall::DamageMob), [`PlayerCall::DamagePlayer`](crate::PlayerCall::DamagePlayer)). Players by
-/// session id, mobs by their stable id.
-///
-/// [`EntityCall::DamageMob`]: crate::EntityCall::DamageMob
-/// [`PlayerCall::DamagePlayer`]: crate::PlayerCall::DamagePlayer
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum EntityRef {
     Player(PlayerId),
     Mob(u64),
 }
 
-/// What stops a [`BlockCall::Raycast`](crate::BlockCall::Raycast).
-///
-/// [`BlockCall::Raycast`]: crate::BlockCall::Raycast
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RayFilter {
-    /// What the crosshair selects: every block with a selection shape —
-    /// solids, sub-cell shapes by their real geometry, plants by their
-    /// selection box. Air and water pass.
     Selectable,
-    /// What a body collides with: only cells holding collision boxes, tested
-    /// by their shape. Plants, snow layers, water and decorative
-    /// no-collision models pass — the ray a swung tool or a projectile
-    /// follows.
     Collidable,
 }
 
-/// One [`BlockCall::Raycast`](crate::BlockCall::Raycast) hit.
-///
-/// [`BlockCall::Raycast`]: crate::BlockCall::Raycast
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct RaycastHitData {
-    /// The cell the ray stopped in.
     pub block: [i32; 3],
-    /// The crossed face's normal, pointing back toward the ray's origin
-    /// (zero when the origin started inside the cell).
     pub face: [i32; 3],
-    /// Distance from the origin to the hit, in blocks.
     pub distance: f32,
 }
 
-/// What a player is attached to, for mount HostCalls and
-/// [`EventPayload::PlayerDismounted`].
-///
-/// [`EventPayload::PlayerDismounted`]: crate::EventPayload::PlayerDismounted
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum MountTarget {
-    /// Live mob, addressed by its stable session id.
     Mob(u64),
-    /// A static world-space pose anchor ([`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet)) — the
-    /// anchor position the pose was pinned at.
-    ///
-    /// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
     Anchor([f64; 3]),
 }
 
-/// Named actor-pose vocabulary for [`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet) (`0` is
-/// reserved). Unknown values pin the body in its ordinary rest pose — like a
-/// disabled pack, never an error.
-///
-/// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
 pub mod pose {
-    /// Seated: thighs forward, shins down — chairs, benches, sofas.
     pub const SITTING: u8 = 1;
 }
 
-/// One rider of a mount, for [`EntityCall::MobRiders`](crate::EntityCall::MobRiders).
-///
-/// [`EntityCall::MobRiders`]: crate::EntityCall::MobRiders
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct MobRiderData {
-    /// Seat index into the mount's declared `seats` list.
     pub seat: u8,
-    /// The riding session.
     pub player_id: PlayerId,
 }
 
-/// Seat declaration and current occupants of one mount, for
-/// [`EntityCall::MobRiders`](crate::EntityCall::MobRiders).
-///
-/// [`EntityCall::MobRiders`]: crate::EntityCall::MobRiders
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct MobRidersData {
-    /// Number of seats declared by the mount's row. Valid seat indices
-    /// are `0..capacity`.
     pub capacity: u8,
-    /// Current occupants, in player-id order.
     pub riders: Vec<MobRiderData>,
 }
 
 impl MobRidersData {
-    /// The lowest declared seat index nobody occupies, or `None` when the
-    /// mount is full (or declares no seats) — the shared boarding pick.
     pub fn first_free_seat(&self) -> Option<u8> {
         (0..self.capacity).find(|s| !self.riders.iter().any(|r| r.seat == *s))
     }
 }
 
-/// A placed model-block group's world placement, for
-/// [`EntityCall::BlockModelGroup`](crate::EntityCall::BlockModelGroup) — everything block-local policy (a seat
-/// layout, a machine front) needs to map its own footprint-space data into
-/// the world.
-///
-/// [`EntityCall::BlockModelGroup`]: crate::EntityCall::BlockModelGroup
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ModelGroupData {
-    /// The group's BASE cell (the rotated footprint's min corner).
     pub base: [i32; 3],
-    /// The placement facing the group was placed with.
     pub facing: crate::Facing,
 }
 
-/// Authoritative playback state of one active named mob animation, for
-/// [`EntityCall::MobAnimState`](crate::EntityCall::MobAnimState).
-///
-/// [`EntityCall::MobAnimState`]: crate::EntityCall::MobAnimState
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct MobAnimStateData {
-    /// Absolute authored-animation phase in seconds.
     pub phase: f32,
-    /// Current playback rate. While seeking this is the non-negative approach
-    /// rate; after landing it is `0`.
     pub rate: f32,
-    /// Absolute seek target, or `None` during ordinary rate-driven playback.
     pub seek: Option<f32>,
 }
 
-/// One player's movement intent this tick, for [`PlayerCall::PlayerInput`](crate::PlayerCall::PlayerInput) —
-/// decomposed into the player's own yaw frame so a driving mod never touches
-/// the world-space wish plumbing.
-///
-/// [`PlayerCall::PlayerInput`]: crate::PlayerCall::PlayerInput
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub struct PlayerInputData {
-    /// Forward(+)/back(−) along the player's facing, `[-1, 1]`.
     pub forward: f32,
-    /// Right(+)/left(−) strafe, `[-1, 1]`.
     pub strafe: f32,
     pub jump: bool,
     pub sneak: bool,
-    /// The player's look. PLAYER convention: yaw `0` faces `+Z` (facing
-    /// `(sin yaw, 0, cos yaw)`) — π apart from the mob yaw convention; a mod
-    /// aligning a mount to its rider adds π.
     pub yaw: f32,
     pub pitch: f32,
 }
 
-/// One extra Blockbench DISPLAY TRANSFORM on top of an item's authored hold —
-/// same units and axis order as the `display` block, so a pose tuned in the
-/// modelling tool transfers digit-for-digit.
-///
-/// Composed OUTSIDE the authored transform (`offset · authored`), so the
-/// translation moves the item within the hold frame rather than along its own
-/// tilted axes. [`IDENTITY`](Self::IDENTITY) means the same as no pose at all.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
 pub struct HeldPoseData {
-    /// Rotation in DEGREES about X, then Y, then Z — the `display` block's
-    /// convention.
     pub rotation: [f32; 3],
-    /// Translation in 1/16-BLOCK pixels — the `display` block's convention.
     pub translation: [f32; 3],
 }
 
 impl HeldPoseData {
-    /// The neutral offset: the authored hold, unchanged.
     pub const IDENTITY: Self = Self {
         rotation: [0.0; 3],
         translation: [0.0; 3],
     };
 
-    /// Whether this offset changes nothing.
     pub fn is_identity(&self) -> bool {
         *self == Self::IDENTITY
     }
 
-    /// Every component finite. A NaN would poison every transform downstream
-    /// of the hand, so the engine refuses one outright.
     pub fn is_finite(&self) -> bool {
         self.rotation
             .iter()
@@ -379,87 +170,43 @@ impl HeldPoseData {
     }
 }
 
-/// One hand's held-item pose for [`BodyCall::SetPlayerHeldPose`](crate::BodyCall::SetPlayerHeldPose): an offset
-/// per VIEW, because the two views hold an item from different authored poses
-/// (`firstperson_righthand` vs `thirdperson_righthand`), so the same intent is
-/// a different delta in each.
-///
-/// The OFF hand is never authored separately — the engine mirrors by the rule
-/// Blockbench applies to a left-hand slot (negate the x-translation and the
-/// y/z rotations).
-///
-/// [`BodyCall::SetPlayerHeldPose`]: crate::BodyCall::SetPlayerHeldPose
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Default)]
 pub struct HeldPose {
-    /// Composed onto the item's `firstperson_*hand` hold — the wielder's own
-    /// screen.
     pub first_person: HeldPoseData,
-    /// Composed onto the item's `thirdperson_*hand` hold — the body every
-    /// observer sees (and the wielder's own, in third person).
     pub third_person: HeldPoseData,
 }
 
 impl HeldPose {
-    /// The neutral pose: both views keep their authored hold.
     pub const IDENTITY: Self = Self {
         first_person: HeldPoseData::IDENTITY,
         third_person: HeldPoseData::IDENTITY,
     };
 
-    /// Whether this pose changes nothing in either view.
     pub fn is_identity(&self) -> bool {
         self.first_person.is_identity() && self.third_person.is_identity()
     }
 
-    /// Every component of both views finite.
     pub fn is_finite(&self) -> bool {
         self.first_person.is_finite() && self.third_person.is_finite()
     }
 }
 
-/// How a [`BonePoseData`] meets the animation already posing its bone.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum BonePoseMode {
-    /// COMPOSE onto whatever the animation put the bone at, so the offset
-    /// layers over the motion — a nudge that still walks, sneaks and swings.
     #[default]
     Compose,
-    /// REPLACE the animation's own posing of this bone: HELD at the rig's rest
-    /// pose plus this rotation, whatever the walk cycle wanted.
-    ///
-    /// What a STANCE needs — an arm raised mid-stride must not also swing, and
-    /// composing cannot express that because the swing is still underneath.
-    /// Descendants keep their own animation relative to the held bone, so
-    /// holding a shoulder does NOT freeze the elbow: a stance must hold every
-    /// joint it owns.
     Replace,
 }
 
-/// One bone's pose: an offset composed onto the engine's own animation, or a
-/// stance that replaces it — see [`BonePoseMode`].
-///
-/// The rotation is about the bone's PIVOT and carries through every descendant,
-/// which is what makes "rotate the shoulder" move the whole arm and the thing
-/// in its fist.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct BonePoseData {
-    /// The rig bone to pose — see the [`bone`](crate::bone) names. A name
-    /// the rig does not have is ignored, like a disabled pack.
     pub bone: String,
-    /// Rotation in DEGREES about the bone's pivot, applied X then Y then Z —
-    /// the same convention as a `.bbmodel`'s own rotations, so a pose posed
-    /// in Blockbench transfers digit for digit.
     pub rotation: [f32; 3],
-    /// Translation in 1/16-BLOCK pixels, in the bone's frame.
     pub translation: [f32; 3],
-    /// Whether this pose layers over the animation or replaces it.
     pub mode: BonePoseMode,
 }
 
 impl BonePoseData {
-    /// Every component finite; a NaN would poison every transform below the
-    /// bone, so the engine refuses the list whole. The NAME is not validated
-    /// here — an unknown one resolves to nothing and is dropped.
     pub fn is_finite(&self) -> bool {
         self.rotation
             .iter()
@@ -468,316 +215,124 @@ impl BonePoseData {
     }
 }
 
-/// The player rig's bone names, for [`BodyCall::SetPlayerBonePose`](crate::BodyCall::SetPlayerBonePose). Any
-/// authored name works; these are the shipped rig's, named by intent rather
-/// than by how the model file spells them.
-///
-/// THAT MATTERS FOR THE ARMS: the rig authors the MAIN hand's arm as the
-/// model's LEFT (the body faces engine-forward, which swaps the sides you
-/// see), so reaching for `"right_shoulder"` by intuition moves the wrong arm.
-///
-/// [`BodyCall::SetPlayerBonePose`]: crate::BodyCall::SetPlayerBonePose
 pub mod bone {
-    /// The head — rotating it composes with, and is overridden by, the
-    /// engine's own head-look when an animation is not driving the head.
     pub const HEAD: &str = "head";
-    /// The upper body (chest + arms + head). Rotating it turns everything
-    /// above the waist.
     pub const BODY: &str = "body";
-    /// Everything above the legs.
     pub const WAIST: &str = "waist";
 
-    /// The MAIN hand's whole arm, from the shoulder joint down.
     pub const MAIN_SHOULDER: &str = "left_shoulder";
-    /// The MAIN hand's forearm, from the elbow down.
     pub const MAIN_ELBOW: &str = "left_elbow";
-    /// The OFF hand's whole arm, from the shoulder joint down.
     pub const OFF_SHOULDER: &str = "right_shoulder";
-    /// The OFF hand's forearm, from the elbow down.
     pub const OFF_ELBOW: &str = "right_elbow";
 }
 
-/// One thing a body does with its hands, and can be barred from doing
-/// ([`PlayerCall::SetPlayerDeniedActions`](crate::PlayerCall::SetPlayerDeniedActions)).
-///
-/// These are the three gates a player's own buttons drive, and they stay
-/// separate because they are separate gates: a body that can still mine but
-/// not fight is a reasonable thing to want.
-///
-/// Barring an action stops the ACTION, never the intent behind it. A body
-/// denied [`Use`](Self::Use) still has its use button read as held, which is
-/// what lets the same press that raises a guard be the press the guard
-/// swallows.
-///
-/// [`PlayerCall::SetPlayerDeniedActions`]: crate::PlayerCall::SetPlayerDeniedActions
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BodyAction {
-    /// Swing at a mob, another player, or the air.
     Attack,
-    /// Break blocks — both the held-button timer and a client's claimed finish.
     Mine,
-    /// Interact: the whole use dispatch — placing, doors and containers, an
-    /// item's own use, starting an eat — and the hold-repeat that re-runs it.
     Use,
 }
 
-/// One of a body's engine QUANTITIES a claim can scale
-/// ([`PlayerCall::SetPlayerAttribute`](crate::PlayerCall::SetPlayerAttribute)): the engine keeps the base — a
-/// constant, a mode, a formula — and the resolved claims multiply it.
-///
-/// The vocabulary is engine-defined and grows by appending a variant at the
-/// engine quantity that wants a knob; a claim is always a MULTIPLIER
-/// (product across claimants, `1.0` releases), never an absolute, so any
-/// two packs' claims compose without an order to argue about.
-///
-/// [`PlayerCall::SetPlayerAttribute`]: crate::PlayerCall::SetPlayerAttribute
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PlayerAttribute {
-    /// The land-speed multiplier: scales whatever mode the player's own
-    /// input selected (walk, sprint and sneak together; swim, climb and
-    /// flight untouched). The engine's own claim — the speed-carrying
-    /// status effects — multiplies in beside yours.
     MoveSpeed,
-    /// The cooldown between primary-button attack swings (the engine's
-    /// melee rate limit). `0.0` removes it — for a pack whose own pacing
-    /// already gates the hand (a swing-claim animation barring attacks
-    /// mid-arc), so the ANIMATION becomes the attack pace instead of a
-    /// constant the animation has to chase.
     AttackCooldown,
-    /// The flight-speed multiplier: scales spectator and creative flight
-    /// alike (walking untouched). Its own ceiling, since a body that flies
-    /// has its own ways to outrun the terrain.
     FlySpeed,
 }
 
 impl PlayerAttribute {
-    /// Every attribute, in declaration order — the index space claim
-    /// storage sizes itself on. A new variant is appended here too.
     pub const ALL: [PlayerAttribute; 3] = [Self::MoveSpeed, Self::AttackCooldown, Self::FlySpeed];
 
-    /// This attribute's slot in [`Self::ALL`]: the declaration order, which
-    /// is also its wire discriminant.
     pub const fn index(self) -> usize {
         self as usize
     }
 }
 
-/// One kind of one-shot hand action the engine latches per tick (client:
-/// per frame) — the raw gesture that fired, so a body-posing mod keys its
-/// own curve off the same trigger and off nothing pre-interpreted. The
-/// engine's own graphs collapse these into two gestures: `Attack`/`Break`
-/// play the full swing, the rest the softer jab.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum SwingKind {
-    /// An attack swing — a mob, another player, or a punch at the air.
     Attack,
-    /// A block broke under this hand's mining timer.
     Break,
-    /// A block placement.
     Place,
-    /// A throw or drop left this hand.
     Throw,
-    /// A use click that something consumed: a screen, a door, a bed, an
-    /// item use.
     Interact,
 }
 
-/// What a body's hands are doing with the PRIMARY button this tick (client:
-/// frame), as [`BodyCall::PlayerState`](crate::BodyCall::PlayerState) / [`PlayerCall::Players`](crate::PlayerCall::Players) publish it —
-/// the raw swing facts a body-animating mod keys its own clock off.
-///
-/// Deliberately raw TRIGGERS, not a phase: each side runs its own clock off
-/// them (ticks on the server, frame seconds on the client) exactly as the
-/// recoil-cue pattern does. The mining level is a LEVEL (the held button is
-/// working a block), the one-shots are edges the newest wins.
-///
-/// [`BodyCall::PlayerState`]: crate::BodyCall::PlayerState
-/// [`PlayerCall::Players`]: crate::PlayerCall::Players
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HandSwing {
-    /// The MAIN hand is mid-mine (held button on a block, timer running).
     pub mining: bool,
-    /// The main hand's one-shot this tick, if it fired one.
     pub main: Option<SwingKind>,
-    /// The off hand's one-shot (its place jab), if it fired one.
     pub off: Option<SwingKind>,
 }
 
-/// The player's state for [`BodyCall::PlayerState`](crate::BodyCall::PlayerState).
-///
-/// [`BodyCall::PlayerState`]: crate::BodyCall::PlayerState
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerSnapshot {
-    /// WHOSE state this is — the identity every player-addressed HostCall
-    /// takes, so a handler acts on the player it was handed instead of
-    /// guessing. `None` only where the dispatch has no session behind it (mod
-    /// init, unit fixtures). On a CLIENT instance, always the local player.
     pub id: Option<PlayerId>,
-    /// Feet position.
     pub pos: [f64; 3],
     pub vel: [f32; 3],
-    /// Look direction, radians (yaw about +Y, pitch clamped short of vertical).
     pub yaw: f32,
     pub pitch: f32,
-    /// Half-heart points (`0..=20`).
     pub health: i32,
     pub on_ground: bool,
     pub spectator: bool,
-    /// Whether the player is sneaking (held intent, gated on gameplay focus).
-    /// Part of the snapshot so anything consuming an
-    /// [`EventPayload::InteractAttempt`] gates its own claim on the actor's
-    /// state instead of reconstructing input from the roster.
-    ///
-    /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
     pub sneak: bool,
-    /// The selected hotbar stack's item (`None` = empty hand); bridge with
-    /// [`RegistryCall::ItemNames`](crate::RegistryCall::ItemNames) / [`RegistryCall::ResolveItem`](crate::RegistryCall::ResolveItem).
-    ///
-    /// [`RegistryCall::ItemNames`]: crate::RegistryCall::ItemNames
-    /// [`RegistryCall::ResolveItem`]: crate::RegistryCall::ResolveItem
     pub held: Option<ItemId>,
-    /// The OFF-HAND slot's item (`None` = empty). Always literally that slot,
-    /// unlike [`held`](Self::held), which resolves the ACTING hand during a use
-    /// click's second pass — so a consumer can see both hands at once.
     pub off_held: Option<ItemId>,
-    /// Whether the interact (use) button is HELD, gated on gameplay focus like
-    /// [`sneak`](Self::sneak). The unconditional intent, for continuous-use
-    /// predicates: a held button also re-fires
-    /// [`EventPayload::InteractAttempt`] every few ticks, but only at whatever
-    /// the crosshair holds.
-    ///
-    /// [`EventPayload::InteractAttempt`]: crate::EventPayload::InteractAttempt
     pub use_held: bool,
-    /// Whether THIS caller holds the actor's current use gesture — took the
-    /// press ([`BodyCall::HoldUse`](crate::BodyCall::HoldUse)) and has not seen the button come up.
-    ///
-    /// The predicate a CONTINUOUS use is written against, in place of
-    /// [`use_held`](Self::use_held): a raw held button says nothing about
-    /// whether the press was yours, so a pack keying off it starts its own
-    /// interaction on top of whatever the click actually did.
-    ///
-    /// [`BodyCall::HoldUse`]: crate::BodyCall::HoldUse
     pub holds_use: bool,
-    /// The selected stack's count (0 = empty hand) — lets a consumer gate an
-    /// atomic multi-item spend (the trough's three-wheat fill) exactly.
     pub held_count: u8,
-    /// The world-space anchor this player is pose-pinned at
-    /// ([`EntityCall::PlayerPoseSet`](crate::EntityCall::PlayerPoseSet)), or `None` when not posed. THE occupancy
-    /// read model for static seats: a consumer derives "is this seat taken"
-    /// by comparing its own seat anchors against the roster — the engine's
-    /// registry is always truth, so there is no mod-side bookkeeping to
-    /// desync. Anchors round-trip verbatim (`f64` bit-exact), so exact
-    /// equality against the anchor a mod passed is sound.
-    ///
-    /// [`EntityCall::PlayerPoseSet`]: crate::EntityCall::PlayerPoseSet
     pub pose_anchor: Option<[f64; 3]>,
-    /// What this body's hands did with the action buttons this tick (client:
-    /// this frame) — the swing facts a hand-animating mod keys its clock
-    /// off. A mod that animates a gesture itself stands the engine's copy
-    /// down by setting the param the rig's gate for that gesture reads
-    /// ([`BodyCall::SetPlayerAnimatorParams`](crate::BodyCall::SetPlayerAnimatorParams)).
-    ///
-    /// [`BodyCall::SetPlayerAnimatorParams`]: crate::BodyCall::SetPlayerAnimatorParams
     pub swing: HandSwing,
-    /// Body extents, the same envelope the engine collides and targets:
-    /// a box `half_width` either side of the feet, `height` tall, with the
-    /// eye `eye_height` above the feet (where this body's look ray starts).
     pub half_width: f32,
     pub height: f32,
     pub eye_height: f32,
-    /// Whether this body is ENTOMBED: standing inside collision geometry
-    /// with nowhere free to escape to within reach (walled in, buried,
-    /// grown into by a trunk). The engine reports the fact and holds the
-    /// body still; what should happen to it — suffocation, a rescue, a
-    /// slow crush — is a mod's decision.
     pub entombed: bool,
-    /// Active body conditions in condition-id order.
     pub conditions: Vec<ConditionData>,
 }
 
-/// One condition active on a body (see [`MobSnapshot::conditions`] /
-/// [`PlayerSnapshot::conditions`]).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ConditionData {
     pub condition: crate::ConditionId,
-    /// The current stage's index in the condition row.
     pub stage: u8,
-    /// Ticks until the condition ends.
     pub remaining: u32,
-    /// Ticks since it began.
     pub elapsed: u32,
 }
 
-/// A condition row, answered by [`RegistryCall::ResolveCondition`](crate::RegistryCall::ResolveCondition).
-///
-/// [`RegistryCall::ResolveCondition`]: crate::RegistryCall::ResolveCondition
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ConditionInfoData {
     pub id: crate::ConditionId,
     pub key: String,
-    /// Stage names in row (strength) order; a stage index addresses this list.
     pub stages: Vec<String>,
 }
 
 impl ConditionInfoData {
-    /// The index of the stage named `name`.
     pub fn stage(&self, name: &str) -> Option<u8> {
         self.stages.iter().position(|s| s == name).map(|i| i as u8)
     }
 }
 
-/// One entry of [`PlayerCall::Players`](crate::PlayerCall::Players): a connected player's session id plus
-/// their state snapshot.
-///
-/// [`PlayerCall::Players`]: crate::PlayerCall::Players
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayerListEntry {
-    /// The session's player id — the value per-player calls
-    /// (`PlayerInput`, `MobMount`) address.
     pub id: PlayerId,
     pub state: PlayerSnapshot,
 }
 
-/// One session with a mod GUI open, as [`GuiCall::GuiViewers`](crate::GuiCall::GuiViewers) reports it.
-///
-/// `anchor` is the cell the session was opened on — the SAME cell a machine is
-/// keyed at (its container anchor), so matching a viewer to one of your placed
-/// machines is an equality test, not a search — or the live mob a session was
-/// opened on. `None` for a GUI with nothing behind it (a station, an
-/// unanchored `GuiOpen`).
-///
-/// [`GuiCall::GuiViewers`]: crate::GuiCall::GuiViewers
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GuiViewerData {
     pub player_id: PlayerId,
-    /// The GUI kind key (`mod_id:name`) this session has open.
     pub kind: String,
     pub anchor: Option<ContainerAddress>,
 }
 
-/// One core-selected candidate for programmatic hostile spawning. The engine
-/// owns physical site selection; registered hostile spawners decide whether a
-/// specific hostile species admits this site.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct HostileSpawnCandidate {
-    /// Feet position, centered in the candidate cell.
     pub pos: [f64; 3],
-    /// Feet cell.
     pub cell: [i32; 3],
-    /// Cached light channels on the 6-bit `0..=63` scale.
     pub combined_light: u8,
     pub sky_light: u8,
     pub block_light: u8,
-    /// Distance (blocks) from this site to the NEAREST connected player — the
-    /// multiplayer-correct input for proximity spawn rules (the host-session
-    /// `PlayerState` snapshot only sees one player).
     pub nearest_player_dist: f32,
 }
 
-/// Which isolated runtime instance is executing this module. Server and
-/// worldgen instances are deterministic simulation runtimes; `Client` is a
-/// presentation-only instance with read-only replica queries and sandboxed
-/// client storage.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeSide {
     Server,
@@ -785,20 +340,6 @@ pub enum RuntimeSide {
     Client,
 }
 
-/// One thing a mod draws on a placed block, in the BLOCK'S OWN SPACE.
-///
-/// For a MODEL block that is its FOOTPRINT space — the coordinates its
-/// `.bbmodel` is authored in (16 authored px = 1.0), origin at the footprint
-/// base and turned by the placed facing — so `[0,0,0]` is the same corner
-/// whichever of its cells you addressed, and geometry computed against the
-/// model in Blockbench lands right at every placement. For anything else it is
-/// the cell, `0..1`.
-///
-/// This is the primitive under any presentation a mod SIMULATES rather than
-/// stages: liquid in a channel, a needle on a dial, a part sliding. The set is
-/// retained and replaced wholesale, redrawn every frame from the replica, and
-/// costs no re-mesh — which is what makes it usable at tick rate, unlike a
-/// block-row swap or a parts mask.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum DrawPrim {
     /// An axis-aligned box wearing an atlas TILE (the same names a block row's
@@ -832,16 +373,6 @@ pub enum DrawPrim {
         item: String,
         tint: [u8; 3],
     },
-    /// An atlas TILE extruded one texel (1/16 of its width) deep — the slab a
-    /// sprite item is drawn as, without an item row behind it: a sign, a
-    /// badge, a status mark. `scale` is its width in block units, centred on
-    /// `at`; `pitch` then `yaw` as for [`Item`](Self::Item). Its motion runs
-    /// on the viewer's own clock, so it costs no per-tick resubmission: `spin`
-    /// (radians per second about +Y, through `at`), and `bob` (`[height,
-    /// seconds]`: it rises and falls `height` blocks either side of `at` once
-    /// every `seconds`; a zero in either is no bob). `faces_viewer` turns its
-    /// face toward whoever looks at it, about +Y, under `yaw` and `spin` — a
-    /// mark that must read from every side. `emissive` draws it at full light.
     Sprite {
         at: [f32; 3],
         scale: f32,
@@ -856,33 +387,19 @@ pub enum DrawPrim {
     },
 }
 
-/// What a burst's particles are cut from, named by the event that fires it
-/// ([`SoundCall::EmitterBurst`](crate::SoundCall::EmitterBurst)). The bundle row
-/// owns how the particles fly; this is only what they show.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ParticleTexture {
-    /// Patches of an atlas TILE (the names a block row's `tiles` use), from
-    /// the part of it `slice` names (`[u0, v0, u1, v1]` in tile fractions;
-    /// the whole tile is `[0, 0, 1, 1]`), multiplied by `tint`.
     Tile {
         tile: String,
         slice: [f32; 4],
         tint: [u8; 3],
     },
-    /// A block's own look, the way mining it sheds it: per particle one of
-    /// its face tiles — or its model's texture, which no tile name reaches —
-    /// tinted as the block is. `tint` adds a dye (a cell's `petramond:tint`).
     Block {
         block: BlockId,
         tint: Option<[u8; 3]>,
     },
 }
 
-/// Where a container lives. A `Block` names a block's slot storage (any
-/// footprint cell of a multi-cell block addresses its anchor's one container);
-/// a `Mob` names a live mob's carried storage, sized by its row's
-/// `container_slots`. Plain arrays convert to `Block`, so block call sites
-/// keep reading as positions.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ContainerAddress {
     Block([i32; 3]),
@@ -895,190 +412,91 @@ impl From<[i32; 3]> for ContainerAddress {
     }
 }
 
-/// A connected player's lasting identity ([`PlayerCall::PlayerIdentity`](crate::PlayerCall::PlayerIdentity)).
-///
-/// [`PlayerCall::PlayerIdentity`]: crate::PlayerCall::PlayerIdentity
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PlayerIdentityData {
-    /// The player's stable name — what their saved state is keyed by, unlike
-    /// the session id, which a rejoin reassigns.
     pub name: String,
-    /// Whether the player is a server operator.
     pub operator: bool,
 }
 
-/// One item stack crossing the ABI: the item's registry NAME (the one
-/// mod-facing item identity — see the identity note on
-/// [`HostCall`](crate::HostCall)) + count + per-stack instance data.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ItemStackData {
-    /// Registry name (`"petramond:coal"`, `"kitchen:raw_mutton"`).
     pub item: String,
     pub count: u8,
-    /// The stack's instance data: namespaced key → small opaque value, sorted
-    /// by key, empty = plain stack (the ordinary case). Stacks merge only on
-    /// byte-identical data; caps are tight (≤4 keys, ≤64-byte values) and an
-    /// over-cap or malformed map on a write call is a HARD error (mod bug).
-    /// Like registry row data, ANY namespaced consumer key may be attached —
-    /// describing an item in another system's vocabulary is the interop point.
     pub data: Vec<(String, Vec<u8>)>,
 }
 
-/// One item's registry row (see [`RegistryCall::ItemInfo`](crate::RegistryCall::ItemInfo)) — the stable,
-/// mod-relevant fields of its `items.json` row, the same data engine
-/// mechanics read. Presentation internals (sprite/model/held pose) stay
-/// engine-side. Session-stable: cache it mod-side, never re-ask per tick.
-///
-/// [`RegistryCall::ItemInfo`]: crate::RegistryCall::ItemInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ItemInfoData {
-    /// Effective per-slot stack cap (durable items — tools — never stack).
     pub max_stack: u8,
-    /// Fuel burn duration in game ticks; `0` = not a fuel. Any machine may
-    /// consume it (the furnace reads exactly this field).
     pub fuel_burn_ticks: u32,
-    /// The item's tag names (engine tags bare, pack tags namespaced).
     pub tags: Vec<String>,
-    /// Human-readable display name (UI text only — never an identity).
     pub display_name: String,
-    /// Session id of the block this item places (the row's `block` link), or
-    /// `None` for an item-only item (tools, raw drops, ingots). Compare
-    /// against `get_block` reads; resolve a name via `BlockNames`.
     pub block: Option<BlockId>,
-    /// The mining tool this item acts as, or `None`.
     pub tool: Option<ToolInfoData>,
-    /// Edible-item data, or `None` for non-food.
     pub food: Option<FoodInfoData>,
-    /// The ENGINE use handler the row declares (`"bucket_fill"`,
-    /// `"bucket_pour"`, `"shear"`), or `None`. Mods react to any item's use
-    /// through `item_use_pre` — this field only reveals engine-handled uses.
     pub item_use: Option<String>,
 }
 
-/// An item's mining-tool row data (see [`ItemInfoData::tool`]), RESOLVED: a
-/// row that states only `kind` and `tier` answers the tier ladder's derived
-/// speed and damage here, so a mod computing over a tool (the forge's anvil
-/// multiplying an augment onto a base tool) never re-implements the engine's
-/// default ladder — the duplicated-constants trap.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ToolInfoData {
-    /// Tool family: `"pickaxe"`, `"axe"`, `"shovel"`, `"shears"`, or `"sword"`.
     pub kind: String,
-    /// Material tier `1..=4` (wooden, stone, iron, diamond).
     pub tier: u8,
-    /// Mining speed as a multiplier over the bare hand (the row's, or the
-    /// tier's derived rung).
     pub speed: f32,
-    /// Melee damage range `[min, max]` (the row's, or the derived rung).
     pub damage: [f32; 2],
-    /// Knockback multiplier over the victim's own authored shove (`1.0` =
-    /// a plain hit; the row's, or a stack override's).
     pub knockback: f32,
 }
 
-/// One block's registry row (see [`RegistryCall::BlockInfo`](crate::RegistryCall::BlockInfo)) — the stable,
-/// mod-relevant harvest facts of its `blocks.json` row, the same data the
-/// engine's own break gate reads (so a mod computing over a break never
-/// re-implements the material→tool ladder). Session-stable: cache it
-/// mod-side, never re-ask per tick.
-///
-/// [`RegistryCall::BlockInfo`]: crate::RegistryCall::BlockInfo
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct BlockInfoData {
-    /// The row's `material` string (`"stone"`, `"dirt"`, `"ore"`, `"wood"`,
-    /// …; `"none"` for the unset default) — the sound/tool class the row
-    /// declared, verbatim.
     pub material: String,
-    /// Break hardness (seconds-scale; the row's value).
     pub hardness: f32,
-    /// The tool tier the harvest gate demands (`0` = harvested by hand).
     pub harvest_tier: u8,
-    /// The tool family the gate credits against this block (`"pickaxe"`,
-    /// `"axe"`, `"shovel"`), or `None` when any hand harvests — the engine's
-    /// own material→tool derivation, answered rather than re-derived.
     pub preferred_tool: Option<String>,
-    /// Session id of the ITEM that places this block (the reverse of
-    /// [`ItemInfoData::block`]; lowest item id wins when several link), or
-    /// `None` when no item places it. Resolve a name via `ItemNames`.
     pub item: Option<ItemId>,
-    /// The row's default form's collision boxes as cell-local `(min, max)`
-    /// corners in `0..1` — what a body walks into: empty for air, plants,
-    /// torches, rails and anything else walked through; one full box for a
-    /// cube; the real shape for a slab, a stair, a machine. The registry-time
-    /// answer to "what in that cell is a wall", so a rule can sweep its own
-    /// body against it without a world read.
     pub collision: Vec<([f32; 3], [f32; 3])>,
-    /// The row's fluid descriptor, `None` for a non-fluid block (a host
-    /// containing a fluid answers `None`; ask about the contained block).
     pub fluid: Option<FluidInfoData>,
-    /// Whether a placement may take this block's cell (air, plants, fluids):
-    /// such a block is also no face for a placement beside it to lean on.
     pub replaceable: bool,
-    /// What using the block does; `None` when a use click does nothing.
     pub interaction: Option<BlockUse>,
 }
 
-/// The axes a body's draw set is drawn in (see
-/// [`EntityCall::SetMobDraw`](crate::EntityCall::SetMobDraw)).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum DrawFrame {
-    /// Turning with the body's yaw: something it wears.
     Body,
-    /// The world's axes, following only the body's position: something hung
-    /// in the air beside it.
     World,
 }
 
-/// What a use click on a block does (see [`BlockInfoData::interaction`]).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BlockUse {
-    /// Opens a screen for whoever used it (a chest, a station, a mod GUI).
     OpenGui,
-    /// Swings between open and shut, changing what walks through it.
     ToggleDoor,
-    /// Puts a player to sleep in it.
     Sleep,
-    /// Swings a flat panel up off the floor (or down from the ceiling),
-    /// changing what falls through it.
     ToggleTrapdoor,
 }
 
-/// A fluid block row's rule facts (see [`BlockInfoData::fluid`]).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct FluidInfoData {
-    /// Ticks between scheduled flow checks.
     pub delay: u64,
-    /// Level lost per block of lateral spread.
     pub drop_off: u8,
-    /// Whether adjacent sources renew a supported gap.
     pub renewable: bool,
     pub quench: Option<QuenchData>,
-    /// Damage on this fluid's own contact clock, first contact immediate.
     pub contact_damage: Option<PulseData>,
-    /// The condition contact grants.
     pub applies: Option<ConditionGrantData>,
-    /// Conditions contact removes; a body touching this fluid refuses grants
-    /// of them from any source.
     pub clears: Vec<crate::ConditionId>,
-    /// Whether loose items inside this fluid are destroyed.
     pub destroys_items: bool,
 }
 
-/// Contact with fluid `by` turns the receiving fluid cell into `result`.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct QuenchData {
     pub by: BlockId,
     pub result: BlockId,
 }
 
-/// Damage dealt every `interval` fixed ticks.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct PulseData {
     pub amount: i32,
     pub interval: u32,
 }
 
-/// `ticks` of `condition` granted at `stage` (an index into the row's stages).
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ConditionGrantData {
     pub condition: crate::ConditionId,
@@ -1086,127 +504,63 @@ pub struct ConditionGrantData {
     pub ticks: u32,
 }
 
-/// An item's edible row data (see [`ItemInfoData::food`]).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FoodInfoData {
-    /// Game ticks of held-button eating before the item is consumed.
     pub eat_ticks: u32,
-    /// Status effects granted when the eat completes.
     pub effects: Vec<FoodEffectData>,
 }
 
-/// One granted food effect: an `effects.json` registry key + duration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct FoodEffectData {
     pub effect: String,
     pub ticks: u32,
 }
 
-/// Which [`BlockBehavior`](crate::GuestCall::BlockBehavior) hook fired — the mod-side
-/// mirror of the engine `BlockBehavior` trait's methods.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BlockHookKind {
-    /// The probabilistic per-section random tick (a few cells per section per
-    /// game tick). Mod-behavior blocks always receive random ticks.
     RandomTick,
-    /// A scheduled tick previously requested via [`BlockCall::ScheduleTick`](crate::BlockCall::ScheduleTick).
-    ///
-    /// [`BlockCall::ScheduleTick`]: crate::BlockCall::ScheduleTick
     ScheduledTick,
-    /// The cell or one of its 6 neighbours changed (the ANNOUNCE phase).
     NeighborUpdate,
 }
 
-/// One active status effect crossing the ABI (see [`PlayerCall::EffectsActive`](crate::PlayerCall::EffectsActive)).
-///
-/// [`PlayerCall::EffectsActive`]: crate::PlayerCall::EffectsActive
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct EffectStateData {
-    /// The effect's registry key (`"petramond:regeneration"`, `"mod_id:haste"`).
     pub key: String,
-    /// Remaining game ticks.
     pub remaining: u32,
 }
 
-/// Cached light at a loaded cell (see [`BlockCall::LightAt`](crate::BlockCall::LightAt)), all on the
-/// renderer's 6-bit `0..=63` scale; `combined = max(sky, block)`.
-///
-/// [`BlockCall::LightAt`]: crate::BlockCall::LightAt
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LightData {
     pub combined: u8,
     pub sky: u8,
-    /// Block-light BRIGHTNESS. Unchanged by coloured light: it is the strongest
-    /// channel of [`block_rgb`](Self::block_rgb), so a light-level rule
-    /// (crop growth, hostile spawning) means what it always meant.
     pub block: u8,
-    /// Per-channel block light, same scale. `block == max(block_rgb)`, and
-    /// colourless light is `[block; 3]` — so a mod only needs to look here if
-    /// it cares about the HUE (a plant that only grows under blue glow).
-    /// Skylight has no per-channel form; it is white by construction.
     pub block_rgb: [u8; 3],
 }
 
-/// The collision-shape CLASS of a world cell (see
-/// [`BlockCall::CollisionShapeAt`](crate::BlockCall::CollisionShapeAt)) — generic physics with no gameplay policy
-/// baked in. Spawn/placement rules compose on top of it in mod code (e.g.
-/// `Full` + not tagged `petramond:leaves`).
-///
-/// [`BlockCall::CollisionShapeAt`]: crate::BlockCall::CollisionShapeAt
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CollisionShape {
-    /// No collision boxes: air, any fluid, walk-through cover (tall grass).
     Empty,
-    /// Collision boxes that do not amount to one full unit cube: stairs,
-    /// slabs, doors, snow layers, model blocks.
     Partial,
-    /// Exactly one collision box spanning the whole unit cell.
     Full,
 }
 
-/// The names of the engine's shipped player rigs — the `rig` every animator
-/// primitive addresses. Rigs are rows of the layered rigs catalog, one per
-/// presenter the engine draws (the body, the first-person viewmodel): a pack
-/// re-points a row's model, animator and conventions, and a name no
-/// registered rig carries is refused at the call.
 pub mod rig {
-    /// The body every observer sees, and the wielder in third person.
     pub const PLAYER_BODY: &str = "player_body";
-    /// The first-person viewmodel: the arms (and camera) the wielder sees.
-    /// Not observed — nothing played on it reaches other players.
     pub const PLAYER_FIRST_PERSON: &str = "player_first_person";
 }
 
-/// A value a graph param takes: a number (a bool is `1` / `0`) or a NAME,
-/// which the graph compares as an interned string (`main.tool == "spear"`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum AnimatorValue {
     Number(f32),
     Name(String),
 }
 
-/// How a played clip advances. `Scrub` is the caller's own clock: the frame
-/// drawn is the one at that fraction of the clip on every mirror, so a hit
-/// landing at the clip's `impact` marker lands where it is seen. `Run`
-/// free-runs from the frame the play starts, at `rate` (1 = authored
-/// speed), once or looping.
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum AnimatorClock {
-    /// `0..=1` through the clip.
     Scrub(f32),
-    Run {
-        rate: f32,
-        looping: bool,
-    },
+    Run { rate: f32, looping: bool },
 }
 
-/// One graph param a mod sets on one of a player's rigs, for
-/// [`BodyCall::SetPlayerAnimatorParams`](crate::BodyCall::SetPlayerAnimatorParams). `rig` names a registered rig
-/// ([`rig`]); params are the rig graph's own declared vocabulary (`params`
-/// in its animator document). A rig or param name the engine lacks is
-/// refused at the call.
-///
-/// [`BodyCall::SetPlayerAnimatorParams`]: crate::BodyCall::SetPlayerAnimatorParams
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimatorParam {
     pub rig: String,
@@ -1214,15 +568,6 @@ pub struct AnimatorParam {
     pub value: AnimatorValue,
 }
 
-/// One montage a mod holds in a slot of one of a player's rigs, for
-/// [`BodyCall::SetPlayerAnimatorPlays`](crate::BodyCall::SetPlayerAnimatorPlays). `rig` names a registered rig
-/// ([`rig`]); `slot` and `clip` are the rig graph's declared slot and its
-/// library's clip (`petramond:fp_slash_a`). `clock` is how the clip
-/// advances ([`AnimatorClock`]). `mirror` plays it reflected left↔right (a
-/// main-hand clip on the off hand); `priority` refuses a lower-priority
-/// newcomer to the same slot while this play stands.
-///
-/// [`BodyCall::SetPlayerAnimatorPlays`]: crate::BodyCall::SetPlayerAnimatorPlays
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimatorPlay {
     pub rig: String,
@@ -1245,26 +590,18 @@ impl AnimatorPlay {
         }
     }
 
-    /// A play scrubbed by the caller's own clock.
     pub fn scrubbed(rig: &str, slot: &str, clip: &str, progress: f32) -> Self {
         Self::new(rig, slot, clip, AnimatorClock::Scrub(progress))
     }
 
-    /// A play free-running at `rate` from the frame it starts.
     pub fn running(rig: &str, slot: &str, clip: &str, rate: f32, looping: bool) -> Self {
         Self::new(rig, slot, clip, AnimatorClock::Run { rate, looping })
     }
 }
 
-/// What [`BodyCall::AnimationClip`](crate::BodyCall::AnimationClip) answers about one clip.
-///
-/// [`BodyCall::AnimationClip`]: crate::BodyCall::AnimationClip
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AnimationClipInfo {
-    /// Seconds.
     pub length: f32,
     pub looping: bool,
-    /// Timeline markers `(name, seconds)` in time order; an `impact` marker
-    /// is where a strike lands.
     pub markers: Vec<(String, f32)>,
 }

@@ -20,9 +20,6 @@ fn synthetic_tree_region(x0: i32, z0: i32, w: usize, h: usize) -> RegionCells {
     region
 }
 
-/// Unclipped write collector: trees now overhang a single chunk (footprint
-/// up to MARGIN), so the shape invariants below inspect the feature's FULL
-/// write set instead of one chunk's clipped slice.
 struct MapSink(std::collections::HashMap<petramond_world::mathh::IVec3, Block>);
 
 impl super::VoxelSink for MapSink {
@@ -58,11 +55,6 @@ fn generate_into_map_with_open(
     sink.0
 }
 
-/// Every leaf a configured tree places must reach one of its logs within
-/// `MAX_LOG_DISTANCE` FACE-steps travelling only through leaves — the exact
-/// rule `block::behavior::leaves` decays against. Diagonal-only attachment (the
-/// acacia umbrella bug) does not count, so this guards against canopies that
-/// silently rot after generation.
 #[test]
 fn configured_trees_place_only_orthogonally_supported_leaves() {
     use crate::data::features;
@@ -85,11 +77,6 @@ fn configured_trees_place_only_orthogonally_supported_leaves() {
     }
 }
 
-/// Assert every leaf in a feature write set reaches one of its logs within
-/// `MAX_LOG_DISTANCE` FACE-steps travelling only through leaves — the exact
-/// rule `block::behavior::leaves` decays against. Diagonal-only attachment (the
-/// acacia umbrella bug) does not count, so this guards against canopies that
-/// silently rot after generation.
 fn assert_all_leaves_supported(
     map: &std::collections::HashMap<petramond_world::mathh::IVec3, Block>,
     what: &str,
@@ -140,11 +127,6 @@ fn assert_all_leaves_supported(
     }
 }
 
-/// The `TreeFeature` canopies against a closed half-space — a hillside or the
-/// wall of a cave beside the trunk. No leaf may land in a closed cell (the old
-/// layer loops skipped the wall and kept placing in the cave air behind it),
-/// and everything placed must still satisfy the decay-support rule (the old
-/// loops stranded outer leaves whose inward path the wall interrupted).
 #[test]
 fn tree_canopies_respect_closed_cells_and_stay_supported() {
     use crate::data::features;
@@ -155,7 +137,6 @@ fn tree_canopies_respect_closed_cells_and_stay_supported() {
         ("acacia", features::acacia()),
     ] {
         for seed in [1u32, 7, 42, 99, 1000, 31337] {
-            // Wall right beside the trunk column: everything at x ≥ 2 closed.
             let map = generate_into_map_with_open(feat, seed, &mut |p| p.x < 2);
             for (p, b) in &map {
                 assert!(
@@ -168,10 +149,6 @@ fn tree_canopies_respect_closed_cells_and_stay_supported() {
     }
 }
 
-/// Seen from straight above, an oak's trunk top must end in leaves, never
-/// a bare log end — the exposed-top-log artifact playtesting flagged
-/// (2026-07-12). Search the entire footprint so a leaning crown cannot
-/// escape the check by moving away from the rooted foot.
 #[test]
 fn oak_crowns_bury_the_trunk_top() {
     use crate::data::features;
@@ -201,8 +178,6 @@ fn oak_crowns_bury_the_trunk_top() {
     }
 }
 
-/// The oak anchoring gate: flat ground accepts, a drop under the root
-/// splay rejects the whole tree — the floating-tree guard.
 #[test]
 fn oaks_refuse_sites_where_roots_would_hang() {
     use crate::data::features;
@@ -221,8 +196,6 @@ fn oaks_refuse_sites_where_roots_would_hang() {
                 feat.feature.is_anchored(&mut |_, _| 64, origin, rng),
                 "{name} seed {seed}: flat ground must anchor"
             );
-            // Everything but the origin column drops far below: some base
-            // cell always lies off-column, so the site must be refused.
             assert!(
                 !feat.feature.is_anchored(
                     &mut |x, z| if x == 0 && z == 0 { 64 } else { 40 },
@@ -313,10 +286,6 @@ fn live_density_feature_region_covers_margin_and_spacing_queries() {
     }
 }
 
-/// The memoized feature windows every section's tree pass reads must equal an
-/// uncached reference: the raw density region with the per-cell cave
-/// adjustment applied. Warm and cold windows alike, and windows that only
-/// partly overlap tiles already cached.
 #[test]
 fn cached_feature_windows_match_the_uncached_region() {
     let seed = 0x1234_5678;
@@ -367,8 +336,6 @@ fn generate_chunk_is_deterministic() {
     }
 }
 
-/// The tree pass over the sections of column `(0, 0)`, cy 0..16, reading
-/// `field` — the section path's origin loop with no generator around it.
 fn place_features_column(field: &RegionCells, seed: u32) -> Vec<Section> {
     (0..(CHUNK_SY / SECTION_SIZE) as i32)
         .map(|cy| {
@@ -381,7 +348,6 @@ fn place_features_column(field: &RegionCells, seed: u32) -> Vec<Section> {
 
 #[test]
 fn features_occupy_chunk_edges() {
-    // P4 removed the chunk-edge skip: trees may now sit on the border.
     for seed in [1u32, 7, 42, 0x1234_5678] {
         let (x0, z0, w, h) = feature_region_bounds(0, 0);
         let field = synthetic_tree_region(x0, z0, w, h);
@@ -406,10 +372,6 @@ fn features_occupy_chunk_edges() {
 
 #[test]
 fn trees_span_chunk_seams() {
-    // A trunk rooted on the west border of chunk (cx,cz) (world x = cx*16)
-    // must have canopy reaching into the previous chunk's east column
-    // (local x = 15). Any one confirmed seam-spanning tree proves the
-    // cross-chunk feature mechanism (no bald seam, no gap).
     for seed in [1u32, 7, 13, 42, 0x1234_5678] {
         for cz in 0..6 {
             for cx in 1..6 {
@@ -420,14 +382,12 @@ fn trees_span_chunk_seams() {
                         if east.block_raw(0, y, z) != Block::OakLog.id() {
                             continue;
                         }
-                        // Canopy of this trunk should reach the west chunk's
-                        // x = 15 column near (y.., z..).
                         let z_lo = z.saturating_sub(2);
                         let z_hi = (z + 3).min(CHUNK_SZ);
                         for yy in y..(y + 8).min(CHUNK_SY) {
                             for zz in z_lo..z_hi {
                                 if is_tree(west.block_raw(15, yy, zz)) {
-                                    return; // seam-spanning tree confirmed
+                                    return;
                                 }
                             }
                         }

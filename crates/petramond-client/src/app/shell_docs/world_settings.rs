@@ -1,17 +1,9 @@
-//! World Settings controller: a tabbed screen — the World tab (seed + copy,
-//! world size, day length, keep inventory, auto-LAN; every change writes
-//! `settings.json` immediately, applied on next world open) and the Mods tab
-//! (per-world pack toggles, same write policy) — plus the header's inline
-//! world-rename editor and the shared Back/Delete footer.
-
 use super::mods_tab;
 use super::ScreenCtx;
 use crate::app::shell_state::SettingsTab;
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
-/// Per-frame prep: adopt the off-thread save-dir size once it lands, then the
-/// shared pack-icon registration.
 pub(super) fn prepare(ctx: &mut ScreenCtx) -> bool {
     ctx.shell.poll_world_size();
     super::pack_icon_prepare(ctx)
@@ -55,7 +47,6 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     mods_tab::populate(&session.rows, &session.settings, session.selected, state);
 }
 
-/// Human size on the KB/MB/GB ladder ("412 KB", "38.2 MB", "1.24 GB").
 fn format_size(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -167,7 +158,6 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
     }
 }
 
-/// Leave the settings page for the delete confirmation of its world.
 fn open_delete_confirm(ctx: &mut ScreenCtx) {
     ctx.shell.close_page();
     if ctx.shell.selected_world_info().is_some() {

@@ -44,8 +44,6 @@ where
             ignore,
         );
         if escaping {
-            // Still inside geometry: the escape owns this tick, sweeps and
-            // all (see `collision::EscapeRoute::in_progress`).
             return (escape, false, [false; 3], escape);
         }
         let (mut moved, grounded, hit) = petramond_world::collision::resolve_body_dyn_escaped(
@@ -68,8 +66,6 @@ where
     let body: Vec<WorldBox> = body_boxes(pos, yaw, size).collect();
     let mut hit = [false; 3];
 
-    // The whole run escapes as one body: a wedged hull is free only where
-    // bow, middle and stern all are.
     let mut moved = route.advance(&body, dt, boxes_fn, escape_dyn_boxes, ignore);
     if route.in_progress() {
         return (moved, false, [false; 3], moved);
@@ -170,9 +166,6 @@ where
     travel
 }
 
-/// A terrain-resolved transform proposal for one solid body. `start_pos` is
-/// after mandatory shallow-foot healing. Peer progress rotates first and then
-/// translates; any shortened translation is terrain-validated before commit.
 #[derive(Copy, Clone, Debug)]
 pub struct BodyMotion {
     pub id: u64,
@@ -264,9 +257,6 @@ impl MotionBounds {
     }
 }
 
-/// Reusable pair solver for a tick's solid-body proposals. Candidate pairs use
-/// a swept X-axis broadphase; constraint passes are synchronous, so list order
-/// cannot decide which member of a pair gets the remaining gap.
 #[derive(Default)]
 pub struct SolidMotionSolver {
     fractions: Vec<f32>,
@@ -320,9 +310,6 @@ impl SolidMotionSolver {
             (ids.0.min(ids.1), ids.0.max(ids.1))
         });
 
-        // A reduction can expose a following body to a peer that another pair
-        // stopped. Synchronous repetition propagates that constraint through a
-        // whole contact chain without making the answer pair-iteration ordered.
         let max_passes = motions.len().saturating_mul(2).max(1);
         for _ in 0..max_passes {
             self.next_fractions.copy_from_slice(&self.fractions);
@@ -524,8 +511,6 @@ fn relative_segment_range(
     let bq1 = b_fraction * hi;
     let a_translation = position_component_range(a, axis, aq0, aq1);
     let b_translation = position_component_range(b, axis, bq0, bq1);
-    // The difference of two absolute ranges, taken in double precision
-    // before it narrows to the relative frame.
     let translation = (
         (a_translation.0.min(a_translation.1) - b_translation.0.max(b_translation.1)) as f32,
         (a_translation.0.max(a_translation.1) - b_translation.0.min(b_translation.1)) as f32,
@@ -566,11 +551,6 @@ fn position_component_range(motion: BodyMotion, axis: usize, lo: f32, hi: f32) -
     (a.min(b), a.max(b))
 }
 
-/// Clamp a peer-selected motion prefix before the first terrain contact along
-/// its abstract yaw-then-translation path. The ordinary resolver's endpoint
-/// is terrain-safe, but its axis-ordered slide can differ from the straight
-/// translation used by the peer solver; this conservative interval sweep
-/// closes that corner-cutting gap before the pose is committed.
 pub fn terrain_safe_motion_prefix<F>(motion: BodyMotion, requested: f32, boxes_fn: &F) -> f32
 where
     F: Fn(i32, i32, i32) -> &'static [petramond_world::block::Aabb],

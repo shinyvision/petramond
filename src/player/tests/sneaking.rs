@@ -19,7 +19,6 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
         pl.vel.x
     );
 
-    // Sneak + sprint held together: sneak wins.
     let both = Input {
         sprint: true,
         ..sneak_walk
@@ -37,7 +36,6 @@ fn sneaking_halves_land_speed_and_overrides_sprint() {
 
 #[test]
 fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
-    // A plateau ending at x=1: floor cells x<=0 at y=0, a deep drop beyond.
     let solid = |x: i32, y: i32, _z: i32| y == 0 && x <= 0;
     let sneak_walk = Input {
         wishdir: Vec3::new(1.0, 0.0, 0.0),
@@ -57,7 +55,6 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
         pl.pos.x
     );
 
-    // The same walk WITHOUT sneak drops off.
     let plain = Input {
         sneak: false,
         ..sneak_walk
@@ -68,7 +65,6 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
     }
     assert!(pl.pos.y < 1.0, "an ordinary walk falls off the ledge");
 
-    // Jumping while sneaking is an explicit action: it clears the edge.
     let hop = Input {
         jump: true,
         ..sneak_walk
@@ -87,8 +83,6 @@ fn sneaking_never_walks_off_a_ledge_but_jumping_escapes() {
 #[test]
 fn sneaking_still_steps_down_a_half_block() {
     use petramond_world::block::Aabb;
-    // A full floor for x<=0, a half-height slab (top y=0.5) for x>=1: a
-    // step DOWN of exactly the step height, which sneaking must allow.
     const SLAB: &[Aabb] = &[Aabb {
         min: [0.0, 0.0, 0.0],
         max: [1.0, 0.5, 1.0],
@@ -128,12 +122,6 @@ fn sneaking_still_steps_down_a_half_block() {
 #[test]
 fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     use petramond_world::block::Aabb;
-    // A plateau (x<=0, top y=1), a ONE-block-wide slab strip beside it (x==1,
-    // top y=0.5 — a legal step-down), and void beyond and below. Sneaking
-    // diagonally (+X+Z) must step onto the strip and then slide along its far
-    // lip forever. The old airborne step-down failed exactly here: ~10 frames
-    // of gravity with the guard off let the diagonal momentum carry the body
-    // across the 1-wide strip and off its far edge.
     const SLAB: &[Aabb] = &[Aabb {
         min: [0.0, 0.0, 0.0],
         max: [1.0, 0.5, 1.0],
@@ -165,7 +153,6 @@ fn sneak_step_down_is_instant_so_diagonal_descent_cannot_fall_off() {
     for i in 0..600 {
         pl.simulate(1.0 / 60.0, &Surroundings::dry(&world), diag);
         min_y = min_y.min(pl.pos.y as f32);
-        // Skip the first frames: a fresh Player spawns with on_ground unset.
         if i > 2 && !pl.on_ground {
             airborne_frames += 1;
         }

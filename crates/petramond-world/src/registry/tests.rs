@@ -12,9 +12,6 @@ struct Row {
     hardness: f32,
 }
 
-/// A row extending an earlier one starts as that row and replaces WHOLE
-/// fields — a list or map it states is exactly what it wrote, never a merge
-/// — keeps its own key, and can itself be extended in turn.
 #[test]
 fn an_extending_row_copies_its_base_and_replaces_whole_fields() {
     let text = r#"{ "rows": [
@@ -54,8 +51,6 @@ fn extending_a_row_that_is_not_earlier_in_the_layer_is_an_error() {
     assert!(parse_rows::<Row>(missing, "rows", "key").is_err());
 }
 
-/// Patch rows ride the same array and keep working beside templates: they
-/// are split out after expansion, and a template never sees them as a base.
 #[test]
 fn patch_rows_split_out_after_templates_expand() {
     let text = r#"{ "rows": [
@@ -100,14 +95,8 @@ fn tag_table_interns_namespaced_and_rejects_bare_unknowns() {
     );
 }
 
-/// The reason the ids are two bytes: with EVERY shipped pack installed the
-/// registries must still have room for more content, not a couple of dozen
-/// free ids. This reads the real installed pack set, so it fails the day
-/// the shipped packs genuinely crowd the table again.
 #[test]
 fn the_installed_pack_set_leaves_room_for_more_packs() {
-    // Comfortably more than any one content pack registers, and small
-    // enough that it is a real bound rather than a restatement of the cap.
     const ROOM: usize = 1024;
     let names = names();
     for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
@@ -123,7 +112,6 @@ fn the_installed_pack_set_leaves_room_for_more_packs() {
 #[test]
 fn namespaced_keys_register_and_bare_unknowns_error() {
     let engine = &["petramond:air", "petramond:stone"];
-    // Engine override (known `petramond:*`) + a namespaced addition.
     let table = NameTable::build(
         engine,
         &[vec!["petramond:stone".into(), "mymod:gadget".into()]],
@@ -139,7 +127,6 @@ fn namespaced_keys_register_and_bare_unknowns_error() {
     );
     assert_eq!(table.id("mymod:gadget"), Some(2), "appended after engine");
     assert_eq!(table.name(2), Some("mymod:gadget"));
-    // Restating a registered dynamic name in a later layer adds no id.
     let table = NameTable::build(
         engine,
         &[vec!["mymod:gadget".into()], vec!["mymod:gadget".into()]],
@@ -148,7 +135,6 @@ fn namespaced_keys_register_and_bare_unknowns_error() {
     )
     .unwrap();
     assert_eq!(table.len(), 3);
-    // A NEW bare name is an error, not a registration.
     let err = NameTable::build(engine, &[vec!["gadget".into()]], "block", WIDE_ID_CAP)
         .expect_err("bare additions are refused");
     assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
@@ -163,7 +149,6 @@ fn namespaced_keys_register_and_bare_unknowns_error() {
         err.contains("petramond") && err.contains("reserved"),
         "{err}"
     );
-    // Degenerate namespaces are not namespaces.
     for bad in [":gadget", "mymod:", ":"] {
         assert!(!is_namespaced(bad), "{bad}");
     }
@@ -172,8 +157,6 @@ fn namespaced_keys_register_and_bare_unknowns_error() {
 
 #[test]
 fn registry_caps_at_its_declared_ceiling() {
-    // The wide (block/item) ceiling and the byte ceiling are separate
-    // numbers, and each catalog is held to its own.
     let engine = &["petramond:air"];
     let keys: Vec<String> = (0..WIDE_ID_CAP)
         .map(|i| format!("mymod:thing_{i}"))

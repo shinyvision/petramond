@@ -27,12 +27,6 @@ mod tests {
     use petramond_world::gui_state::PointerButton;
     use petramond_world::inventory::Inventory;
     use petramond_world::item::{ItemStack, ItemType};
-    /// The engine chest earns its slot semantics from its OWN GUI document,
-    /// exactly as a pack container does — there is no engine-owned chest spec
-    /// set any more. If `chest.gui.json` ever stops declaring `container`
-    /// slots, the specs go empty and shift-clicking into a chest silently
-    /// degrades to a plain hotbar↔grid move instead of routing into storage,
-    /// which no other test would catch.
     #[test]
     fn the_chest_derives_its_slot_specs_from_its_document() {
         let specs = super::slot_specs_for_kind(petramond_world::gui_state::GuiKind::Chest);
@@ -47,11 +41,6 @@ mod tests {
         );
     }
 
-    /// The furnace's slot SEMANTICS: a smeltable-only input, a fuel-only fuel
-    /// slot, and a take-only output, in the engine's
-    /// `SLOT_INPUT`/`SLOT_FUEL`/`SLOT_OUTPUT` index order. If they ever drift,
-    /// shift-routing sends coal to the input and the output stops refusing
-    /// inserts — both silent.
     #[test]
     fn the_furnace_derives_its_slot_specs_from_its_document() {
         use petramond_world::furnace::{SLOT_FUEL, SLOT_INPUT, SLOT_OUTPUT};
@@ -81,9 +70,6 @@ mod tests {
         world
     }
 
-    /// The test player's discovery record with the fixture recipe unlocked —
-    /// crafting is authoritative on the UNLOCKED set, so every craft path in
-    /// these tests must present one.
     fn unlocked() -> crate::player::Progression {
         let mut progression = crate::player::Progression::default();
         progression.unlock("test:coal_to_sticks");
@@ -106,9 +92,6 @@ mod tests {
         )
     }
 
-    /// A recipe the player has not unlocked is refused by the AUTHORITATIVE
-    /// path, not merely hidden by the browser: hiding is presentation, and a
-    /// crafted item is state.
     #[test]
     fn crafting_refuses_a_recipe_the_player_has_not_unlocked() {
         let recipes = player_crafting_recipes(CraftingStation::Inventory);
@@ -129,7 +112,6 @@ mod tests {
             "and nothing was consumed"
         );
 
-        // The same request, once unlocked, is an ordinary craft.
         assert!(menu
             .craft_recipe(
                 &mut inv,
@@ -329,8 +311,6 @@ mod tests {
                 false
             )
             .is_ok());
-        // A same-item output MERGES the repeat craft (stackable results keep
-        // the button usable) instead of refusing.
         assert!(menu
             .craft_recipe(
                 &mut inv,
@@ -346,7 +326,6 @@ mod tests {
         );
         assert!(inv.slot(0).is_none(), "both coal consumed");
 
-        // A foreign-item output still refuses without consuming anything.
         inv.add(ItemStack::new(ItemType::Coal, 1));
         menu.craft_output = Some(ItemStack::new(ItemType::Dirt, 1));
         assert_eq!(
@@ -373,7 +352,6 @@ mod tests {
         inv.add(ItemStack::new(ItemType::Coal, 5));
         menu.open_crafting(CraftingStation::Inventory);
 
-        // Resource-bound: 5 coal → 5 crafts of 2 sticks each.
         assert_eq!(
             menu.craft_recipe(&mut inv, &recipes, &unlocked(), "test:coal_to_sticks", true),
             Ok(Vec::new())
@@ -384,7 +362,6 @@ mod tests {
         );
         assert!(inv.slot(0).is_none(), "all coal consumed");
 
-        // Stack-bound: plenty of coal, but the output caps at one full stack.
         let max = ItemType::Stick.max_stack_size();
         inv.add(ItemStack::new(ItemType::Coal, max));
         menu.craft_output = None;
@@ -402,7 +379,6 @@ mod tests {
             "coal beyond the full output stack stays in the inventory"
         );
 
-        // An impossible first craft is still the request's failure.
         assert_eq!(
             menu.craft_recipe(&mut inv, &recipes, &unlocked(), "test:coal_to_sticks", true),
             Err(CraftMenuFailure::OutputOccupied)
@@ -457,13 +433,11 @@ mod tests {
         world.insert_furnace(pos, Facing::North);
         menu.open_furnace_screen(&mut world, pos);
 
-        // Hotbar: coal (slot 0), raw iron (slot 1), oak planks (slot 2 — neither tag).
         let mut inv = Inventory::new();
         inv.add(ItemStack::new(ItemType::Coal, 5));
         inv.add(ItemStack::new(ItemType::RawIron, 3));
         inv.add(ItemStack::new(ItemType::OakPlanks, 4));
 
-        // Coal -> fuel slot.
         menu.container_shift_from_inventory(&mut world, &mut inv, None, 0);
         assert!(inv.slot(0).is_none(), "coal left the inventory");
         assert_eq!(
@@ -472,7 +446,6 @@ mod tests {
             "coal went to the fuel slot"
         );
 
-        // Raw iron -> input slot.
         menu.container_shift_from_inventory(&mut world, &mut inv, None, 1);
         assert!(inv.slot(1).is_none(), "raw iron left the inventory");
         assert_eq!(
@@ -481,15 +454,12 @@ mod tests {
             "raw iron went to the input slot"
         );
 
-        // A non-fuel, non-smeltable item is not pulled into the furnace; it falls
-        // back to the ordinary hotbar->main-grid shuffle.
         menu.container_shift_from_inventory(&mut world, &mut inv, None, 2);
         assert!(inv.slot(2).is_none(), "plank moved out of the hotbar slot");
         let c = world.container_at(pos).unwrap();
         for slot in &c.slots {
             assert_ne!(slot.map(|s| s.item), Some(ItemType::OakPlanks));
         }
-        // It landed in the main grid (first slot of the 27-slot region).
         assert_eq!(
             inv.slot(petramond_world::inventory::HOTBAR_LEN)
                 .map(|s| s.item),
@@ -504,7 +474,6 @@ mod tests {
         let pos = IVec3::new(3, 64, 3);
         world.set_block_world(pos.x, pos.y, pos.z, Block::Furnace);
         world.insert_furnace(pos, Facing::North);
-        // Seed the fuel slot with some coal already.
         world.container_at_mut(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL] =
             Some(ItemStack::new(ItemType::Coal, 60));
         menu.open_furnace_screen(&mut world, pos);
@@ -513,7 +482,6 @@ mod tests {
         inv.add(ItemStack::new(ItemType::Coal, 10));
         menu.container_shift_from_inventory(&mut world, &mut inv, None, 0);
 
-        // 4 top up the fuel slot to 64; the remaining 6 stay in the inventory.
         assert_eq!(
             world.container_at(pos).unwrap().slots[petramond_world::furnace::SLOT_FUEL]
                 .unwrap()
@@ -525,9 +493,6 @@ mod tests {
 
     #[test]
     fn container_shift_merges_before_opening_an_empty_slot() {
-        // Regression: the routed shift-in must top up a matching stack even
-        // when an EARLIER slot is empty — index-order routing used to drop
-        // the stack into the empty slot 0 and fragment the pile.
         let mut world = world_with_empty_chunk();
         let mut menu = ContainerMenu::new();
         let pos = IVec3::new(4, 64, 4);

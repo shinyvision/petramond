@@ -9,8 +9,6 @@ fn engine(key: &str) -> &'static AnimatedModelDef {
     by_key(key).unwrap_or_else(|| panic!("{key} ships in assets/animated_models.json"))
 }
 
-/// Turn a canonical (south-facing) cell-local point to `facing` about the
-/// cell's vertical centre — the renderer's placement turn.
 fn turn(p: [f32; 3], facing: Facing) -> [f32; 3] {
     use std::f32::consts::{FRAC_PI_2, PI};
     let yaw: f32 = match facing {
@@ -24,7 +22,6 @@ fn turn(p: [f32; 3], facing: Facing) -> [f32; 3] {
     [0.5 + dx * c + dz * s, p[1], 0.5 - dx * s + dz * c]
 }
 
-/// The bounds of `part` at `open01`, turned to `facing`.
 fn posed_bounds(part: &ModelPart, open01: f32, facing: Facing) -> Aabb {
     let mut min = [f32::INFINITY; 3];
     let mut max = [f32::NEG_INFINITY; 3];
@@ -72,9 +69,6 @@ fn every_engine_model_loads_and_the_rows_that_draw_one_name_it() {
 
 #[test]
 fn the_drawn_door_swing_lands_on_its_collision_slab_for_every_facing() {
-    // The model is authored once, south-facing; turned to each facing, its
-    // closed and fully-open lower half must be exactly the door's collision
-    // slab in that state — the drawn door never pokes into a neighbour.
     let lower = &engine("petramond:door").variant(0).parts[0];
     for facing in FACINGS {
         for open in [false, true] {

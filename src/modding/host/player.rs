@@ -1,13 +1,3 @@
-//! Player calls: state snapshot, the damage funnel, knockback, items,
-//! health, teleports, status effects, and chat delivery. (There is no kill
-//! call: `DamagePlayer` with current health is the kill, same funnel.)
-//!
-//! Every call reaches a player BY ID through the dispatch's roster. The
-//! single-player-era calls (`PlayerState`, `GiveItem`, `Teleport`, ...)
-//! address the dispatch's ACTOR and refuse an actor-less dispatch; each shares
-//! its body with an explicitly addressed twin (`PlayerStateOf`, `GiveItemTo`,
-//! `TeleportPlayer`, ...), so the two addressings can never disagree.
-
 use mod_api::{BodyCall, HostRet, PlayerCall, PlayerSnapshot};
 
 use crate::events::{DeferredAction, SimCtx};
@@ -21,9 +11,6 @@ use super::guards::{
 };
 use super::intern_mod_id;
 
-/// The pose anchor a player is pinned at, read LIVE from the riding registry
-/// (not the start-of-tick roster) so an occupancy check made right after a
-/// same-tick `PlayerPoseSet` already sees the seat taken.
 fn pose_anchor_of(world: &crate::world::ServerWorld, id: u8) -> Option<[f64; 3]> {
     match world.riding().mount_of(id)?.target {
         crate::mob::riding::MountTarget::Anchor(a) => Some(a.pos.to_array()),
@@ -31,10 +18,6 @@ fn pose_anchor_of(world: &crate::world::ServerWorld, id: u8) -> Option<[f64; 3]>
     }
 }
 
-/// One player's ABI snapshot: the body read live off the session's player,
-/// the session-side facts (sneak, use-held, swing) off this tick's published
-/// roster row. The ONE assembly `PlayerState`, `PlayerStateOf` and `Players`
-/// share. `None` = no such connected session.
 fn player_snapshot(ctx: &mut SimCtx<'_>, id: PlayerId, mod_id: &str) -> Option<PlayerSnapshot> {
     let (sneak, use_held, swing) = ctx
         .world
@@ -56,14 +39,8 @@ fn player_snapshot(ctx: &mut SimCtx<'_>, id: PlayerId, mod_id: &str) -> Option<P
         sneak,
         use_held,
         holds_use: p.use_gesture.held_by(mod_id),
-        // The ACTING hand's stack: during the use-click ladder's off-hand
-        // pass this answers the off-hand item, so a handler gating on "what
-        // am I holding" acts for whichever hand the dispatch is offering —
-        // with no hand on the ABI.
         held: p.held().map(|st| mod_api::ItemId(st.item.id())),
         held_count: p.held().map_or(0, |st| st.count),
-        // The literal OFF-HAND slot, whichever hand is acting — the "both
-        // hands at once" read beside `held`/`off_held`.
         off_held: p
             .inventory
             .off_hand()
@@ -78,7 +55,6 @@ fn player_snapshot(ctx: &mut SimCtx<'_>, id: PlayerId, mod_id: &str) -> Option<P
     })
 }
 
-/// Player `id`'s active status effects. `None` = no such session.
 fn effects_of(ctx: &mut SimCtx<'_>, id: PlayerId) -> Option<Vec<mod_api::EffectStateData>> {
     ctx.with_player(id, |p| {
         p.effects()
@@ -91,8 +67,6 @@ fn effects_of(ctx: &mut SimCtx<'_>, id: PlayerId) -> Option<Vec<mod_api::EffectS
     })
 }
 
-/// Apply the effect named `key` to player `id`. Unknown keys are forgiving
-/// (`false`) — a typo'd key is not a protocol break.
 fn apply_effect(ctx: &mut SimCtx<'_>, mod_id: &str, id: PlayerId, key: &str, ticks: u32) -> bool {
     let Some(effect) = petramond_world::effect::by_name(key) else {
         log::warn!("[mod {mod_id}] EffectApply: unknown effect '{key}'");
@@ -102,10 +76,6 @@ fn apply_effect(ctx: &mut SimCtx<'_>, mod_id: &str, id: PlayerId, key: &str, tic
         .is_some()
 }
 
-/// Spend `count` of `item` from player `id`'s ACTING hand, atomically: only a
-/// stack holding at least `count` consumes — the held stack IS the
-/// validation, so no registry check. During the ladder's off-hand pass this
-/// spends the off-hand.
 fn consume_held(ctx: &mut SimCtx<'_>, id: PlayerId, item: mod_api::ItemId, count: u32) -> bool {
     ctx.with_player(id, |p| {
         let hand = p.acting_hand;
@@ -122,7 +92,6 @@ fn consume_held(ctx: &mut SimCtx<'_>, id: PlayerId, item: mod_api::ItemId, count
     .unwrap_or(false)
 }
 
-/// Swap ONE of player `id`'s acting-hand stack of `item` for `replacement`.
 fn replace_held_one(
     ctx: &mut SimCtx<'_>,
     mod_id: &str,
@@ -144,9 +113,6 @@ fn replace_held_one(
     .unwrap_or(false)
 }
 
-/// Player calls (snapshot, damage/kill through the funnel, inventory,
-/// movement primitives).
-/// One player's movement intent this tick, in the ABI's shape.
 fn player_input(ctx: &SimCtx<'_>, player: mod_api::PlayerId) -> Option<mod_api::PlayerInputData> {
     ctx.world
         .player_input(player.0)
@@ -271,25 +237,14 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 HostRet::Bool(give_item_to(ctx, id, item_ty, count, variant))
             })
         }
-        // The per-player, per-stack held read: the stack's instance data
-        // rides along, which the row-level `PlayerState.held` cannot carry.
-        // An unresolvable id answers `None`, like every id-addressed read.
         PlayerCall::PlayerHeld { player } => sim_query(move |ctx| {
             let id = crate::player::PlayerId(player.0);
             HostRet::HeldStack(
-                // The acting hand's stack (only the actor is ever mid-ladder,
-                // so every other session reads its selected slot).
                 ctx.with_player(id, |p| p.held().copied())
                     .flatten()
                     .map(super::guards::item_stack_data),
             )
         }),
-        // The compare-and-set write onto the HELD stack: the mod names both
-        // the item and the exact data it computed the new map against, so a
-        // hand swapped OR a stack another writer re-stamped in between
-        // refuses rather than clobbers. Explicit player addressing like
-        // GiveItemTo; the slot write bumps the inventory revision, so
-        // replication is automatic.
         PlayerCall::SetPlayerHeldData {
             player,
             expect_item,
@@ -348,9 +303,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 HostRet::Bool(ok)
             })
         }
-        // Atomic: only an acting-hand stack holding at least `count` of `item`
-        // consumes. During the ladder's off-hand pass this spends the
-        // off-hand.
         PlayerCall::ConsumeHeld { item, count } => {
             sim_query(|ctx| match actor_for(ctx, "ConsumeHeld", "ConsumeHeldBy") {
                 Ok(id) => HostRet::Bool(consume_held(ctx, id, item, count)),
@@ -415,8 +367,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 }),
             }
         }
-        // Status effects are player-state primitives like SetHealth: direct
-        // mutation, no events.
         PlayerCall::EffectApply { key, ticks } => {
             sim_query(|ctx| match actor_for(ctx, "EffectApply", "EffectApplyTo") {
                 Ok(id) => HostRet::Bool(apply_effect(ctx, mod_id, id, &key, ticks)),
@@ -437,12 +387,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
         PlayerCall::EffectsActiveOf { player } => {
             sim_query(|ctx| HostRet::EffectsOf(effects_of(ctx, PlayerId(player.0))))
         }
-        // Body-level player-state primitives like SetHealth: direct mutation
-        // of the named session, no events. Both are per-player writes a tick
-        // system re-states, so they address the player EXPLICITLY (the
-        // addressing doctrine), never the actor. `BodyClaims` owns the
-        // invariants: the claim is keyed by THIS mod, non-finite is refused
-        // whole, and finite values clamp.
         PlayerCall::SetPlayerAttribute {
             player,
             attribute,
@@ -461,10 +405,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 }
             })
         }
-        // The spend half of a launch: `count` of `item` out of the named
-        // session's inventory, whole or nothing, ONE variant. The variant
-        // filter is COMPARED against the carried stacks, never interned: a
-        // spend that finds nothing must not mint a permanent row.
         PlayerCall::TakeItem {
             player,
             item,
@@ -491,9 +431,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 HostRet::ItemStack(taken.map(super::guards::item_stack_data))
             })
         }
-        // The action-denial claim. Infallible below the ABI (a set of enum
-        // values has no malformed form), so the only answer is whether the
-        // addressed session is reachable.
         PlayerCall::SetPlayerDeniedActions { player, actions } => {
             let mod_id = mod_id.to_owned();
             let denied = crate::player::DeniedActions::of(actions);
@@ -509,8 +446,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
             {
                 return err;
             }
-            // Empty / whitespace-only text is rejected at delivery time too;
-            // report it here so the mod can tell a no-op from a queued send.
             if text.trim().is_empty() {
                 return HostRet::Bool(false);
             }
@@ -519,12 +454,7 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 .push_action(DeferredAction::ChatSend { text, targets });
             HostRet::Bool(true)
         }),
-        // Progression is per-player state, so both arms address a player
-        // explicitly (the addressing doctrine) — never the actor.
         PlayerCall::UnlockRecipe { player, recipe } => sim_query(|ctx| {
-            // A key no catalog row owns would sit in the player's record
-            // forever, unlocking nothing and never failing — refuse it, so a
-            // typo shows up as a `false` the mod can log.
             let known = crate::modding::active_recipes()
                 .is_some_and(|recipes| recipes.crafting().get(&recipe).is_some());
             if !known {
@@ -535,8 +465,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
                 p.progression.unlock(&recipe)
             }) {
                 Some(unlocked) => HostRet::Bool(unlocked),
-                // No such session. Silence here would look exactly like
-                // "already unlocked", so say which.
                 None => {
                     log::warn!(
                         "[mod {mod_id}] UnlockRecipe '{recipe}': player {} is not connected",
@@ -557,9 +485,6 @@ pub(super) fn handle_player_call(mod_id: &str, call: PlayerCall) -> HostRet {
     }
 }
 
-/// The body domain on the SERVER: the authoritative answers to the calls
-/// a client instance also serves as predictions (see
-/// `client::handle_body_call`).
 pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
     match call {
         BodyCall::ActingPlayer => {
@@ -589,9 +514,6 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
                 }
             })
         }
-        // The animator primitives: names resolve to graph ids HERE, once, so
-        // the claim, the wire row and the render frame carry plain ids; a
-        // name a rig's graph lacks is loud, like a typo'd item.
         BodyCall::SetPlayerAnimatorParams { player, params } => {
             let params = match crate::player::animator::resolve_params(params) {
                 Ok(params) => params,
@@ -628,8 +550,6 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
                 }
             })
         }
-        // An edge: queued on the tick's feed, replicated to every mirror of
-        // the body (the player's own viewmodel included).
         BodyCall::FirePlayerAnimatorEvent { player, rig, event } => {
             let (rig, event) = match crate::player::animator::resolve_event(&rig, &event) {
                 Ok(resolved) => resolved,
@@ -646,8 +566,6 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
         BodyCall::AnimationClip { rig, clip } => {
             HostRet::AnimationClip(crate::player::animator::clip_info(&rig, &clip))
         }
-        // Taking the use gesture is a body write like the claims beside it:
-        // addressed at a session, keyed by the caller, transient.
         BodyCall::HoldUse { player } => {
             let claimant = mod_id.to_owned();
             sim_query(move |ctx| {
@@ -657,10 +575,6 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
                 HostRet::Bool(wrote.is_some())
             })
         }
-        // What a hand DISPLAYS: the pose seam's shape (a per-mod claim on
-        // the addressed body, last claim wins). Names resolve to ids HERE,
-        // once, so the claim, the wire row and the render frame all carry a
-        // plain id.
         BodyCall::SetPlayerHeldDisplay { player, main, off } => {
             let mod_id = mod_id.to_owned();
             let (main, off) = match (display_item(&main), display_item(&off)) {
@@ -680,16 +594,11 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
             }))
         }),
         BodyCall::SetPlayerBonePose { player, bones } => {
-            // Names resolve to rig ids HERE, once, so nothing below this
-            // boundary carries a string.
             let Some(bones) = crate::modding::resolve_bone_poses(bones) else {
                 return HostRet::invalid(crate::modding::BONE_POSE_REFUSAL.into());
             };
             let mod_id = mod_id.to_owned();
             sim_query(move |ctx| {
-                // The claim's own validation cannot fail here — `resolve` has
-                // already rejected the one thing it refuses — so the only
-                // answer left is whether the addressed session exists.
                 let wrote = ctx.with_player(crate::player::PlayerId(player.0), |p| {
                     p.claims.set_bone_poses(&mod_id, bones);
                 });
@@ -699,8 +608,6 @@ pub(super) fn handle_body_call(mod_id: &str, call: BodyCall) -> HostRet {
     }
 }
 
-/// A hand-display claim's item name resolved to its id: `None` releases,
-/// an unknown name is a mod bug.
 fn display_item(name: &Option<String>) -> Result<Option<ItemType>, HostRet> {
     match name {
         None => Ok(None),
@@ -710,7 +617,6 @@ fn display_item(name: &Option<String>) -> Result<Option<ItemType>, HostRet> {
     }
 }
 
-/// An inventory as the ABI's carried-slot layout (`Inventory::carried`).
 pub(in crate::modding) fn carried_slots(
     inventory: &petramond_world::inventory::Inventory,
 ) -> Vec<Option<mod_api::ItemStackData>> {
@@ -732,9 +638,6 @@ mod tests {
     use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
-    /// The held-data write compares the VALUE it is replacing, not just the
-    /// item: a stack that another handler re-stamped between the mod's read
-    /// and its write refuses instead of silently dropping that other write.
     #[test]
     fn held_data_write_refuses_a_stack_restamped_under_it() {
         use petramond_world::item::{variant, ItemStack, ItemType};
@@ -798,9 +701,6 @@ mod tests {
         assert_eq!(*variant::get(after.variant).expect("data"), stamp(1));
     }
 
-    /// `TakeItem` spends ONE variant in the carried layout, and its data
-    /// filter is compared against what is carried, never interned: a filter
-    /// nothing matches takes nothing and mints no variant row.
     #[test]
     fn take_item_spends_one_variant_and_interns_nothing() {
         use petramond_world::item::{variant, ItemStack, ItemType};
@@ -873,20 +773,10 @@ mod tests {
         }
     }
 
-    /// The progression arms: unlocking is per-player, idempotent (`true` only
-    /// on the call that changed it), refuses a key no catalog row owns, and
-    /// the query reads back what the write stored. An unreachable player
-    /// answers `false` rather than silently unlocking the actor.
     #[test]
     fn unlocking_is_per_player_idempotent_and_refuses_unknown_keys() {
         use crate::player::PlayerId;
 
-        // The validation reads the process-wide installed catalog (the same
-        // snapshot `RecipeResult` answers from), and every session build
-        // installs the REAL one — so the fixture installs that and takes a key
-        // FROM it. A synthetic catalog would be stomped by any concurrently
-        // building session; naming a specific engine recipe would pin editable
-        // data. Neither is this test's subject.
         let recipes = petramond_world::crafting::load_recipes_for(&Default::default())
             .expect("the shipped recipes catalog loads");
         let key = recipes
@@ -953,13 +843,10 @@ mod tests {
                 assert_eq!(unlock(&mut data, 0), HostRet::Bool(true), "first unlock");
                 assert_eq!(unlock(&mut data, 0), HostRet::Bool(false), "idempotent");
                 assert_eq!(query(&mut data, 0), HostRet::Bool(true));
-                // Per PLAYER: the other session is untouched until addressed.
                 assert_eq!(query(&mut data, 1), HostRet::Bool(false));
                 assert_eq!(unlock(&mut data, 1), HostRet::Bool(true));
                 assert_eq!(query(&mut data, 1), HostRet::Bool(true));
-                // No such session.
                 assert_eq!(unlock(&mut data, 9), HostRet::Bool(false));
-                // A key no catalog row owns is refused rather than stored.
                 assert_eq!(
                     handle_host_call(
                         &mut data,
@@ -975,11 +862,6 @@ mod tests {
         assert_eq!(acting.progression.unlocked(), std::slice::from_ref(&key));
         assert_eq!(other.progression.unlocked(), [key]);
     }
-    /// The body-claim primitives (`SetPlayerAttribute` /
-    /// `SetPlayerHeldPose`): per-player writes through the roster — an
-    /// unreachable player answers `false` and the ADDRESSED body is written,
-    /// not whoever the tick happens to run as. The claim is keyed by the
-    /// CALLING mod, so the addressing doctrine survives the fold.
     #[test]
     fn body_state_writes_address_a_player_and_credit_the_calling_mod() {
         use crate::player::PlayerId;
@@ -1053,12 +935,10 @@ mod tests {
                 );
                 assert_eq!(pose(&mut alpha, 9, None), HostRet::Bool(false));
 
-                // Two mods claiming the same body compose rather than race.
                 assert_eq!(scale(&mut alpha, 0, 0.5), HostRet::Bool(true));
                 assert_eq!(scale(&mut beta, 0, 0.5), HostRet::Bool(true));
                 assert_eq!(pose(&mut alpha, 0, Some(guard)), HostRet::Bool(true));
 
-                // A non-finite claim is a loud error, not a stored value.
                 let mut nan = guard;
                 nan.first_person.translation[0] = f32::NAN;
                 assert!(matches!(pose(&mut alpha, 0, Some(nan)), HostRet::Err(_)));
@@ -1067,8 +947,6 @@ mod tests {
                     HostRet::Err(_)
                 ));
 
-                // A clear addressed at the OTHER session is a valid write —
-                // per-player, never the acting shortcut.
                 assert_eq!(pose(&mut alpha, 1, None), HostRet::Bool(true));
             });
         }
@@ -1079,16 +957,10 @@ mod tests {
             "the refused writes left the good pose standing"
         );
         assert_eq!(acting.claims.held_pose(Hand::Off), None);
-        // The other session stayed at its defaults (checked after the scope:
-        // its borrow lives in the roster).
         assert_eq!(other.move_scale(), crate::player::MOVE_SCALE_DEFAULT);
         assert!(other.claims.is_empty());
     }
 
-    /// The single-player-era calls act for the dispatch's ACTOR — the second
-    /// session here, never whoever joined first — and an actor-less dispatch
-    /// (a tick system) refuses them rather than lending some other player,
-    /// while their explicit twins reach any named session.
     #[test]
     fn implicit_calls_act_for_the_actor_and_refuse_an_actorless_dispatch() {
         use crate::player::PlayerId;
@@ -1116,7 +988,6 @@ mod tests {
             },
         ]);
 
-        // An event handler acting for the second session.
         let mut ctx = SimCtx {
             world: &mut world,
             actor: Some(PlayerId(1)),
@@ -1142,7 +1013,6 @@ mod tests {
             );
         });
 
-        // A tick system: nobody acts.
         ctx.actor = None;
         scope::enter(&mut ctx, || {
             assert_eq!(

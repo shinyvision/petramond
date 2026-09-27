@@ -1,25 +1,18 @@
-//! The terrain quad passes' draw lists: every draw a pass submits this plan,
-//! as the `DrawIndexedIndirectArgs` records an indirect draw reads, grouped
-//! into BATCHES that share one quad-arena block and one pipeline.
+//! Draw lists for the terrain quad passes, stored as the `DrawIndexedIndirectArgs` records an
+//! indirect draw reads and grouped into batches that share one quad-arena block and one pipeline.
 //!
-//! The quad arena allocates in whole [`TerrainVertex`] units, so binding one
-//! block's buffer reaches every column in it by `base_vertex`; each column's
-//! origin row rides `first_instance`. A batch is therefore ONE
-//! `multi_draw_indexed_indirect` however many columns and sections it covers.
-//! Devices without indirect `first_instance` take the fallback: the same
-//! records, issued one `draw_indexed` each — identical draws, CPU-submitted.
+//! The arena allocates in whole [`TerrainVertex`] units, so binding one block's buffer reaches
+//! every column in it by `base_vertex`, and each column's origin row rides `first_instance`. A
+//! batch is one `multi_draw_indexed_indirect` however many columns it covers. Devices without
+//! indirect `first_instance` issue the same records as one `draw_indexed` each.
 //!
-//! The lists are built once per plan (the planner reruns only when the view
-//! or the column set changes) and uploaded then; a frame that reuses the plan
-//! reuses the uploaded records.
+//! The lists are built and uploaded once per plan, and a frame that reuses the plan reuses them.
 //!
 //! [`TerrainVertex`]: petramond_mesh::TerrainVertex
 
 use crate::resources::{ColumnBuffer, GpuColumnMesh, Span, TerrainArenas};
 use petramond_mesh::QuadLayer;
 
-/// One indexed draw in the layout indirect draws read
-/// (`wgpu::util::DrawIndexedIndirectArgs`): 20 bytes, tightly packed.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct IndirectDraw {
@@ -32,16 +25,10 @@ pub(crate) struct IndirectDraw {
 
 const DRAW_BYTES: u64 = std::mem::size_of::<IndirectDraw>() as u64;
 
-/// The three terrain passes that draw quad layers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum QuadPass {
-    /// Opaque terrain, near→far. Depth-tested and written with `Less`, so the
-    /// image does not depend on draw order: batches group by block.
     Opaque,
-    /// Translucent blocks (ice), near→far. Blended, so draw order is kept.
     Translucent,
-    /// Translucent fluids, far→near, sides and two-sided tops interleaved.
-    /// Blended, so draw order is kept.
     Transparent,
 }
 
@@ -53,15 +40,11 @@ impl QuadPass {
         QuadPass::Transparent,
     ];
 
-    /// Whether the pass's result depends on draw order (blending). Such a
-    /// pass batches only CONSECUTIVE draws that share a block and pipeline.
     fn order_matters(self) -> bool {
         !matches!(self, QuadPass::Opaque)
     }
 }
 
-/// A run of a list's draws sharing one quad-arena block and quad layer (the
-/// layer picks the pipeline).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct Batch {
     layer: QuadLayer,
@@ -70,14 +53,11 @@ struct Batch {
     count: u32,
 }
 
-/// One pass's draws, in submission order once [`DrawList::finish`] ran.
 #[derive(Default)]
 pub(crate) struct DrawList {
     draws: Vec<IndirectDraw>,
-    /// `(layer, block)` of each draw while the list is built.
     keys: Vec<(QuadLayer, u32)>,
     batches: Vec<Batch>,
-    /// This list's first record in the uploaded indirect buffer.
     base: u32,
     indices: u64,
 }
@@ -90,19 +70,14 @@ impl DrawList {
         self.indices = 0;
     }
 
-    /// Draws in the list.
     pub fn len(&self) -> u32 {
         self.draws.len() as u32
     }
 
-    /// Indices the list submits.
     pub fn indices(&self) -> u64 {
         self.indices
     }
 
-    /// Queue `quads` quads of `column`'s `layer` buffer from element `start`
-    /// (a section's span, or a whole-column region). Nothing is queued for an
-    /// empty range or a column without that buffer.
     pub fn push(
         &mut self,
         arenas: &TerrainArenas,
@@ -130,7 +105,6 @@ impl DrawList {
         self.indices += u64::from(quads) * 6;
     }
 
-    /// Queue a section's span of `layer` (vertices, whole quads).
     pub fn push_span(
         &mut self,
         arenas: &TerrainArenas,
@@ -141,8 +115,6 @@ impl DrawList {
         self.push(arenas, column, layer, span.start, span.count / 4);
     }
 
-    /// Batch the queued draws. An order-free pass groups them by block first
-    /// (stably, so near→far survives inside each block).
     fn finish(&mut self, order_matters: bool) {
         if !order_matters {
             let mut keyed: Vec<_> = self.keys.drain(..).zip(self.draws.drain(..)).collect();
@@ -168,20 +140,12 @@ impl DrawList {
     }
 }
 
-/// How a device submits the lists.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Submission {
-    /// One `multi_draw_indexed_indirect` per batch.
     Indirect,
-    /// One `draw_indexed` per record: devices without indirect
-    /// `first_instance` (the column origin rides it).
     Direct,
 }
 
-/// The device features the indirect path needs, as far as `adapter` has them
-/// (request them at device creation; without them the lists draw directly).
-/// An adapter that cannot execute indirect draws at all gets none, so its
-/// device takes the direct path.
 pub(crate) fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     let indirect = adapter
         .get_downlevel_capabilities()
@@ -194,7 +158,6 @@ pub(crate) fn wanted_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     }
 }
 
-/// Every terrain quad pass's draw list and the GPU records they upload to.
 pub(crate) struct TerrainDraws {
     lists: [DrawList; QuadPass::COUNT],
     indirect: Option<wgpu::Buffer>,
@@ -218,16 +181,12 @@ impl TerrainDraws {
         }
     }
 
-    /// Start a new plan: every list empty.
     pub fn clear(&mut self) {
         for list in &mut self.lists {
             list.clear();
         }
     }
 
-    /// Whether every record costs a CPU draw call on this device (no indirect
-    /// `first_instance`). There, one whole-column draw beats per-section draws
-    /// even when it also covers culled sections.
     pub fn draws_directly(&self) -> bool {
         self.submission == Submission::Direct
     }
@@ -240,7 +199,6 @@ impl TerrainDraws {
         &mut self.lists[pass as usize]
     }
 
-    /// Batch every list and upload the records the indirect path reads.
     pub fn finish(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let mut base = 0u32;
         for pass in QuadPass::ALL {
@@ -273,10 +231,6 @@ impl TerrainDraws {
         }
     }
 
-    /// Record `pass`'s draws. `pipeline` names the pipeline each quad layer
-    /// draws with; it is bound whenever the layer changes (a render pass
-    /// starts with none bound). The caller binds everything else: the frame
-    /// and atlas groups, the column-origin table and the shared quad index.
     pub fn encode<'p>(
         &self,
         render: &mut wgpu::RenderPass<'_>,

@@ -1,7 +1,3 @@
-//! The RUN rule: which form a cell of a linear run takes from its place in
-//! the run. Pure over two neighbour predicates, so the family, the placement
-//! pre-write and the tests all resolve through one function.
-
 use crate::mathh::IVec3;
 
 use super::{RunForm, RunRoot, RUN_BASE, RUN_FRUSTUM, RUN_MERGE, RUN_MIDDLE, RUN_TIP};
@@ -50,8 +46,6 @@ pub fn run_form(
 mod tests {
     use super::*;
 
-    /// A four-long hanging run over air reads base / middle / frustum / tip
-    /// from the ceiling down, and every interior read is identity only.
     #[test]
     fn a_hanging_run_tapers_from_its_root_to_its_free_end() {
         let run: Vec<IVec3> = (0..4).map(|i| IVec3::new(0, 10 - i, 0)).collect();
@@ -64,8 +58,6 @@ mod tests {
         assert_eq!(forms, [RUN_BASE, RUN_MIDDLE, RUN_FRUSTUM, RUN_TIP]);
     }
 
-    /// The same rule mirrored: a standing run tapers upward, and a lone cell
-    /// is a free end (a single spike), never a base.
     #[test]
     fn a_standing_run_tapers_upward_and_a_lone_cell_is_a_tip() {
         let run: Vec<IVec3> = (0..3).map(|i| IVec3::new(0, i, 0)).collect();
@@ -82,8 +74,6 @@ mod tests {
         );
     }
 
-    /// Two runs meeting tip to tip form a column: both free ends read
-    /// `merge`, and the segments behind them still read `frustum`.
     #[test]
     fn opposing_free_ends_merge() {
         let hanging = [IVec3::new(0, 6, 0), IVec3::new(0, 5, 0)];
@@ -105,10 +95,8 @@ mod tests {
         );
     }
 
-    /// The cascade only revisits neighbours of a CHANGED cell, so a cell's
-    /// two-deep read must be covered by a one-deep change: whenever the cell
-    /// two tipward flips identity, the cell one tipward changes form. Pinned
-    /// over every neighbourhood the rule can see.
+    /// The cascade only revisits neighbours of a changed cell. So when the cell two tipward flips
+    /// identity, the cell one tipward has to change form. Checked for every neighbourhood.
     #[test]
     fn a_two_deep_change_always_changes_the_cell_between() {
         let p = IVec3::ZERO;
@@ -116,8 +104,6 @@ mod tests {
             let tip = root.tip();
             for rootward in [false, true] {
                 for far in [false, true] {
-                    // The neighbour one tipward is part of the run (else the
-                    // cell never reads two deep at all).
                     let same_with = |two: bool| {
                         move |q: IVec3| {
                             q == p

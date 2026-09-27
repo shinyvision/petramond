@@ -1,23 +1,13 @@
-//! A persistent set of `u64` ids in world KV, sharded so one change writes
-//! one small value.
-
 use std::collections::BTreeSet;
 
 use crate::{world_kv_delete, world_kv_get, world_kv_set, KV_MAX_VALUE_BYTES};
 
-/// Ids per shard by id RANGE: id `n` lives in shard `n / IDS_PER_SHARD`, so
-/// adding or removing one id rewrites that shard alone, however large the
-/// set. Suits ids handed out by a counter (dense, ever growing).
 const IDS_PER_SHARD: u64 = 4096;
 const _: () = assert!(IDS_PER_SHARD as usize * 8 <= KV_MAX_VALUE_BYTES);
 
-/// The set, loaded once per session. World KV keys are `"{prefix}/{shard}"`
-/// plus `"{prefix}/shards"` (how many shards to read back); the prefix must
-/// sit in the mod's own namespace.
 pub struct IdShards {
     prefix: String,
     ids: BTreeSet<u64>,
-    /// Shards `0..shards` may hold a value.
     shards: u64,
 }
 
@@ -52,8 +42,6 @@ impl IdShards {
         self.ids.iter().copied()
     }
 
-    /// Put `id` in (`true`) or take it out. A call that changes nothing
-    /// writes nothing; `true` when the set changed.
     pub fn set(&mut self, id: u64, present: bool) -> bool {
         let changed = if present {
             self.ids.insert(id)

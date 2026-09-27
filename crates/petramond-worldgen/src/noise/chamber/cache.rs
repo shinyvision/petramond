@@ -1,8 +1,6 @@
 use super::{Excavation, Room};
 use crate::cache::{inline, CacheBudget, GenContext, Memo, MemoSpec, MemoStats, Scaling};
 
-/// A candidate room's identity: the context of the catalogs it was rolled
-/// under, its excavation row by salt, and the placement cell.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
     context: GenContext,
@@ -20,11 +18,6 @@ impl Key {
     }
 }
 
-/// Memoizes position-only admission, including rejected candidates. Query-box
-/// culling happens afterward; it must never enter a cached result. Admission
-/// is a pure function of the key and the natural geometry source, so every
-/// generator of a world shares its world's instance (`crate::cache`); a test
-/// that substitutes its own geometry oracle builds its own.
 pub(in crate::noise) struct CandidateCache(Memo<Key, Option<Room>>);
 
 impl Default for CandidateCache {

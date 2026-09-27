@@ -35,47 +35,16 @@ const PEBBLE_DENSITY: f32 = 0.008;
 /// patch shape (`WildCropSpec`) lifted into core.
 ///
 /// THIS IS NOT A `patch_field` BLOB, and the reason is the whole point. A
-/// smoothed field couples a patch's SIZE to its SPACING: both scale with the
-/// period, so "small stands, far apart" is not a setting it has. Measured, with
-/// `littercensus` clump sizes: period 8 gave a mean of 4 but merged into runs
-/// of 13+ wherever grassland was continuous, and period 32 gave two stands per
-/// 400 chunks of 12 and 23 stalks. An anchor plus a bounded walk separates the
+/// smoothed field couples a patch's size to its spacing: both scale with the
+/// period. An anchor plus a bounded walk separates the
 /// two knobs — this is the size, the biome's anchor chance is the frequency —
 /// and the size can never run away, because the walk stops.
 ///
 /// Stalks per stand, inclusive: the walk's step count. Some steps revisit a
 /// cell and some land on ground that refuses, so the stand is at most this.
 const HEMP_STAND_STEPS: (i32, i32) = (2, 6);
-/// How far a walk may wander from its anchor — the largest step count minus
-/// the anchor itself, so the clamp never bends a walk back into a blob.
 const HEMP_STAND_REACH: i32 = 5;
-/// Only columns on this lattice may ANCHOR a stand.
-///
-/// This is a COST decision, and a load-bearing one: membership is answered by
-/// re-rolling every candidate anchor in reach, per column, so an anchor on
-/// every column means `(2·reach+1)²` = 121 positional rolls for each grass
-/// column in a hemp biome. Measured with `genmap 42 /dev/null top`, that was
-/// **+30% on total generation time** (1.73s → 2.29s over 576 chunks) — far too
-/// much for one plant. On a 4-block lattice the same scan is at most 9 rolls.
-///
-/// What it costs in return is that stands can only START on the lattice. That
-/// is invisible: the walk out of the anchor is what gives a stand its shape,
-/// and at roughly one stand per 16 chunks nothing lines up to be seen.
 const HEMP_ANCHOR_GRID: i32 = 4;
-// HEMP IS DENSER NEAR WATER, AND THAT IS A BIOME STATEMENT, NOT A HEIGHT ONE.
-// The obvious cheap proxy — "how far is this column above sea level", which is
-// exact here because the generator has no water table, so every surface water
-// body sits at exactly `SEA_LEVEL` — was built, measured, and thrown away:
-// `littercensus` puts 65% of all DRY land within two blocks of sea level, so
-// boosting that band boosts most of the map and says nothing about water. The
-// signal that does work is the one the vegetation pass already holds: swamp and
-// wetland ARE the temperate water margins, and they carry several times the
-// hemp of plains and forest (see each biome's `with_hemp`).
-//
-// What this deliberately does NOT catch is a river bank cutting through plains:
-// that column is plain grass at plain height, and telling it apart needs a
-// world-anchored surface scan at neighbouring offsets (the shape of the beach
-// pass's `near_ocean_memo`) rather than anything a single column knows.
 
 /// Per-section ground vegetation. Places each column's single plant into the ONE
 /// section that contains the cell just above its post-cave bare-ground top.
@@ -99,25 +68,21 @@ pub fn place_vegetation_section(
         for x in 0..SECTION_SIZE {
             let i = z * SECTION_SIZE + x;
             let column_surf = surf[i];
-            // Submerged (or floorless) columns top out at the waterline: their surface
-            // material is water, which carries no ground plant.
             if column_surf < SEA_LEVEL {
                 continue;
             }
             let anchor = top[i];
-            // A plant roots above the world's floor layer and fits under its
-            // top, wherever in the cubic range a cave mouth drops the ground.
             if anchor <= WORLD_MIN_Y || anchor + 1 >= WORLD_MAX_Y {
                 continue;
             }
             let plant_y = anchor + 1;
             let ly = plant_y - oy;
             if ly < 0 || ly >= SECTION_SIZE as i32 {
-                continue; // the plant cell belongs to a different section.
+                continue;
             }
             let (lx, ly, lz) = (x, ly as usize, z);
             if section.block_raw(lx, ly, lz) != Block::Air.id() {
-                continue; // already occupied (terrain/scatter).
+                continue;
             }
             let biome = Biome::from_id(biomes[i]);
             let wx = ox + x as i32;
@@ -138,25 +103,12 @@ pub fn place_vegetation_section(
             if let Some(p) = pick_plant(biome, surf_block, seed, wx, wz, &mut rng) {
                 section.set_block_raw(lx, ly, lz, p.id());
             } else if spec(biome).snow_cover.covers(anchor) && surf_block.is_solid() {
-                // Snow-covered columns blanket the bare ground with a snow
-                // layer; a column that rolled a plant keeps it (ferns poke
-                // through the snow).
                 section.set_block_raw(lx, ly, lz, Block::SnowLayer.id());
             }
         }
     }
 }
 
-/// Choose a plant for a column. The biome row's `covers` answer first for the
-/// grounds they name; then sand and podzol take their cover rolls, and grass
-/// surfaces split into two INDEPENDENT decisions:
-///   1. a common grass-tuft / fern scatter (keyed to the column RNG), and
-///   2. a flower PATCH: a low-frequency presence field decides whether this column
-///      is inside a flower patch, a low-frequency species field picks the ONE
-///      flower that patch is made of, and the column RNG decides whether a flower
-///      actually stands here. So flowers appear as single-species clusters with a
-///      natural within-patch scatter — not a per-column free-for-all of mixed
-///      species. Both draws happen in a fixed order so the stream is deterministic.
 fn pick_plant(
     biome: Biome,
     surf: Block,
@@ -227,16 +179,9 @@ fn pick_plant(
 /// Draws happen in a fixed order, so the stream is a pure function of the
 /// column, like every other decision on this path.
 ///
-/// SNOW DOES NOT GATE THIS PASS, and that reversal (2026-07-31) is load-bearing.
-/// Skipping snow-covered columns whole protected the look of a snowfield — a
-/// litter cell takes the column's snow layer, so its grass goes green-topped —
-/// and it cost the player the game: measured with `littercensus --biome
-/// snowy_taiga`, 102k columns of snowy taiga and tundra carried ZERO pebbles,
-/// zero branches and zero hemp, which is every ingredient of the first tool. A
-/// snowy biome is not decoration, it is somewhere a fresh player can spawn. The
-/// look survives anyway: those biomes already spend 12% of their columns on
-/// ferns, which take the snow layer the same way, so litter at ~0.5% is
-/// invisible against speckling that is twenty times denser.
+/// Snow does not gate this pass: players can spawn in snowy biomes and must
+/// still find the materials for their first tool. A litter cell replaces its
+/// column's snow layer, but its low density preserves the snowfield's appearance.
 fn pick_litter(
     biome: Biome,
     surf: Block,
@@ -251,8 +196,6 @@ fn pick_litter(
     let spec = spec(biome);
 
     if rng.chance(PEBBLE_DENSITY) {
-        // Three sizes, evenly drawn, so a scattered field does not read as one
-        // sprite stamped across the map.
         return Some(match rng.next_i32(0, 2) {
             0 => Block::PebblesSmall,
             1 => Block::PebblesMedium,
@@ -260,10 +203,6 @@ fn pick_litter(
         });
     }
 
-    // Hemp grows in small STANDS. The biome gate is checked FIRST and is what
-    // keeps the anchor scan off the hot path: only grass in a hemp biome ever
-    // pays for it, and the scan itself is one positional roll per candidate
-    // anchor that almost always fails on that roll.
     let anchor_chance = spec.vegetation.hemp_anchor_chance;
     if anchor_chance > 0.0 && surf == Block::Grass && in_hemp_stand(seed, anchor_chance, wx, wz) {
         return Some(Block::Hemp);
@@ -271,17 +210,7 @@ fn pick_litter(
     None
 }
 
-/// Whether `(wx, wz)` lies in some hemp stand: is it an anchor, or on the walk
-/// out of one within reach?
-///
-/// Anchor rolls and walk shapes are positional-RNG-pure per `(seed, anchor)`,
-/// so every caller — either batch granularity, any chunk, any order — computes
-/// the same answer for the same column, with no neighbour reads and therefore
-/// no seam. That purity is also why the walk may be recomputed per column
-/// instead of being memoised: it is cheaper than the bookkeeping would be, and
-/// the anchor roll rejects almost every candidate before the walk starts.
 fn in_hemp_stand(seed: u32, anchor_chance: f32, wx: i32, wz: i32) -> bool {
-    /// The lattice points within `HEMP_STAND_REACH` of `v`.
     fn candidates(v: i32) -> impl Iterator<Item = i32> {
         let lo = v - HEMP_STAND_REACH;
         let first = lo + (HEMP_ANCHOR_GRID - lo.rem_euclid(HEMP_ANCHOR_GRID)) % HEMP_ANCHOR_GRID;
@@ -309,9 +238,6 @@ fn in_hemp_stand(seed: u32, anchor_chance: f32, wx: i32, wz: i32) -> bool {
                     _ => (0, -1),
                 };
                 let (nx, nz) = (cx + dx, cz + dz);
-                // Clamped to the reach box, so a walk can never leave the
-                // window every neighbouring column scans — which is what makes
-                // the membership answer identical from either side.
                 if (nx - ax).abs() > HEMP_STAND_REACH || (nz - az).abs() > HEMP_STAND_REACH {
                     continue;
                 }
@@ -325,11 +251,6 @@ fn in_hemp_stand(seed: u32, anchor_chance: f32, wx: i32, wz: i32) -> bool {
     false
 }
 
-/// The ground litter may lie on. Deliberately a SHORT list of bare, settled
-/// surfaces (per Rachel) rather than "anything solid": litter on gravel, moss,
-/// mycelium or a mountain's stone cap reads as debris rather than as something
-/// a person would stop and pick up. Shared by the pebbles here and by the
-/// branch scatter in `tree_select`, so the two cannot drift.
 #[inline]
 pub fn litter_ground(surf: Block) -> bool {
     matches!(
@@ -338,9 +259,6 @@ pub fn litter_ground(surf: Block) -> bool {
     )
 }
 
-/// Whether ground cover is allowed at this column under the biome's optional
-/// cluster mask: with no mask, always; otherwise only inside a low-frequency
-/// patch (so ferns/tufts form clumps with bare ground between).
 fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i32) -> bool {
     match cluster {
         None => true,
@@ -352,23 +270,9 @@ fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i
 mod tests {
     use super::*;
 
-    /// A snowfield must still hand a fresh player the makings of the first tool.
-    ///
-    /// This pass once skipped snow-covered columns whole, to protect the look of
-    /// an unbroken snowfield, and the price was that every `SnowCover::Always`
-    /// biome generated no pebbles and no hemp at all — measured at zero over
-    /// 102k columns. A player can spawn in one of those biomes, and with logs
-    /// axe-gated the gathering layer is the only way out, so the look is not
-    /// worth the game. Re-gate this pass on snow and this fails.
-    ///
-    /// Hemp is the scarce half and the reason the sweep is this wide: cold hemp
-    /// is deliberately an order below the temperate rate. (Fallen branches are
-    /// the third ingredient and are placed by the TREE placer, not here.)
     #[test]
     fn a_snowfield_still_grows_the_ingredients_of_the_first_tool() {
         const SEED: u32 = 0x5EA5_04E5;
-        // Wide enough that the hemp count has room to be retuned DOWN without
-        // this reading as a flake: the sweep expects tens of stalks, not one.
         const SIDE: i32 = 600;
 
         let mut pebbles = 0;

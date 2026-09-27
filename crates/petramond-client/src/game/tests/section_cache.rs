@@ -1,15 +1,3 @@
-//! Cross-side contract tests for the section cache:
-//! keep-shape unloads vouch content hashes and the client parks the evicted
-//! copies; a re-entered section with unmoved content re-promotes as
-//! `SectionCached` (byte-identical to what a full resend would install); a
-//! belief hash that disagrees with current content forces the full payload;
-//! and a client that declined to park heals through `SectionCacheMiss`.
-//!
-//! The fixture leans on GENERATED terrain (no save): leaving evicts the area
-//! server-side and returning regenerates it deterministically, so untouched
-//! sections hash equal across the trip — the same property that makes the
-//! cache effective in real play.
-
 use super::super::tick::TICK_DT;
 use super::common::{game, TestGame};
 use crate::game::GameInput;
@@ -18,8 +6,6 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
-/// Wall-clock give-up bound for the pump loops (`TestGame` uses an inline
-/// pool, so waits are compute-bound; this is only a hard fail reporting cap).
 const DEADLINE: std::time::Duration = petramond_util::test_time::TEST_HARD_DEADLINE;
 
 const HOME: WorldPos = WorldPos::new(8.5, 80.0, 8.5);
@@ -37,8 +23,6 @@ fn frame(game: &mut TestGame) -> Vec<ServerToClient> {
     game.tick_recorded(TICK_DT, &GameInput::default())
 }
 
-/// Pump frames until `done`, panicking past the deadline with a summary of
-/// what flowed; returns every recorded server→client message.
 fn frames_until(
     game: &mut TestGame,
     what: &str,
@@ -76,10 +60,6 @@ fn kind(m: &ServerToClient) -> &'static str {
     }
 }
 
-/// Pump until the home column replicated AND no section payloads
-/// (`SectionData`/`SectionCached`) arrived for a stretch of frames — the
-/// terrain of an initial load (or a re-entry) has landed. Light rebakes and
-/// tick deltas may keep trickling (water settling); they don't gate this.
 fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
     let deadline = std::time::Instant::now() + DEADLINE;
     let mut recorded = Vec::new();
@@ -106,7 +86,6 @@ fn settle(game: &mut TestGame, what: &str) -> Vec<ServerToClient> {
     }
 }
 
-/// Snapshot every loaded replica section of the home column, keyed by pos.
 fn home_column_payloads(game: &TestGame) -> Vec<(SectionPos, SectionPayload)> {
     (-4..16)
         .filter_map(|cy| {
@@ -179,10 +158,6 @@ fn unmoved_sections_repromote_from_the_cache_byte_identically() {
                 .any(|m| matches!(m, ServerToClient::SectionData(s) if s.pos == *sp)),
             "a re-promoted section {sp:?} was not also re-streamed"
         );
-        // The contract: the re-promoted replica copy equals what a full send
-        // would install RIGHT NOW. The loopback pipe skips the id remap, so
-        // the two payloads compare directly; the harness is synchronous, so
-        // nothing mutates between the two reads.
         let client = game
             .replica
             .world
@@ -216,9 +191,6 @@ fn a_moved_belief_hash_resends_the_full_payload() {
         .expect("the home column unload vouched at least one section");
     let sp = SectionPos::new(HOME_COLUMN.cx, cy, HOME_COLUMN.cz);
 
-    // Stand in for "the content changed while the client was away": force the
-    // belief to a hash current content can never equal (a real edit moves the
-    // CURRENT hash instead — the same inequality drives the same branch).
     game.session_mut()
         .transport_mut()
         .terrain
@@ -227,11 +199,6 @@ fn a_moved_belief_hash_resends_the_full_payload() {
             hash: hash.wrapping_add(1),
         }]);
 
-    // Return home, gating on the OBSERVABLE end of the resend flow: the
-    // replica holds the section live again. The quiet-frame `settle` is a
-    // scheduling assumption — under load the home column's base can land and
-    // 30 frames pass while this section's regen job is still starved, ending
-    // the observation window before the payload ever shipped.
     place_player(&mut game, HOME);
     let msgs = frames_until(&mut game, "the mismatched section streamed back in", |g| {
         g.replica.world.section_payload(sp).is_some()
@@ -261,10 +228,6 @@ fn a_pending_prediction_declines_parking_and_heals_by_cache_miss() {
     place_player(&mut game, HOME);
     settle(&mut game, "initial load");
 
-    // Pending predicted edits across the whole home column at unload time:
-    // the replica copies may not equal what the server vouches, so the
-    // client must not park them (reach makes this impossible in real play —
-    // the guard is the backstop). The server still believes they parked.
     for cy in -4..16 {
         game.game
             .prediction

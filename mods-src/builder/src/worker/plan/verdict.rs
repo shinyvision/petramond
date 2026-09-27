@@ -1,6 +1,3 @@
-//! Asking the world whether a task would be accepted before anyone is sent
-//! to do it, and acting on the answer.
-
 use crate::host::prelude::*;
 
 use super::{defer_task, places};
@@ -13,17 +10,11 @@ use crate::worker::upkeep::open_block;
 use crate::worker::Job;
 use crate::worker::{pocket, Body, Ctx, Task};
 
-/// What the world answers a planned task, asked before the golem is sent:
-/// the planner hands out only work that will be accepted.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Viable {
-    /// Accepted from where the golem stands now.
     Now,
-    /// Only reach or sight stand in the way: another stance may do.
     Elsewhere,
-    /// Refused for a reason no stance changes; asked again after this long.
     Waits(u64),
-    /// Nothing left to do there.
     Done,
 }
 
@@ -40,23 +31,15 @@ pub(super) fn viability(
     if !places(job, task) {
         return Viable::Now;
     }
-    // Laid now, it would close the last way in to work beside it; landing
-    // that work wakes it. A unit taken down to open a way in stays down until
-    // what it opened for stands.
     if job.crew.access.reopen.values().flatten().any(|o| *o == i) {
         return Viable::Waits(SEALED_WAIT);
     }
-    // Laid now, it would bury earth still to be dug that only its cell lays
-    // bare: the digging goes first, but not forever, so work nothing reaches
-    // does not hold its neighbours back.
     if buries(ctx, job, i) && job.crew.deferrals.bury_waits.within(i, BURY_ROUNDS) {
         return Viable::Waits(BURY_WAIT);
     }
     match pocket::seals(ctx, job, i) {
         Some(None) => {}
         Some(Some(sealed)) => {
-            // A window it would close in is glazed now, not last: behind the
-            // wall it could never be seen again.
             if job.design.glazing(sealed) {
                 job.crew.glazing.ahead.insert(sealed);
             }
@@ -83,9 +66,6 @@ pub(super) fn viability(
         PlaceRequest::Queued => Viable::Now,
         PlaceRequest::Satisfied => Viable::Done,
         PlaceRequest::Refused(refusal) => match refusal {
-            // Reach and sight are judged before faces: from afar a block with
-            // nothing to hang on reads as merely out of reach, and a trip or a
-            // climb would be made to hear the rest.
             ActionRefusal::OutOfReach | ActionRefusal::NoLineOfSight
                 if face_beside(ctx, job, unit) == Some(false) =>
             {
@@ -105,8 +85,6 @@ pub(super) fn viability(
     }
 }
 
-/// Whether laying unit `i` would cover the last open face of a block beside
-/// it that is still to be dug away.
 fn buries(ctx: &mut Ctx, job: &Job, i: usize) -> bool {
     let Some(survey) = job.survey.as_ref() else {
         return false;
@@ -147,12 +125,7 @@ fn buries(ctx: &mut Ctx, job: &Job, i: usize) -> bool {
     false
 }
 
-/// Nothing to hang on yet: a neighbour landing usually brings one; a cell
-/// that stays faceless gets scaffolding under it.
 pub(super) fn faceless(ctx: &mut Ctx, job: &mut Job, i: usize) -> Viable {
-    // Due work leading here from something standing is the face it waits for:
-    // those blocks are owed anyway, and landing one wakes it. Not forever: a
-    // chain whose first block never goes in must not hold the rest back.
     if ctx.now <= job.crew.pace.progress_at + DUE_PATIENCE && hangs_on_due_work(ctx, job, i) {
         return Viable::Waits(SEALED_WAIT);
     }
@@ -166,9 +139,6 @@ pub(super) fn faceless(ctx: &mut Ctx, job: &mut Job, i: usize) -> Viable {
     }
 }
 
-/// Whether unit `i`, with nothing to be placed against, is joined through
-/// blocks still to be laid to one that has: the build itself will bring it
-/// a face.
 fn hangs_on_due_work(ctx: &mut Ctx, job: &Job, i: usize) -> bool {
     let Some(survey) = job.survey.as_ref() else {
         return false;
@@ -198,8 +168,6 @@ fn hangs_on_due_work(ctx: &mut Ctx, job: &Job, i: usize) -> bool {
     false
 }
 
-/// Whether anything beside `unit`'s cells gives a placement a face: a block
-/// no placement could take. `None` while a neighbour is unreadable.
 fn face_beside(ctx: &mut Ctx, job: &Job, unit: crate::design::Unit) -> Option<bool> {
     let cells = job.design.cells(unit);
     let beside: Vec<[i32; 3]> = crate::geometry::beside(&cells)
@@ -217,9 +185,6 @@ fn face_beside(ctx: &mut Ctx, job: &Job, unit: crate::design::Unit) -> Option<bo
     Some(false)
 }
 
-/// Whether the world would still refuse `task` from `stance` for a reason
-/// the trip there cannot fix (nothing to hang on yet): the verdict is
-/// settled instead of walking or climbing there to hear it.
 pub(in crate::worker) fn waits_there(
     ctx: &mut Ctx,
     job: &mut Job,
@@ -244,7 +209,6 @@ pub(super) fn verdict_name(verdict: Viable) -> String {
     }
 }
 
-/// Act on a verdict that sends nobody: wait it out or forget done work.
 pub(super) fn settle_verdict(ctx: &Ctx, job: &mut Job, task: Task, verdict: Viable) {
     match verdict {
         Viable::Waits(0) | Viable::Now | Viable::Elsewhere => {}

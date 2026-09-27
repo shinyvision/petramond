@@ -10,8 +10,6 @@ use crate::furnace::Furnace;
 use super::{BlockEntities, CellMap, Section, SectionMetrics, SectionSummary};
 
 impl Section {
-    /// Rebuild a section from saved arrays. `modified` starts false — it already
-    /// matches what's on disk. The light cube is left for the async bake.
     #[allow(clippy::too_many_arguments)]
     pub fn from_saved(
         cx: i32,
@@ -38,8 +36,6 @@ impl Section {
         )
     }
 
-    /// Rebuild a replica section from immutable wire buffers and server-derived
-    /// counters. No voxel buffer is copied or scanned on the render thread.
     #[allow(clippy::too_many_arguments)]
     pub fn from_replica(
         cx: i32,
@@ -128,12 +124,6 @@ impl Section {
         s
     }
 
-    /// Whether `other` holds exactly this section's content — blocks, cell
-    /// state, block entities, light and the counters derived from them — so
-    /// installing it in this one's place would change nothing a reader sees.
-    /// Bookkeeping (dirty flags, revisions) and the client's own bakes of the
-    /// content are not content. Every field is named, so a new one has to be
-    /// sorted here.
     pub fn same_content(&self, other: &Section) -> bool {
         let Section {
             cx,

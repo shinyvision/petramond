@@ -1,16 +1,3 @@
-//! Animated blocks — every row that draws an animated block model (a chest's
-//! lid, a door's swing, a trapdoor's panel, a pack's barrel) — share ONE
-//! gather and ONE pose read.
-//!
-//! The model, its variants and its hinges are data
-//! ([`petramond_world::animated_model`]); how a cell poses it is its shape
-//! family's answer ([`Block::animated_pose`]). Nothing here knows which kind
-//! of block it is gathering, so a new animated block needs no edit here.
-//!
-//! An animated cell is found through the block-entity section index, which
-//! admits a cell by its stored state: every animated row stores one (its
-//! placement front, or its shape's own state).
-
 #[cfg(test)]
 use crate::world::ServerWorld;
 use crate::world::{World, WorldSide};
@@ -19,9 +6,6 @@ use petramond_world::animated_model::{AnimatedModelDef, AnimatedPose};
 use petramond_world::block::{Block, ShapeNeighborhood};
 use petramond_world::light::BlockLight6;
 
-/// One animated block to draw this frame: where, what, how it is posed by its
-/// own state, and the light at its cell. The client eases the open fraction
-/// on top (see `petramond_client`'s block animations).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AnimatedBlock {
     pub pos: IVec3,
@@ -32,8 +16,6 @@ pub struct AnimatedBlock {
 }
 
 impl<S: WorldSide> World<S> {
-    /// Gather every loaded animated block into `out` (cleared first). Visits
-    /// only the block-entity section index, not every loaded section.
     pub fn collect_animated_blocks(&self, out: &mut Vec<AnimatedBlock>) {
         out.clear();
         for sp in &self.data.block_entity_sections {
@@ -61,9 +43,6 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    /// The animated model at `pos` and how the cell poses it, or `None` when
-    /// the cell draws none itself (no animated row, a compound member its
-    /// anchor draws, or an unloaded cell).
     pub fn animated_pose_at(
         &self,
         pos: IVec3,
@@ -122,7 +101,6 @@ mod tests {
             got,
             vec![
                 (chest, Block::Chest, pose(Facing::East, 0, false)),
-                // Once, from the lower half: the upper is drawn with it.
                 (door, Block::OakDoor, pose(Facing::South, 0, false)),
                 (hatch, Block::OakTrapdoor, pose(Facing::West, 1, true)),
             ]

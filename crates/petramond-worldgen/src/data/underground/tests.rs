@@ -14,7 +14,6 @@ fn underground_identity_uses_climate_fitness_and_depth() {
     assert_eq!(table.id_at([0.0, -0.5, 0.0, 0.0, 0.0, 0.5], 0), 0);
     assert_eq!(table.id_at([0.0, 0.8, 0.0, 0.0, 0.0, 0.0], 0), 0);
     assert_eq!(table.id_at([0.0, 0.0, 0.0, -0.8, 0.0, 1.1], 0), deep);
-    // Ranges compete by distance, so their edges do not impose hard climate cutoffs.
     assert_eq!(table.id_at([0.0, 0.65, 0.0, 0.0, 0.0, 0.5], 0), humid);
 }
 

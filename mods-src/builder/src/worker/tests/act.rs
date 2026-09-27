@@ -9,11 +9,8 @@ use crate::worker::tuning::waits::FACELESS_SPACING;
 use crate::worker::Job;
 use crate::worker::{acted, Ctx, Step, Task};
 
-/// Where the golem stands: in front of the middle of the row, in reach of
-/// all of it.
 const AT: [i32; 3] = [1, 0, -2];
 
-/// The world refuses what the golem was waiting on at `pos`.
 fn refuse(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -120,7 +117,6 @@ fn a_block_with_nothing_to_hang_on_is_propped_once_refused_often_enough() {
             refuse(ctx, projects, job, task, [1, 0, 0], ActionRefusal::NoFace);
             assert_eq!(job.crew.faces.floating.contains(&middle), k == 2);
         }
-        // Between tries it waited for a neighbour to bring it a face.
         assert!(job.crew.deferrals.deferred(task, tries[1] + 119));
         assert!(!job.crew.deferrals.deferred(task, tries[1] + 120));
     });

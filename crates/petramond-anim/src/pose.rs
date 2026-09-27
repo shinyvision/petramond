@@ -1,8 +1,3 @@
-//! Local-space poses: per-bone rotation (euler degrees) and position deltas
-//! from a rig's rest pose. That is the space Blockbench animates in, so adding
-//! clips here is exactly what Blockbench's multi-animation preview shows, and
-//! a pose resolves through the same bone transform a single clip does.
-
 use glam::{Mat4, Vec3};
 
 use petramond_world::bbmodel::{Animation, Channel, Model};
@@ -14,7 +9,6 @@ pub struct LocalPose {
 }
 
 impl LocalPose {
-    /// The rest pose of a rig with `bones` bones.
     pub fn rest(bones: usize) -> Self {
         Self {
             rot: vec![Vec3::ZERO; bones],
@@ -30,7 +24,6 @@ impl LocalPose {
         self.rot.is_empty()
     }
 
-    /// Back to rest, keeping the allocation.
     pub fn clear(&mut self) {
         self.rot.fill(Vec3::ZERO);
         self.pos.fill(Vec3::ZERO);
@@ -57,7 +50,6 @@ impl LocalPose {
         &self.pos
     }
 
-    /// Both channel arrays at once, rotations first.
     pub fn channels_mut(&mut self) -> (&mut [Vec3], &mut [Vec3]) {
         (&mut self.rot, &mut self.pos)
     }
@@ -74,7 +66,6 @@ impl LocalPose {
         }
     }
 
-    /// Add to one bone's channels (degrees, model units).
     pub fn add_bone(&mut self, bone: usize, rotation: Vec3, position: Vec3) {
         if let (Some(r), Some(p)) = (self.rot.get_mut(bone), self.pos.get_mut(bone)) {
             *r += rotation;
@@ -82,13 +73,10 @@ impl LocalPose {
         }
     }
 
-    /// Add `weight` × `anim` at playback `time` (wrapped or clamped by the
-    /// clip's own loop mode). Bones the clip does not key are untouched.
     pub fn add_clip(&mut self, anim: &Animation, time: f32, weight: f32) {
         self.add_clip_at(anim, anim.clip_time(time), weight);
     }
 
-    /// Add `weight` × `anim` sampled at clip-local `t`, taken as given.
     pub fn add_clip_at(&mut self, anim: &Animation, t: f32, weight: f32) {
         if weight == 0.0 {
             return;
@@ -100,15 +88,10 @@ impl LocalPose {
         }
     }
 
-    /// Overwrite every channel `anim` keys with its value at clip-local `t`;
-    /// channels it does not key keep what they had.
     pub fn set_clip_at(&mut self, anim: &Animation, t: f32) {
         self.set_clip_at_looping(anim, t, anim.looping);
     }
 
-    /// [`set_clip_at`](Self::set_clip_at) with the player's own loop mode, so
-    /// a clip played as a loop wraps its Catmull-Rom neighbours whatever its
-    /// authored flag says.
     pub fn set_clip_at_looping(&mut self, anim: &Animation, t: f32, looping: bool) {
         for (bone, channel, v) in anim.samples_at(t, looping) {
             if let Some(slot) = self.channel_mut(channel, bone) {
@@ -124,8 +107,6 @@ impl LocalPose {
         }
     }
 
-    /// Add `weight` × `other`, bone for bone, scaled by the bone's `mask`
-    /// entry when one is given (a missing entry is 0 — outside the mask).
     pub fn add_scaled(&mut self, other: &LocalPose, weight: f32, mask: Option<&[f32]>) {
         if weight == 0.0 {
             return;
@@ -140,8 +121,6 @@ impl LocalPose {
         }
     }
 
-    /// Move each bone a fraction toward `other`: `weight` scaled by the bone's
-    /// `mask` entry when one is given (a missing entry is 0 — outside the mask).
     pub fn blend_toward(&mut self, other: &LocalPose, weight: f32, mask: Option<&[f32]>) {
         if weight == 0.0 {
             return;
@@ -157,10 +136,6 @@ impl LocalPose {
         }
     }
 
-    /// This pose reflected across the rig's YZ plane into `out`: each bone
-    /// takes its partner's channels with position X and rotation Y/Z negated
-    /// (a reflection conjugates a ZYX euler to `(x, -y, -z)`). Exact for a rig
-    /// whose partners are authored mirror images of each other.
     pub fn mirror_into(&self, map: &MirrorMap, out: &mut LocalPose) {
         out.rot.resize(self.rot.len(), Vec3::ZERO);
         out.pos.resize(self.pos.len(), Vec3::ZERO);
@@ -172,12 +147,10 @@ impl LocalPose {
         }
     }
 
-    /// The bone world transforms this pose resolves to on `model`.
     pub fn resolve(&self, model: &Model) -> Vec<Mat4> {
         model.resolve_local(&self.rot, &self.pos)
     }
 
-    /// [`resolve`](Self::resolve) into `out`, reusing its storage.
     pub fn resolve_into(&self, model: &Model, out: &mut Vec<Mat4>) {
         model.resolve_local_into(&self.rot, &self.pos, out);
     }
@@ -187,9 +160,6 @@ fn mask_weight(mask: Option<&[f32]>, bone: usize) -> f32 {
     mask.map_or(1.0, |m| m.get(bone).copied().unwrap_or(0.0))
 }
 
-/// Which bone mirrors which, by name: `left`/`right` swapped wherever the
-/// word appears, in any capitalization (`left_shoulder` ↔ `right_shoulder`,
-/// `leftArm` ↔ `rightArm`). A bone with no partner mirrors onto itself.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MirrorMap {
     partner: Vec<usize>,
@@ -215,8 +185,6 @@ impl MirrorMap {
     }
 }
 
-/// `name` with its first `left`/`right` swapped (matching the capitalization
-/// of the word's first letter), or `None` when it has neither.
 pub fn swap_side(name: &str) -> Option<String> {
     let lower = name.to_ascii_lowercase();
     let (at, from, to) = match (lower.find("left"), lower.find("right")) {

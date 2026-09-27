@@ -1,25 +1,3 @@
-//! Builder: survival schematics.
-//!
-//! A blueprint in a schematic table names a project: a saved schematic, the
-//! ghost a player anchored for it, and the job that builds it. Start admits
-//! the job once the chests chained to the table hold every item the site
-//! still needs; a Mason Golem then digs itself out beside the table, fetches
-//! blocks and tools, clears what is in the way, builds, and burrows home.
-//!
-//! Everything here composes generic host capabilities: world-held schematics
-//! read as construction records, record statuses, container transfers, actor
-//! digs and placements, route probes, anchored ghosts and mob tags. Modules:
-//!
-//! - [`project`] — the persistent project record and its world-KV store.
-//! - [`design`] — a schematic compiled into construction units in build order.
-//! - [`survey`] — a rolling measurement of those units against the world.
-//! - [`supplies`] — the chests chained to a table, and what they hold.
-//! - [`jobs`] — per-project session state, the tick, Start/Resume admission,
-//!   holds, ghosts.
-//! - [`table`] — the table and materials panels and their buttons.
-//! - [`worker`] — the golem's work, a step at a time.
-//! - [`node`] — the golem's steering brain node.
-
 mod caches;
 mod content;
 mod design;
@@ -83,10 +61,7 @@ impl Mod for BuilderMod {
         register_event_handler(EventKind::BlockPlaced, 0, ON_BLOCK_PLACED);
         register_event_handler(EventKind::ContainerOpened, 0, ON_CONTAINER_OPENED);
         register_ai_node(keys::WORKER_NODE, AI_WORKER);
-        // After the mobs move, so the golem is read where it stands this tick.
         register_tick_system(Stage::Mobs, AttachSide::After, 0, TICK_JOBS);
-        // After the menu stage, where panels open: a fresh one is filled
-        // before anyone sees it.
         register_tick_system(Stage::Menu, AttachSide::After, 0, TICK_PANELS);
     }
 

@@ -1,7 +1,3 @@
-//! Options → Sound controller: master / sound / music volume sliders.
-//! Slider drags apply LIVE (the mixer re-reads volumes every frame); the
-//! release commit persists `client.json`.
-
 use super::{ScreenCtx, ShellCommand};
 use petramond_ui::{UiEvent, UiState, UiValue};
 
@@ -49,9 +45,6 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
 mod tests {
     use super::*;
 
-    /// The percent readout is engine copy in a fixed column, so no document
-    /// guard sees it — and a box too tight even for an ellipsis draws NOTHING,
-    /// which is how "100%" once rendered as blank. 100 is the widest value.
     #[test]
     fn the_widest_volume_readout_fits_its_column() {
         use petramond_ui::{solve, InstTree, ThemeEnv};

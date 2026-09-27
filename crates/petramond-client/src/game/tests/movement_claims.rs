@@ -1,8 +1,3 @@
-//! The authority's handling of the client's movement claims — soft-accepted
-//! verbatim or rejected, never granting reach, noclip or a dodged fall — and
-//! the client's side of the correction loop (only real divergence ships, the
-//! look and hotbar stay client-owned).
-
 use super::common::*;
 use petramond::events::tick::TickEvents;
 use petramond::net::protocol::{ActionDenyReason, ClientToServer, PlayerAction, SelfTransform};
@@ -10,28 +5,17 @@ use petramond_math::math::{IVec3, Vec3};
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 
-/// F1 movement-claim validation: every case sends ONE `PlayerUpdate` claim
-/// from the same airborne start, ticks movement, and asserts the claim was
-/// soft-accepted verbatim or rejected (the integrated result stays near the
-/// start). Claims that assert other quantities — anti-noclip geometry, reach,
-/// fall-damage tracking — keep their own tests.
 #[test]
 fn movement_claim_validation_cases() {
     enum Expect {
-        /// The claim transform is adopted exactly (velocity too when flagged).
         Accepted { adopts_vel: bool },
-        /// The claim is refused: the kept position stays within this distance
-        /// of the start.
         RejectedWithin(f32),
     }
     struct Case {
         label: &'static str,
-        /// Free-run ticks between an at-rest claim and the claim under test
-        /// (a slow client's report gap widens the drift ring).
         gap_ticks: usize,
         claim_offset: Vec3,
         claim_vel: Vec3,
-        /// `Some` overrides the claim's grounded flag.
         on_ground: Option<bool>,
         expect: Expect,
     }
@@ -45,7 +29,6 @@ fn movement_claim_validation_cases() {
             expect: Expect::RejectedWithin(5.0),
         },
         Case {
-            // A position jump under an innocent velocity must not teleport.
             label: "teleport claim with a plausible velocity",
             gap_ticks: 0,
             claim_offset: Vec3::new(50.0, 0.0, 0.0),
@@ -54,9 +37,6 @@ fn movement_claim_validation_cases() {
             expect: Expect::RejectedWithin(5.0),
         },
         Case {
-            // A sideways hop far beyond any legitimate horizontal speed,
-            // under an innocent velocity — the old isotropic (terminal-speed)
-            // ring accepted this; the per-axis ring must not.
             label: "horizontal teleport inside the old isotropic ring",
             gap_ticks: 0,
             claim_offset: Vec3::new(3.5, 0.0, 0.0),
@@ -65,9 +45,6 @@ fn movement_claim_validation_cases() {
             expect: Expect::RejectedWithin(2.0),
         },
         Case {
-            // Take-off frame of a sprint jump: horizontal sprint + full jump
-            // speed. The caps are per-axis, so the combined magnitude must
-            // still pass.
             label: "sprint-jump take-off frame",
             gap_ticks: 0,
             claim_offset: Vec3::new(0.2, 0.0, 0.0),
@@ -76,10 +53,6 @@ fn movement_claim_validation_cases() {
             expect: Expect::Accepted { adopts_vel: true },
         },
         Case {
-            // A slow client free-runs several server ticks with no fresh
-            // claim, so its next report legitimately drifted further than one
-            // frame's worth. The closeness ring scales with the claim gap —
-            // no rubber-banding.
             label: "claim after a slow-client gap",
             gap_ticks: 4,
             claim_offset: Vec3::new(3.5, 0.0, 0.0),
@@ -151,7 +124,7 @@ fn claim_inside_solid_geometry_is_rejected() {
         .set_block_world(8, 64, 8, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(8.5, 66.0, 8.5);
     let mut u = player_update(&game, true);
-    u.transform.pos = WorldPos::new(8.5, 64.3, 8.5); // feet well inside the stone cell
+    u.transform.pos = WorldPos::new(8.5, 64.3, 8.5);
     u.transform.vel = Vec3::ZERO;
     game.send_to_server(ClientToServer::PlayerUpdate(u));
     game.sim_mut().tick_movement(0);
@@ -168,8 +141,6 @@ fn transform_corrections_ship_only_on_real_divergence() {
     let sess = game.session_mut();
     sess.player_mut().pos = WorldPos::new(8.5, 70.0, 8.5);
     sess.player_mut().vel = Vec3::new(0.0, -1.4, 0.0);
-    // The server free-ran a little past the client's last claim: small pos
-    // phase drift, one tick of gravity — time-phase, not divergence.
     sess.replication_mut().last_reported_transform = Some(SelfTransform {
         transform: petramond::net::protocol::Transform {
             pos: sess.player().pos + Vec3::new(0.4, 0.5, 0.0),
@@ -184,7 +155,6 @@ fn transform_corrections_ship_only_on_real_divergence() {
         "extrapolation past the claim must not rubber-band the client"
     );
 
-    // A genuine tick-side teleport still corrects.
     game.server_player_mut().pos += Vec3::new(50.0, 0.0, 0.0);
     assert!(
         game.sim_mut().build_self_state(0).transform.is_some(),
@@ -197,12 +167,9 @@ fn hotbar_selection_is_client_owned_and_never_yanked_by_a_batch() {
     let mut game = game();
     game.server_player_mut().inventory = filled_inventory();
 
-    // The client scrolls ahead of the server (which still thinks slot 0)...
     game.game.set_active_hotbar(3);
     assert_eq!(game.replica.self_view.inventory.active_slot(), 3);
 
-    // ...and a full-inventory batch from the lagging server must keep the
-    // client's newer selection, not echo the stale one back.
     game.sync_self_view_for_test();
     assert_eq!(
         game.replica.self_view.inventory.active_slot(),
@@ -220,8 +187,6 @@ fn far_claim_does_not_grant_reach() {
         .set_block_world(far.x, far.y, far.z, Block::Stone));
     game.server_player_mut().pos = WorldPos::new(2.5, 65.0, 2.5);
 
-    // A fabricated claim right next to the far block: outside the drift ring
-    // of the server's own integration, so it must not become the reach eye.
     let mut u = player_update(&game, true);
     u.transform.pos = WorldPos::new(13.5, 65.0, 13.5);
     u.transform.vel = Vec3::ZERO;
@@ -264,8 +229,6 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
     game.session_mut().input_mut().claim_pos = game.server_player().pos;
     game.session_mut().sim_mut().fall.reset(80.0);
 
-    // Descend claiming on_ground every tick — the mid-air flag is fabricated
-    // (no support under the feet), so the peak must survive to the landing.
     for y in [80.0, 76.0, 72.0, 68.0, 65.0] {
         let mut u = player_update(&game, true);
         u.transform.pos = WorldPos::new(8.5, y, 8.5);
@@ -285,9 +248,6 @@ fn fake_on_ground_claims_do_not_evade_fall_damage() {
 fn sprint_descent_down_steps_is_not_one_tall_fall() {
     use petramond_world::block_state::{StairHalf, StairState};
     let mut game = game_on_empty_chunk();
-    // A staircase of real stair blocks descending +x (low half downhill), onto
-    // a floor at y = 59 — half-block steps every half block, like any player
-    // staircase.
     for i in 0..12 {
         assert!(game.server_world_mut().place_stair(
             IVec3::new(2 + i, 70 - i, 8),
@@ -345,9 +305,6 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
         "the client sim must finish the descent (ended at {:?})",
         client.pos
     );
-    // Stand on the floor for a few ticks so the server observes the final
-    // grounded transform (the landing that would convert a mis-measured
-    // descent into damage).
     for _ in 0..3 {
         let mut u = player_update(&game, true);
         u.transform.pos = client.pos;
@@ -365,11 +322,6 @@ fn sprint_descent_down_steps_is_not_one_tall_fall() {
     );
 }
 
-/// A `SelfTransform` correction never adopts yaw/pitch: the look is
-/// client-owned input (like the hotbar index), so a correction can only carry
-/// the one-RTT-old echo of the client's own look — adopting it reverts every
-/// look change for as long as a correction stream flows (rejected claims over
-/// still-streaming terrain), and the server never sees the player's aim.
 #[test]
 fn corrections_never_adopt_the_look() {
     let mut game = game();
@@ -385,8 +337,6 @@ fn corrections_never_adopt_the_look() {
         on_ground: true,
     });
 
-    // The in-flight correction carries the PREVIOUS look (the echo) and a
-    // genuinely server-moved position.
     let corrected_pos = game.game.local.player.pos + Vec3::new(0.0, -2.0, 0.0);
     game.game.adopt_authoritative_transform(&SelfTransform {
         transform: petramond::net::protocol::Transform {

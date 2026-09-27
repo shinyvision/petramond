@@ -1,47 +1,20 @@
-//! Legacy 16x16x256 voxel column — the worldgen transfer format and the
-//! column-era test fixture.
-//!
-//! Live world storage is the cubic [`crate::section::Section`] (16³), keyed by
-//! [`SectionPos`]. [`Chunk`] survives in exactly two roles:
-//!
-//! - **Worldgen transfer format**: `worldgen::generate_chunk` assembles a whole
-//!   column (blocks, heightmap, biome — never block entities) from the
-//!   per-section pipeline, consumed by the worldgen bins/audit tooling
-//!   (`genmap`, `genfeature`) and by worldgen tests.
-//! - **Test fixture**: column-era tests hand-build a `Chunk` and install it via
-//!   `World::insert_chunk_for_test`, which splits it into sections like the old
-//!   streamer did (`world::stream::split_generated_column`); `mesh`'s legacy
-//!   whole-column skylight bake (`mesh::skylight`, `cfg(test)`) also still runs
-//!   against it.
-
 use crate::block::Block;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SZ: usize = 16;
 pub const CHUNK_SY: usize = 256;
 pub const SECTION_SIZE: usize = 16;
-/// Voxels in one cubic section (16×16×16). The unit of the cubic-chunks refactor.
 pub const SECTION_VOLUME: usize = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE;
 
-// --- Cubic-chunk world vertical range ---------------------------------------
-// The cubic world spans `WORLD_MIN_Y..WORLD_MAX_Y`. Sea level and the surface
-// datum are unchanged (see `SEA_LEVEL`); the extra room below 0 exists so caves
-// have somewhere to carve. These are the tunable extents of the section grid.
 pub const WORLD_MIN_Y: i32 = -64;
 pub const WORLD_MAX_Y: i32 = 256;
-/// Lowest / highest section coordinate `cy` (inclusive). `cy` is
-/// `wy.div_euclid(16)`, so it is negative below y=0.
 pub const SECTION_MIN_CY: i32 = WORLD_MIN_Y / SECTION_SIZE as i32;
 pub const SECTION_MAX_CY: i32 = WORLD_MAX_Y / SECTION_SIZE as i32 - 1;
 
-// Matches the reference overworld sea level so the land/water line aligns with the
-// reference terrain (offset-0 land sits at ≈63.5, just above the waterline).
 pub const SEA_LEVEL: i32 = 63;
 
 pub const VOLUME: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ;
 
-/// Full skylight on the x2 integer scale used by the mesher (= light level 15).
-/// Shared so chunk storage and the flood-fill agree on "open sky".
 pub const SKY_FULL: u8 = 30;
 
 #[inline]
@@ -60,17 +33,12 @@ pub fn idx(x: usize, y: usize, z: usize) -> usize {
     (y * CHUNK_SX * CHUNK_SZ) + (z * CHUNK_SX) + x
 }
 
-/// Section-local block index for a cubic section: `x,y,z` each in `0..16`. Layout
-/// matches [`idx`] within one section (`y*256 + z*16 + x`), so the same value also
-/// serves as the `u16` block-entity key (max 4095, well inside `u16`).
 #[inline]
 pub fn section_idx(x: usize, y: usize, z: usize) -> usize {
     debug_assert!(x < SECTION_SIZE && y < SECTION_SIZE && z < SECTION_SIZE);
     (y * SECTION_SIZE * SECTION_SIZE) + (z * SECTION_SIZE) + x
 }
 
-/// Inverse of [`section_idx`]: the section-local `(x, y, z)` a linear cell index
-/// (equivalently, a sparse block-state `u16` key) refers to.
 #[inline]
 pub fn section_local(idx: usize) -> (usize, usize, usize) {
     debug_assert!(idx < SECTION_VOLUME);
@@ -81,29 +49,15 @@ pub fn section_local(idx: usize) -> (usize, usize, usize) {
     )
 }
 
-/// A legacy voxel column: the worldgen transfer format + column-era test
-/// fixture (see the module doc). Blocks stored as `Box<[u16; VOLUME]>`. Carries only what worldgen produces — blocks, fluid
-/// metadata, heightmap, biome — never block entities. Live world storage is
-/// [`crate::section::Section`].
 pub struct Chunk {
     pub cx: i32,
     pub cz: i32,
     blocks: Box<[u16]>,
-    /// Per-block fluid state, parallel to `blocks`, meaningful for simulated
-    /// fluids only. Stores a level (0 = source, 1..=7 = flowing) and a FALLING
-    /// bit (see [`crate::fluid_math`]). Absent until a cell holds nonzero meta.
     fluid: Option<Box<[u8]>>,
-    /// Highest non-air Y per (x,z) column for fast surface queries.
     pub heightmap: Box<[u16; CHUNK_SX * CHUNK_SZ]>,
-    /// Biome id per (x,z) column (Biome::from_id).
     pub biomes: Box<[u8; CHUNK_SX * CHUNK_SZ]>,
     pub dirty: bool,
-    /// Set when blocks change. Nothing on the column clears it any more (live
-    /// light lives on `Section`); worldgen fixture asserts still read it.
     pub light_dirty: bool,
-    /// Count of blocks in this column that receive random ticks (see
-    /// [`Block::has_random_tick`]). Maintained incrementally by every setter and
-    /// recomputed on bulk load (`recompute_random_tick_count`).
     random_tick_count: u32,
 }
 
@@ -138,9 +92,6 @@ impl Chunk {
         self.blocks[idx(x, y, z)]
     }
 
-    /// Test-fixture setter with full bookkeeping (heightmap, fluid meta, random-tick
-    /// count). Worldgen writes via [`set_block_raw`](Self::set_block_raw) /
-    /// `blocks_slice_mut`.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_block(&mut self, x: usize, y: usize, z: usize, b: Block) {
         self.set_block_raw(x, y, z, b.id());
@@ -157,8 +108,6 @@ impl Chunk {
         self.mark_light_dirty();
     }
 
-    /// Fluid-flow metadata at a local voxel (0 where the cell is not flowing
-    /// fluid or the column has never held flowing fluid). See [`crate::fluid_math`].
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
     pub fn fluid_meta(&self, x: usize, y: usize, z: usize) -> u8 {
@@ -168,8 +117,6 @@ impl Chunk {
         }
     }
 
-    /// Set a fluid cell (block + flow meta) without marking skylight dirty.
-    /// Marks the chunk mesh-dirty. `meta` is treated as 0 for non-fluid blocks.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_fluid(&mut self, x: usize, y: usize, z: usize, b: Block, meta: u8) {
         let i = idx(x, y, z);
@@ -227,9 +174,6 @@ impl Chunk {
         self.heightmap[z * CHUNK_SX + x] as i32
     }
 
-    /// Keep [`random_tick_count`](Self::random_tick_count) in step with one cell
-    /// changing from `old_id` to `new_id`. Every block setter calls this, so the
-    /// per-column gate stays exact through generation and runtime edits alike.
     #[inline]
     fn adjust_random_tick_count(&mut self, old_id: u16, new_id: u16) {
         let was = Block::from_id(old_id).has_random_tick();
@@ -241,8 +185,6 @@ impl Chunk {
         }
     }
 
-    /// Recount random-tickable cells from scratch — for a bulk load that fills
-    /// `blocks` directly (disk load) instead of going through the setters.
     pub fn recompute_random_tick_count(&mut self) {
         self.random_tick_count = self
             .blocks
@@ -251,8 +193,6 @@ impl Chunk {
             .count() as u32;
     }
 
-    /// Whether this column holds any random-tickable block. The live per-section
-    /// gate is `Section::has_random_tickable`; this survives for fixture asserts.
     #[cfg(any(test, feature = "test-support"))]
     #[inline]
     pub fn has_random_tickable(&self) -> bool {
@@ -279,8 +219,6 @@ impl Chunk {
         (self.cx * CHUNK_SX as i32, self.cz * CHUNK_SZ as i32)
     }
 
-    /// Rebuild heightmap from block data (used when block data arrives fully
-    /// from a worker without per-cell update bookkeeping).
     pub fn recompute_heightmap(&mut self) {
         for z in 0..CHUNK_SZ {
             for x in 0..CHUNK_SX {
@@ -299,9 +237,6 @@ impl Chunk {
     }
 }
 
-/// 2D column coordinate `(cx, cz)` — the key for per-column [`crate::column::Column`]
-/// data (biome, heightmap) and region-file / entity grouping. One column is a
-/// vertical stack of [`SectionPos`].
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -316,9 +251,6 @@ impl ChunkPos {
     }
 }
 
-/// 3D section coordinate `(cx, cy, cz)` — the canonical key of the cubic world.
-/// `cy` may be negative (`cy = wy.div_euclid(16)`), spanning
-/// [`SECTION_MIN_CY`]..=[`SECTION_MAX_CY`].
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SectionPos {
     pub cx: i32,
@@ -331,8 +263,6 @@ impl SectionPos {
         Self { cx, cy, cz }
     }
 
-    /// The section containing world `(wx,wy,wz)`, or `None` if `wy` is outside the
-    /// world vertical range `WORLD_MIN_Y..WORLD_MAX_Y`.
     #[inline]
     pub fn from_world(wx: i32, wy: i32, wz: i32) -> Option<Self> {
         if !(WORLD_MIN_Y..WORLD_MAX_Y).contains(&wy) {
@@ -350,7 +280,6 @@ impl SectionPos {
         ChunkPos::new(self.cx, self.cz)
     }
 
-    /// World-space minimum corner of this section.
     #[inline]
     pub fn origin_world(self) -> (i32, i32, i32) {
         (
@@ -360,7 +289,6 @@ impl SectionPos {
         )
     }
 
-    /// Whether `cy` is within the world's vertical section range.
     #[inline]
     pub fn cy_in_range(cy: i32) -> bool {
         (SECTION_MIN_CY..=SECTION_MAX_CY).contains(&cy)

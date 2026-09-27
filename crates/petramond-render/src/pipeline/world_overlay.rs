@@ -62,7 +62,6 @@ pub(crate) fn ghost(
     )
 }
 
-/// A flat-colour line or triangle overlay in world space.
 pub(crate) fn flat(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,

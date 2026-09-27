@@ -1,55 +1,9 @@
-//! The boat: a rowable hull over the generic riding/drive API.
-//!
-//! Everything here is POLICY over engine mechanisms; the pack ships no
-//! vehicle-specific engine code:
-//!
-//! - **Placing** (`item_use_pre`): the boat item's `use_ray: water` row makes
-//!   its use click target the water surface; a click on a water cell with air
-//!   above spawns the `vehicles:boat` mob (bow away from the player) and
-//!   consumes the item (`consume_held`). A shore-hugging click nudges the
-//!   hull to the nearest nearby water cell it fits ([`NUDGE_OFFSETS`]);
-//!   water too small for the hull refuses and refunds. The boat floats on
-//!   the engine's own mob buoyancy.
-//! - **Boarding** (`interact_attempt`): a use click on the boat seats the
-//!   player in the first free seat (`mob_mount`; the row declares two). The
-//!   FIRST player aboard steers; the engine's sneak gesture (or death, or the
-//!   boat sinking out of existence) dismounts, and `player_dismounted` keeps
-//!   the rider list honest — the next-oldest rider inherits the oars.
-//! - **Rowing** (tick system, `Before(Mobs)`): the driver's `player_input`
-//!   forward/strafe feed a small momentum model — acceleration with drag on
-//!   speed AND yaw rate, so the boat surges, glides, and carves instead of
-//!   jolting — issued to the engine as one `mob_drive` intent per tick.
-//!   Collision, gravity, and buoyancy stay engine physics.
-//! - **Oars** (`mob_anim_set` + `mob_anim_rate`/`mob_anim_seek`): the
-//!   model's looping `row_left`/`row_right` animations activate once (parked
-//!   on their authored rest pose — boarding never starts a stroke) and stay
-//!   active; authoritative `mob_anim_state` readback drives the control
-//!   policy. Forward rows both (rate 1);
-//!   turning left rows only the RIGHT oar and vice versa; backing water rows
-//!   in reverse (rate −1). A RELEASED oar settles gently back onto its
-//!   authored rest pose by the SHORTEST path (a seek to the nearest whole
-//!   stroke — never a snap, never the long way around) — a real boat's
-//!   asymmetric stroke, code-driven over Blockbench-tunable clips.
-//! - **Breaking**: pure engine content — the boat is a 4-health mob, so
-//!   punching it runs the ordinary damage pipeline and its loot table drops
-//!   the boat item back.
-//!
-//! Boat state (rider order, speed, yaw rate) is transient mod state keyed by
-//! the STABLE mob id: it exists only while someone rides or the hull still
-//! glides, and a boat that despawns/unloads/dies simply stops answering
-//! `mob_drive`, which retires its entry. A reloaded boat starts at rest.
-
 use std::collections::BTreeMap;
 
 use mod_sdk::*;
 
 use crate::keys;
 
-/// Candidate cells for a shore-hugging boat click, nearest first: the clicked
-/// cell itself, then the surrounding water cells out to two blocks. The
-/// checked spawn sweeps the whole hull, so a click right at the water's edge
-/// slides the boat toward open water instead of silently refusing; a pond
-/// with no fitting spot within this ring is genuinely too small for the hull.
 const NUDGE_OFFSETS: [(i32, i32); 25] = [
     (0, 0),
     (-1, 0),
@@ -78,21 +32,13 @@ const NUDGE_OFFSETS: [(i32, i32); 25] = [
     (2, 2),
 ];
 
-/// Forward acceleration per tick of full input (m/s per tick at 20 TPS).
 const ACCEL: f32 = 0.26;
-/// Per-tick speed retention — the water drag that makes the boat surge up to
-/// speed and glide to a stop instead of jolting.
 const DRAG: f32 = 0.96;
 const MAX_FORWARD: f32 = 5.5;
 const MAX_REVERSE: f32 = 1.8;
-/// Yaw-rate acceleration per tick of full rudder (radians/tick²) and its
-/// per-tick retention — the turning friction: heading carves in and eases out.
 const TURN_ACCEL: f32 = 0.012;
 const TURN_DRAG: f32 = 0.85;
-/// Input dead zone (the wish components are ±1 or ±0.707 on diagonals).
 const INPUT_EPS: f32 = 0.1;
-/// Below these residuals an unmanned hull counts as at rest and its state
-/// retires.
 const REST_SPEED: f32 = 0.01;
 const REST_YAW_VEL: f32 = 0.001;
 
@@ -108,33 +54,15 @@ pub(crate) fn wrap_yaw(yaw: f32) -> f32 {
     }
 }
 
-/// Authored length of one `row_left`/`row_right` stroke in the boat model —
-/// MUST match the clip length in `boat.bbmodel` (retune both together): the
-/// settle target is the nearest whole multiple of this.
 const STROKE_SECONDS: f32 = 1.5;
-/// How fast a released oar eases back onto its rest pose (anim-seconds per
-/// second) — gentler than the rowing rate of 1.
 const SETTLE_RATE: f32 = 0.75;
 
-/// One live boat's transient state, keyed by stable mob id.
 struct Boat {
-    /// Riders in boarding order; the first steers.
     riders: Vec<PlayerId>,
-    /// Signed speed along the bow (m/s); negative = backing water.
     speed: f32,
-    /// Facing in the MOB yaw convention (yaw 0 faces -Z), integrated here and
-    /// issued back through `mob_drive` — seeded from the live mob at first
-    /// boarding.
     yaw: f32,
     yaw_vel: f32,
-    /// Whether the two oar animations have been activated on the mob (done
-    /// once at first control; thereafter only playback changes).
     oars_active: bool,
-    /// The playback each oar (left, right) was last steered to, `None` until
-    /// steered. The engine layer holds a steered rate, and a settle lands and
-    /// holds on its own, so an oar whose wanted playback has not changed
-    /// needs no state read and no command — an idle or cruising boat costs
-    /// no animation calls at all.
     oar_steered: [Option<f32>; 2],
 }
 
@@ -154,12 +82,8 @@ impl Boat {
 #[derive(Default)]
 pub struct Boats {
     boat_item: Option<ItemId>,
-    /// The boat species id, resolved once — a mob snapshot names its species
-    /// by id, not by string.
     boat_kind: Option<MobId>,
     water: Option<BlockId>,
-    /// Live boat state by STABLE mob id — `BTreeMap` so the drive tick
-    /// iterates deterministically.
     boats: BTreeMap<u64, Boat>,
 }
 
@@ -170,11 +94,6 @@ impl Boats {
         self.water = resolve_block_logged(keys::WATER);
     }
 
-    /// A use click with the boat item: on a water surface cell with air above,
-    /// spend the item and launch a hull facing away from the player — at the
-    /// clicked cell, or nudged to the nearest nearby water cell the hull fits
-    /// when the click hugs the shore. Water too small for the hull anywhere
-    /// nearby refuses (the item is refunded).
     pub fn on_item_use(&mut self, item: ItemId, target: Option<[i32; 3]>) -> Outcome {
         if Some(item) != self.boat_item {
             return Outcome::Continue;
@@ -182,25 +101,18 @@ impl Boats {
         let (Some(pos), Some(water)) = (target, self.water) else {
             return Outcome::Continue;
         };
-        // Stream-final gated reads: `None` means frozen state — treat like a
-        // miss and keep the item.
         if get_block(pos) != Some(water)
             || get_block([pos[0], pos[1] + 1, pos[2]]) != Some(BlockId::AIR)
         {
             return Outcome::Continue;
         }
-        // Spend first, launch second: a raced-empty hand refuses cleanly, and
-        // a failed spawn refunds — the item is never lost.
         if !consume_held(item, 1) {
             return Outcome::Continue;
         }
         let player = player_state();
-        // Bow away from the player: mob yaw is π from player yaw.
         let yaw = player.yaw + std::f32::consts::PI;
         let spawned = NUDGE_OFFSETS.iter().find_map(|&(dx, dz)| {
             let c = [pos[0] + dx, pos[1], pos[2] + dz];
-            // A nudge candidate must itself be open water (the clicked cell
-            // was already checked above).
             if (dx != 0 || dz != 0)
                 && (get_block(c) != Some(water)
                     || get_block([c[0], c[1] + 1, c[2]]) != Some(BlockId::AIR))
@@ -216,9 +128,6 @@ impl Boats {
         Outcome::Cancel
     }
 
-    /// A use click on a live mob: only a boat hull claims it — and only when
-    /// a seat was actually taken (act-based claim: a full boat, or an
-    /// engine-refused mount, consumed nothing).
     pub fn on_interact_mob(&mut self, mob_id: u64, kind: MobId, player: PlayerId) -> Outcome {
         if Some(kind) != self.boat_kind {
             return Outcome::Continue;
@@ -238,21 +147,14 @@ impl Boats {
         }
     }
 
-    /// Seat a clicking player in the first free seat and record boarding
-    /// order (the first rider steers).
-    /// Returns whether the player actually took a seat (the act-based claim).
     fn board(&mut self, mob_id: u64, player_id: PlayerId) -> bool {
         let Some(seat) = mob_riders(mob_id).and_then(|seats| seats.first_free_seat()) else {
-            return false; // no such mob, or full
+            return false;
         };
         if !mob_mount(mob_id, player_id, seat) {
-            return false; // already mounted / boat gone — the engine said no
+            return false;
         }
         let boat = self.boats.entry(mob_id).or_insert_with(|| {
-            // Seed the heading from the live hull so a reloaded (or drifted)
-            // boat doesn't snap to a stale angle on first boarding. The
-            // clicking player is the acting session, so a small radius around
-            // them always covers the boat they just clicked.
             let p = player_state();
             let yaw = mobs_in_radius(p.pos, 8.0)
                 .into_iter()
@@ -265,10 +167,6 @@ impl Boats {
         true
     }
 
-    /// One momentum step per live boat: read the driver's input, integrate
-    /// speed and yaw rate under drag, issue the drive intent, and animate the
-    /// oars on stroke transitions. A hull that stops answering (died,
-    /// despawned, unloaded) or has gone still with nobody aboard retires.
     pub fn tick(&mut self) {
         let mut retired: Vec<u64> = Vec::new();
         for (&id, boat) in self.boats.iter_mut() {
@@ -276,23 +174,20 @@ impl Boats {
             let (forward, strafe) = input.map_or((0.0, 0.0), |i| (i.forward, i.strafe));
 
             boat.speed = ((boat.speed + forward * ACCEL) * DRAG).clamp(-MAX_REVERSE, MAX_FORWARD);
-            // Strafe + turns the rudder right; increasing mob yaw turns left.
             boat.yaw_vel = (boat.yaw_vel - strafe * TURN_ACCEL) * TURN_DRAG;
             boat.yaw = wrap_yaw(boat.yaw + boat.yaw_vel);
 
             let facing = mob_facing_xz(boat.yaw);
             let vel = [facing[0] * boat.speed, facing[1] * boat.speed];
             if !mob_drive(id, vel, Some(boat.yaw)) {
-                retired.push(id); // gone — riders already heard dismounted
+                retired.push(id);
                 continue;
             }
 
-            // Oar playback follows the INPUT, per stroke side: turning left
-            // pulls only the right oar, turning right only the left, forward
-            // both, backing water rows in reverse — and a released oar
-            // settles gently back onto its rest pose (see `steer_oar`). The
-            // animations activate once and stay active; playback is the
-            // whole control surface.
+            // Oars follow the input. Turning left rows only the right oar, turning right only the
+            // left, forward both, reverse both backwards. Let go and it eases back to rest
+            // (`steer_oar`). The anims are started once and left running, and we steer them purely
+            // through playback.
             if !boat.oars_active {
                 boat.oars_active = ensure_oars(id);
             }
@@ -331,7 +226,7 @@ impl Boats {
                 && boat.speed.abs() < REST_SPEED
                 && boat.yaw_vel.abs() < REST_YAW_VEL
             {
-                retired.push(id); // at rest, unmanned — nothing left to drive
+                retired.push(id);
             }
         }
         for id in retired {
@@ -340,9 +235,6 @@ impl Boats {
     }
 }
 
-/// Adopt an already-complete pair (including an autonomous settle left by a
-/// retired boat), or activate a fresh pair as one parked transaction. A
-/// partial pre-existing pair is normalized through the same rollback path.
 fn ensure_oars(id: u64) -> bool {
     match (
         mob_anim_state(id, "row_left"),
@@ -357,9 +249,6 @@ fn ensure_oars(id: u64) -> bool {
     }
 }
 
-/// Activate both oars and immediately park both at rate 0. No caller can
-/// observe a successful half-pair: any failed activation/park rolls back all
-/// membership changes.
 fn activate_parked_oars(id: u64) -> bool {
     let left_active = mob_anim_set(id, "row_left", true);
     let right_active = left_active && mob_anim_set(id, "row_right", true);
@@ -385,9 +274,6 @@ fn deactivate_oars(id: u64) {
     mob_anim_set(id, "row_right", false);
 }
 
-/// Apply input policy against the engine's current layer state. Released oars
-/// seek from the authoritative phase to the nearest authored rest cycle;
-/// active seeks are left alone to finish autonomously.
 fn steer_oar(id: u64, name: &str, desired: f32) -> bool {
     let Some(state) = mob_anim_state(id, name) else {
         return false;

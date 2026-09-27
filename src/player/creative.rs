@@ -3,7 +3,6 @@ use super::movement::Surroundings;
 use super::{Input, Player, PlayerMode};
 use petramond_math::math::Vec3;
 
-/// Creative flight is paced for building within ordinary interaction reach.
 pub fn creative_flight_speed(sprint: bool) -> f32 {
     if sprint {
         10.0
@@ -46,8 +45,6 @@ impl Player {
         let target = wish * creative_flight_speed(input.sprint) * self.fly_scale();
         let rate = if wish == Vec3::ZERO { 5.0 } else { 12.0 };
         let retain = (-rate * dt).exp();
-        // Integrate the exponential exactly so a low frame rate coasts the
-        // same distance as a high one, including the first released frame.
         let travel = target * dt + (self.vel - target) * ((1.0 - retain) / rate);
         self.vel = target + (self.vel - target) * retain;
         for (axis, delta, component) in [

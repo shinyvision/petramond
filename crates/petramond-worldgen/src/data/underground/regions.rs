@@ -1,5 +1,3 @@
-//! Spatial admission before nearest-climate fallback.
-
 use serde::{Deserialize, Serialize};
 
 use super::{ClimatePoint, ClimateRange, IdSet, UndergroundBiomes};
@@ -93,7 +91,6 @@ pub(super) fn compile(rows: &[super::UndergroundBiomeDef]) -> Box<[RegionGroup]>
 
 fn permutation(seed: u64) -> [u8; 256] {
     let mut random = Xoroshiro::new(seed);
-    // Origins are part of the random stream even when sampling without them.
     for _ in 0..3 {
         random.next_double();
     }

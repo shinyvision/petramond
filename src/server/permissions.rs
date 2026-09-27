@@ -1,15 +1,3 @@
-//! World-persisted operator permissions.
-//!
-//! Operators are authenticated player identities ([`PlayerKey`]), never
-//! display names, stored in the world's ordinary engine KV map so the set
-//! follows the same autosave/save-all path as the day/night clock. The listen
-//! server's local session is intrinsically an operator and does not need an
-//! entry here.
-//!
-//! Worlds from before player identities stored case-folded NAMES under the
-//! same key. Those load as `legacy_names`: each one converts to the identity
-//! that first claims the name (see `server::accounts`), then disappears.
-
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -19,14 +7,12 @@ use crate::world::ServerWorld;
 
 const OPERATORS_KEY: &str = "petramond:operators";
 
-/// The operator set: identities, plus legacy names awaiting their claimant.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Operators {
     keys: BTreeSet<PlayerKey>,
     legacy_names: BTreeSet<String>,
 }
 
-/// The KV encoding: the current shape, or the pre-identity bare name list.
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 enum Stored {
@@ -42,19 +28,14 @@ impl Operators {
         self.keys.contains(key)
     }
 
-    /// Grant; `false` = already an operator.
     pub fn insert(&mut self, key: PlayerKey) -> bool {
         self.keys.insert(key)
     }
 
-    /// Revoke; `false` = was not an operator.
     pub fn remove(&mut self, key: &PlayerKey) -> bool {
         self.keys.remove(key)
     }
 
-    /// Convert a legacy name-keyed operator entry for `name` into `key`'s
-    /// grant. Called once, when the world first sees `key` (claiming `name`).
-    /// `true` = the set changed and should be stored.
     pub fn claim_legacy(&mut self, name: &str, key: PlayerKey) -> bool {
         if !self.legacy_names.remove(&canonical_name(name)) {
             return false;

@@ -32,7 +32,6 @@ fn joined_catalog_round_trips_namespaced_selectors_and_stable_keys() {
         sticks.ingredients()[0].selector,
         IngredientSelector::Tag(ItemTag::PLANKS)
     );
-    // A pack station survives the joined round trip by key.
     let bench_sticks = restored.get("test:bench_sticks").expect("mod station row");
     assert_eq!(bench_sticks.station(), bench);
 }

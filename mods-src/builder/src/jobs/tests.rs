@@ -219,7 +219,6 @@ fn a_finished_job_with_nothing_left_is_not_started_again() {
     );
 }
 
-/// A second table on the other side of the same chest, its job under way.
 #[test]
 fn what_another_working_job_sharing_the_chests_still_needs_is_not_offered() {
     let (mut session, a) = row_site();
@@ -423,7 +422,6 @@ fn a_job_whose_table_is_broken_is_called_off() {
     let (mut session, id) = row_site();
     session.job(id);
     at_work(&mut session, id);
-    // Due on the tick its id falls on, of every forty.
     session.world.unload(TABLE_AT, TABLE_AT);
     session.builder.cancel_tableless(&[id], 41);
     assert!(!brief(&mut session, id).cancelling, "unloaded is not gone");

@@ -1,12 +1,5 @@
-//! The torch: a tilted pole with no collision, mounted from stored placement.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A torch: no collision (selectable by its pole in `player::interaction`); its
-/// item is a flat sprite.
 pub struct TorchFamily;
 
 impl ShapeSim for TorchFamily {
@@ -37,8 +30,6 @@ impl ShapeSim for TorchFamily {
         pos: IVec3,
         _b: Block,
     ) -> Option<ShapeMount> {
-        // The stored placement decides both: a floor torch grips the cell
-        // below, a wall torch the wall behind it.
         let placement = TorchPlacement::from_cell(nb.shape_state(pos));
         Some(ShapeMount {
             cell: placement.support_cell(pos),
@@ -52,7 +43,6 @@ impl ShapeRender for TorchFamily {
         MeshEmitter::Pole
     }
 
-    /// A tilted pole, not a box set: the ray must meet the actual geometry.
     fn precise_pick(&self, _p: &ShapeParams) -> bool {
         true
     }
@@ -83,9 +73,6 @@ impl ShapePlacement for TorchFamily {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> PlacementOutcome {
-        // A torch-shaped block mounts on a floor or wall (never a ceiling) and
-        // needs a usable support face. Replacing a plant drops it to the FLOOR.
-        // Then the shared single-cell tail applies (substrate/replaceable/body).
         let p = inputs.place_pos;
         let tp = if inputs.replacing_in_place {
             TorchPlacement::Floor
@@ -106,8 +93,6 @@ impl ShapePlacement for TorchFamily {
     }
 }
 
-/// Whether `block` is a torch-shaped row — the ownership test of the
-/// [`TorchPlacement`] cell state.
 pub fn is_torch(block: Block) -> bool {
     block.shape_family() == ShapeFamily::Torch
 }

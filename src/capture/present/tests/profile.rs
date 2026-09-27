@@ -1,8 +1,3 @@
-//! What presenting costs, measured (manual: `cargo test --profile fasttest
-//! --lib apply_profile -- --ignored --nocapture`): a full open, a far seek
-//! that provenance mostly skips, and a one-tick seek back over pieces
-//! presented moments ago, which lands in the frame it is issued in.
-
 use std::time::{Duration, Instant};
 
 use super::*;
@@ -22,7 +17,6 @@ fn apply_profile() {
         let mut replica = replica();
         p.set_window(window_over(side));
 
-        // A full open: everything read, decoded, folded and installed.
         let started = Instant::now();
         let (state, events) = seek(&h, None, 21.25);
         p.push(Op::Apply {
@@ -35,7 +29,6 @@ fn apply_profile() {
         let open = started.elapsed();
         let sections = replica.data().sections.len();
 
-        // Play on, then seek far back over what provenance skips.
         p.push(Op::Queue(vec![h.frames_from(23, 6)]));
         p.push(Op::Time(27.25));
         settle(&mut p, &mut replica);
@@ -50,8 +43,6 @@ fn apply_profile() {
         settle(&mut p, &mut replica);
         let far = started.elapsed();
 
-        // Drag one tick forward and back, over and over: the seek back
-        // passes pieces presented moments ago.
         let mut back = Vec::new();
         let mut inline = 0;
         for round in 0..40u64 {

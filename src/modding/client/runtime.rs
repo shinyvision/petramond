@@ -1,10 +1,3 @@
-//! Presentation-only client WASM instances.
-//!
-//! A pack opts in with `client_wasm`; this runtime is separate from the
-//! deterministic server/worldgen instances. It can sample final cells from
-//! the client's replica, publish document state/images, receive registered
-//! key, GUI, and canvas events, and persist namespaced blobs in a host-owned sandbox.
-
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -37,19 +30,10 @@ pub use buckets::{delete_local_world_storage, local_session_key, remote_session_
 struct ClientMod {
     id: String,
     instance: ModInstance,
-    /// The client-dispatchable handlers `mod_init` registered, as
-    /// `(priority, kind, filter, handler id)` in registration order — kept
-    /// with the instance, which may move from one runtime into another.
     handlers: Vec<(i32, EventKind, EventFilter, u32)>,
-    /// Started from its pack's launch entry rather than loaded for a session:
-    /// the shell's own instance, carried into a presentation it opens and back.
     launched: bool,
 }
 
-/// One client-registered event handler: the kind it asked for during
-/// `mod_init`, and where to dispatch it. Serves both client routes — the
-/// speculative PRE kinds ([`ClientModRuntime::predict_claim`]) and the mod
-/// cues the server addressed at this client ([`ClientModRuntime::mod_event`]).
 struct Handler {
     kind: EventKind,
     filter: EventFilter,
@@ -57,13 +41,6 @@ struct Handler {
     handler_id: u32,
 }
 
-/// The kinds a client instance may register, and they are two different
-/// things. The PRE kinds are dispatched speculatively against the replica, so
-/// a mod consumer is as predictable as an engine one; `ModEvent` is not a
-/// prediction at all but the DELIVERY of a cue the server addressed here
-/// (`EmitEventTo`), which is the only way a client mod hears about something
-/// local input does not imply. Anything else registered on a client instance
-/// is a mistake — logged and ignored, never dispatched.
 fn client_dispatchable(kind: EventKind) -> bool {
     matches!(
         kind,
@@ -79,12 +56,9 @@ fn client_dispatchable(kind: EventKind) -> bool {
 pub struct ClientUiView {
     pub state: Arc<std::collections::BTreeMap<String, mod_api::GuiValue>>,
     pub images: Vec<ClientImageData>,
-    /// The mod's retained scenes, for its documents' `canvas` nodes.
     pub scenes: Vec<(String, super::state::ClientCanvasSceneData)>,
 }
 
-/// One retained canvas element, with the image it draws when it draws one:
-/// geometry and glyph rows carry `None`.
 pub struct ClientCanvasElementView {
     pub element: mod_api::ClientCanvasElement,
     pub image: Option<ClientImageData>,
@@ -95,17 +69,11 @@ pub struct ClientCanvasView {
     pub elements: Vec<ClientCanvasElementView>,
 }
 
-/// One mod-registered remappable key action, resolved for this session.
 pub struct ModKeyAction {
-    /// Namespaced identity (`mod_id:action`): the remap-persistence key, the
-    /// dispatch handle, and the controls-screen row id.
     pub full_id: String,
     pub label: String,
-    /// Controls-screen category: the owning pack's display name.
     pub category: String,
-    /// The registered DEFAULT binding (the player may remap it away).
     pub default: petramond_input::controls::Binding,
-    /// Where a press reaches the mod.
     contexts: mod_api::ClientKeyContexts,
     mod_index: usize,
     action_id: u32,
@@ -113,37 +81,19 @@ pub struct ModKeyAction {
 
 pub struct ClientModRuntime {
     mods: Vec<ClientMod>,
-    /// Indices into [`mods`](Self::mods) in MOD-ID order — the sequence the
-    /// server's `BodyClaims` folds body claims in. Load order is a dependency
-    /// topo sort and is deliberately NOT it.
     fold_order: Vec<usize>,
-    /// Client event handlers in dispatch order: `(priority, load order,
-    /// registration order)` — the same ordering contract as the server bus.
-    /// Filtered by kind at each dispatch site.
     handlers: Vec<Handler>,
     actions: Vec<ModKeyAction>,
     overlays: Vec<super::state::ClientOverlayRegistration>,
-    /// Currently-down action `full_id`s — the edge filter for `ClientKey`
-    /// dispatch, whatever input the player bound.
     pressed: HashSet<String>,
-    /// Graph events client mods fired that the server has yet to echo.
     pending_fires: super::pending_fires::PendingFires,
-    /// The frame, clock, tap and media desk every mod of this runtime shares.
     media: super::media::MediaDesk,
-    /// What the app presented, for the host calls that answer it.
     presented: super::presented::PresentedDesk,
-    /// Test-only scripted answer for [`Self::placement_plan`]: lets prediction
-    /// tests drive the custom-shape placement arm without a wasm instance.
     #[cfg(any(test, feature = "test-support"))]
     pub scripted_shape_plan: Option<mod_api::ShapePlacementResult>,
 }
 
 impl ClientModRuntime {
-    /// Load the session's client mods. `enabled` is the session's
-    /// mod-enablement AUTHORITY: locally the installed packs minus the
-    /// world's disabled set; on a remote join the server's
-    /// handshake-reported mod set. A locally installed client mod the
-    /// server does not run therefore never activates.
     pub fn load(
         world_seed: u32,
         session_key: &str,
@@ -156,8 +106,6 @@ impl ClientModRuntime {
         Self::assemble(mods, media, presented)
     }
 
-    /// A runtime around already-initialized instances, in load order, sharing
-    /// one media desk and one presented desk.
     fn assemble(
         mut mods: Vec<ClientMod>,
         media: super::media::MediaDesk,
@@ -168,8 +116,6 @@ impl ClientModRuntime {
                 data.presented = presented.clone();
             }
         }
-        // Dispatch order: (priority, load order, registration order) — the
-        // stable sort keeps ties in the order they are listed here.
         let mut handler_rows: Vec<(i32, Handler)> = mods
             .iter()
             .enumerate()
@@ -199,12 +145,7 @@ impl ClientModRuntime {
             let Some(data) = loaded.instance.client_data() else {
                 continue;
             };
-            // Overlay image keys are namespace-guarded at registration (and
-            // per-mod duplicates rejected there), so keys are already unique
-            // across mods.
             overlays.extend(data.overlays.iter().cloned());
-            // Category = the pack's display name; the id keys the category
-            // when a pack somehow has no display row.
             let category = petramond_world::assets::packs()
                 .iter()
                 .find(|p| p.id.as_deref() == Some(loaded.id.as_str()))
@@ -243,7 +184,6 @@ impl ClientModRuntime {
             }
         }
 
-        // Body claims fold in MOD-ID order, not load order — see `fold_order`.
         let mut fold_order: Vec<usize> = (0..mods.len()).collect();
         fold_order.sort_by(|&a, &b| mods[a].id.cmp(&mods[b].id));
 
@@ -264,8 +204,6 @@ impl ClientModRuntime {
         rt
     }
 
-    /// No client mods at all — the stand-in a client holds while its real
-    /// runtime is handed back to the shell.
     pub fn empty() -> Self {
         Self {
             mods: Vec::new(),
@@ -282,21 +220,14 @@ impl ClientModRuntime {
         }
     }
 
-    /// The frame, clock, tap and media desk this runtime's mods drive.
     pub fn media_desk(&self) -> &super::media::MediaDesk {
         &self.media
     }
 
-    /// What the app presented, as this runtime's mods read it back.
     pub fn presented(&self) -> &super::presented::PresentedDesk {
         &self.presented
     }
 
-    /// One-time load pass: bake every custom-shape block's ITEM geometry
-    /// (`BakeShapeItem`) on its owning client mod and cache it for the item
-    /// renderer. Detached (no world) — the item form is a pure function of the
-    /// block. A block whose owner ships no client wasm (or a trapped bake) is
-    /// simply skipped, and its item draws as a plain cube.
     fn bake_item_geometry(&mut self) {
         for &block in petramond_world::block::Block::all() {
             if !block.is_custom_shape() {
@@ -313,7 +244,6 @@ impl ClientModRuntime {
                 block_id: mod_api::BlockId(block_id),
             };
             if let Some(GuestRet::BakedItem(geo)) = loaded.instance.call_guest_detached(&call) {
-                // Sanitize the guest boxes; a breach falls back to the cube icon.
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
                         petramond_world::block::item_shape_bake::set_item_bake(block_id, boxes);
@@ -323,13 +253,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// Speculatively dispatch a predicted pre event to every client
-    /// predictor registered for its kind, in bus order, with `actor`
-    /// published as the `PlayerState` snapshot and the REPLICA as the world
-    /// scope. Returns whether any predictor answered Cancel — "I predict I
-    /// claim (interact/use) or veto (place_pre) this attempt". Prediction is
-    /// presentation-only: handlers must not mutate (mutating host calls are
-    /// capability-blocked on client instances anyway).
     pub fn predict_claim(
         &mut self,
         world: &ReplicaWorld,
@@ -435,8 +358,6 @@ impl ClientModRuntime {
                 payload: payload.clone(),
             };
             super::scope::enter_actor(actor.clone(), || {
-                // The verdict is meaningless here — nothing downstream is
-                // cancellable — so any well-formed event reply is accepted.
                 match loaded.instance.call_guest_client(world, &call) {
                     None | Some(GuestRet::Event { .. }) => {}
                     Some(_) => loaded
@@ -447,13 +368,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// The client twin of the server's custom-shape placement dispatch: ask
-    /// the shape's owning CLIENT instance for its placement plan against the
-    /// replica (`GuestCall::ShapePlacementPlan`), with `actor` published as
-    /// the `PlayerState` snapshot. The plan is deterministic, so the two
-    /// sides compute the same write — the ghost presents it and the
-    /// authoritative delta confirms. `None` = no reachable owner; the caller
-    /// falls through to the ordinary ghost, the server's fall-through twin.
     pub fn placement_plan(
         &mut self,
         world: &ReplicaWorld,
@@ -481,11 +395,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// The client twin of `ModHost::bake_placement_sim_boxes`: the would-be
-    /// SIM and RENDER boxes of a not-yet-placed custom cell, baked against
-    /// the replica. The ghost installs them eagerly so a predicted placement
-    /// collides and draws exactly from frame 0; the per-tick pump re-bakes
-    /// the same pure result when the delta dirties the cell.
     pub fn bake_placement_geometry(
         &mut self,
         world: &ReplicaWorld,
@@ -540,20 +449,15 @@ impl ClientModRuntime {
         (sim, render)
     }
 
-    /// Bake the SIM geometry of any dirty custom-shape cell on the
-    /// CLIENT (each shape's own `client_wasm` `bake_shape_sim`), so the client's
-    /// physics/prediction sees the same collision the server does — otherwise a
-    /// custom shape would fall back to its (often empty) static boxes and desync.
-    /// A missing owner / disabled mod / wrong reply leaves cells uncached
-    /// (static fallback), the failure policy.
+    /// Client-side SIM bake for dirty custom-shape cells, through each shape's `client_wasm`
+    /// `bake_shape_sim`, so client physics/prediction sees the server's collision instead of
+    /// falling back to often-empty static boxes and desyncing. A missing owner, disabled mod or
+    /// bad reply leaves the cell uncached on the static fallback, on purpose.
     pub fn bake_custom_shapes(&mut self, world: &mut ReplicaWorld) {
         let cells = world.drain_custom_bake_dirty();
         if cells.is_empty() {
             return;
         }
-        // A BTreeMap (not HashMap) over the position-sorted drain gives the same
-        // dispatch order the server uses (C1) — the SIM bake is cross-checked
-        // against the server, so the two sides must dispatch identically.
         let mut groups: std::collections::BTreeMap<
             (&'static str, u16),
             Vec<crate::world::CustomBakeCell>,
@@ -564,7 +468,6 @@ impl ClientModRuntime {
                 .or_default()
                 .push(cell);
         }
-        // Dispatch under an immutable world borrow, collect, then populate.
         let mut baked_sim: Vec<(
             petramond_math::math::IVec3,
             Vec<petramond_world::block::Aabb>,
@@ -582,9 +485,6 @@ impl ClientModRuntime {
                 .iter()
                 .map(crate::modding::shape_bake::cell_input)
                 .collect();
-            // SIM bake → collision (also cross-checked against the server). A
-            // sanitation/protocol breach disables the mod; skip the render bake
-            // explicitly rather than relying on the no-op-on-disabled path.
             let sim_call = GuestCall::BakeShapeSim {
                 shape_kind: *shape_kind,
                 cells: inputs.clone(),
@@ -605,7 +505,6 @@ impl ClientModRuntime {
                     }
                 }
             }
-            // RENDER bake → mesh geometry (client presentation only).
             let render_call = GuestCall::BakeShapeRender {
                 shape_kind: *shape_kind,
                 cells: inputs,
@@ -635,16 +534,10 @@ impl ClientModRuntime {
         }
     }
 
-    /// The session's mod-registered remappable actions, for the app's action
-    /// table and the controls screen.
     pub fn key_actions(&self) -> &[ModKeyAction] {
         &self.actions
     }
 
-    /// The server disabled these mods for the session
-    /// (`ServerToClient::ModsDisabled`): disable their client instances too,
-    /// so shape bakes and predictions fall back exactly when the server's do
-    /// instead of baking collision the server no longer has.
     pub fn disable_from_server(&mut self, mod_ids: &[String]) {
         for loaded in &mut self.mods {
             if mod_ids.contains(&loaded.id) {
@@ -655,7 +548,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// Whether a press of action `full_id` reaches a live mod at `at`.
     pub fn action_fires(&self, full_id: &str, at: super::keys::KeyContext<'_>) -> bool {
         self.actions.iter().any(|a| {
             a.full_id == full_id
@@ -664,9 +556,6 @@ impl ClientModRuntime {
         })
     }
 
-    /// The live (non-disabled) mod owning a namespaced `mod_id:name` key.
-    /// THE ownership rule for every keyed dispatch — images, canvases, shapes,
-    /// mod cues — so a key routes to one place however it arrived.
     fn owner_index(&self, key: &str) -> Option<usize> {
         let owner = key.split_once(':')?.0;
         self.mods
@@ -678,17 +567,10 @@ impl ClientModRuntime {
         self.owner_index(key).map(|i| &self.mods[i])
     }
 
-    /// [`owner_mod`](Self::owner_mod) for dispatching into the owner.
     fn owner_mod_mut(&mut self, key: &str) -> Option<&mut ClientMod> {
         self.owner_index(key).map(|i| &mut self.mods[i])
     }
 
-    /// Drive every client mod's per-frame hook, with `actor` published as the
-    /// `PlayerState` snapshot — the same query-the-snapshot vocabulary the
-    /// prediction dispatches and the whole server side use, so a mod's rule
-    /// reads identically wherever it runs. This is what lets a rule derived
-    /// from local input (a raised guard) present on the frame the button goes
-    /// down instead of a round trip later.
     pub fn frame(
         &mut self,
         world: &ReplicaWorld,
@@ -701,8 +583,6 @@ impl ClientModRuntime {
         self.presented.lock().view = Some(view);
         super::scope::enter_inventory(inventory, || {
             for loaded in &mut self.mods {
-                // Each mod sees ITS OWN answer to "is this press mine", the
-                // same way the server resolves the field per caller.
                 let mut mine = actor.clone();
                 mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
                 super::scope::enter_actor(mine, || {
@@ -712,9 +592,6 @@ impl ClientModRuntime {
         });
     }
 
-    /// Drive every client mod's per-frame hook with no world behind it (the
-    /// shell): no actor, no inventory, no presented view — the frame's player
-    /// fields are zero, and the mods' world calls answer an error.
     pub fn frame_detached(&mut self, frame: ClientFrameData) {
         let call = GuestCall::ClientFrame { frame };
         for loaded in &mut self.mods {
@@ -722,22 +599,16 @@ impl ClientModRuntime {
         }
     }
 
-    /// Every client mod's VIEW CLAIMS, resolved in the same mod-id fold order
-    /// the body claims settle in ([`view::fold`](super::view::fold)).
     pub fn view_claims(&self) -> super::view::ViewFold {
         super::view::fold(self.claim_stores().map(|data| &data.view))
     }
 
-    /// Whether client mod `mod_id` is loaded here and still running.
     pub fn is_live(&self, mod_id: &str) -> bool {
         self.mods
             .iter()
             .any(|m| m.id == mod_id && !m.instance.disabled())
     }
 
-    /// Drop every mod's view claims: the presented session changed, and a
-    /// claim was made of the view that presented before (mods re-issue
-    /// theirs for the new session).
     pub fn drop_view_claims(&mut self) {
         for loaded in &mut self.mods {
             if let Some(data) = loaded.instance.client_data_mut() {
@@ -746,8 +617,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// Stand in for mod `mod_id`'s own view calls. `false` = no such client
-    /// mod.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_view_claims_for_test(
         &mut self,
@@ -762,10 +631,6 @@ impl ClientModRuntime {
         data.map(|data| data.view = claims).is_some()
     }
 
-    /// Every client mod's world marks, mods in mod-id order, each mod's sets in
-    /// name order and each set's marks in the order it set them, with the
-    /// published image a mark's
-    /// sprite names (`None` when it names none or the image is not there).
     pub fn for_each_world_mark(
         &self,
         mut f: impl FnMut(&mod_api::ClientWorldMark, Option<&ClientImageData>),
@@ -784,9 +649,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// Issue `call` exactly as client mod `mod_id` would from a dispatch —
-    /// the same capability check, routing and handler — beside `world`
-    /// when given. `None` = no such client mod.
     #[cfg(any(test, feature = "test-support"))]
     pub fn call_as_for_test(
         &mut self,
@@ -804,8 +666,6 @@ impl ClientModRuntime {
         })
     }
 
-    /// Stand in for mod `mod_id`'s own `ClientWorldMarksSet` (unvalidated).
-    /// `false` = no such client mod.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_world_marks_for_test(
         &mut self,
@@ -823,7 +683,6 @@ impl ClientModRuntime {
         .is_some()
     }
 
-    /// The mod holding the local player's use gesture, if any.
     pub fn use_holder(&self) -> Option<&str> {
         self.mods
             .iter()
@@ -833,7 +692,6 @@ impl ClientModRuntime {
             .map(|m| m.id.as_str())
     }
 
-    /// The button came up: every hold ends with it.
     pub fn release_use(&mut self) {
         for loaded in &mut self.mods {
             if let Some(data) = loaded.instance.client_data_mut() {
@@ -842,13 +700,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// Every enabled client mod's store, in MOD-ID order.
-    ///
-    /// The order is the whole point: the server folds body claims through one
-    /// `BodyClaims` keyed by pack id, so a prediction that folded in LOAD order
-    /// (a dependency topo sort, which is a different sequence) could pick a
-    /// different winner than the authority for a contested hand. Same input,
-    /// same order, same answer.
     fn claim_stores(&self) -> impl Iterator<Item = &crate::modding::client::ClientStoreData> {
         self.fold_order.iter().filter_map(|&i| {
             let m = &self.mods[i];
@@ -858,14 +709,6 @@ impl ClientModRuntime {
         })
     }
 
-    /// The local player's hand poses: this client's own PREDICTION for any
-    /// hand a client mod poses, and `replicated` for the rest.
-    ///
-    /// A hand a client mod poses is client-authoritative from its first pose
-    /// onward — including when that mod RELEASES it, which is the edge the
-    /// replicated answer is a round trip late on. A hand no client mod has
-    /// ever posed keeps the server's answer untouched, so a pack that poses
-    /// only on the server still reaches the local hands.
     pub fn local_held_poses(
         &self,
         replicated: (Option<HeldPose>, Option<HeldPose>),
@@ -875,8 +718,6 @@ impl ClientModRuntime {
         for data in self.claim_stores() {
             for (h, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
                 claimed[h] |= data.poses_hands[h];
-                // Later mods in MOD-ID order win a contested hand — the
-                // server's own rule, run over the same sequence.
                 predicted[h] = data.body.held_pose(hand).or(predicted[h]);
             }
         }
@@ -884,10 +725,6 @@ impl ClientModRuntime {
         (pick(0, replicated.0), pick(1, replicated.1))
     }
 
-    /// The local player's hand DISPLAYS — what each hand draws in place of
-    /// its stack — by exactly [`local_held_poses`](Self::local_held_poses)'s
-    /// rule: predicted for a hand a client mod has ever dressed, `replicated`
-    /// for the rest.
     pub fn local_held_displays(
         &self,
         replicated: [Option<petramond_world::item::ItemType>; 2],
@@ -955,8 +792,6 @@ impl ClientModRuntime {
                 taken[i] = true;
             }
         }
-        // Whatever the authority is not carrying yet — the raise that has not
-        // round-tripped, and the bones only a client mod ever bends.
         out.extend(
             predicted
                 .iter()
@@ -967,11 +802,6 @@ impl ClientModRuntime {
         out
     }
 
-    /// The local player's animator claims, by
-    /// [`local_held_poses`](Self::local_held_poses)'s rule per KEY: a param
-    /// or slot any client mod has ever claimed is predicted by the server's
-    /// resolution, every other one keeps the replicated answer
-    /// ([`animator_fold`](super::animator_fold)).
     pub fn local_animator(
         &self,
         replicated: &crate::player::AnimatorClaims,
@@ -983,11 +813,6 @@ impl ClientModRuntime {
         )
     }
 
-    /// The graph events client mods fired since the last call, drained,
-    /// followed by the server's echoes `replicated` minus one echo per
-    /// local fire still waiting for it (the mod fired it itself, a round
-    /// trip earlier). `dt` is the seconds since the last call — the clock
-    /// the waiting fires expire on.
     pub fn take_animator_events(
         &mut self,
         replicated: &[(crate::player::RigId, u16)],
@@ -1016,11 +841,6 @@ impl ClientModRuntime {
         out
     }
 
-    /// Dispatch one bound-action edge to its owning mod, by the action's
-    /// namespaced `full_id`. A press reaches the mod only where the action
-    /// fires ([`mod_api::ClientKeyContexts`] against `at`); a release always
-    /// does, so an action never stays down. Returns whether a live mod owns
-    /// the action.
     pub fn action(
         &mut self,
         world: Option<&ReplicaWorld>,
@@ -1161,12 +981,6 @@ impl ClientModRuntime {
         })
     }
 
-    /// Every mod's current ambient-volume targets, per (mod id, bundle):
-    /// `(intensity, wind)` rows the presentation layer pushes into its
-    /// ambient drives. A disabled (trapped/watchdogged) mod must not freeze
-    /// its last weather on for the rest of the session: its targets read as
-    /// zero intensity so the drives ease out and retire (mirrors
-    /// `take_commands`).
     pub fn ambient_targets(&self) -> impl Iterator<Item = (&str, u8, f32, [f32; 2])> + '_ {
         self.mods.iter().flat_map(|m| {
             let disabled = m.instance.disabled();
@@ -1185,10 +999,6 @@ impl ClientModRuntime {
         })
     }
 
-    /// Every mod's looping-sound gains: `(sound, gain)`, mods in load order.
-    /// The audio side keys its loop table on the resolved sound, so two mods
-    /// driving one sound key resolve last-writer-wins there. Disabled mods
-    /// contribute nothing — their loops sweep to silence.
     pub fn sound_loops(&self, out: &mut Vec<(petramond_world::sound_registry::Sound, f32)>) {
         out.clear();
         for m in &self.mods {
@@ -1202,8 +1012,6 @@ impl ClientModRuntime {
         }
     }
 
-    /// The combined post-process mood: component-wise MAX over enabled mods
-    /// (disabled mods contribute nothing — their mood dies with them).
     pub fn mood(&self) -> [f32; 2] {
         let mut mood = [0.0f32, 0.0];
         for m in &self.mods {
@@ -1235,13 +1043,6 @@ impl ClientModRuntime {
     }
 }
 
-/// Bake the ITEM geometry of every INSTALLED custom-shape block into the item
-/// cache, using a detached client instance per owning pack. Run ONCE at client
-/// startup, BEFORE the icon atlas bakes (`render::renderer::construct`), so a
-/// custom block's inventory icon shows its real baked shape (a chair) instead of
-/// the plain cube fallback (which reads a plank). Side-effect-free (no storage,
-/// no registration); the per-world runtime re-bakes the enabled subset at join,
-/// idempotently. A headless server has no icon atlas and never calls this.
 pub fn bake_installed_custom_item_geometry() {
     use petramond_world::block::Block;
 
@@ -1286,9 +1087,6 @@ pub fn bake_installed_custom_item_geometry() {
                 block_id: mod_api::BlockId(block.id()),
             };
             if let Some(GuestRet::BakedItem(geo)) = instance.call_guest_detached(&call) {
-                // Sanitize like the sim/render pumps; a breach just means the
-                // item draws its cube fallback (this detached pass has no mod to
-                // disable for the session).
                 if let Ok(boxes) = crate::world::ingest_shape_boxes(&geo.boxes) {
                     if !boxes.is_empty() {
                         petramond_world::block::item_shape_bake::set_item_bake(block.id(), boxes);
@@ -1299,8 +1097,6 @@ pub fn bake_installed_custom_item_geometry() {
     }
 }
 
-/// Load a session's client mods: every enabled pack's `client_wasm`, each
-/// with the session's storage bucket and the shared desks.
 fn load_mods(
     world_seed: u32,
     session_key: &str,
@@ -1322,8 +1118,6 @@ fn load_mods(
         .collect()
 }
 
-/// Instantiate one client mod and run its `mod_init`. `None` = it failed to
-/// load or trapped in init (logged); a mod is never half-loaded.
 fn instantiate(
     id: &str,
     path: &Path,
@@ -1362,10 +1156,6 @@ fn instantiate(
     if instance.disabled() {
         return None;
     }
-    // Client registrations live in ClientStoreData; of the simulation
-    // registrations only the client-dispatchable event handlers are
-    // meaningful here — the rest are irrelevant to this isolated instance (a
-    // dual-side wasm branches its init on RuntimeSide).
     let handlers = instance
         .take_registrations()
         .into_iter()
@@ -1393,14 +1183,6 @@ fn instantiate(
     })
 }
 
-/// The `(mod id, client wasm path)` pairs a session activates: every
-/// installed id-bearing pack that ships `client_wasm` AND is in the
-/// session's enabled set. Pure — the client-side enablement contract,
-/// unit-tested against synthetic pack lists (the client twin of
-/// `session_wasm_mods` in `modding/mod.rs`).
-/// Every installed pack whose only part is presentation (a client module and
-/// presentation catalogs, nothing that changes what a world holds): what may
-/// load on a server that does not run it, when that server consents.
 pub fn presentation_only_packs() -> BTreeSet<String> {
     presentation_only(petramond_world::assets::packs())
 }
@@ -1431,8 +1213,6 @@ fn session_client_mods(
         .collect()
 }
 
-/// Dispatch into a client instance beside `world`, or with no world at all
-/// (the shell): the instance's world calls then answer an error.
 fn call_client(
     instance: &mut ModInstance,
     world: Option<&ReplicaWorld>,
@@ -1456,9 +1236,6 @@ fn dispatch_unit(
     }
 }
 
-/// The view rows of a retained canvas scene, in paint order. An image row
-/// whose image is not published (yet) drops; geometry and glyphs name no image
-/// and always survive.
 fn canvas_rows(
     elements: &[mod_api::ClientCanvasElement],
     images: &std::collections::BTreeMap<String, ClientImageData>,
@@ -1486,10 +1263,6 @@ fn canvas_rows(
 mod tests {
     use super::*;
 
-    /// Client mods activate ONLY for packs in the session's enabled set —
-    /// on a remote join that is the server's handshake-reported mod list,
-    /// so a locally installed client mod the server does not run (e.g. the
-    /// minimap against a server without it) stays inactive.
     #[test]
     fn unlisted_packs_contribute_no_client_instance() {
         let pack = |name: &str, id: Option<&str>, client_wasm: Option<&str>| {
@@ -1553,8 +1326,6 @@ mod tests {
         );
     }
 
-    /// Geometry and glyphs name no image, so no missing image can drop them;
-    /// an image row still waits for its image.
     #[test]
     fn canvas_rules_and_labels_survive_the_view_without_an_image() {
         use mod_api::ClientCanvasElement as E;

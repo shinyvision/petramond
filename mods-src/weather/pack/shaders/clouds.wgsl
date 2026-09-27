@@ -27,24 +27,6 @@
 const CLOUD_BASE: f32 = 192.0;
 const CLOUD_THICK: f32 = 128.0;
 const CLOUD_FAR: f32 = 2400.0;   // march cap; beyond, the deck fades to haze
-// Density samples sit at most MAX_STEP_LENGTH blocks apart along the ray,
-// never fewer than MIN_STEPS of them: a fixed budget spread over a grazing
-// ray's kilometres is what showed the sample layers through the deck
-// (banding fix, 2026-09-05). MAX_STEPS is not a tuning knob — it is exactly
-// the count the longest possible span needs at that spacing (the march ends
-// at CLOUD_FADE_END_CAP), kept as the integer bound that makes the
-// float-conditioned loop below safe on sliver spans.
-//
-// Raising the budget is cheap here because the coverage keys are capped
-// independently (MAX_COV_KEYS): in the earlier fixed-28-step march the key
-// count rode the step count, so more steps re-exposed the high-frequency
-// field the keys smooth, and 36 steps measured worse than 28. With the keys
-// decoupled the cap binds only on grazing spans, where the clear-segment
-// skip and the transmittance early-out already cut most of the work:
-// measured against the fixed-28-step march, the environment chain costs a
-// small, bounded amount more at its worst views and the same at the zenith,
-// and coarser spacing saves a fraction of that while bringing the layers
-// back.
 const MIN_STEPS: i32 = 28;
 const MAX_STEP_LENGTH: f32 = 12.0;
 // BEGIN GENERATED WEATHER FIELD CONSTANTS
@@ -59,14 +41,6 @@ const SIGMA_T: f32 = 0.11;       // extinction at density 1 — thick cores go
                                  // volume read)
 const RAIN_DARKEN: f32 = 1.25;
 
-// Cloud fog-fade band: starts where the terrain fog completes (u.fog.y) and
-// is COMPLETE by 3x that, so the deck dissolves into the haze exactly like
-// terrain does — just over a cloud-scaled range (they are huge and high, so
-// they legitimately outlive the terrain fog before melting away). PURELY
-// proportional to the view distance: hard floors here (400/+600, removed
-// 2026-07-19) pinned the band below ~25 chunks, so lowering the view
-// distance fogged the terrain in but left clouds crisp to 400 blocks and
-// visible to a kilometer.
 const CLOUD_FADE_END_CAP: f32 = 2200.0;
 const MAX_STEPS: i32 = i32(ceil(CLOUD_FADE_END_CAP / MAX_STEP_LENGTH));
 // Global opacity ceiling: a whisper of sky always shows through the deck —
@@ -134,13 +108,6 @@ fn fbm_epoch(q: vec2<f32>, o: vec2<f32>, base: u32, seed: u32) -> f32 {
     return (n0 + 0.5 * n1 + 0.25 * n2) / 1.75;
 }
 
-// Sheet B: weather-core's SHEET_B_* twins. Larger features advected at 2x
-// the wind (INTEGER multiple — wrap-exactness); feature size a power of two
-// dividing WRAP.
-
-// One cloud sheet — weather-core's `sheet` twin: epoch-morphed fbm (shapes
-// REFORM while they drift; a rigid translation read as unnaturally uniform,
-// playtest 2026-07-17) remapped by the storm bias to [0,1] coverage.
 fn sheet_at(xz: vec2<f32>, salt: u32, feature: f32, advect: f32) -> f32 {
     let wind = params.values[0];
     let sky = params.values[1];
@@ -190,7 +157,7 @@ fn remap(v: f32, l0: f32, h0: f32, l1: f32, h1: f32) -> f32 {
 // horizon formula in daynight_sky.wgsl / atmosphere.wgsl (chroma-boosted
 // biome fog, warmed toward the sun; keep the three in sync). Fading toward
 // the RAW fog color made far clouds go blue over a savanna while the
-// terrain beneath melted into warm cream (playtest 2026-07-17).
+// terrain beneath melted into warm cream.
 fn haze_color(view_dir: vec3<f32>) -> vec3<f32> {
     let daylight = u.sun_dir.w;
     let toward = max(dot(view_dir, u.sun_dir.xyz), 0.0);

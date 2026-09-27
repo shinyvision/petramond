@@ -1,18 +1,8 @@
-//! The offline mixdown: the world lane mixed on rodio's own device-free
-//! mixer and pulled as PCM on the caller's clock instead of a sound card's.
-//!
-//! Nothing here plays a sound. Every play path in the engine is unchanged —
-//! it joins whichever mixer the world lane points at — so a mixdown carries
-//! exactly the gain, pitch, distance and spatialisation the device would
-//! have. rodio applies controls on sample counts, never on wall time, so
-//! pulling faster or slower than real time is correct by construction.
-
 use rodio::mixer::{self, Mixer, MixerSource};
 use rodio::{ChannelCount, SampleRate, Source};
 
 use super::{connect_gain_loop, Audio, Lane};
 
-/// Where the world lane mixes.
 pub(super) enum WorldOutput {
     Device,
     Offline(OfflineMix),
@@ -27,8 +17,6 @@ impl WorldOutput {
 pub(super) struct OfflineMix {
     mixer: Mixer,
     source: MixerSource,
-    /// Frames owed but not yet pulled: the fraction a `dt` at this sample rate
-    /// leaves over, carried so the track never drifts from the pictures.
     carry: f64,
 }
 
@@ -48,9 +36,6 @@ impl OfflineMix {
         &self.mixer
     }
 
-    /// Append `frames` interleaved frames. The mixer answers `None` whenever
-    /// nothing is sounding and recovers on the next call, so this is a counted
-    /// loop: a gap is silence, never the end of the track.
     fn render(&mut self, frames: usize, out: &mut Vec<f32>) {
         let samples = frames * self.source.channels().get() as usize;
         out.reserve(samples);
@@ -67,34 +52,21 @@ impl OfflineMix {
 /// finer poll and the listener and emitters move a slice at a time. A fast
 /// emitter then pans as smoothly as it does live instead of in frame steps.
 const CONTROL_POLL_SECONDS: f64 = 0.005;
-/// Bounds the slicing of one enormous pull (a stalled frame).
 const MAX_SLICES: usize = 64;
 
 impl Audio {
-    /// A device-free engine whose world lane is an offline mixdown of
-    /// `channels` at `sample_rate`, with pitch jitter and variant choice drawn
-    /// from `seed` so the same session mixes down to the same samples.
     pub fn new_offline(channels: u16, sample_rate: u32, seed: u64) -> Self {
         let mut audio = Self::with_device(None, seed);
         audio.world = WorldOutput::Offline(OfflineMix::new(channels, sample_rate));
         audio
     }
 
-    /// Move the world lane onto an offline mixdown (see
-    /// [`new_offline`](Self::new_offline)). Every world sound already
-    /// sounding carries over from the sample it had reached, and its sounds
-    /// from here on mix there; the interface lane — menu clicks, the
-    /// soundtrack — stays on the device. Beginning again restarts the
-    /// mixdown, carrying the world's sounds over the same way.
     pub fn begin_offline(&mut self, channels: u16, sample_rate: u32, seed: u64) {
         self.rng = super::Xorshift::new(seed);
         self.world = WorldOutput::Offline(OfflineMix::new(channels, sample_rate));
         self.rebind_world_voices();
     }
 
-    /// Hand the world lane back to the device, the sounds still sounding
-    /// going on there from where the mixdown left them. Inert when no
-    /// mixdown is open.
     pub fn end_offline(&mut self) {
         if self.world.is_offline() {
             self.world = WorldOutput::Device;
@@ -102,8 +74,6 @@ impl Audio {
         }
     }
 
-    /// The open mixdown's `(channels, sample_rate)`, or `None` when the world
-    /// lane is on the device.
     pub fn offline_format(&self) -> Option<(u16, u32)> {
         match &self.world {
             WorldOutput::Offline(mix) => {
@@ -113,12 +83,6 @@ impl Audio {
         }
     }
 
-    /// Advance the mixdown by `dt` seconds, appending its interleaved `f32`
-    /// frames to `out` and answering how many frames that was. Over any run
-    /// of pulls the total stays within one frame of the summed `dt` times the
-    /// sample rate. Call it once per presented frame, after
-    /// [`update_spatial`](Self::update_spatial). Appends nothing when no
-    /// mixdown is open.
     pub fn pull(&mut self, dt: f64, out: &mut Vec<f32>) -> usize {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         let Some(mix) = self.offline_mut() else {
@@ -140,11 +104,8 @@ impl Audio {
         frames
     }
 
-    /// Move every world-lane voice onto the new output's mixer, each going
-    /// on from the sample it had reached: the one-shots already sounding,
-    /// the spatial sounds and the mod loops. They start again there in a
-    /// fixed order, and none draws from the seeded stream, so a mixdown
-    /// reproduces.
+    /// Move the world-lane voices over to the new mixer, each picking up where it was. The order
+    /// is fixed and the seeded stream is left alone, so a mixdown reproduces.
     fn rebind_world_voices(&mut self) {
         let Some(mixer) = self.mixer(Lane::World).cloned() else {
             self.clear_spatial();
@@ -238,8 +199,6 @@ mod tests {
 
     const RATE: u32 = 48_000;
 
-    /// Replace `sound`'s clips with one steady mono tone, so a test reads the
-    /// mixer's behaviour rather than an authored clip's envelope.
     fn steady(audio: &mut Audio, sound: Sound, seconds: f32) {
         audio.buffers[sound.0 as usize] = vec![DecodedSound {
             channels: ChannelCount::new(1).unwrap(),
@@ -254,8 +213,6 @@ mod tests {
         steady(&mut audio, Sound::WoodPunch, 0.002);
         audio.play(Sound::WoodPunch);
         let mut out = Vec::new();
-        // The clip ends inside the first pull; every pull after it runs over
-        // an empty mixer.
         for _ in 0..10 {
             let before = out.len();
             assert_eq!(audio.pull(0.01, &mut out), 480);
@@ -366,8 +323,6 @@ mod tests {
         assert!(out.iter().any(|s| *s != 0.0));
     }
 
-    /// Replace `sound`'s clips with one mono rising ramp, so a sample's value
-    /// says where in the clip it was read.
     fn ramp(audio: &mut Audio, sound: Sound, seconds: f32) {
         let frames = (seconds * RATE as f32) as usize;
         audio.buffers[sound.0 as usize] = vec![DecodedSound {
@@ -401,7 +356,6 @@ mod tests {
             );
             audio.update_spatial(listener, &[]);
         };
-        // The same two sounds, never interrupted: the reference.
         play_both(&mut audio);
         let mut whole = Vec::new();
         audio.pull(0.2, &mut whole);
@@ -416,9 +370,6 @@ mod tests {
         let mut after = Vec::new();
         audio.pull(0.2, &mut after);
 
-        // rodio's resampling reads a little ahead of what it has played, so
-        // the seam may slip by a millisecond or so; a sound that
-        // restarted or went missing is off by a third of the ramp.
         let slip = 2.0 * 0.002 * 1.5 / 0.5;
         let seam = before.len();
         let worst = whole[seam..]

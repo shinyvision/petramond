@@ -1,9 +1,3 @@
-//! Shared world-space mob body geometry.
-//!
-//! Long bodies are represented by the same overlapping, axis-aligned segments
-//! for terrain movement, pairwise solid motion, soft contact, placement,
-//! client picking, and server-side target validation.
-
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
 
@@ -20,7 +14,6 @@ pub use queries::{
     body_separation, body_separation_from_body, clamp_body_yaw, closest_body_ray_hit,
 };
 
-/// A world-space `(min, max)` box, double precision like [`WorldPos`].
 type WorldBox = ([f64; 3], [f64; 3]);
 
 fn segment_offsets(size: MobSize) -> impl Iterator<Item = f32> {
@@ -38,7 +31,6 @@ fn segment_offsets(size: MobSize) -> impl Iterator<Item = f32> {
     })
 }
 
-/// A segment centre's offset from the body position along its facing.
 fn segment_offset(yaw: f32, offset: f32) -> Vec3 {
     Vec3::new(-yaw.sin(), 0.0, -yaw.cos()) * offset
 }
@@ -51,12 +43,6 @@ fn segment_centres(pos: WorldPos, yaw: f32, size: MobSize) -> impl Iterator<Item
     segment_offsets(size).map(move |offset| segment_centre(pos, yaw, offset))
 }
 
-/// World-space boxes covering a mob body at `pos` and `yaw`.
-///
-/// Ordinary bodies yield one square box. A body with `half_length` yields a
-/// run of overlapping square boxes along its facing axis, matching the solid
-/// collision staircase at diagonal yaws without filling the enclosing
-/// square's empty corners.
 pub fn body_boxes(pos: WorldPos, yaw: f32, size: MobSize) -> impl Iterator<Item = WorldBox> {
     let hw = f64::from(size.half_width);
     let height = f64::from(size.height);

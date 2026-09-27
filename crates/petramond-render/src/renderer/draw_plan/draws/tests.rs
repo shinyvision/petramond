@@ -20,7 +20,6 @@ fn list(keys: &[(QuadLayer, u32)]) -> DrawList {
     list
 }
 
-/// The records must be exactly what wgpu's indirect draw reads.
 #[test]
 fn a_record_matches_wgpus_indirect_layout() {
     let ours = IndirectDraw {
@@ -41,9 +40,6 @@ fn a_record_matches_wgpus_indirect_layout() {
     assert_eq!(DRAW_BYTES, 20);
 }
 
-/// The opaque pass does not depend on order, so its draws group by block —
-/// one batch per block however they interleaved — keeping near→far inside
-/// each block.
 #[test]
 fn an_order_free_list_groups_by_block_stably() {
     let o = QuadLayer::Opaque;
@@ -57,9 +53,6 @@ fn an_order_free_list_groups_by_block_stably() {
     assert_eq!(l.indices(), 30);
 }
 
-/// A blended pass keeps its exact order: only consecutive draws on one block
-/// with one pipeline share a batch, and a layer change (the fluid pass's
-/// two-sided tops) always starts a new one.
 #[test]
 fn an_ordered_list_batches_only_consecutive_runs() {
     let (side, top) = (QuadLayer::Transparent, QuadLayer::TransparentTwoSided);
@@ -83,7 +76,6 @@ fn an_ordered_list_batches_only_consecutive_runs() {
     assert_eq!(order, [0, 1, 2, 3, 4]);
 }
 
-/// Batches cover every draw exactly once.
 #[test]
 fn batches_tile_the_list() {
     let o = QuadLayer::Opaque;

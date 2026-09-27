@@ -1,5 +1,3 @@
-//! The way home once the work is done.
-
 use crate::host::prelude::*;
 
 use super::{walk_to, walk_via, Flow, Mode, Round};
@@ -25,12 +23,10 @@ pub(super) fn returning(
             None => Step::Plan,
         };
     }
-    // Doors it propped open are shut behind it, from the home side.
     while let Some(&door) = job.crew.access.opened.first() {
         let trail = job.crew.trail.clone();
         let hubs = Hubs::new(project.home, &trail);
         let shut = [door, offset(door, [0, 1, 0])];
-        // Judged on the upper half: the lower one hides behind it.
         let stance = match stance::find(
             ctx,
             body,
@@ -52,7 +48,6 @@ pub(super) fn returning(
             Some(Route::Open) => {}
             None => return Step::Plan,
             Some(_) => {
-                // Only from inside: left open rather than shut in.
                 trace!("TRACE door {door:?}: only shut from inside {stance:?}");
                 job.crew.access.opened.remove(0);
                 continue;
@@ -75,7 +70,6 @@ pub(super) fn returning(
     walk_to(ctx, home, Then::Home)
 }
 
-/// The work done and the scaffolding down: home.
 pub(super) fn go_home(
     ctx: &mut Ctx,
     projects: &mut Projects,

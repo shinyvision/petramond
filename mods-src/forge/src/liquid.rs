@@ -36,16 +36,9 @@ const CHANNEL_DEPTH: f32 = 1.5 * PX;
 /// walls, just clear of the lip's end face.
 const FALL_X: (f32, f32) = (21.5 * PX, 23.0 * PX);
 const FALL_Z: (f32, f32) = (9.0 * PX, 11.0 * PX);
-/// The crucible: interior x19..27, z5..13, floor at y12. Square, because
-/// everything cast in it is square and a stretched pan reads as a gutter — and
-/// UNDER THE TAP rather than in the middle of the shelf, because that is where
-/// metal leaving a side wall lands.
 const BASIN_X: (f32, f32) = (19.25 * PX, 26.75 * PX);
 const BASIN_Z: (f32, f32) = (5.25 * PX, 12.75 * PX);
 const BASIN_FLOOR: f32 = 12.0 * PX;
-/// Full to the rim, and the rim is THREE px. It is the model's number: a taller
-/// rim hides the cast behind a wall at standing eye level, which is the one
-/// thing in the crucible worth looking at.
 const BASIN_DEPTH: f32 = 3.0 * PX;
 /// Where a mould sits in the crucible, and how big it draws. The mould and the
 /// cast are drawn as their own ITEMS, so what you see in the crucible and what
@@ -77,19 +70,13 @@ const CAST_SCALE: f32 = 6.0 * PX;
 /// (`block_local_to_world`) — a world offset off the anchor is right at one
 /// facing and lands inside the masonry at the other three.
 pub const EJECT_AT: [f32; 3] = [23.0 * PX, 17.5 * PX, 6.0 * PX];
-/// A sprite item is a VERTICAL slab; this is what lays one flat in the basin.
 const LIE_FLAT: f32 = std::f32::consts::FRAC_PI_2;
 
-/// The cast's drawn size at a given fill: a pour starts at a third of full
-/// size rather than popping in.
 fn cast_scale(fill: f32) -> f32 {
     (0.35 + 0.65 * fill.clamp(0.0, 1.0)) * CAST_SCALE
 }
 
-/// How much of the drop the head of the stream covers per tick. Slow enough
-/// that the leading edge is visibly travelling rather than teleporting.
 const FALL_SPEED: f32 = 0.055;
-/// How fast the spout channel fills and drains.
 const CHANNEL_RATE: f32 = 0.12;
 
 /// The molten metal's continuous state — the part of a pour that is a NUMBER
@@ -103,25 +90,17 @@ pub struct Liquid {
     /// metal's surface, `0..1`. Zero while nothing is falling; `1` once it has
     /// landed.
     pub head: f32,
-    /// The same measure for the stream's TRAILING edge — the top of the
-    /// falling column.
+    /// Trailing edge of the falling column (the top).
     ///
-    /// A stream needs both ends or it cannot obey gravity. While the tap runs
-    /// this stays at the lip, so the column is attached and grows downward.
-    /// When the tap shuts, the tail falls away at the same speed as everything
-    /// else, so the column detaches from the lip and shortens FROM THE TOP —
-    /// the last of the metal keeps going down. Pinning the top and raising the
-    /// bottom instead, which is what one number forces, reads as the stream
-    /// being sucked back up into the furnace.
+    /// Needs both ends to obey gravity. While the tap runs, the tail stays pinned at the lip and
+    /// the column grows downward. When the tap shuts, the tail falls at the same speed as
+    /// everything else, so the column detaches and shortens from the top down. Don't pin the top
+    /// and raise the bottom with one number; that looks like the stream getting sucked back into
+    /// the furnace.
     pub tail: f32,
-    /// How full the basin (or the mould in it) is, `0..1`.
     pub level: f32,
 }
 
-/// What is sitting in the basin this tick, as ITEMS: the mould, and the
-/// product the metal is becoming — with the colour it currently glows and how
-/// FULL the mould is, `0..1`, so the accumulating metal can grow in the
-/// product's shape rather than appearing in it.
 #[derive(Default)]
 pub struct Basin {
     pub mould: Option<String>,
@@ -129,12 +108,6 @@ pub struct Basin {
 }
 
 impl Liquid {
-    /// Clamped on the way IN, not trusted.
-    ///
-    /// These three numbers become the corners of drawn boxes, and the engine's
-    /// draw boundary rejects only non-finite and inverted ones — so a `level`
-    /// of 1e24 from a truncated or mis-versioned blob passes every check and
-    /// becomes a kilometres-tall emissive column standing in the world.
     pub fn decode(r: &mut ByteReader) -> Liquid {
         let unit = |v: Option<f32>| v.filter(|f| f.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
         Liquid {
@@ -152,13 +125,12 @@ impl Liquid {
         w.f32(self.level);
     }
 
-    /// One tick of flow. `tapped` = the lever is open and there is metal to
-    /// run; `fill_rate` is how much of the basin one pour fills per tick.
+    /// One tick of flow. `tapped` means the lever's open and there's metal to run. `fill_rate` is
+    /// how much of the basin one pour fills per tick.
     ///
-    /// The order matters and is the whole simulation: the channel fills first,
-    /// the head only leaves the lip once the channel has something in it, and
-    /// the basin only rises once the head has reached the bottom. That is why
-    /// it reads as metal travelling rather than three bars moving at once.
+    /// Order matters here, it's the whole sim: channel fills first, head only leaves the lip once
+    /// channel has something in it, basin only rises once head hits bottom. That's what makes it
+    /// read as metal traveling instead of three bars moving independently.
     pub fn step(&mut self, tapped: bool, fill_rate: f32) {
         let running = tapped || self.channel > 0.0;
         if tapped {
@@ -166,20 +138,14 @@ impl Liquid {
         } else {
             self.channel = (self.channel - CHANNEL_RATE).max(0.0);
         }
-        // The leading edge leaves the lip once the channel has something in it
-        // to leave with, and from then on it only ever goes down.
         if running && self.channel > 0.35 {
             self.head = (self.head + FALL_SPEED).min(1.0);
         }
-        // The trailing edge is HELD at the lip for exactly as long as metal is
-        // still arriving. The moment it stops, the tail is in free fall like
-        // the rest of it.
         if running {
             self.tail = 0.0;
         } else if self.head > 0.0 {
             self.tail = (self.tail + FALL_SPEED).min(1.0);
             if self.tail >= self.head {
-                // The tail has caught the head: the last of the metal is down.
                 self.head = 0.0;
                 self.tail = 0.0;
             }
@@ -189,42 +155,24 @@ impl Liquid {
         }
     }
 
-    /// Whether the falling head has reached the basin.
     pub fn landed(&self) -> bool {
         self.head >= 1.0
     }
 
-    /// The height the metal leaves the lip at: the SURFACE of what is standing
-    /// in the channel, not the channel's floor.
-    ///
-    /// Metal pours over the top of what is already there. Starting the fall at
-    /// the floor instead leaves the drop beginning a channel-depth BELOW the
-    /// metal feeding it, so the stream reads as detached from its own source —
-    /// which is exactly how it looked in game.
     fn lip_y(&self) -> f32 {
         SPOUT_Y + CHANNEL_DEPTH * self.channel.clamp(0.0, 1.0)
     }
 
-    /// Where a point `t` along the drop is, in block coords: `0` is the lip,
-    /// `1` is the bare pool's surface. Retained for the bare-pour tests; the
-    /// draw path goes through `fall_y_to` with [`Liquid::landing_y`], which
-    /// answers the shaped cast's top when a mould is filling.
     #[cfg(test)]
     fn fall_y(&self, t: f32) -> f32 {
         self.fall_y_to(t, BASIN_FLOOR + BASIN_DEPTH * self.level)
     }
 
-    /// The same, onto an explicit surface — see [`Liquid::landing_y`].
     fn fall_y_to(&self, t: f32, surface: f32) -> f32 {
         let top = self.lip_y();
         top - (top - surface) * t.clamp(0.0, 1.0)
     }
 
-    /// What the falling column LANDS ON: the shaped cast's TOP while the metal
-    /// is accumulating in a mould (the seat plus the cast's full thickness at
-    /// its current fill-scaled size), else the square pool's rising surface.
-    /// Bottoming at the pool surface either way leaves the stream hovering
-    /// above the product it is becoming — visibly, once the cast grows.
     fn landing_y(&self, basin: &Basin) -> f32 {
         match &basin.cast {
             Some((_, _, fill)) if *fill > 0.0 => CAST_SEAT + cast_scale(*fill) / 16.0,
@@ -232,13 +180,8 @@ impl Liquid {
         }
     }
 
-    /// Everything the furnace draws for itself right now: the metal it is
-    /// moving, the mould in its basin, and the cast taking shape in that
-    /// mould. The mod owns every shape here; the engine owns the atlas, the
-    /// light, and nothing else.
     pub fn prims(&self, tile: &str, rgb: [u8; 3], basin: &Basin) -> Vec<DrawPrim> {
         let mut out = Vec::new();
-        // The mould, drawn as the item it IS.
         if let Some(mould) = &basin.mould {
             out.push(DrawPrim::Item {
                 at: TRAY_AT,
@@ -275,9 +218,6 @@ impl Liquid {
             tint: rgb,
             emissive: false,
         };
-        // Metal standing in the channel, rising off its floor as it fills —
-        // BOTH legs, because the launder turns a corner and a stream that
-        // appears only after the bend has come from nowhere.
         if self.channel > 0.0 {
             let depth = CHANNEL_DEPTH * self.channel;
             out.push(cuboid(
@@ -289,10 +229,6 @@ impl Liquid {
                 [SPOUT_X.1, SPOUT_Y + depth, SPOUT_Z.1],
             ));
         }
-        // The falling column, between its two ends. Attached to the lip while
-        // metal is still arriving, in free fall once it is not. It lands on
-        // the shaped cast's top while a mould is filling, on the pool's own
-        // surface otherwise.
         if self.head > self.tail {
             let surface = self.landing_y(basin);
             let (bottom, top) = (
@@ -306,8 +242,6 @@ impl Liquid {
                 ));
             }
         }
-        // What has collected in the basin — hidden once the metal has taken
-        // the mould's shape, because then the CAST is the metal.
         if self.level > 0.0 && basin.cast.is_none() {
             out.push(cuboid(
                 [BASIN_X.0, BASIN_FLOOR, BASIN_Z.0],
@@ -322,10 +256,6 @@ impl Liquid {
 mod tests {
     use super::*;
 
-    /// The ORDER is the animation, and it is the whole reason this is a
-    /// simulation rather than three bars: the channel must fill before the head
-    /// leaves the lip, and the head must land before the basin rises. Any
-    /// rewrite that lets them move together loses the effect silently.
     #[test]
     fn metal_travels_channel_then_air_then_basin() {
         let mut l = Liquid::default();
@@ -342,10 +272,6 @@ mod tests {
         assert!(l.level > 0.0);
     }
 
-    /// The column's top and bottom must BOTH descend monotonically for the
-    /// whole life of a pour — start, run and drain. This is the property the
-    /// owner reported broken in game, so it is checked across the entire
-    /// sequence rather than in one phase of it.
     #[test]
     fn the_column_never_moves_upward_at_any_point_in_a_pour() {
         let mut l = Liquid::default();
@@ -359,18 +285,12 @@ mod tests {
             let (t, b) = (l.fall_y(l.tail), l.fall_y(l.head));
             assert!(b <= t, "the column is never inside out");
             if drawn > 0 {
-                // The top may only rise while the stream is ATTACHED, where it
-                // tracks the metal standing in the channel and that metal is
-                // still filling. Once it lets go of the lip it is in free fall.
                 if l.tail > 0.0 {
                     assert!(
                         t <= top + 1e-6,
                         "tick {tick}: a detached top rose {top} -> {t}"
                     );
                 }
-                // The bottom may only rise once the stream has LANDED, where
-                // it rests on a pool surface that is legitimately climbing.
-                // In the air it falls, full stop.
                 if !l.landed() {
                     assert!(
                         b <= bottom + 1e-6,
@@ -385,10 +305,6 @@ mod tests {
         assert!(drawn > 30, "fixture: the stream is drawn for a good while");
     }
 
-    /// The falling column must begin at the SURFACE of the metal in the
-    /// channel, so the two read as one body of metal going over an edge. The
-    /// owner caught this in game as a visible step between the gutter and the
-    /// top of the drop.
     #[test]
     fn the_drop_begins_at_the_metal_in_the_channel_not_under_it() {
         let mut l = Liquid::default();
@@ -404,11 +320,6 @@ mod tests {
         );
     }
 
-    /// A stream falls off the lip; it is not sucked back up it.
-    ///
-    /// With one edge, closing the tap raised the column's BOTTOM while its top
-    /// stayed nailed to the lip — metal running backwards into the furnace.
-    /// The trailing edge is what makes the last of it fall away downward.
     #[test]
     fn the_last_of_the_pour_falls_away_from_the_lip_downward() {
         let mut l = Liquid::default();
@@ -417,7 +328,6 @@ mod tests {
         }
         assert_eq!(l.tail, 0.0, "while it runs, the column is attached");
 
-        // The tap shuts. The channel drains first, then the tail lets go.
         let mut prev_top = l.fall_y(l.tail);
         let mut prev_bottom = l.fall_y(l.head);
         for _ in 0..40 {
@@ -437,9 +347,6 @@ mod tests {
         assert_eq!(l.head, 0.0, "the stream is gone once the tail catches it");
     }
 
-    /// Shutting the tap must not teleport the stream away — what is already in
-    /// the air keeps falling, which is what makes the lever feel like a valve
-    /// rather than a switch.
     #[test]
     fn closing_the_tap_leaves_the_airborne_metal_falling() {
         let mut l = Liquid::default();
@@ -472,9 +379,6 @@ mod tests {
         (a.len() == 3).then(|| std::array::from_fn(|i| a[i].as_f64().unwrap_or(0.0) as f32))
     }
 
-    /// The `.bbmodel` cube every constant above was measured off, in the
-    /// SHIPPED model's own pixels — which are footprint pixels, see
-    /// [`the_model_fills_the_footprint_it_declares`].
     fn cube(name: &str) -> ([f32; 3], [f32; 3]) {
         elements()
             .iter()
@@ -498,8 +402,6 @@ mod tests {
     /// reason; this is the assertion that says so.
     #[test]
     fn the_model_fills_the_footprint_it_declares() {
-        // The row's `cells`, in pixels. Rotated cubes are skipped: their raw
-        // corners are pre-rotation and sit outside the model by design.
         const BOX: [f32; 3] = [32.0, 48.0, 32.0];
         let mut lo = [f32::MAX; 3];
         let mut hi = [f32::MIN; 3];
@@ -519,8 +421,6 @@ mod tests {
                 BOX[i]
             );
         }
-        // ...and it actually REACHES the box, so a model shifted the other way
-        // (or shrunk into a corner) fails too.
         assert!(
             lo[0] < 1.0 && hi[0] > BOX[0] - 1.0,
             "the model spans its width"
@@ -528,22 +428,11 @@ mod tests {
         assert!(lo[2] < 1.0 && hi[2] > BOX[2] - 1.0, "and its depth");
     }
 
-    /// EVERY CONSTANT IN THIS FILE IS A COPY OF A NUMBER THE MODEL OWNS, and
-    /// the model is DERIVED by a script that knows nothing about this file.
-    /// Move the crucible or the launder there and the liquid keeps being drawn
-    /// where they used to be: metal pouring through masonry, or a pool standing
-    /// in the air beside a trough. Nothing fails, nothing logs — it is only
-    /// visible in a render, which is the definition of a drift nobody catches.
-    ///
-    /// So the vessel is read back out of the model and the liquid is checked
-    /// to be inside it.
     #[test]
     fn the_liquid_is_drawn_inside_the_vessel_the_model_gives_it() {
         let px = |v: f32| v * PX;
         let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
 
-        // --- The launder: the metal runs in the channel, not beside it. ---
-        // It is an L: leg A out of the tap hole, leg B along the shelf.
         let (spout_lo, spout_hi) = cube("tap_spout");
         let (far, near) = (cube("tap_wall_far"), cube("tap_wall_near"));
         assert!(
@@ -579,7 +468,6 @@ mod tests {
             "a full channel stays below the walls that hold it in"
         );
 
-        // --- The crucible: everything that collects in it stays inside it. ---
         let rim_top = px(cube("crucible_front").1[1]);
         assert!(
             close(BASIN_FLOOR, px(cube("crucible_floor").1[1])),
@@ -614,10 +502,6 @@ mod tests {
             "the metal has to fall INTO the crucible, so the lip is above its rim"
         );
 
-        // --- THE GUTTER HAS TO OVERHANG, or the stream lands on the rim. ---
-        // The lip is leg B's far end; the stream leaves it there and has to be
-        // over the crucible's INTERIOR at that point, not over its wall and not
-        // short of the whole vessel.
         let lip_x = px(lip_lo[0]);
         assert!(
             lip_x > in_x.0 && lip_x < in_x.1,
@@ -631,10 +515,6 @@ mod tests {
             FALL_X.1 <= lip_x && FALL_X.0 >= in_x.0,
             "the stream falls OFF the lip and still inside the crucible"
         );
-        // --- ...and it must come out of a HOLE, carried on masonry. ---
-        // A launder floating in the fire's own mouth is the shape this keeps
-        // being redrawn as, and it is wrong twice over: you would reach through
-        // the flame to work it, and nothing holds it up.
         let mouth = (px(cube("pier_inner").0[0]), px(cube("pier_outer").1[0]));
         assert!(
             SPOUT_A_X.0 >= mouth.0 && SPOUT_A_X.1 <= mouth.1,
@@ -650,11 +530,6 @@ mod tests {
             "and the near end on the corbel out of the jamb's face"
         );
 
-        // --- What sits in the crucible: over the floor, UNDER the rim. ---
-        // A sprite item is a one-texel slab drawn about its centre, so its
-        // half-thickness is scale / 32: the whole slab — not just the centre —
-        // must clear the floor and stay under the rim, the cast even at FULL
-        // size (a growing cast is only ever smaller).
         for (what, at, scale) in [
             ("mould", TRAY_AT, TRAY_SCALE),
             (
@@ -690,18 +565,6 @@ mod tests {
         );
     }
 
-    /// A CHANNEL THAT TURNS IS ONE RUN, NOT TWO TROUGHS BUTTED AT A CORNER.
-    ///
-    /// The first build of this bend had a one-pixel step in it and it took an
-    /// owner opening the model in Blockbench to see: the two floors were
-    /// different thicknesses, one outer wall ended a pixel past the floor it
-    /// stood on, and the outer corner was left as an open notch. Every one of
-    /// those is INVISIBLE in a full-model render — which is exactly why the
-    /// numbers are checked here instead of being looked at.
-    ///
-    /// The rule is per pair, not per piece: at each corner the two walls share
-    /// an END FACE (same plane, same span), and both floors share a plane and a
-    /// thickness.
     #[test]
     fn the_launder_turns_its_corner_without_a_step_a_notch_or_an_overhang() {
         let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
@@ -740,8 +603,6 @@ mod tests {
         }
     }
 
-    /// A furnace reloading mid-pour must find the stream where it left it, so
-    /// the continuous state has to survive the cell-KV round trip.
     #[test]
     fn liquid_survives_the_kv_round_trip() {
         let mut l = Liquid::default();
@@ -755,9 +616,6 @@ mod tests {
         assert!(back == l, "the pour resumes exactly where it stopped");
     }
 
-    /// The basin drawing must not double up: once the metal has taken the
-    /// mould's shape, the CAST is the metal, and drawing the pool as well puts
-    /// a box through the product.
     #[test]
     fn a_cast_replaces_the_pool_rather_than_joining_it() {
         let l = Liquid {
@@ -781,10 +639,6 @@ mod tests {
         assert_eq!(cuboids(&cast) + 1, cuboids(&pooled));
     }
 
-    /// A pour into a MOULD accumulates in the product's shape, not in a box:
-    /// the cast item is drawn from the first landed metal, its scale tracks
-    /// the fill from a third of full size upward, and there is no square pool
-    /// beside it.
     #[test]
     fn the_accumulating_metal_grows_in_the_moulds_shape() {
         let l = Liquid {
@@ -826,11 +680,6 @@ mod tests {
         assert_eq!(cuboids, 0, "the shaped cast replaces the square pool");
     }
 
-    /// The falling column must END ON what the metal is becoming: with a mould
-    /// in the basin that is the shaped cast's TOP (seat + full thickness at
-    /// the current fill-scaled size), not the old square-pool surface — the
-    /// stream hovering above the growing product was the bug. The bare basin
-    /// keeps the pool surface it always had.
     #[test]
     fn the_column_lands_on_the_shaped_cast_not_beside_it() {
         let l = Liquid {
@@ -867,8 +716,6 @@ mod tests {
         );
     }
 
-    /// With no mould in the basin there is no shape to grow into: metal poured
-    /// onto the bare crucible is still the square pool, all the way down.
     #[test]
     fn a_mould_less_basin_still_pools_square() {
         let l = Liquid {

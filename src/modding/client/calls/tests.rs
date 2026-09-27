@@ -13,14 +13,10 @@ fn client_data(dir: &std::path::Path) -> ModStoreData {
     )
 }
 
-/// The weather-era client calls: unknown keys are FORGIVING `false`
-/// (a disabled pack is not a protocol break), malformed values are hard
-/// errors, and the env-param read is capped at the GPU slot budget.
 #[test]
 fn weather_era_client_calls_validate_and_forgive() {
     let scratch = TestScratchDir::new("client-calls-weather-era");
     let mut data = client_data(&scratch);
-    // Unknown bundle key / unknown sound key: forgiving false.
     assert_eq!(
         handle_host_call(
             &mut data,
@@ -32,7 +28,6 @@ fn weather_era_client_calls_validate_and_forgive() {
         ),
         HostRet::Bool(false)
     );
-    // A real bundle that is NOT ambient (a shipped burst): also forgiving false.
     assert_eq!(
         handle_host_call(
             &mut data,
@@ -59,7 +54,6 @@ fn weather_era_client_calls_validate_and_forgive() {
         ),
         HostRet::Bool(false)
     );
-    // Non-finite / out-of-envelope values are hard errors.
     for bad in [
         HostCall::from(calls::ClientAmbientSet {
             key: "m:x".into(),
@@ -86,7 +80,6 @@ fn weather_era_client_calls_validate_and_forgive() {
             "malformed values must be a hard error: {bad:?} -> {ret:?}"
         );
     }
-    // The mood clamps into its subtle envelope and always succeeds.
     assert_eq!(
         handle_host_call(
             &mut data,
@@ -98,7 +91,6 @@ fn weather_era_client_calls_validate_and_forgive() {
         HostRet::Bool(true)
     );
     assert_eq!(data.client.as_ref().unwrap().mood, [0.5, 0.0]);
-    // Env-param reads cap at the 16-slot GPU budget.
     assert!(matches!(
         handle_host_call(
             &mut data,
@@ -110,8 +102,6 @@ fn weather_era_client_calls_validate_and_forgive() {
     ));
 }
 
-/// The weather-era SERVER calls are rejected on a client instance by the
-/// capability gate, like every sim-facing call.
 #[test]
 fn weather_era_server_calls_stay_server_side() {
     let scratch = TestScratchDir::new("client-calls-server-side");
@@ -128,11 +118,6 @@ fn weather_era_server_calls_stay_server_side() {
     }
 }
 
-/// `underground_biome_at` is a pure `(world seed, position)` partition, so a
-/// presentation mod may ask which cave biome the camera is in and must get
-/// the SERVER's answer — that is what lets a client mod drive an ambient
-/// volume over an underground biome. Its sibling `terrain_solid_at` runs the
-/// carve per position and stays server-side.
 #[test]
 fn the_underground_biome_partition_answers_on_a_client_instance() {
     let scratch = TestScratchDir::new("client-calls-underground-biome");
@@ -322,8 +307,6 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
         "the blit records its rect for partial texture uploads"
     );
 
-    // The partial-update chain: bounded window, oldest first, broken by
-    // whole-image mutations (text draws, re-publish).
     for _ in 0..super::super::state::IMAGE_BLIT_WINDOW + 2 {
         handle_host_call(
             &mut data,
@@ -364,28 +347,24 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
     );
 
     for bad in [
-        // out of bounds
         HostCall::from(calls::ClientImageBlit {
             key: "map:tile".into(),
             origin: [2, 0],
             size: [1, 1],
             rgba: vec![0; 4],
         }),
-        // byte count mismatch
         HostCall::from(calls::ClientImageBlit {
             key: "map:tile".into(),
             origin: [0, 0],
             size: [1, 1],
             rgba: vec![0; 3],
         }),
-        // never published
         HostCall::from(calls::ClientImageBlit {
             key: "map:none".into(),
             origin: [0, 0],
             size: [1, 1],
             rgba: vec![0; 4],
         }),
-        // foreign namespace
         HostCall::from(calls::ClientImageBlit {
             key: "other:tile".into(),
             origin: [0, 0],
@@ -447,7 +426,6 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
         "cells with no surface stay unknown"
     );
 
-    // Echoing the served revision skips the cell payload…
     let revision = column.revision;
     let HostRet::ClientSurfaceColumns(replies) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query(revision)))
@@ -458,7 +436,6 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
     assert_eq!(unchanged.revision, revision);
     assert!(unchanged.cells.is_none(), "unchanged column sends no cells");
 
-    // …until an edit moves the column revision.
     assert!(world.set_block_world(3, 64, 5, petramond_world::block::Block::Dirt));
     let HostRet::ClientSurfaceColumns(replies) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query(revision)))
@@ -506,8 +483,6 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     );
     assert_eq!(blocks[2], None, "an unloaded section reads None");
 
-    // A section whose streamed content is not final reads None — the same
-    // "state frozen, retry later" contract as the server-side mod reads.
     world.mark_overlay_in_flight_for_test(sp);
     let HostRet::Blocks(blocks) =
         super::client_scope::enter(&world, || handle_host_call(&mut data, query()))
@@ -519,9 +494,6 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         "an in-flight overlay leaked a replica read"
     );
 
-    // Registry-only queries are legal on client instances (a client mod
-    // interpreting block ids has to resolve the names and tag sets it
-    // compares to).
     assert_eq!(
         handle_host_call(
             &mut data,
@@ -543,7 +515,6 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
     };
     assert!(!leaves.is_empty());
 
-    // The batch bound is enforced.
     assert!(matches!(
         handle_host_call(
             &mut data,
@@ -612,14 +583,11 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
     };
 
     crate::modding::client::scope::enter_actor(local, || {
-        // Someone else's body is not this mirror's to pose.
         assert!(matches!(
             pose(&mut data, 4, Some(guard), None),
             HostRet::Err(_)
         ));
 
-        // "Nothing in either hand" claims nothing: another pack's replicated
-        // pose still owns both hands.
         assert_eq!(pose(&mut data, 3, None, None), HostRet::Bool(true));
         assert_eq!(
             data.client.as_ref().unwrap().poses_hands,
@@ -627,11 +595,9 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
             "an empty publish must not claim a hand"
         );
 
-        // The first real pose claims that hand — and only that hand.
         assert_eq!(pose(&mut data, 3, Some(guard), None), HostRet::Bool(true));
         assert_eq!(data.client.as_ref().unwrap().poses_hands, [true, false]);
 
-        // Releasing keeps the claim, so the drop presents on this frame.
         assert_eq!(pose(&mut data, 3, None, None), HostRet::Bool(true));
         assert_eq!(data.client.as_ref().unwrap().poses_hands, [true, false]);
         assert_eq!(
@@ -640,7 +606,6 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
             "the claim outlives the pose; the pose itself is gone"
         );
 
-        // A NaN pose is refused whole, exactly as on the server.
         let mut nan = guard;
         nan.third_person.translation[2] = f32::NAN;
         assert!(matches!(
@@ -650,13 +615,11 @@ fn a_client_poses_only_the_local_player_and_latches_a_hand_on_its_first_pose() {
     });
 }
 
-/// Bone offsets latch PER BONE, and their names resolve to rig ids at the call.
+/// Latches per bone, names resolve to rig ids at the call.
 ///
-/// Per bone because they COMPOSE: a pack predicting a shoulder must leave
-/// another pack's replicated head tilt exactly where it was, which a body-wide
-/// latch cannot express — it would blank every bone the predicting mod never
-/// touched. A name the rig does not carry is dropped rather than refused, so
-/// one stale bone in a list does not cost the caller the rest of its stance.
+/// Per bone so packs compose: one pack posing a shoulder won't stomp
+/// another's head tilt latch. Names the rig doesn't have just get dropped,
+/// not rejected, so they don't kill the rest of the list.
 #[test]
 fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
     use mod_api::{BonePoseData, BonePoseMode, PlayerId, PlayerSnapshot};
@@ -705,12 +668,9 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
         .expect("the rig carries the main arm");
 
     crate::modding::client::scope::enter_actor(local, || {
-        // An empty publish claims nothing — another pack's replicated bend
-        // still owns every bone.
         assert_eq!(set(&mut data, Vec::new()), HostRet::Bool(true));
         assert!(data.client.as_ref().unwrap().poses_bones.is_empty());
 
-        // A real bend latches THAT bone and nothing else, stored by id.
         assert_eq!(
             set(&mut data, vec![bend(mod_api::bone::MAIN_SHOULDER)]),
             HostRet::Bool(true)
@@ -725,8 +685,6 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
             [want]
         );
 
-        // Releasing keeps the latch (the drop must present on THIS frame),
-        // and a bone the rig does not have is dropped, not an error.
         assert_eq!(
             set(&mut data, vec![bend("no_such_bone")]),
             HostRet::Bool(true)
@@ -739,16 +697,12 @@ fn bone_poses_resolve_to_rig_ids_and_latch_per_bone() {
             "the latch outlives the offset"
         );
 
-        // A NaN is refused whole, exactly as on the server.
         let mut nan = bend(mod_api::bone::MAIN_SHOULDER);
         nan.rotation[1] = f32::NAN;
         assert!(matches!(set(&mut data, vec![nan]), HostRet::Err(_)));
     });
 }
 
-/// `PlayerInventory` on a client instance answers only the LOCAL player,
-/// only while a dispatch has published the replicated inventory — and in
-/// the one carried layout the server's read shares (grid, then off hand).
 #[test]
 fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
     use crate::modding::client::scope;
@@ -800,9 +754,6 @@ fn client_player_inventory_is_local_only_and_needs_a_published_inventory() {
     });
 }
 
-/// A refused animator write latches NOTHING: the key stays replicated, so
-/// one NaN from a client mod cannot hide the server's claim on that param
-/// for the rest of the session. A good write then latches its keys.
 #[test]
 fn a_refused_animator_write_latches_no_key() {
     use mod_api::{AnimatorParam, AnimatorValue, PlayerId};
@@ -845,8 +796,6 @@ fn a_refused_animator_write_latches_no_key() {
     });
 }
 
-/// A snapshot with nothing in it — the fixture an actor-gated call test
-/// stamps an id onto.
 fn blank_snapshot() -> mod_api::PlayerSnapshot {
     mod_api::PlayerSnapshot {
         id: None,
@@ -873,8 +822,6 @@ fn blank_snapshot() -> mod_api::PlayerSnapshot {
     }
 }
 
-/// Every VIEW call and every capability call this surface declares, one
-/// sample each, in declaration order.
 fn view_and_session_calls() -> Vec<HostCall> {
     vec![
         HostCall::from(calls::ClientViewCameraSet {
@@ -926,8 +873,6 @@ fn view_and_session_calls() -> Vec<HostCall> {
     .collect()
 }
 
-/// One sample of every capability call: files, state, events, presentation,
-/// frames and the clock, taps, media and facts.
 fn capability_calls() -> Vec<HostCall> {
     use mod_api::ClientStorageScope::Pack;
     let ranges = || {
@@ -1081,11 +1026,6 @@ fn capability_calls() -> Vec<HostCall> {
     ]
 }
 
-/// A client-legal call that is PERMITTED but not ROUTED falls through to the
-/// simulation handler and dies on "no simulation context is active" — a trap
-/// that costs nothing to fall into when a variant is appended and nothing to
-/// catch here. The mirror invariant: on a SIM instance every one of them is a
-/// clean refusal, never a panic and never a partial write.
 #[test]
 fn the_view_and_capability_calls_are_routed_on_a_client_and_refused_on_a_sim() {
     let scratch = TestScratchDir::new("client-calls-view-session");
@@ -1121,9 +1061,6 @@ fn the_view_and_capability_calls_are_routed_on_a_client_and_refused_on_a_sim() {
     }
 }
 
-/// While a presentation is on screen, what a mod sees is the presented
-/// world's: a `World` write made then — a KV write or a file — never reaches
-/// the session's own bucket, while reads keep answering from it.
 #[test]
 fn client_storage_writes_during_a_presentation_never_reach_the_session() {
     use mod_api::ClientStorageScope::World;
@@ -1207,7 +1144,6 @@ fn client_storage_writes_during_a_presentation_never_reach_the_session() {
         holds(1),
         "the disk never saw the presentation's write"
     );
-    // A read is ordered after the writes queued to its bytes.
     let (tx, rx) = std::sync::mpsc::channel();
     let tile = crate::modding::client::files::FileRef::in_bucket(
         &dir.join("world").join("files"),
@@ -1223,9 +1159,6 @@ fn client_storage_writes_during_a_presentation_never_reach_the_session() {
     );
 }
 
-/// World marks are accepted WHOLE or refused WHOLE — a mod that sends an
-/// invalid mark keeps the set it had, never a truncated one — and the call is
-/// routed on a client and refused on a sim instance.
 #[test]
 fn a_world_mark_set_is_kept_whole_or_refused_whole() {
     use mod_api::{ClientSprite, ClientWorldMark};
@@ -1264,7 +1197,6 @@ fn a_world_mark_set_is_kept_whole_or_refused_whole() {
     assert_eq!(set(&mut data, vec![line(2.0), own.clone()]), HostRet::Unit);
     let kept = data.client.as_ref().unwrap().world_marks["path"].clone();
     assert_eq!(kept.len(), 2);
-    // Points land inside the world border on every axis.
     let border = f64::from(petramond_world::border::WORLD_BORDER);
     let ClientWorldMark::Line { to, .. } = kept[0] else {
         panic!("the line came back as {:?}", kept[0]);
@@ -1306,7 +1238,6 @@ fn a_world_mark_set_is_kept_whole_or_refused_whole() {
             "a refused set changed the kept one ({what})"
         );
     }
-    // A second set is replaced on its own.
     let live = HostCall::from(calls::ClientWorldMarksSet {
         set: "live".into(),
         marks: vec![line(1.0)],
@@ -1348,10 +1279,6 @@ fn shell_data(dir: &std::path::Path) -> ModStoreData {
     )
 }
 
-/// On the shell there is no world: every call that reads or writes one is
-/// refused with an error that says so — none reaches a desk or a disk — while
-/// the calls a launched tool is made of (its UI, its pack bucket, its files)
-/// answer as they do anywhere.
 #[test]
 fn a_shell_instance_is_refused_every_world_call_cleanly() {
     use mod_api::{ClientContext, ClientStorageScope};
@@ -1466,9 +1393,6 @@ fn a_shell_instance_is_refused_every_world_call_cleanly() {
     drop(data);
 }
 
-/// The PACK bucket follows the mod, not the world: what a session filed there
-/// — during a presentation too, which keeps its hands off the WORLD bucket —
-/// is what the next session reads, even one on the shell with no world at all.
 #[test]
 fn pack_storage_survives_across_sessions_and_presentations() {
     use mod_api::ClientStorageScope::{Pack, World};
@@ -1586,9 +1510,6 @@ fn pack_storage_survives_across_sessions_and_presentations() {
     );
 }
 
-/// A client's `Raycast` is the sim's ray cast against the REPLICA: the
-/// switchboard sends a client instance's block-domain ray to the client
-/// handler, and it is validated the same way.
 #[test]
 fn a_client_raycast_answers_from_the_replica() {
     let scratch = TestScratchDir::new("client-calls-raycast");
@@ -1616,10 +1537,6 @@ fn a_client_raycast_answers_from_the_replica() {
     ));
 }
 
-/// A media open is checked against the machine's own answer, never against a
-/// size of the engine's: a file only a mod's pushes feed opens at any size.
-/// A second writer of the same path is refused, and a wrong-sized push is
-/// the mod's bug.
 #[test]
 fn a_push_only_media_file_of_any_size_opens_and_its_path_is_its_own() {
     use mod_api::ClientStorageScope::Pack;
@@ -1700,9 +1617,6 @@ fn a_push_only_media_file_of_any_size_opens_and_its_path_is_its_own() {
     );
 }
 
-/// A folder the player chose is a place the mod writes files into by slot,
-/// never by path: nothing before the choice, one picker at a time, a cancel
-/// keeps what was chosen, and the choice outlives the instance that asked.
 #[test]
 fn a_chosen_folder_takes_files_only_once_the_player_picked_it() {
     use crate::modding::client::files::folders::{install_chooser, FolderRequest};
@@ -1789,7 +1703,7 @@ fn a_chosen_folder_takes_files_only_once_the_player_picked_it() {
         Some(picked.as_path()),
         "it opens where it was"
     );
-    drop(request); // a picker that never answers cancels
+    drop(request);
     assert_eq!(answer(&mut data, ticket), ClientFileAnswer::Folder(None));
 
     let mut later = client_data(&scratch);

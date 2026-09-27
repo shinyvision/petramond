@@ -1,14 +1,3 @@
-//! The frame's passes as graph nodes, and their encoding.
-//!
-//! [`frame_graph`] declares every node the frame can record — its phase, its
-//! attachments, what its shaders sample — and [`Renderer::encode_passes`]
-//! walks the plan the graph derives from those declarations: one wgpu render
-//! pass per merged group, each node recorded by the pass struct that owns its
-//! resources (`terrain`, `entities`, `environment`, `hand`, `screen`). Adding
-//! a pass is a [`Node`] variant, one declaration row, a gate in
-//! [`Renderer::node_active`] and an arm in [`Renderer::record_node`]; where it
-//! runs and how its attachments load and store follow from the row.
-
 use super::graph::{
     ColorTarget, DepthTarget, FrameGraph, FramePlan, GraphError, LoadOp, PassGroup, PassNode,
     Phase, Sampled,
@@ -25,7 +14,6 @@ mod terrain;
 #[cfg(test)]
 mod tests;
 
-/// Every pass the frame can record.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Node {
     Opaque,
@@ -57,13 +45,10 @@ pub(super) enum Node {
     UiOverlay,
 }
 
-/// The frame's pass table. Each row is a node's whole contract with the
-/// rest of the frame; the phases carry the ordering rules (see [`Phase`]).
 pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
     use ColorTarget::{EnvColor, MarksEye, Swapchain, World};
     use DepthTarget::{Depth, EnvDepth};
     use LoadOp::{Clear, Load};
-    // Most nodes draw into the world colour over the frame depth, loading both.
     let world = |id: Node, label: &'static str, phase: Phase| {
         PassNode::new(id, label, phase)
             .color(World, Load)
@@ -108,7 +93,6 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         PassNode::new(Node::Environment, "environment pass", Phase::Environment)
             .color(EnvColor, Clear)
             .sampling(&[Sampled::EnvDepth]),
-        // No depth attachment: the composite SAMPLES the frame depth.
         PassNode::new(Node::EnvComposite, "env composite pass", Phase::Environment)
             .color(World, Load)
             .sampling(&[Sampled::EnvColor, Sampled::EnvDepth, Sampled::Depth]),
@@ -119,13 +103,9 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
         ),
         world(Node::Outline, "outline pass", Phase::Highlight),
         world(Node::Ghosts, "ghosts and selection", Phase::Highlight),
-        // The window's world marks test against the world's depth, which the
-        // hand pass clears: keep it, as eye depth, first.
         PassNode::new(Node::WorldMarksDepth, "world marks depth", Phase::Highlight)
             .color(MarksEye, Clear)
             .sampling(&[Sampled::Depth]),
-        // Clearing depth gives the hand its own depth space: it stays on top
-        // of the world while its held geometry still self-sorts.
         PassNode::new(Node::Hand, "hand pass", Phase::Hand)
             .color(World, Load)
             .depth(Depth, Clear),
@@ -138,19 +118,13 @@ pub(super) fn frame_graph() -> Result<FrameGraph<Node>, GraphError> {
     ])
 }
 
-/// What every node's recording shares.
 pub(super) struct PassCtx<'a> {
-    /// The world's sample count, which picks each pipeline's variant.
     pub(super) samples: u32,
     pub(super) binds: &'a SharedBinds,
-    /// group(0) of the terrain-family pipelines: the frame uniforms, or
-    /// their selection-highlight twin while a region selection is shown.
     pub(super) world_bind: &'a wgpu::BindGroup,
 }
 
 impl Renderer {
-    /// Whether `node` has anything to draw this frame. A node that does not
-    /// is left out of the plan entirely — it opens no pass and costs nothing.
     pub(super) fn node_active(&self, node: Node, route: SceneRoute) -> bool {
         let plan = &self.terrain.plan;
         match node {
@@ -181,8 +155,6 @@ impl Renderer {
         }
     }
 
-    /// Record `node`'s draws into the open render pass. Every node sets its
-    /// own pipeline and binds: it may share the pass with any other node.
     fn record_node(
         &self,
         node: Node,
@@ -226,9 +198,6 @@ impl Renderer {
         }
     }
 
-    /// Encode this frame's plan: one render pass per group, each node inside
-    /// its own debug group. Reads the baked per-frame buffers off `self`;
-    /// mutates only the passed `stats`.
     pub(super) fn encode_passes(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -252,8 +221,6 @@ impl Renderer {
         }
     }
 
-    /// Open the render pass for `group`, with the load, store and resolve
-    /// the graph derived for it.
     fn begin_group<'e>(
         &self,
         enc: &'e mut wgpu::CommandEncoder,
@@ -305,9 +272,6 @@ impl Renderer {
         })
     }
 
-    /// The texture behind a colour target this frame. The world draws into
-    /// the swapchain when nothing post-processes it, else into the
-    /// multisampled colour or the scene texture.
     fn color_view<'a>(
         &'a self,
         target: ColorTarget,
@@ -337,9 +301,6 @@ impl Renderer {
         }
     }
 
-    /// Where the multisampled world resolves: straight to the swapchain when
-    /// nothing post-processes it, else into the scene texture the post pass
-    /// reads.
     fn resolve_view<'a>(
         &'a self,
         swapchain: &'a wgpu::TextureView,
@@ -352,10 +313,6 @@ impl Renderer {
         }
     }
 
-    /// A colour target's clear value: the world clears to the fog colour
-    /// (so the horizon matches the fog terrain fades into), the volumetric
-    /// target to transparent black (premultiplied compositing over a clear is
-    /// the same as compositing over the scene), the swapchain to black.
     fn clear_color(&self, target: ColorTarget) -> wgpu::Color {
         match target {
             ColorTarget::World => {

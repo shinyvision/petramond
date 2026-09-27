@@ -1,6 +1,3 @@
-//! Delete-world confirmation controller. Confirm and cancel both return to
-//! world select (confirm deletes first), exactly like the legacy screen.
-
 use super::ScreenCtx;
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};

@@ -1,25 +1,3 @@
-//! Native test support: run a mod's REAL logic off-wasm against a fake
-//! host, one per test.
-//!
-//! Inside the wasm guest every SDK host call crosses the ABI. Built natively
-//! (a mod's `cargo test`), the same calls go to the host installed on the
-//! CALLING THREAD — nothing process-global, so parallel tests each get their
-//! own world and a test can swap hosts mid-way:
-//!
-//! - [`MockHost`] is a ready-made fake world: blocks, world and cell KV, mob
-//!   tags, the tick clock, RNG streams, logs, and a recorder of every call.
-//!   Calls it does not model panic with the call named, unless the test
-//!   answers them through [`MockHost::on`].
-//! - [`install_host`] / [`with_host`] install any closure, for a test that
-//!   needs a hand-rolled answer to everything.
-//!
-//! ```ignore
-//! let host = mod_sdk::testing::MockHost::new();
-//! host.set_block([0, 64, 0], STONE);
-//! host.run(|| my_mod::grow_crop([0, 65, 0]));
-//! assert_eq!(host.block([0, 65, 0]), Some(WHEAT));
-//! ```
-
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -36,8 +14,6 @@ thread_local! {
     static HOST: RefCell<Option<NativeHost>> = const { RefCell::new(None) };
 }
 
-/// The installed host's answer to `call`, or `None` when this thread has
-/// none (the caller then takes the wasm path, which panics off-wasm).
 pub(crate) fn answer_natively(call: &HostCall) -> Option<HostRet> {
     HOST.with(|slot| {
         let mut slot = slot
@@ -47,9 +23,6 @@ pub(crate) fn answer_natively(call: &HostCall) -> Option<HostRet> {
     })
 }
 
-/// Keeps a host installed on this thread; dropping it restores whatever was
-/// installed before (hosts nest). Not `Send`: the host belongs to the thread
-/// that installed it.
 #[must_use = "the host is uninstalled when the guard drops"]
 pub struct HostGuard {
     previous: Option<NativeHost>,
@@ -59,14 +32,10 @@ pub struct HostGuard {
 impl Drop for HostGuard {
     fn drop(&mut self) {
         let previous = self.previous.take();
-        // `try_with`: a guard kept in a thread-local of its own may drop
-        // during thread teardown, after this slot is gone.
         let _ = HOST.try_with(|slot| *slot.borrow_mut() = previous);
     }
 }
 
-/// Answer every SDK host call made on this thread with `host` until the
-/// returned guard drops.
 pub fn install_host(host: impl FnMut(&HostCall) -> HostRet + 'static) -> HostGuard {
     let previous = HOST.with(|slot| slot.borrow_mut().replace(Box::new(host)));
     HostGuard {
@@ -75,7 +44,6 @@ pub fn install_host(host: impl FnMut(&HostCall) -> HostRet + 'static) -> HostGua
     }
 }
 
-/// Run `f` with `host` answering this thread's SDK host calls.
 pub fn with_host<R>(host: impl FnMut(&HostCall) -> HostRet + 'static, f: impl FnOnce() -> R) -> R {
     let _guard = install_host(host);
     f()
@@ -83,8 +51,6 @@ pub fn with_host<R>(host: impl FnMut(&HostCall) -> HostRet + 'static, f: impl Fn
 
 type Fallback = Box<dyn FnMut(&HostCall) -> Option<HostRet>>;
 
-/// A fake world answering the common host calls, plus a recorder. Cheap to
-/// clone (clones share the world). See the module docs.
 #[derive(Clone, Default)]
 pub struct MockHost {
     state: Rc<RefCell<MockState>>,
@@ -95,7 +61,6 @@ pub struct MockHost {
 struct MockState {
     tick: u64,
     blocks: HashMap<[i32; 3], BlockId>,
-    /// `None` = every cell counts as loaded; `Some` = only these.
     loaded: Option<Vec<[i32; 3]>>,
     world_kv: HashMap<String, Vec<u8>>,
     cell_kv: HashMap<([i32; 3], String), Vec<u8>>,
@@ -112,20 +77,16 @@ impl MockHost {
         Self::default()
     }
 
-    /// Install this world on the calling thread until the guard drops.
     pub fn install(&self) -> HostGuard {
         let host = self.clone();
         install_host(move |call| host.answer(call))
     }
 
-    /// Run `f` with this world installed on the calling thread.
     pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
         let _guard = self.install();
         f()
     }
 
-    /// Answer calls this world does not model (or override ones it does):
-    /// `handler` is asked first, and `None` falls through to the model.
     pub fn on(&self, handler: impl FnMut(&HostCall) -> Option<HostRet> + 'static) {
         *self.fallback.borrow_mut() = Some(Box::new(handler));
     }
@@ -138,13 +99,10 @@ impl MockHost {
         self.state.borrow_mut().blocks.insert(pos, block);
     }
 
-    /// The block at `pos`, `None` where nothing was ever placed.
     pub fn block(&self, pos: [i32; 3]) -> Option<BlockId> {
         self.state.borrow().blocks.get(&pos).copied()
     }
 
-    /// Restrict the loaded cells to `cells` (by default everything is
-    /// loaded); reads of any other cell answer "unloaded".
     pub fn set_loaded(&self, cells: impl IntoIterator<Item = [i32; 3]>) {
         self.state.borrow_mut().loaded = Some(cells.into_iter().collect());
     }
@@ -171,7 +129,6 @@ impl MockHost {
             .cloned()
     }
 
-    /// Make mob `id` live (with no tags) so tag calls address it.
     pub fn add_mob(&self, id: u64) {
         self.state.borrow_mut().mobs.entry(id).or_default();
     }
@@ -180,28 +137,22 @@ impl MockHost {
         self.state.borrow().mobs.get(&id)?.get(key).cloned()
     }
 
-    /// Place a container with exactly these slots at a block or mob address.
     pub fn set_container(&self, at: ContainerAddress, slots: Vec<Option<ItemStackData>>) {
         self.state.borrow_mut().containers.insert(at, slots);
     }
 
-    /// Read the fake container at `at`, if one exists.
     pub fn container(&self, at: ContainerAddress) -> Option<Vec<Option<ItemStackData>>> {
         self.state.borrow().containers.get(&at).cloned()
     }
 
-    /// Values the next `RngU64` calls answer, in order, before the
-    /// deterministic per-stream fallback takes over.
     pub fn queue_rng(&self, values: impl IntoIterator<Item = u64>) {
         self.state.borrow_mut().rng_queue.extend(values);
     }
 
-    /// Every line the mod logged, in order.
     pub fn logs(&self) -> Vec<String> {
         self.state.borrow().logs.clone()
     }
 
-    /// Every host call the mod made, in order (the recorder).
     pub fn calls(&self) -> Vec<HostCall> {
         self.state.borrow().calls.clone()
     }
@@ -255,8 +206,6 @@ impl MockState {
         z ^ (z >> 31)
     }
 
-    /// The modelled answer to `call`, `None` when this world does not model
-    /// it.
     fn model(&mut self, call: &HostCall) -> Option<HostRet> {
         Some(match call {
             HostCall::Core(CoreCall::Log { msg }) => {
@@ -443,8 +392,6 @@ mod tests {
         assert_eq!(host.world_kv("m:k"), Some(vec![1]));
         assert_eq!(host.mob_tag(3, "m:t"), Some(MobTagValue::Bool(true)));
         assert_eq!(first, 11, "queued values come first");
-        // The queue was spent on the first draw, so the second is the
-        // stream's first value — the same one a fresh world draws first.
         let replay = MockHost::new().run(|| crate::rng_u64("s"));
         assert_eq!(second, replay, "streams are deterministic per key");
     }

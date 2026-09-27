@@ -1,20 +1,10 @@
 use super::*;
 
-/// A lone fence is a bare post (4 sides + 2 caps). Two adjacent fences grow
-/// rail pairs toward each other with no end faces at the shared cell boundary,
-/// so the run reads as continuous rails between the posts. A fence beside a
-/// transparent block (leaves) stays a bare post.
 #[test]
 fn fence_rails_connect_and_never_show_end_faces() {
     let m_lone = mesh(&section_with(&[((8, 8, 8), Block::OakFence)]));
     assert_eq!(m_lone.opaque.len(), 24, "bare post: 4 sides + 2 caps");
 
-    // Two connected fences: each grows ONE rail pair toward the other. Per
-    // fence: the post's three free sides + two caps (5), the post side facing
-    // the rails split around the two buried rail-contact rects (7 — the
-    // box-set emitter removes the covered area instead of overdrawing it),
-    // and 2 rails × 4 long faces (8) = 20 quads; the rails carry no end
-    // faces, so nothing lies on the shared cell-boundary plane.
     let m_pair = mesh(&section_with(&[
         ((8, 8, 8), Block::OakFence),
         ((9, 8, 8), Block::OakFence),
@@ -34,8 +24,6 @@ fn fence_rails_connect_and_never_show_end_faces() {
         "no quad may lie in the shared cell-boundary plane"
     );
 
-    // Leaves are transparent: the fence beside them keeps the bare-post shape
-    // (every fence vertex lives in the post's span, x < 9).
     let m = mesh(&section_with(&[
         ((8, 8, 8), Block::OakFence),
         ((9, 8, 8), Block::OakLeaves),
@@ -44,7 +32,6 @@ fn fence_rails_connect_and_never_show_end_faces() {
     assert_eq!(fence_verts, 24, "fence beside leaves stays a bare post");
 }
 
-/// Stacked fences hide the shared post cap both ways; the outer caps stay.
 #[test]
 fn stacked_fences_bury_the_shared_post_cap() {
     let m = mesh(&section_with(&[

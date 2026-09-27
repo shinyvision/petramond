@@ -1,16 +1,5 @@
-//! A fast non-cryptographic hasher for a mod's own maps.
-//!
-//! `std`'s default SipHash defends against hostile keys; a mod hashing cells,
-//! ids and indices by the thousand per tick pays for a defence it has no use
-//! for. [`FxHashMap`] / [`FxHashSet`] are the `std` collections over the Fx
-//! word hash: same API, `::default()` instead of `::new()`.
-//!
-//! Iteration order is as unspecified as `std`'s, but it is the SAME on every
-//! run (no random seed), so it never breaks determinism on its own.
-
 use std::hash::{BuildHasherDefault, Hasher};
 
-/// The Fx word hash: rotate, xor, multiply per 8-byte word.
 #[derive(Default, Clone, Copy)]
 pub struct FxHasher(u64);
 
@@ -59,7 +48,5 @@ impl Hasher for FxHasher {
 }
 
 pub type FxBuildHasher = BuildHasherDefault<FxHasher>;
-/// `std::collections::HashMap` over [`FxHasher`].
 pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
-/// `std::collections::HashSet` over [`FxHasher`].
 pub type FxHashSet<K> = std::collections::HashSet<K, FxBuildHasher>;

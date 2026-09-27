@@ -1,5 +1,3 @@
-//! A pillar whose top walks on along a roof course to work no perch sees.
-
 use crate::host::prelude::*;
 
 use super::find::column_base;
@@ -15,8 +13,6 @@ use crate::worker::tuning::reach::{ONWARD_SPAN, ONWARD_STANCES, ONWARD_TOPS};
 use crate::worker::Job;
 use crate::worker::{sight, Body, Ctx};
 
-/// Where the standing room level with `stance` (a roof course, a wall top)
-/// runs out, nearest first: open cells beside it a pillar could top out in.
 fn walkway_ends(job: &Job, stance: [i32; 3], span: i32) -> Vec<[i32; 3]> {
     let mut walkway: HashSet<[i32; 3]> = [stance].into_iter().collect();
     let mut frontier = vec![stance];
@@ -52,8 +48,6 @@ fn walkway_ends(job: &Job, stance: [i32; 3], span: i32) -> Vec<[i32; 3]> {
             }
         }
     }
-    // A cell or two further too: a pillar top may stand clear of an overhang
-    // (an eave row the design governs) and step across to the walkway.
     let mut ring = edge.clone();
     for _ in 0..2 {
         let beyond: Vec<[i32; 3]> = ring
@@ -78,9 +72,6 @@ fn walkway_ends(job: &Job, stance: [i32; 3], span: i32) -> Vec<[i32; 3]> {
     ends
 }
 
-/// A pillar whose top walks on to standing room that sees `cells`, for work
-/// no perch sees: the middle of a ridge is reached along the roof course
-/// beside it from a pillar at the gable, never from the ground.
 pub fn find_onward(
     ctx: &mut Ctx,
     job: &Job,
@@ -98,8 +89,6 @@ pub fn find_onward(
         for dx in -3..=3 {
             for dz in -3..=3 {
                 let s = offset(target, [dx, dy, dz]);
-                // Never on the work itself (a dig drops the stance, and no
-                // face is seen from on top), nor where it was refused before.
                 if !cells.contains(&s)
                     && !cells.contains(&offset(s, [0, 1, 0]))
                     && !cells.contains(&offset(s, [0, -1, 0]))

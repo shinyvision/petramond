@@ -2,8 +2,6 @@ use serde_json::Value;
 
 use super::parse::{base64_decode, per_texture_uv_size, project_resolution};
 
-/// One texture's slot in the combined sheet: its own UV divisor plus the
-/// normalized offset/scale of its band, so a face UV remaps in one step.
 pub(super) struct TexRect {
     uv_w: f32,
     uv_h: f32,
@@ -14,7 +12,6 @@ pub(super) struct TexRect {
 }
 
 impl TexRect {
-    /// A raw face UV coordinate (in this texture's own UV units) → the sheet.
     pub(super) fn remap(&self, u: f32, v: f32) -> (f32, f32) {
         (
             self.u_off + u / self.uv_w * self.u_scale,
@@ -23,9 +20,6 @@ impl TexRect {
     }
 }
 
-/// Every embedded texture decoded and stacked vertically into one RGBA sheet.
-/// Faces reference textures by array index; `rects` is index-aligned with the
-/// authored `textures` array (`None` = that entry had no decodable source).
 pub(super) struct TextureSheet {
     pub(super) rgba: Vec<u8>,
     pub(super) w: u32,
@@ -34,8 +28,6 @@ pub(super) struct TextureSheet {
 }
 
 impl TextureSheet {
-    /// The rect for a face's texture reference: its own entry when it decoded,
-    /// else the first decoded texture (the old first-texture-only behavior).
     pub(super) fn rect(&self, index: Option<usize>) -> Option<&TexRect> {
         index
             .and_then(|i| self.rects.get(i))
@@ -52,16 +44,10 @@ impl TextureSheet {
             .and_then(Value::as_array)
             .unwrap_or(&empty);
 
-        // Decode each entry's `data:image/png;base64,<payload>` source; an entry
-        // without one (or that fails to decode) stays `None` so indices keep lining
-        // up with face references.
         struct DecodedTex {
             rgba: Vec<u8>,
             w: u32,
             h: u32,
-            /// UV-space size the face coordinates are authored in (this
-            /// texture's own, in the formats that have one; else the project
-            /// resolution).
             uv_w: f32,
             uv_h: f32,
         }

@@ -1,5 +1,3 @@
-//! Cross-subsystem riding boundaries that need the full server fixture.
-
 use super::common::{game, game_on_empty_chunk};
 use petramond::mob::Mob;
 use petramond_math::world_pos::WorldPos;
@@ -25,9 +23,8 @@ fn mounted_autosave_expands_past_blocked_dismount_probes_without_moving_the_ride
     let mount = game.server_world().riding().mount_of(player_id);
     game.session_mut().sim_mut().mount = mount;
 
-    // Block the seat itself and every ordinary right/left/behind/ahead probe
-    // at both heights. The persistence search must expand; falling back to the
-    // unchanged seat would restore the detached player inside solid geometry.
+    // Wall off the seat and every normal probe at both heights so the search has to widen.
+    // Falling back to the seat here would drop the player inside solid blocks.
     let probes = std::cell::RefCell::new(Vec::new());
     assert_eq!(
         petramond::mob::riding::dismount_spot(

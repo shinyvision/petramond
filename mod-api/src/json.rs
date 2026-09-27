@@ -1,24 +1,7 @@
-//! A minimal JSON reader shared by the engine and the guests.
-//!
-//! Item/block consumer-data entries cross the ABI as RAW JSON TEXT — the
-//! catalogs' native substance — so a consuming mod needs to read JSON
-//! without hauling a full serde stack into its wasm; and the shared
-//! [`crate::animation`] formats parse through the same reader on BOTH sides
-//! of the boundary, which is what makes "the engine and a pack read this
-//! file identically" a fact instead of a convention. This is a small strict
-//! recursive-descent parser producing a [`Value`] tree with the accessor
-//! helpers a consumer actually needs (`get`, `as_*`). Parsing is
-//! deterministic and allocation-bounded by the input; malformed input is
-//! `None` — the consumer's contract is "parse what you understand, ignore
-//! the rest".
-
-/// One parsed JSON value. Object fields keep declaration order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
     Bool(bool),
-    /// All JSON numbers, as f64 (the data surface carries row metadata, not
-    /// precision-critical integers).
     Num(f64),
     Str(String),
     Arr(Vec<Value>),
@@ -26,7 +9,6 @@ pub enum Value {
 }
 
 impl Value {
-    /// Parse a complete JSON document (trailing garbage is an error).
     pub fn parse(text: &str) -> Option<Value> {
         let bytes = text.as_bytes();
         let mut i = 0;
@@ -35,7 +17,6 @@ impl Value {
         (i == bytes.len()).then_some(v)
     }
 
-    /// Object field `key`, or `None` (also for non-objects).
     pub fn get(&self, key: &str) -> Option<&Value> {
         match self {
             Value::Obj(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -55,7 +36,6 @@ impl Value {
         (n.fract() == 0.0 && n >= i32::MIN as f64 && n <= i32::MAX as f64).then_some(n as i32)
     }
 
-    /// The value as a u8, if it is a number representing one exactly.
     pub fn as_u8(&self) -> Option<u8> {
         let n = self.as_f64()?;
         (n.fract() == 0.0 && (0.0..=255.0).contains(&n)).then_some(n as u8)
@@ -82,9 +62,6 @@ impl Value {
         }
     }
 
-    /// The object's fields in declaration order, or `None` for a non-object —
-    /// for consumers that treat an object as a MAP with unknown keys (a
-    /// per-family art table) rather than fetching named fields.
     pub fn as_object(&self) -> Option<&[(String, Value)]> {
         match self {
             Value::Obj(fields) => Some(fields),
@@ -207,8 +184,6 @@ fn parse_string(b: &[u8], i: &mut usize) -> Option<String> {
                     b'u' => {
                         let hex = b.get(*i + 1..*i + 5)?;
                         let code = u32::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
-                        // Surrogate pairs are out of scope for row metadata;
-                        // a lone surrogate reads as the replacement char.
                         out.push(char::from_u32(code).unwrap_or('\u{fffd}'));
                         *i += 4;
                     }
@@ -217,8 +192,6 @@ fn parse_string(b: &[u8], i: &mut usize) -> Option<String> {
                 *i += 1;
             }
             _ => {
-                // A run of plain bytes up to the next quote or escape. Both
-                // are ASCII, so the run ends on a char boundary of the input.
                 let start = *i;
                 while *i < b.len() && !matches!(b[*i], b'"' | b'\\') {
                     *i += 1;

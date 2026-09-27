@@ -1,20 +1,19 @@
-//! Exploration cache: revision-gated host surface sampling, the 16×16
-//! explored-tile store bundled into 4×4-tile REGION storage values, the
-//! write-time mip store the outermost zoom renders from, asynchronous
-//! ticket-based loading, and relief shading.
+//! Exploration cache. Revision-gated host surface sampling, a 16×16 explored-tile
+//! store packed into 4×4-tile region storage values, a write-time mip store the
+//! outermost zoom renders from, async ticket-based loading, relief shading.
 //!
-//! Storage layout (see `codec.rs` for the value format):
-//! - base region `minimap:r:{rx}:{rz}`: 4×4 tiles = 64×64 blocks, one cell
-//!   per block;
-//! - mip region `minimap:m:{mx}:{mz}`: 4×4 MIP tiles = 128×128 blocks, one
-//!   cell per 2×2 blocks, colors HSL-averaged at WRITE time (the flush that
-//!   persists a dirty base tile recomputes its mip cells), so the outermost
-//!   zoom renders with plain copies and 4× fewer keys.
+//! Storage layout (value format is in `codec.rs`):
+//! - base region `minimap:r:{rx}:{rz}`: 4×4 tiles = 64×64 blocks, one cell per
+//!   block.
+//! - mip region `minimap:m:{mx}:{mz}`: 4×4 mip tiles = 128×128 blocks, one cell
+//!   per 2×2 blocks. Colors get HSL-averaged at write time, when a dirty base
+//!   tile flushes and recomputes its mip cells. Outermost zoom just copies these
+//!   cells and touches 4× fewer keys.
 //!
-//! All bulk reads go through async storage tickets: a slow disk delays data,
-//! never the frame. Residency is REGION-granular — a region's 16 member
-//! tiles are inserted and evicted together, so a flush always has the whole
-//! value in memory and never read-modifies-writes on the frame.
+//! All bulk reads go through async storage tickets, so a slow disk delays data
+//! but never the frame. Residency is region-granular: a region's 16 tiles get
+//! inserted and evicted together, so a flush always has the full value in memory
+//! and never has to read-modify-write mid-frame.
 
 use crate::*;
 
@@ -22,33 +21,16 @@ pub(crate) const SAMPLE_RADIUS: i32 = 96;
 pub(crate) const SAMPLE_STEP: i32 = 8;
 const BASE_PREFIX: &str = "minimap:r:";
 const MIP_PREFIX: &str = "minimap:m:";
-/// Resident-region caps (a base region ≈ 25 KB of cells), enforced by the
-/// map-open-aware trim in `pump_store`.
 const BASE_REGION_CACHE_MAX: usize = 448;
 const MIP_REGION_CACHE_MAX: usize = 448;
 const REGION_CACHE_SLACK: usize = 16;
-/// Frames between persistence flushes of changed tiles (~2 s at 60 fps): a
-/// frontier tile fills over many samples but is written once per interval.
 pub(crate) const FLUSH_INTERVAL: u64 = 120;
 pub(crate) const UNKNOWN_HEIGHT: i16 = i16::MIN;
-/// Async read batching: keys per ticket and tickets kept in flight (the host
-/// caps outstanding tickets at 8; leave headroom for same-frame edits).
 const LOAD_KEYS_PER_TICKET: usize = 96;
 const LOAD_TICKETS_IN_FLIGHT: usize = 4;
-/// In-flight tickets that may be prefetch-only: urgent (sample/visible)
-/// loads always find a free ticket slot, so a warm-up sweep can never park
-/// the whole pipeline ahead of what the viewport is waiting for.
 const PREFETCH_TICKETS_IN_FLIGHT: usize = 2;
-/// Region values DECODED per frame: arrivals beyond this wait in a queue, so
-/// a burst of completed tickets can never spend a frame's budget unpacking
-/// cells. Urgent arrivals take the whole budget (decode is a few µs per
-/// region; their volume is bounded by the viewport); prefetch arrivals only
-/// decode from the remainder, capped harder.
 const DECODE_BUDGET_PER_FRAME: usize = 64;
 const PREFETCH_DECODE_BUDGET_PER_FRAME: usize = 16;
-/// Prefetch reads only ISSUE while the arrival queue is shallow — they are
-/// idle-time work and must never grow a decode backlog that urgent arrivals
-/// would land behind.
 const PREFETCH_ISSUE_UNDECODED_MAX: usize = 16;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -81,15 +63,8 @@ impl Default for Tile {
 
 #[derive(Clone)]
 pub(crate) struct CachedTile {
-    /// Boxed: the cache holds thousands of entries; an inline 1.5 KB payload
-    /// would put the hash table's buckets (plus its rehash doubling spike)
-    /// at tens of MB.
     pub(crate) tile: Box<Tile>,
-    /// Host column revision this tile was last seen COMPLETE at (0 = never):
-    /// echoed back so an unchanged column costs no cell bytes. Session-local
-    /// replica state — never persisted with the tile. (Base tiles only.)
     pub(crate) watermark: u64,
-    /// Changed since the last persistence flush.
     pub(crate) dirty: bool,
 }
 
@@ -103,15 +78,12 @@ impl CachedTile {
     }
 }
 
-/// Which store a region load belongs to.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RegionKind {
     Base,
     Mip,
 }
 
-/// Load priority: sampling feeds live exploration, visible feeds the open
-/// map, prefetch warms what panning/zooming will need next.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd)]
 pub(crate) enum LoadTier {
     Sample,
@@ -119,7 +91,6 @@ pub(crate) enum LoadTier {
     Prefetch,
 }
 
-/// One completed region load the caller may need to repaint.
 pub(crate) struct RegionArrival {
     pub(crate) kind: RegionKind,
     pub(crate) coord: (i32, i32),
@@ -128,57 +99,35 @@ pub(crate) struct RegionArrival {
 
 struct QueuedLoad {
     tier: LoadTier,
-    /// Sampling needs mutation targets, so its loads materialize default
-    /// tiles even when storage has nothing.
+    /// Sampling needs default tiles even if storage has nothing, since it writes into tiles
+    /// directly.
     materialize: bool,
 }
 
 struct InFlightLoad {
     ticket: u64,
-    /// Whether any entry is urgent (sample/visible) — counts against the
-    /// prefetch ticket reservation when false.
     urgent: bool,
     entries: Vec<QueuedEntry>,
 }
 
-/// One queued/issued load: region coord, store kind, materialize-on-absent,
-/// and the tier it was picked at (routes its arrival's decode priority).
 type QueuedEntry = ((i32, i32), RegionKind, bool, LoadTier);
 
-/// One arrived region awaiting its decode-budget slot: the region coord, which
-/// kind it is, whether it was a live fetch, and the raw bytes (`None` = miss).
 type Undecoded = ((i32, i32), RegionKind, bool, Option<Vec<u8>>);
 
-/// The tile/mip caches plus the async region loader.
 #[derive(Default)]
 pub(crate) struct TileStore {
-    /// A store of a world whose exploration is not this session's to keep
-    /// (a presentation): it neither loads from storage nor writes to it,
-    /// and forgets what it trims.
     pub(crate) ephemeral: bool,
-    /// Base tiles by 16-block tile coord (one cell per block).
     pub(crate) tiles: HashMap<(i32, i32), CachedTile>,
-    /// Mip tiles by MIP-tile coord (16×16 cells of 2×2 blocks = 32×32
-    /// blocks per tile).
     pub(crate) mips: HashMap<(i32, i32), CachedTile>,
-    /// Resident regions (each implies all 16 member tiles resident) with
-    /// their LRU stamps.
     base_regions: HashMap<(i32, i32), u64>,
     mip_regions: HashMap<(i32, i32), u64>,
-    /// Regions storage had nothing for — never re-requested until written.
     base_absent: HashSet<(i32, i32)>,
     mip_absent: HashSet<(i32, i32)>,
     queued: HashMap<(RegionKind, (i32, i32)), QueuedLoad>,
     in_flight: Vec<InFlightLoad>,
-    /// Every coord currently queued, in flight, or awaiting decode — the
-    /// paint-once readiness check.
     pending: HashSet<(RegionKind, (i32, i32))>,
-    /// Arrived values awaiting their decode-budget slot, split by urgency:
-    /// urgent (sample/visible) arrivals always decode ahead of prefetch ones.
     undecoded_urgent: std::collections::VecDeque<Undecoded>,
     undecoded_prefetch: std::collections::VecDeque<Undecoded>,
-    /// rgb→hsl work on the mip write path is memoized: terrain colors repeat
-    /// massively.
     hsl_memo: HashMap<[u8; 3], (f32, f32, f32)>,
     frame: u64,
 }
@@ -190,7 +139,6 @@ fn region_key(kind: RegionKind, (rx, rz): (i32, i32)) -> String {
     }
 }
 
-/// World-block rect `[x0, z0, x1, z1)` one region covers.
 pub(crate) fn region_block_rect(kind: RegionKind, (rx, rz): (i32, i32)) -> [i32; 4] {
     let span = match kind {
         RegionKind::Base => codec::REGION_TILES * 16,
@@ -237,23 +185,16 @@ impl TileStore {
         };
     }
 
-    /// Whether the region's data is not yet available (queued, in flight, or
-    /// awaiting decode) — a raster over it would paint holes it will have to
-    /// repaint. Resident and absent regions are both READY.
     pub(crate) fn region_pending(&self, kind: RegionKind, coord: (i32, i32)) -> bool {
         self.pending.contains(&(kind, coord))
     }
 
-    /// Queue one region load (idempotent; a stronger tier upgrades a weaker
-    /// queued entry). Absent-memo'd regions never re-request: sampling
-    /// materializes them, everything else skips.
     pub(crate) fn request_region(&mut self, kind: RegionKind, coord: (i32, i32), tier: LoadTier) {
         if self.region_resident(kind, coord) {
             self.touch_region(kind, coord);
             return;
         }
         if self.ephemeral {
-            // Storage holds another world's exploration: nothing to load.
             match kind {
                 RegionKind::Base => self.base_absent.insert(coord),
                 RegionKind::Mip => self.mip_absent.insert(coord),
@@ -279,9 +220,6 @@ impl TileStore {
             }
             std::collections::hash_map::Entry::Vacant(entry) => {
                 if self.pending.contains(&(kind, coord)) {
-                    // Already in flight or awaiting decode; the sampling
-                    // upgrade only matters for materialize-on-absent, which
-                    // request_region re-runs after the result lands.
                     return;
                 }
                 self.pending.insert((kind, coord));
@@ -290,8 +228,6 @@ impl TileStore {
         }
     }
 
-    /// Insert a region as resident with default (never-explored) tiles — the
-    /// mutation target for fresh exploration of storage-absent ground.
     fn materialize_region(&mut self, kind: RegionKind, coord: (i32, i32)) {
         let frame = self.frame;
         let (regions, tiles) = match kind {
@@ -325,7 +261,7 @@ impl TileStore {
             RegionKind::Mip => (&mut self.mip_regions, &mut self.mips),
         };
         if regions.insert(coord, frame).is_some() {
-            return; // raced by a materialize: live samples win over storage
+            return;
         }
         for (i, tile) in decoded.into_iter().enumerate() {
             let (tx, tz) = (
@@ -342,12 +278,6 @@ impl TileStore {
         }
     }
 
-    /// Poll in-flight tickets and issue new ones from the queue: the once-
-    /// per-frame loader heartbeat. Returns completed loads so the map can
-    /// repaint what arrived. Decoding is budgeted — a burst of completed
-    /// tickets unpacks over several frames instead of spiking one — and
-    /// urgent (sample/visible) work is never behind prefetch work at any
-    /// stage: it decodes first and always finds a free ticket slot.
     pub(crate) fn pump_loads(&mut self) -> Vec<RegionArrival> {
         let mut still_in_flight = Vec::new();
         for load in std::mem::take(&mut self.in_flight) {
@@ -444,10 +374,6 @@ impl TileStore {
         });
     }
 
-    /// Drop queued (not yet issued) visible/prefetch loads the caller no
-    /// longer needs — a long pan must not accumulate a stale backlog behind
-    /// which fresh viewport loads would queue. Sampling loads never drop, and
-    /// in-flight or arrived loads complete normally.
     pub(crate) fn drop_queued_outside(&mut self, keep: impl Fn(RegionKind, (i32, i32)) -> bool) {
         let dropped: Vec<(RegionKind, (i32, i32))> = self
             .queued
@@ -461,9 +387,8 @@ impl TileStore {
         }
     }
 
-    /// Recompute the 8×8 mip cells one dirty base tile covers, from its own
-    /// 16×16 block cells: color = HSL average of the known blocks in each
-    /// 2×2 group, height = their mean. The owning mip tile must be resident.
+    /// Redo the 8x8 mip cells this dirty tile covers. Every 2x2 group of blocks gets their mean
+    /// height and the HSL average of whichever blocks we know. Only call with the mip tile loaded.
     fn merge_tile_into_mip(&mut self, tile_coord: (i32, i32)) {
         let Some(base) = self.tiles.get(&tile_coord) else {
             return;
@@ -509,11 +434,6 @@ impl TileStore {
         }
     }
 
-    /// Write every dirty tile's region (and its recomputed mip region) as one
-    /// storage batch. A base region whose mip region is not yet resident
-    /// keeps its dirty flags and retries next interval — mip values never go
-    /// stale relative to committed base values. An ephemeral store merges its
-    /// mips the same way and writes nothing.
     pub(crate) fn flush_dirty(&mut self) {
         let dirty_tiles: Vec<(i32, i32)> = self
             .tiles
@@ -537,8 +457,6 @@ impl TileStore {
         for region in base_regions {
             let mip_region = (region.0.div_euclid(2), region.1.div_euclid(2));
             if !self.region_resident(RegionKind::Mip, mip_region) {
-                // Queued by the sampling path when the tile went dirty;
-                // retry once it lands.
                 self.request_region(RegionKind::Mip, mip_region, LoadTier::Sample);
                 continue;
             }
@@ -619,11 +537,6 @@ impl TileStore {
         codec::encode_region(&members)
     }
 
-    /// Region-granular LRU trim. `protect` exempts the live working sets
-    /// (the sampling neighborhood, and the open full map's visible+prefetch
-    /// rect) — the caps may be exceeded by however much `protect` covers,
-    /// but never by unprotected leftovers. Regions with unflushed members
-    /// are skipped; they trim after their next flush.
     pub(crate) fn trim_caches(&mut self, protect: impl Fn(RegionKind, (i32, i32)) -> bool) {
         for kind in [RegionKind::Base, RegionKind::Mip] {
             let (cap, regions) = match kind {
@@ -682,9 +595,6 @@ impl Minimap {
             (center.0 + SAMPLE_RADIUS).div_euclid(16),
             (center.1 + SAMPLE_RADIUS).div_euclid(16),
         );
-        // Request the covering regions; sample only tiles already resident
-        // (a region still loading answers next frame — the watermark gate
-        // makes retrying free).
         for rz in min.1.div_euclid(codec::REGION_TILES)..=max.1.div_euclid(codec::REGION_TILES) {
             for rx in min.0.div_euclid(codec::REGION_TILES)..=max.0.div_euclid(codec::REGION_TILES)
             {
@@ -717,13 +627,11 @@ impl Minimap {
                 continue;
             };
             let Some(column) = reply else {
-                // Column not loaded in the replica: keep prior explored data
-                // and keep polling.
                 cached.watermark = 0;
                 continue;
             };
             let Some(bytes) = column.cells else {
-                continue; // unchanged since the watermark
+                continue;
             };
             if bytes.len() != CLIENT_SURFACE_COLUMN_BYTES {
                 cached.watermark = 0;
@@ -734,7 +642,6 @@ impl Minimap {
             for (i, raw) in bytes.chunks_exact(CLIENT_SURFACE_CELL_BYTES).enumerate() {
                 let height = i16::from_le_bytes([raw[0], raw[1]]);
                 if height == CLIENT_SURFACE_UNKNOWN_HEIGHT {
-                    // Unknown never erases what an earlier session explored.
                     complete = false;
                     continue;
                 }
@@ -751,14 +658,10 @@ impl Minimap {
                     });
                 }
             }
-            // Only a fully known reply may arm the skip: a column still
-            // streaming in keeps getting polled until every cell is final.
             cached.watermark = if complete { column.revision } else { 0 };
             if let Some([lx0, lz0, lx1, lz1]) = changed {
                 cached.dirty = true;
                 any_changed = true;
-                // Flush will merge this tile into its mip region: have that
-                // region on the way before the flush interval fires.
                 self.store.request_region(
                     RegionKind::Mip,
                     (
@@ -767,9 +670,6 @@ impl Minimap {
                     ),
                     LoadTier::Sample,
                 );
-                // The exact changed cells (+1: exclusive bound); the zoom-
-                // dependent southeast relief fringe is added by
-                // mark_full_tiles_dirty itself.
                 dirty_rects.push([
                     cx * 16 + lx0,
                     cz * 16 + lz0,
@@ -789,9 +689,8 @@ impl Minimap {
     /// The once-per-frame store heartbeat: poll/issue async loads, repaint
     /// whatever arrived, and trim the caches. Trimming runs with the full
     /// map OPEN too — its visible+prefetch rect is protected instead of
-    /// deferring eviction wholesale, which let a long browse of a large
-    /// explored world grow the caches to the 64 MiB wasm cap and OOM-abort
-    /// the mod (2026-07-17).
+    /// deferring eviction wholesale, keeping cache use bounded during a long
+    /// browse of a large explored world.
     pub(crate) fn pump_store(&mut self) {
         for arrival in self.store.pump_loads() {
             if arrival.had_data {
@@ -809,17 +708,11 @@ impl Minimap {
             let rect = region_block_rect(kind, region);
             let intersects =
                 |v: [i32; 4]| rect[2] > v[0] && rect[0] < v[2] && rect[3] > v[1] && rect[1] < v[3];
-            // The live sampling neighborhood…
             let pad = SAMPLE_RADIUS + 16;
             let sampled = rect[2] > sample_center.0 - pad
                 && rect[0] < sample_center.0 + pad
                 && rect[3] > sample_center.1 - pad
                 && rect[1] < sample_center.1 + pad;
-            // …and, while the map is open, the SOURCE store under the view
-            // (plus its prefetch margin) and the adjacent zoom's store under
-            // ITS viewport — each kind's protection is bounded by its own
-            // working set, never the other's finer granularity, so protection
-            // stays under the cache caps at every zoom.
             sampled
                 || (kind == source && view.is_some_and(intersects))
                 || adjacent.is_some_and(|(k, v)| k == kind && intersects(v))
@@ -827,13 +720,10 @@ impl Minimap {
     }
 }
 
-/// Pick the next ticket's loads from the queue, or nothing. Urgent tiers
-/// (sample, then visible) fill urgent-only tickets whenever a slot is free —
-/// their arrival volume is bounded by the sampling neighborhood and the
-/// viewport, so they are exempt from arrival backpressure. Prefetch keys
-/// issue only when nothing urgent is queued, within their reserved ticket
-/// slots, and while the arrival queue is shallow: warm-up sweeps fill idle
-/// time and can never delay what the viewport is waiting for.
+/// Picks the next ticket's loads, or nothing. Sample and visible loads take any open slot and skip
+/// backpressure, since the neighborhood and viewport already cap how many there are. Prefetch
+/// waits until nothing urgent is queued and the arrival queue is shallow, and only uses its own
+/// slots, so warming up never holds the viewport back.
 fn plan_issue_batch(
     queued: &HashMap<(RegionKind, (i32, i32)), QueuedLoad>,
     in_flight: usize,
@@ -871,8 +761,6 @@ fn plan_issue_batch(
     pick(&[LoadTier::Prefetch], LOAD_KEYS_PER_TICKET)
 }
 
-/// Sequential cell reads with a two-tile memo: raster loops walk world space
-/// coherently, so nearly every read hits the memo instead of the tile map.
 pub(crate) struct CellReader<'a> {
     tiles: &'a HashMap<(i32, i32), CachedTile>,
     slots: [((i32, i32), Option<&'a Tile>); 2],
@@ -922,12 +810,7 @@ pub(crate) fn tile_has_data(tile: &Tile) -> bool {
     tile.cells.iter().any(|cell| cell.height != UNKNOWN_HEIGHT)
 }
 
-/// The shared relief rule: brighten terrain rising toward the northwest.
-/// Integer throughout — a fixed-point multiplier LUT over the clamped height
-/// delta keeps the raster hot loop free of float math. `shade_rgb_reference`
-/// pins the intended curve.
 pub(crate) fn shade_rgb(rgb: [u8; 3], height: i16, northwest: i16) -> [u8; 3] {
-    // clamp(1 + delta*0.035, 0.82, 1.16): saturated for |delta| >= 6.
     const SHADE_LUT: [u16; 13] = {
         let mut lut = [0u16; 13];
         let mut i = 0;
@@ -950,7 +833,6 @@ pub(crate) fn shade_rgb(rgb: [u8; 3], height: i16, northwest: i16) -> [u8; 3] {
     rgb.map(|channel| (((channel as u32 * multiplier) + 128) >> 8).min(255) as u8)
 }
 
-/// The float formulation of the relief rule, kept as the LUT's test oracle.
 #[cfg(test)]
 pub(crate) fn shade_rgb_reference(rgb: [u8; 3], height: i16, northwest: i16) -> [u8; 3] {
     let relief = (height as f32 - northwest as f32) * 0.035;
@@ -968,8 +850,6 @@ mod tests {
         store
     }
 
-    /// Every storage call the stores under test make on this thread, by kind,
-    /// while the returned guard lives.
     fn storage_calls() -> (
         mod_sdk::testing::HostGuard,
         std::rc::Rc<std::cell::RefCell<Vec<&'static str>>>,
@@ -995,9 +875,6 @@ mod tests {
         (guard, calls)
     }
 
-    /// What a presentation shows is explored, merged into its mips and trimmed
-    /// like the session's own world, and never read from or written to the
-    /// session's storage; the session's own store still writes.
     #[test]
     fn an_ephemeral_store_explores_without_touching_storage() {
         let (_host, calls) = storage_calls();
@@ -1035,11 +912,8 @@ mod tests {
                 assert!(store.tiles.contains_key(&(tx, tz)), "member ({tx},{tz})");
             }
         }
-        // Under the cap: nothing trims.
         store.trim_caches(|_, _| false);
         assert!(store.region_resident(RegionKind::Base, (2, -1)));
-        // Over the cap: whole regions leave together, except protected or
-        // dirty ones.
         for i in 0..(BASE_REGION_CACHE_MAX + REGION_CACHE_SLACK) as i32 + 4 {
             store.materialize_region(RegionKind::Base, (100 + i, 0));
         }
@@ -1065,16 +939,12 @@ mod tests {
         }
     }
 
-    /// With the full map OPEN, far-away regions must still trim — only the
-    /// map's visible+prefetch rect and the sampling neighborhood are
-    /// protected (the map-open trim in `pump_store`).
     #[test]
     fn an_open_full_map_trims_out_of_view_regions() {
         let mut mm = crate::Minimap {
             open_canvas: Some(FULL_CANVAS.to_string()),
             ..Default::default()
         };
-        // Player + pan at the origin: the view rect hugs (0, 0).
         mm.store.materialize_region(RegionKind::Base, (0, 0));
         for i in 0..(BASE_REGION_CACHE_MAX + REGION_CACHE_SLACK) as i32 + 8 {
             mm.store
@@ -1092,10 +962,10 @@ mod tests {
         );
     }
 
-    /// The loader must never let a prefetch backlog delay urgent loads:
-    /// urgent keys fill the next ticket alone, prefetch issues only into its
-    /// reserved slots at idle, and arrival backpressure applies to prefetch
-    /// only — regressions here are exactly the seconds-blank zoomed-out drag.
+    /// Loader must never let a prefetch backlog delay urgent loads. Urgent keys
+    /// fill the next ticket by themselves, prefetch only goes into its reserved
+    /// slots when idle, and arrival backpressure hits prefetch only. If this
+    /// regresses you get the seconds-long blank screen when dragging zoomed out.
     #[test]
     fn urgent_loads_issue_ahead_of_a_prefetch_backlog() {
         let mut queued: HashMap<(RegionKind, (i32, i32)), QueuedLoad> = HashMap::new();
@@ -1158,8 +1028,6 @@ mod tests {
         );
     }
 
-    /// A pan re-stamp drops queued loads outside the new working set —
-    /// except sampling loads, whose data feeds live exploration.
     #[test]
     fn a_pan_restamp_drops_stale_queued_loads() {
         let mut store = TileStore::default();
@@ -1183,7 +1051,6 @@ mod tests {
         let mut store = store_with_region(RegionKind::Base, (0, 0));
         store.materialize_region(RegionKind::Mip, (0, 0));
         let tile = store.tiles.get_mut(&(1, 1)).unwrap();
-        // Two known blocks in one 2×2 group + a fully unknown group.
         tile.tile.cells[0] = Cell {
             height: 10,
             rgb: [100, 0, 0],
@@ -1194,8 +1061,6 @@ mod tests {
         };
         store.merge_tile_into_mip((1, 1));
         let mip = store.mips.get(&(0, 0)).expect("mip tile resident");
-        // Tile (1,1) covers blocks 16..32: its quadrant starts at mip cell
-        // (8, 8) in mip tile (0, 0).
         let merged = mip.tile.cells[8 * 16 + 8];
         assert_eq!(merged.height, 15, "mean of the known heights");
         assert_eq!(merged.rgb, [100, 0, 0], "average of identical colors");

@@ -1,16 +1,9 @@
-//! Sound and burst calls: one-shots, handle-addressed spatial sounds, and
-//! particle bursts — all riding `TickEvents`; the sim never touches audio.
-
 use mod_api::{HostRet, SoundCall};
 
 use super::guards::{sim_call, sim_query};
 
-/// Sound calls (one-shots plus the handle-based spatial commands; the sim
-/// never touches audio — everything rides `TickEvents` to the app layer).
 pub(super) fn handle_sound_call(mod_id: &str, call: SoundCall) -> HostRet {
     match call {
-        // Not a sound, but the same shape: a fire-and-forget world-anchored
-        // presentation one-shot riding the NON-lossy tick queue.
         SoundCall::EmitterBurst {
             key,
             pos,
@@ -73,8 +66,6 @@ pub(super) fn handle_sound_call(mod_id: &str, call: SoundCall) -> HostRet {
                 log::warn!("[mod {mod_id}] EmitSound: unknown sound '{key}'");
                 return HostRet::Bool(false);
             };
-            // The sim never touches audio: the sound rides the NON-lossy tick
-            // queue on `TickEvents` and the app layer plays it next frame.
             ctx.feed.world.sounds.push(crate::events::tick::SoundEvent {
                 sound,
                 pos: pos.map(petramond_math::world_pos::WorldPos::from_array),
@@ -199,8 +190,6 @@ mod tests {
     use crate::world::ServerWorld;
     use petramond_math::world_pos::WorldPos;
 
-    /// `EmitSound` feeds the NON-lossy tick queue (never audio directly) and
-    /// an unknown key reports failure without disabling anything.
     #[test]
     fn emit_sound_rides_the_tick_feed() {
         let mut data = ModStoreData::new("alpha", 1);

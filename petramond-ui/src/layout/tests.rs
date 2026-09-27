@@ -3,8 +3,6 @@ use crate::doc::{Document, Node};
 use crate::state::{UiState, UiValue};
 use crate::tree::InstTree;
 
-/// Fixed-metric mock: labels are 6px/char × 9, checkboxes 10×10,
-/// toggles 18×10, buttons text+8 × 20, slots 18px cells with 0 gap.
 struct MockEnv;
 impl LayoutEnv for MockEnv {
     fn leaf_size(
@@ -71,8 +69,6 @@ fn column_pad_gap_and_centering() {
         }"#,
         (200, 100),
     );
-    // Natural: w = 8+18+8 = 34 (toggle widest), h = 6+10+4+10+6 = 36.
-    // Centered in 200×100 → x=(200-34)/2=83, y=(100-36)/2=32.
     assert_eq!(
         s.rects[0],
         RectI {
@@ -115,7 +111,6 @@ fn grow_distributes_leftover_with_remainder_to_first() {
         }"#,
         (200, 100),
     );
-    // leftover 103: floor shares 34 + 68 = 102, remainder 1 → first grower.
     assert_eq!(s.rects[1].w, 35);
     assert_eq!(s.rects[2].w, 68);
     assert_eq!(s.rects[1].w + s.rects[2].w, 103, "shares sum exactly");
@@ -137,11 +132,9 @@ fn justify_and_align_position_children() {
         }"#,
         (100, 40),
     );
-    // 100 - 30 = 70 leftover over 2 gaps = 35 each.
     assert_eq!(s.rects[1].x, 0);
     assert_eq!(s.rects[2].x, 45);
     assert_eq!(s.rects[3].x, 90);
-    // align center in 40 → y = 15.
     assert!(s.rects[1..].iter().all(|r| r.y == 15));
 }
 
@@ -208,7 +201,6 @@ fn abs_children_leave_the_flow() {
             h: 10
         }
     );
-    // abs against the padded rect; takes no flow space.
     assert_eq!(
         s.rects[2],
         RectI {
@@ -220,9 +212,6 @@ fn abs_children_leave_the_flow() {
     );
 }
 
-/// A bound abs position must MOVE the widget (the anvil's augment slot
-/// follows the inserted tool), and the authored abs must stay the resting
-/// place when nothing is published — per axis.
 #[test]
 fn bound_abs_position_overrides_the_authored_one_per_axis() {
     let json = r#"{
@@ -243,23 +232,14 @@ fn bound_abs_position_overrides_the_authored_one_per_axis() {
         let tree = InstTree::expand(&doc, &state);
         solve(&tree, &MockEnv, (100, 100), &|_| 0)
     };
-    // Nothing published: the authored resting place.
     let s = solve_with(&[]);
     assert_eq!((s.rects[1].x, s.rects[1].y), (5, 7));
-    // Both axes bound: the published position wins.
     let s = solve_with(&[("px", 40), ("py", 60)]);
     assert_eq!((s.rects[1].x, s.rects[1].y), (40, 60));
-    // One axis bound: the other keeps its authored value.
     let s = solve_with(&[("py", 33)]);
     assert_eq!((s.rects[1].x, s.rects[1].y), (5, 33));
 }
 
-/// A bound `min_w` lets host-drawn content the layout engine cannot measure
-/// reserve its own room: the box widens and its ANCESTOR grows around it (the
-/// recipe tooltip widening for a long ingredient strip). It may only ever
-/// raise the authored floor, and — the half that is easy to lose — the room
-/// must survive the shrink pass, or a parent under pressure takes it straight
-/// back and the host's content is clipped again.
 #[test]
 fn a_bound_min_w_grows_the_parent_and_never_shrinks_below_the_authored_floor() {
     let json = r#"{
@@ -285,17 +265,11 @@ fn a_bound_min_w_grows_the_parent_and_never_shrinks_below_the_authored_floor() {
         (s.rects[1].w, s.rects[2].w)
     };
 
-    // Nothing published yet (the first frame): the authored floor stands.
     assert_eq!(width_with(None), (40, 40));
-    // A wider strip grows the hook AND the panel around it.
     assert_eq!(width_with(Some(120)), (120, 120));
-    // A narrower one is ignored — the author's minimum is a promise.
     assert_eq!(width_with(Some(10)), (40, 40));
 }
 
-/// `overlay: true` raises a subtree's PAINT tier without the tooltip tier's
-/// hit exclusion — the anvil's augment slot must draw above the host's
-/// enlarged tool view AND still take the click.
 #[test]
 fn an_overlay_node_is_raised_but_still_hit_testable() {
     let (s, _) = solve_doc(
@@ -372,13 +346,9 @@ fn scroll_shifts_clips_and_reports_content() {
     let state = UiState::new();
     let tree = InstTree::expand(&doc, &state);
     let solved = solve(&tree, &MockEnv, (50, 30), &|_| 8);
-    // Content: 3×10 + 2×2 = 34 tall > 30 viewport, so the children
-    // stretch to the width MINUS the reserved scrollbar lane (50 − 8).
     assert_eq!(solved.scroll_content[0], Some((42, 34)));
     assert_eq!(solved.rects[1].w, 42, "rows reserve the scrollbar lane");
-    // Offset 8 shifts children up by 8; root anchors at 0,0 (fills).
     assert_eq!(solved.rects[1].y, solved.rects[0].y - 8);
-    // Children carry the scroll clip; scrolled-away rows can't hit.
     let clip = solved.clips[1].expect("scroll children are clipped");
     assert_eq!(
         clip,
@@ -398,9 +368,6 @@ fn scroll_shifts_clips_and_reports_content() {
 
 #[test]
 fn grow_children_shrink_before_anything_overflows() {
-    // Column 60 tall holding: label(9) + grow scroll (natural 3×10+4=34,
-    // min_h 12) + button(20). Natural total 63 > 60: the scroll gives
-    // back the 3px deficit and everything fits.
     let (s, _) = solve_doc(
         r#"{
             "format": 1, "kind": "petramond:x", "class": "screen",
@@ -467,8 +434,6 @@ fn two_growers_shrink_by_weight() {
         }"#,
         (200, 100),
     );
-    // Zero naturals grow to 23/47 (70 split 1:2)… growers first expand to
-    // fill, so no shrink here; assert the pair still tiles exactly.
     assert_eq!(s.rects[1].w + s.rects[2].w, 70);
 }
 
@@ -488,7 +453,6 @@ fn fitting_scroll_content_reserves_no_scrollbar_lane() {
     let state = UiState::new();
     let tree = InstTree::expand(&doc, &state);
     let solved = solve(&tree, &MockEnv, (50, 40), &|_| 0);
-    // 2×10 + 2 = 22 fits in 40: no bar, children get the full width.
     assert_eq!(solved.rects[1].w, 50);
 }
 
@@ -546,14 +510,10 @@ fn wrapping_label_uses_column_width_hint() {
         }"#,
         (200, 100),
     );
-    // 12 chars × 6 = 72 > avail 60 → 10 chars/line → 2 lines × 9.
     assert_eq!(s.rects[1].h, 18);
     assert_eq!(s.rects[1].w, 60);
 }
 
-/// A wrapping label beside a button in a row wraps at the width the row
-/// gives it, and the row is as tall as the wrapped lines: what follows the
-/// row starts below them, never over them.
 #[test]
 fn a_wrapping_label_in_a_row_makes_the_row_as_tall_as_its_lines() {
     let (s, _) = solve_doc(
@@ -572,7 +532,6 @@ fn a_wrapping_label_in_a_row_makes_the_row_as_tall_as_its_lines() {
         (200, 100),
     );
     let (row, label, button, under) = (s.rects[1], s.rects[2], s.rects[3], s.rects[4]);
-    // The button keeps 20; the label's 80 px hold 13 chars a line: 2 lines.
     assert_eq!((button.w, label.w), (20, 80));
     assert_eq!(row.h, 20, "the button is the taller: {row:?}");
     assert!(under.y >= row.y + row.h, "{under:?} overlaps {row:?}");
@@ -593,7 +552,6 @@ fn a_wrapping_label_in_a_row_makes_the_row_as_tall_as_its_lines() {
         (200, 100),
     );
     let (row, label, under) = (s.rects[1], s.rects[2], s.rects[4]);
-    // 40 px hold 6 chars a line: 28 chars are 5 lines × 9.
     assert_eq!(label.w, 40);
     assert_eq!(row.h, 45, "{row:?}");
     assert!(under.y >= row.y + row.h, "{under:?} overlaps {row:?}");
@@ -613,7 +571,6 @@ fn slot_grid_natural_size_and_row_major_cells() {
     let g = s.rects[1];
     assert_eq!((g.w, g.h), (162, 54));
     let m = MockEnv.slot_metrics();
-    // Row-major: cell 9 (second row, first column).
     assert_eq!(
         grid_cell(g, 9, 0, m),
         RectI {
@@ -726,8 +683,6 @@ const GRID_DOC: &str = r#"{
 
 #[test]
 fn grid_list_splits_columns_exactly_and_wraps_row_major() {
-    // 100 wide, 4 columns, 2px gaps: 94 of content over 4 columns is 23 each
-    // with 2 left over, which goes +1 to the LEADING columns.
     let s = solve_rows(GRID_DOC, (200, 200), 6);
     let cells = &s.rects[2..];
     assert_eq!(cells.len(), 6);
@@ -742,7 +697,6 @@ fn grid_list_splits_columns_exactly_and_wraps_row_major() {
         "the grid fills its content width with no drift"
     );
 
-    // Row 2 starts under row 1 at the uniform cell height + gap.
     assert_eq!(cells[4].y - cells[0].y, 18);
     assert_eq!(cells[4].x, cells[0].x, "row-major wrap returns to column 0");
     assert_eq!(cells[5].x, cells[1].x);
@@ -789,7 +743,6 @@ fn tooltips_leave_the_flow_at_natural_size_and_unclipped() {
     );
     assert_eq!((tip.w, tip.h), (60, 20), "tooltip arranges at its own size");
 
-    // The scroll clips its flow children but never the floating tooltip.
     assert!(s.clips[1].is_some() && s.clips[4].is_some());
     assert_eq!(s.clips[2], None);
     assert_eq!(s.clips[3], None, "the clip exemption covers the subtree");
@@ -798,10 +751,6 @@ fn tooltips_leave_the_flow_at_natural_size_and_unclipped() {
     assert!(s.overlay[2] && s.overlay[3], "the whole subtree is overlay");
 }
 
-/// A wrapping label inside a max-bounded AUTO container (a tooltip) breaks at
-/// the CAP, not at the incoming hint: the natural width can never exceed
-/// `max_w`, so measuring single-line against the parent hint and then
-/// ellipsizing into the clamped box would hide text the cap had room to show.
 #[test]
 fn a_wrap_label_inside_a_max_bounded_tooltip_wraps_at_the_cap() {
     let (s, _) = solve_doc(
@@ -818,13 +767,10 @@ fn a_wrap_label_inside_a_max_bounded_tooltip_wraps_at_the_cap() {
         }"#,
         (500, 500),
     );
-    // 30 chars × 6 = 180 single-line; capped at 60 → 10 chars/line → 3 lines.
     let tip = s.rects[1];
     assert_eq!(tip.w, 60, "natural width clamps to max_w");
     assert_eq!(tip.h, 3 * 9, "the label wraps at the cap");
 
-    // A short text still shrinks the tooltip to its content — the cap only
-    // ever bounds, it never pads.
     let (s, _) = solve_doc(
         r#"{
             "format": 1, "kind": "petramond:x", "class": "container",
@@ -841,10 +787,6 @@ fn a_wrap_label_inside_a_max_bounded_tooltip_wraps_at_the_cap() {
     assert_eq!((s.rects[1].w, s.rects[1].h), (5 * 6, 9));
 }
 
-/// The mods-list row: an icon, a text column, a spacer, and a toggle. Whatever
-/// a pack author writes in `desc` must not be able to shove the toggle off the
-/// panel — the player could not click it, and the label would paint across the
-/// screen. Bound text ellipsizes; that is what makes it the shock absorber.
 #[test]
 fn bound_text_gives_back_width_before_a_row_pushes_its_widgets_out() {
     let json = r#"{
@@ -881,9 +823,6 @@ fn bound_text_gives_back_width_before_a_row_pushes_its_widgets_out() {
         row.x,
         row.x + row.w
     );
-    // The cut reaches the labels themselves, not just the column around them:
-    // a column that shrank while its text kept its natural width would paint
-    // straight through the panel edge.
     for (i, id) in [(3u32, "name"), (4, "desc")] {
         let label = s.rects[i as usize];
         assert!(
@@ -895,9 +834,6 @@ fn bound_text_gives_back_width_before_a_row_pushes_its_widgets_out() {
     }
 }
 
-/// Authored text is a decision the layout owes the author: a caption that no
-/// longer fits is an authoring bug to fix in the document, not something to
-/// silently ellipsize. Only DATA shrinks.
 #[test]
 fn authored_text_keeps_its_width_while_bound_text_beside_it_shrinks() {
     let json = r#"{
@@ -920,11 +856,6 @@ fn authored_text_keeps_its_width_while_bound_text_beside_it_shrinks() {
     );
 }
 
-/// The options-screen shape: a panel inside a full-screen backdrop frame. The
-/// panel is AUTO-sized, so nothing forces it to notice a short viewport — and
-/// its Back button slides off the bottom of the screen, where no click can
-/// reach it. It has a `grow` scroll inside, which is the thing that should
-/// give; the panel has to pass the cut down to it.
 #[test]
 fn an_auto_panel_gives_height_back_through_the_grower_inside_it() {
     let (s, _) = solve_doc(
@@ -949,8 +880,6 @@ fn an_auto_panel_gives_height_back_through_the_grower_inside_it() {
         }"#,
         (80, 60),
     );
-    // Natural panel: label 9 + 2 + list 40 + 2 + button 20 = 73 in a 60 box.
-    // Arena order: 0 screen, 1 panel, 2 label, 3 scroll, 4..=7 cells, 8 button.
     let (screen, panel, back) = (s.rects[0], s.rects[1], s.rects[8]);
     assert_eq!(panel.h, 60, "the panel took the viewport's height, not 73");
     assert!(
@@ -964,8 +893,6 @@ fn an_auto_panel_gives_height_back_through_the_grower_inside_it() {
     assert_eq!(s.rects[3].h, 27, "the scroll inside absorbed the whole cut");
 }
 
-/// The cut stops at a `Px` size: an author who wrote a number meant it, and
-/// silently squashing it would hide the layout bug instead of showing it.
 #[test]
 fn a_fixed_size_panel_never_gives_height_back() {
     let (s, _) = solve_doc(

@@ -11,11 +11,6 @@ const SURFACE_WINDOW_ABOVE: i32 = 1;
 const HORIZONTAL_KEEP_SLACK: i32 = 2;
 
 impl<S: WorldSide> World<S> {
-    /// Whether `cp` is wanted under ANY current anchor. The multi-anchor form
-    /// of `last_load_target + column_wanted`, used wherever "is this column
-    /// coming?" must hold for every player (the sim guard's in-flight
-    /// classification, keep checks). Identical to the single check while
-    /// `extra_load_targets` is empty.
     pub(in crate::world) fn column_wanted_by_any_target(&self, cp: ChunkPos) -> bool {
         self.data
             .last_load_target
@@ -27,11 +22,6 @@ impl<S: WorldSide> World<S> {
                 .any(|t| Self::column_wanted(*t, cp))
     }
 
-    /// Whether `target`'s anchor sits below its own column's surface band — the
-    /// caving case where the surface-first scheduling bias must stay off (see
-    /// [`LoadTarget::surface_biased_section_key`]). An anchor whose column data
-    /// hasn't landed yet counts as above ground: the bias only reorders work,
-    /// and the anchor's own column is always the nearest-first column job.
     pub(in crate::world) fn anchor_underground(&self, target: LoadTarget) -> bool {
         let band_lo = self
             .column_gen(target.center)
@@ -40,9 +30,6 @@ impl<S: WorldSide> World<S> {
         band_lo.is_some_and(|lo| target.center_cy < lo)
     }
 
-    /// The vertical section-`cy` window around the player, clamped to the world range.
-    /// `slack` widens it (used by unload for hysteresis so a section doesn't thrash on
-    /// the boundary).
     pub(in crate::world) fn vertical_window(
         center_cy: i32,
         slack: i32,
@@ -52,9 +39,6 @@ impl<S: WorldSide> World<S> {
         (center_cy - r).max(SECTION_MIN_CY)..=(center_cy + r).min(SECTION_MAX_CY)
     }
 
-    /// A surface/content retention band for a generated column. This is intentionally
-    /// independent from the player's current section: spectator flight far above the
-    /// world should not evict the terrain stack underneath a still-visible column.
     pub(in crate::world) fn surface_window_for_column(
         col: &ColumnGen,
         slack: i32,
@@ -67,9 +51,6 @@ impl<S: WorldSide> World<S> {
         lo.max(SECTION_MIN_CY)..=hi.min(SECTION_MAX_CY)
     }
 
-    /// Player-centred vertical window plus the column's surface/content band.
-    /// UNORDERED (duplicates removed in-place): every consumer re-orders by its own
-    /// submission priority key, so sorting here was pure per-column waste.
     pub(super) fn wanted_section_cys(col: &ColumnGen, center_cy: i32, slack: i32) -> Vec<i32> {
         let mut out: Vec<i32> = Self::vertical_window(center_cy, slack).collect();
         for cy in Self::surface_window_for_column(col, slack) {
@@ -110,26 +91,16 @@ impl<S: WorldSide> World<S> {
         dx * dx + dz * dz <= radius * radius
     }
 
-    /// `pub(in crate::world)` for the sim guard: an absent column that is wanted under the
-    /// current target counts as in-flight, not as never-coming.
     pub(in crate::world) fn column_wanted(target: LoadTarget, pos: ChunkPos) -> bool {
         Self::column_in_shape(target, pos, 0)
     }
 
-    /// `pub(in crate::world)` for the per-connection terrain sender: its client-side
-    /// unload mirrors the streamer's own keep hysteresis.
     pub(in crate::world) fn column_kept(target: LoadTarget, pos: ChunkPos) -> bool {
         let (dx, dz, r) = Self::column_shape_key(target, pos);
         let keep = r + HORIZONTAL_KEEP_SLACK;
         dx * dx + dz * dz <= keep * keep
     }
 
-    /// Whether `sp` can be left ungenerated: it sits entirely above its column's content
-    /// (provably all-air sky) AND the save holds no player edit there. Absent sky sections
-    /// read as air with full skylight, and building into the sky materializes the section
-    /// on write — so skipping them costs the common case nothing while still streaming any
-    /// sky structure the player saved. Halving the loaded section count this way cuts gen,
-    /// meshing, AND lighting, since each scales with the number of loaded sections.
     pub(super) fn skip_empty_sky_section(&self, sp: SectionPos, content_top: i32) -> bool {
         (sp.cy * SECTION_SIZE as i32) > content_top && !self.data.saved.authoritative_contains(sp)
     }

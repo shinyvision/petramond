@@ -58,13 +58,6 @@ fn targeted_chat_reaches_only_listed_sessions() {
     );
 }
 
-/// The body-claim chain a mod's tick system drives, end to end through the
-/// server: a claim published for one session reaches that session's movement,
-/// releasing it puts the body back, and neither touches anybody else.
-///
-/// The engine owes the CHAIN — roster publish, the addressed write, the fold,
-/// the speed the movement code reads. What a pack decides to claim, and when,
-/// is the pack's business and is tested there.
 #[test]
 fn a_published_body_claim_reaches_the_addressed_sessions_movement() {
     use crate::player::MOVE_SCALE_DEFAULT;
@@ -88,7 +81,6 @@ fn a_published_body_claim_reaches_the_addressed_sessions_movement() {
         "a claim on one body must not reach another"
     );
 
-    // The claim is what the movement integrator reads, not a parallel flag.
     let walk = crate::player::Input {
         wishdir: petramond_math::math::Vec3::new(1.0, 0.0, 0.0),
         jump: false,
@@ -98,18 +90,10 @@ fn a_published_body_claim_reaches_the_addressed_sessions_movement() {
     let full = server.sessions[0].player.wish_speed(walk);
     assert_eq!(server.sessions[s].player.wish_speed(walk), full * 0.25);
 
-    // ...and releasing puts the body back, which is what makes an unloaded or
-    // silent mod self-healing rather than a permanent slow.
     server.sessions[s].player.claims.clear();
     assert_eq!(server.sessions[s].player.wish_speed(walk), full);
 }
 
-/// A raised guard is a mod's business, but the ACTOR CONTEXT it reads is the
-/// engine's: a `player_damage_pre` handler must see the victim's own live
-/// intents, and a cancel must stop the hit AND the knockback that rides on it.
-///
-/// The pre-damage dispatch's own regression test (`server::health`) pins the
-/// naming; this pins what a handler can DO with it.
 #[test]
 fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
     use crate::events::{tick::TickEvents, DamageSource, Outcome};
@@ -119,8 +103,6 @@ fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
     server.sessions[0].input.intent_use_held = true;
     server.publish_player_inputs();
 
-    // The handler cancels on a session-side intent — the class of predicate
-    // that silently answered its default before the dispatch named its victim.
     server
         .mods
         .bus_mut()
@@ -164,20 +146,11 @@ fn a_cancelled_pre_damage_applies_neither_damage_nor_its_knockback() {
         "a cancelled hit must not knock the body back either"
     );
 
-    // Release the intent and the same strike lands — non-vacuous.
     server.sessions[0].input.intent_use_held = false;
     assert!(hit(&mut server), "an unguarded strike must land");
     assert_eq!(server.sessions[0].player.health(), 16);
 }
 
-/// A mod cue (`EmitEventTo`) rides the recipient's own batch, and ONLY that
-/// recipient's: it is the one lane a pack can address a single player's client
-/// through, so misdelivering it would present another player's shield taking a
-/// hit on your screen — with nothing anywhere to say so.
-///
-/// It is also the one NON-lossy field of `SelfEvents`. Every other one-shot
-/// there is a latch the newest write wins; a pack's cues are a queue, and two
-/// in one replication window must both arrive, in order.
 #[test]
 fn a_mod_cue_reaches_only_the_session_it_names_and_never_coalesces() {
     use crate::events::{tick::TickEvents, ClientEvent};
@@ -218,17 +191,6 @@ fn a_mod_cue_reaches_only_the_session_it_names_and_never_coalesces() {
     );
 }
 
-/// A mod-denied body cannot punch or mine, and the engine enforces it at BOTH
-/// gates — the button and the timer.
-///
-/// It is the chain the engine owes: the claim lands on the body, the per-tick
-/// stages read it, and a denied press leaves no trace. What a pack denies, and
-/// when, is the pack's business and is tested there.
-///
-/// The two failure modes worth pinning: a denied attack press that QUEUES
-/// instead of being spent (releasing the claim would then fire a stored punch),
-/// and a denied mine that merely pauses (the crack would resume mid-block on a
-/// cell the player has long stopped looking at).
 #[test]
 fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     use crate::events::tick::TickEvents;
@@ -239,7 +201,6 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
     let mut server = crate::server::session_build::build_server_inline("", 1, 2);
     server.sessions[0].input.intent_gameplay = true;
 
-    // A solid cell right under the player's feet, targeted and being mined.
     let feet = server.sessions[0].player.pos;
     let cell = IVec3::new(
         feet.x.floor() as i32,
@@ -273,9 +234,6 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
         "a denied mine RESETS the timer, it does not pause it"
     );
 
-    // The attack half. Look at NOTHING first: a click on a block is mining,
-    // and never swings whatever the claim says — asserting "no swing" with a
-    // cell under the crosshair passes for the wrong reason.
     server.sessions[0].input.look = None;
     server.sessions[0].input.latch_attack(Default::default());
     server.tick_attack(0, &mut events);
@@ -292,7 +250,6 @@ fn a_denied_body_cannot_swing_or_run_its_mining_timer() {
         "and the denied press was SPENT, not stored for the release"
     );
 
-    // Non-vacuous: the same press on a released body swings.
     server.sessions[0].input.latch_attack(Default::default());
     server.tick_attack(0, &mut events);
     assert!(events.player_at(0).swung_hand);
@@ -361,9 +318,6 @@ fn a_mob_holding_a_chest_open_lifts_its_lid_until_it_lets_go_or_leaves() {
     );
 }
 
-/// Every dispatch names its actor explicitly: a death's post handlers act for
-/// the player who died (not session 0), and a tick system acts for nobody
-/// while still reaching every connected session by id.
 #[test]
 fn post_handlers_act_for_the_events_player_and_systems_for_nobody() {
     use crate::events::tick::TickEvents;
@@ -401,7 +355,6 @@ fn post_handlers_act_for_the_events_player_and_systems_for_nobody() {
     let mut events = TickEvents::default();
     let health = server.sessions[second].player.health();
     server.damage_player(second, health, DamageSource::Fall, None, &mut events);
-    // The tick drains the queued death first, then opens the Mining stage.
     server.game_tick_step(&mut events);
 
     assert_eq!(

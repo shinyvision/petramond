@@ -1,12 +1,5 @@
-//! Cross and crop plants: two diagonal planes, drawn by the plant emitter.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// The cross billboard plant (grass/fern/flower). No collision; its item is a
-/// flat sprite of the top tile.
 pub struct CrossFamily;
 
 impl ShapeSim for CrossFamily {
@@ -29,7 +22,6 @@ impl ShapeRender for CrossFamily {
     }
 }
 
-/// The planted-crop lattice — like [`CrossFamily`] for item purposes.
 pub struct CropFamily;
 
 impl ShapeSim for CropFamily {

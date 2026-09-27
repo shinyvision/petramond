@@ -18,16 +18,12 @@ fn inventory_toggle_is_edge_triggered() {
 #[test]
 fn drop_item_is_edge_triggered() {
     let mut input = InputController::default();
-    // One event per press.
     assert_eq!(
         input.set_control(Control::DropItem, true),
         Some(ControlEvent::DropItem)
     );
-    // Holding Q does not repeat the drop.
     assert_eq!(input.set_control(Control::DropItem, true), None);
     assert_eq!(input.set_control(Control::DropItem, false), None);
-    // Next press fires again. Whole-stack vs single is contextual App
-    // policy, no longer encoded in the event.
     assert_eq!(
         input.set_control(Control::DropItem, true),
         Some(ControlEvent::DropItem)

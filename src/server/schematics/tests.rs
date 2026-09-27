@@ -43,7 +43,6 @@ fn server() -> ServerGame {
     server
 }
 
-/// Run ticks of the sharing lane until `done` sees what it waits for.
 fn pump_until(server: &mut ServerGame, mut done: impl FnMut(&mut ServerGame) -> bool) {
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     while !done(server) {
@@ -79,7 +78,6 @@ fn a_choice_uploads_what_the_world_lacks_then_reports_it() {
 
     let bytes = archive_bytes();
     let id = digest(&bytes);
-    // An answer to a choice nobody opened is ignored.
     server.apply_schematic_request(
         0,
         SchematicRequest::Chosen {

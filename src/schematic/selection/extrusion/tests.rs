@@ -53,7 +53,7 @@ fn connected_face_preserves_holes_and_leaves_other_islands_alone() {
     let mut s = Selection::default();
     s.region([0, 0, 0], [4, 1, 4], false).unwrap();
     s.region([1, 0, 1], [3, 1, 3], true).unwrap();
-    s.region([5, 0, 5], [6, 1, 6], false).unwrap(); // Corner contact is not an edge.
+    s.region([5, 0, 5], [6, 1, 6], false).unwrap();
     let original = cells(&s);
     let surface = s.surface();
     let (face, distance) = surface

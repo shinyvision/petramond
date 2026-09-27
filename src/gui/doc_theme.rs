@@ -1,16 +1,3 @@
-//! The GUI theme loader: `assets/ui/theme/theme.json` + its images, through
-//! the asset layering. Every layer's copy joins the theme STACK (base first,
-//! packs above it): a pack adds or replaces parts by key on its own atlas
-//! page, adds palette entries and metrics, and may bring a font — so several
-//! packs can each add chrome without replacing the kit (see
-//! [`petramond_ui::Theme::load_stack`]).
-//!
-//! Until the shipped kit exists (or when it fails to parse) the synthesized
-//! placeholder theme renders instead — a GUI with programmer-art chrome beats
-//! a panic or a blank screen, and the loud magenta missing-part color makes
-//! gaps obvious. A broken pack layer is reported and the stack loads without
-//! the pack layers rather than losing the base kit.
-
 use petramond_ui::{Theme, ThemeLayer};
 use std::sync::{Arc, Mutex};
 
@@ -22,20 +9,15 @@ pub fn theme() -> Arc<Theme> {
     THEME.lock().unwrap().get_or_insert_with(load).clone()
 }
 
-/// Re-read the theme after the installed pack set changes.
 pub fn reload() {
     *THEME.lock().unwrap() = None;
 }
 
-/// The theme's UI font: what text surfaces outside documents (chat, mod
-/// canvases) measure and paint with, so they match document text. There is
-/// no process-global font — every measurement names the font it uses.
 pub fn ui_font() -> Arc<petramond_ui::text::Font> {
     theme().ui_font().clone()
 }
 
 fn load() -> Arc<Theme> {
-    // read_layers returns base first, packs after: exactly stack order.
     let layers = petramond_world::assets::read_layers(THEME_JSON);
     if layers.is_empty() {
         return Arc::new(Theme::placeholder());

@@ -8,8 +8,6 @@ fn base() -> String {
     text
 }
 
-/// The shipped `assets/mobs.json` must load fully — the same gate the game
-/// applies at startup, surfaced as a test so a bad edit fails CI, not a launch.
 #[test]
 fn shipped_mobs_json_loads_fully() {
     let defs = parse_layers(&[&base()])
@@ -106,13 +104,6 @@ fn pack_layer_overrides_rows_by_mob() {
     assert_eq!(owl.brain.len(), 1);
 }
 
-/// A pack layer's `brain_extensions` row appends nodes to a FOREIGN mob's
-/// brain without owning or restating the row (a scripted namespaced node key
-/// resolves like any brain row's, and may declare scripted `inputs`).
-/// Extensions are cross-pack injections, so their failure policy is
-/// DEGRADATION: an unloaded target or a factory-rejected node skips that one
-/// extension (with a warning naming the source layer) — it never fails the
-/// catalog, and it never touches the target row's own brain.
 #[test]
 fn brain_extensions_apply_as_a_side_table_and_bad_ones_degrade() {
     let layer = r#"{"mobs": [], "brain_extensions": [
@@ -179,8 +170,6 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
         "an empty spawn rule = programmatic-spawn-only"
     );
 
-    // The data brain WORKS: chase overrides wander toward a nearby player, and
-    // melee emits an attack intent in reach — driven through the real Brain.
     let mut brain = super::super::build_brain(z);
     let world = {
         use petramond_world::block::Block;
@@ -197,13 +186,13 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     };
     let mut rng = super::super::MobRng::new(1);
     let mob_pos = WorldPos::new(2.5, 64.0, 2.5);
-    let player = WorldPos::new(3.7, 64.9, 2.5); // 1.2 blocks away: chase + melee range
+    let player = WorldPos::new(3.7, 64.9, 2.5);
     let players = [crate::mob::PlayerAnchor {
         pos: player,
         ..Default::default()
     }];
     let mut ctx = crate::mob::behavior::test_support::ctx_at(&world, &mut rng, mob_pos);
-    ctx.yaw = -std::f32::consts::FRAC_PI_2; // facing +X, toward the player
+    ctx.yaw = -std::f32::consts::FRAC_PI_2;
     ctx.head_height = z.size.height;
     ctx.half_width = z.size.half_width;
     ctx.player_pos = player;
@@ -218,9 +207,6 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
         decision.target.is_some(),
         "the engaged chase publishes its lock"
     );
-    // Melee strikes the PREVIOUS tick's latched lock (the instance feeds
-    // the merged target back as next tick's `AiCtx::target`), so the
-    // strike lands on the second decide.
     ctx.players = &players;
     ctx.target = decision.target;
     let attack = brain
@@ -429,9 +415,7 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
         .map(|_| ())
         .expect_err("unknown node refused");
     assert!(err.contains("unknown AI node 'levitate'"), "{err}");
-    // A namespaced key resolves to the scripted WASM node and loads.
     parse_layers(&[&base(), &row("mymod:levitate")]).expect("scripted node key loads");
-    // Params on a params-less node are refused too (typos never load).
     let bad = r#"{"mobs": [{
             "mob": "mymod:thing", "key": "mymod:thing", "model": "models/owl.bbmodel",
             "scale": 0.25, "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0},
@@ -452,7 +436,6 @@ fn unknown_and_reserved_brain_nodes_are_load_errors() {
 
 #[test]
 fn bare_additions_and_bad_references_are_rejected() {
-    // A NEW bare mob name is refused at name-table build.
     let bare = r#"{"mobs": [{"mob": "zombling", "key": "zombling", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
@@ -467,7 +450,6 @@ fn bare_additions_and_bad_references_are_rejected() {
         "{err}"
     );
 
-    // An unknown biome name in a spawn rule is a load error.
     let bad_biome = r#"{"mobs": [{"mob": "mymod:z", "key": "mymod:z", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
@@ -480,7 +462,6 @@ fn bare_additions_and_bad_references_are_rejected() {
         .expect_err("unknown biome refused");
     assert!(err.contains("atlantis"), "{err}");
 
-    // An unknown cohesion companion is a load error.
     let bad_companion = r#"{"mobs": [{"mob": "mymod:z", "key": "mymod:z", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
@@ -496,7 +477,6 @@ fn bare_additions_and_bad_references_are_rejected() {
 
 #[test]
 fn loader_rejects_incomplete_tables_and_duplicate_keys() {
-    // A single engine row is not a full table.
     let (owl_only, _) = {
         let full: serde_json::Value = serde_json::from_str(&base()).unwrap();
         let owl = full["mobs"][0].clone();
@@ -507,7 +487,6 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
         .expect_err("partial tables refused");
     assert!(err.contains("missing row"), "{err}");
 
-    // Two DIFFERENT mobs sharing one key: rejected (loot resolves by key).
     let clash = r#"{"mobs": [{"mob": "mymod:z", "key": "petramond:owl", "model": "m", "scale": 1.0,
             "size": {"half_width": 0.3, "height": 1.0}, "tags": {"petramond:health": 4.0}, "walk_speed": 2.0,
             "jump_speed": 7.2, "turn_rate": 6.0, "walk_anim_rate": 1.0, "category": "passive",
@@ -520,12 +499,6 @@ fn loader_rejects_incomplete_tables_and_duplicate_keys() {
     assert!(err.contains("duplicate key"), "{err}");
 }
 
-/// End-to-end dynamic mob registration through a REAL pack: the namespaced
-/// species registers, spawns, distance-despawns per its hostile category, and
-/// pins into the save palette by name (with unknown disk names skipped).
-///
-/// The pack loads into a content registry of the test's own, pinned on this
-/// thread — the process registry and every other test never see it.
 #[test]
 fn dynamic_pack_mob_flows_end_to_end() {
     let root = petramond_util::test_dirs::TestScratchDir::new("mobpack");
@@ -536,8 +509,6 @@ fn dynamic_pack_mob_flows_end_to_end() {
         r#"{ "name": "Test Mob", "id": "testmob", "description": "dynamic mob fixture" }"#,
     )
     .unwrap();
-    // A hostile chaser reusing the engine owl model through the overlay
-    // fallback; empty spawn rule = programmatic spawns only.
     std::fs::write(
         pack.join("mobs.json"),
         r#"{"mobs": [{
@@ -564,13 +535,11 @@ fn dynamic_pack_mob_flows_end_to_end() {
     crate::modding::tests::with_fixture_content(&root, || dynamic_pack_mob_inner(&save));
 }
 
-/// The assertions, against the fixture registry pinned above.
 fn dynamic_pack_mob_inner(save: &std::path::Path) {
     use super::super::{def, defs, Mob, Mobs};
     use crate::world::ServerWorld;
 
     let engine = ENGINE_MOB_NAMES.len();
-    // --- Registration: one fresh id past the engine set, name-addressed. ---
     assert_eq!(defs().len(), engine + 1);
     let z = Mob(engine as u8);
     assert_eq!(def(z).name, "testmob:zombling");
@@ -579,15 +548,13 @@ fn dynamic_pack_mob_inner(save: &std::path::Path) {
         serde_json::Value::String("testmob:zombling".into())
     );
 
-    // --- Spawnable programmatically; the data brain builds on spawn. ---
     let world = ServerWorld::new(0, 1);
     let mut mobs = Mobs::new(0);
     let home = WorldPos::new(8.0, 64.0, 8.0);
     assert!(mobs.spawn(z, home, 0.0));
 
-    // --- Hostile despawn contract: culled on the first far tick. ---
     let near = home + Vec3::new(4.0, 0.0, 0.0);
-    let far = home + Vec3::new(500.0, 0.0, 0.0); // way past the despawn radius
+    let far = home + Vec3::new(500.0, 0.0, 0.0);
     for _ in 0..40 {
         mobs.tick(
             0.05,
@@ -614,10 +581,7 @@ fn dynamic_pack_mob_inner(save: &std::path::Path) {
         "a far player culls the hostile mob immediately"
     );
 
-    // --- Save palette: the namespaced mob pins by name; strangers skip. ---
     std::fs::create_dir_all(save).unwrap();
-    // An "old" palette with a stranger between the engine mobs and ours, so
-    // disk ids and runtime ids genuinely diverge.
     let blocks: Vec<&str> = petramond_world::block::ENGINE_BLOCK_NAMES.to_vec();
     let items: Vec<&str> = petramond_world::item::ENGINE_ITEM_NAMES.to_vec();
     std::fs::write(
@@ -662,13 +626,6 @@ fn dynamic_pack_mob_inner(save: &std::path::Path) {
     );
 }
 
-/// Per-biome spawn chances resolve aligned with the biome list (unlisted
-/// biomes stay at full chance, unlisted-in-`biomes` and out-of-range values
-/// are load errors), and `chance_in` answers 0 outside the rule entirely.
-/// A wander `avoid_ground` tag list resolves through the block-tag registry
-/// (the shipped sheep row references `petramond:rock`); an unknown tag
-/// resolves to NOTHING rather than erroring — cross-pack semantics, the tag
-/// may belong to a pack that isn't loaded.
 #[test]
 fn wander_avoid_ground_resolves_tags_and_forgives_unknown_ones() {
     let defs = parse_layers(&[&base()]).expect("base loads").defs;
@@ -743,9 +700,6 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
     .expect_err("a zero chance fails (drop the biome instead)");
     assert!(zeroed.contains("(0, 1]"), "{zeroed}");
 
-    // The species-wide chance MULTIPLIES into every biome's own: the two
-    // knobs are climate rarity and species rarity, and one must never
-    // silently replace the other.
     let text = owl_with(|row| {
         row["spawn"]["chance"] = serde_json::json!(0.25);
         row["spawn"]["chances"] = serde_json::json!({"redwood_forest": 0.5});

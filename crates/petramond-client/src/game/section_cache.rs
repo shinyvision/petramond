@@ -1,15 +1,3 @@
-//! The client-side section cache: replica sections
-//! evicted by the server's keep-shape unloads, parked under the SERVER-DOMAIN
-//! content hash the unload vouched, and re-promoted by
-//! [`SectionCached`](petramond::net::protocol::ServerToClient::SectionCached)
-//! without re-streaming or re-decoding the payload.
-//!
-//! The cache is IN-MEMORY ONLY. Cached blocks are CLIENT-LOCAL ids (the
-//! transport remapped them on ingest), so entries are meaningful exactly as
-//! long as this process interprets those ids the same way — [`Self::
-//! adopt_session`] guards that boundary across sessions and NOTHING here may
-//! ever be persisted.
-
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -18,11 +6,6 @@ use petramond::net::protocol::{NameTables, SectionCacheClaim, SECTION_CACHE_CAP}
 use petramond_world::chunk::SectionPos;
 use petramond_world::section::Section;
 
-/// Fingerprint of a remote session's block-id vocabulary: the server's block
-/// name table (wire-id order) plus this client's own — together they define
-/// what every cached client-local block id means. Only blocks matter here:
-/// sections carry block ids (block buffer, slab layers) while every other
-/// payload field is index- or name-addressed.
 pub fn section_cache_registry_key(tables: &NameTables) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
@@ -35,29 +18,18 @@ pub fn section_cache_registry_key(tables: &NameTables) -> u64 {
 
 struct CachedSection {
     section: Arc<Section>,
-    /// The server-domain content hash vouched at unload — echoed in
-    /// [`SectionCacheClaim`]s and checked against `SectionCached::hash`.
     hash: u64,
-    /// Insertion stamp for oldest-first eviction (see `SECTION_CACHE_CAP`).
     stamp: u64,
 }
 
-/// Parked evicted sections, keyed by position, capped at
-/// [`SECTION_CACHE_CAP`] with oldest-first eviction — the same policy the
-/// server's per-connection belief map runs, so the two stay aligned without
-/// eviction chatter (unloads arrive in the order the server issued them).
 #[derive(Default)]
 pub struct SectionCache {
     entries: FxHashMap<SectionPos, CachedSection>,
     next_stamp: u64,
-    /// Fingerprint of the id vocabulary the cached sections were built under
-    /// (server block name table + this client's). `None` until a session
-    /// adopts the cache.
     registry_key: Option<u64>,
 }
 
 impl SectionCache {
-    /// Park one evicted section under the server-vouched content hash.
     pub fn park(&mut self, pos: SectionPos, section: Arc<Section>, hash: u64) {
         let stamp = self.next_stamp;
         self.next_stamp += 1;
@@ -70,8 +42,6 @@ impl SectionCache {
             },
         );
         if self.entries.len() > SECTION_CACHE_CAP {
-            // O(cap) scan of a u64 per over-cap insert — a few µs against
-            // unload cadence; not worth an ordered side structure.
             if let Some(oldest) = self
                 .entries
                 .iter()
@@ -83,25 +53,15 @@ impl SectionCache {
         }
     }
 
-    /// Take the cached copy for a `SectionCached { pos, hash }` re-promotion.
-    /// `None` = miss (never parked, cap-evicted, or a hash that disagrees
-    /// with the server's belief) — the caller answers `SectionCacheMiss` and
-    /// the server re-streams the full payload. A disagreeing entry is dropped
-    /// either way: it is provably not what the server vouches for.
     pub fn promote(&mut self, pos: SectionPos, hash: u64) -> Option<Arc<Section>> {
         let entry = self.entries.remove(&pos)?;
         (entry.hash == hash).then_some(entry.section)
     }
 
-    /// Drop a parked copy the server superseded with a full `SectionData`
-    /// (its content moved while the section was unloaded).
     pub fn discard(&mut self, pos: SectionPos) {
         self.entries.remove(&pos);
     }
 
-    /// The Join-manifest claims, oldest-first so the server's belief map
-    /// seeds in this cache's insertion order and both caps keep evicting the
-    /// same entries.
     pub fn claims(&self) -> Vec<SectionCacheClaim> {
         let mut entries: Vec<_> = self.entries.iter().collect();
         entries.sort_unstable_by_key(|(_, e)| e.stamp);
@@ -114,10 +74,6 @@ impl SectionCache {
             .collect()
     }
 
-    /// Bind the cache to a session's id vocabulary, clearing it when the
-    /// vocabulary moved: cached blocks are client-local ids, and a session
-    /// whose server tables read differently would re-promote them as the
-    /// wrong blocks even where the server-domain hash still matches.
     pub fn adopt_session(&mut self, registry_key: u64) {
         if self.registry_key != Some(registry_key) {
             self.entries.clear();

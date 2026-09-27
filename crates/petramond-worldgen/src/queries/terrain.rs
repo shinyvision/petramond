@@ -1,12 +1,7 @@
-//! Material queries read the generation memos: the same surface tiles and
-//! section terrain the pipeline fills, so a query and a generated section
-//! cannot disagree.
-
 use petramond_world::chunk::{section_idx, SectionPos};
 use petramond_world::section::BlockCube;
 use std::collections::BTreeMap;
 
-/// Highest solid density cell before caves and feature placement.
 pub fn heights_at(seed: u32, columns: &[[i32; 2]]) -> Vec<i32> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (_, caves) = generator.sources();
@@ -23,8 +18,6 @@ pub fn heights_at(seed: u32, columns: &[[i32; 2]]) -> Vec<i32> {
         .collect()
 }
 
-/// The section whose every cell `positions` lists in section order, if any:
-/// the shape a tile-caching reader asks in, answered as one cube read.
 fn whole_section(positions: &[[i32; 3]]) -> Option<[i32; 3]> {
     use petramond_world::chunk::{SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y};
     const N: usize = SECTION_SIZE;
@@ -51,8 +44,6 @@ fn whole_section(positions: &[[i32; 3]]) -> Option<[i32; 3]> {
         .then(|| origin.map(|v| v.div_euclid(N as i32)))
 }
 
-/// [`blocks_at`] over one whole section in section order. A section outside
-/// the world answers as the clamped positions would.
 pub fn section_blocks(seed: u32, section: [i32; 3]) -> Vec<u16> {
     use petramond_world::chunk::{SECTION_SIZE, WORLD_MAX_Y, WORLD_MIN_Y};
     const N: i32 = SECTION_SIZE as i32;

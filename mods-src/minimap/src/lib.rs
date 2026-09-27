@@ -1,9 +1,3 @@
-//! Client-side minimap
-//!
-//! The host supplies only final surface samples and generic image overlay,
-//! canvas, document, key, and sandboxed-storage capabilities. This module owns
-//! the map projection, exploration cache, shading, waypoints, and interaction.
-
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use mod_sdk::*;
@@ -30,8 +24,6 @@ const KEY_WAYPOINT: u32 = 2;
 
 #[derive(Default)]
 struct Minimap {
-    /// Explored base/mip tile caches plus the async region loader — of the
-    /// world on screen.
     store: TileStore,
     waypoints: Vec<Waypoint>,
     player: [f64; 3],
@@ -40,10 +32,7 @@ struct Minimap {
     last_sample: Option<(i32, i32)>,
     frame: u64,
     pan: [f64; 2],
-    /// Full-map zoom level, [`ZOOM_MIN`]..=[`ZOOM_MAX`] canvas-pixel-per-block
-    /// steps around the 2 px/block default; kept across open/close.
     zoom: i8,
-    /// Sub-notch wheel remainder (hi-res wheels emit fractional notches).
     scroll_accum: f32,
     drag_start: Option<([f32; 2], [f64; 2])>,
     dragged: bool,
@@ -52,22 +41,13 @@ struct Minimap {
     full_tile_slots: FullTileSlots,
     full_scene_stamp: Option<FullSceneStamp>,
     full_view_bits: Option<[u32; 2]>,
-    /// The (bounds, zoom) the visible region requests were queued for.
     full_needed_stamp: Option<([i32; 4], i8)>,
-    /// Pan at the last visible-request recompute — its delta picks the
-    /// velocity-prefetch direction.
     last_synced_pan: Option<[f64; 2]>,
     waypoint_revision: u64,
     arrow_yaw_bits: Option<u32>,
-    /// Bumps whenever any explored cell changes; part of the HUD stamp.
     explored_revision: u64,
-    /// The inputs the current HUD raster was published from.
     hud_stamp: Option<HudStamp>,
-    /// Waypoint layouts cached per (`waypoint_revision`, zoom) — text
-    /// measurement is a host call, never re-measured per publish, and layout
-    /// pixel positions scale with the zoom level.
     full_layouts: Option<(u64, i8, Vec<FullWaypointLayout>)>,
-    /// Scale-2 text measurement cache (waypoint names, initials, cardinals).
     text_sizes: HashMap<String, [u16; 2]>,
 }
 
@@ -114,14 +94,10 @@ impl Mod for Minimap {
         self.player = frame.player_pos;
         self.yaw = frame.yaw;
         self.open_canvas = frame.open_canvas.clone();
-        // A presentation's instance is fresh and never outlives it: its
-        // exploration is the presented world's, never a session's to keep.
         if !self.store.ephemeral && matches!(client_context(), ClientContext::Presentation { .. }) {
             self.enter_presentation();
         }
         self.store.begin_frame(self.frame);
-        // Loader heartbeat: poll async region reads, repaint arrivals, trim
-        // the caches when the map is closed.
         self.pump_store();
         let center = (
             frame.player_pos[0].floor() as i32,
@@ -144,7 +120,6 @@ impl Mod for Minimap {
         if frame.open_canvas.as_deref() == Some(FULL_CANVAS) {
             self.sync_full_canvas();
         } else if self.full_needed_stamp.is_some() {
-            // Map closed: a reopen recomputes its visible requests.
             self.full_needed_stamp = None;
         }
         if self.frame.is_multiple_of(FLUSH_INTERVAL) {
@@ -203,8 +178,6 @@ impl Mod for Minimap {
         if canvas_key != FULL_CANVAS {
             return;
         }
-        // Whole notches step the zoom (wheel up = in), anchored at the
-        // cursor; the sub-notch remainder carries to the next event.
         self.scroll_accum += delta;
         let steps = self.scroll_accum.trunc();
         self.scroll_accum -= steps;
@@ -215,8 +188,6 @@ impl Mod for Minimap {
 }
 
 impl Minimap {
-    /// Every sample, watermark and raster started before the instance knew
-    /// it presents belongs to no world it keeps.
     fn enter_presentation(&mut self) {
         self.store = TileStore::ephemeral();
         self.last_sample = None;
@@ -228,8 +199,6 @@ impl Minimap {
         self.full_needed_stamp = None;
     }
 
-    /// Scale-2 single-line measurement through a cache: `client_text_measure`
-    /// crosses the ABI, so each distinct string measures once.
     fn measure_cached(&mut self, text: &str) -> [u16; 2] {
         if let Some(&size) = self.text_sizes.get(text) {
             return size;

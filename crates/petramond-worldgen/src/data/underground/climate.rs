@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Temperature, humidity, continentality, erosion, variance and terrain depth.
 pub type ClimatePoint = [f64; 6];
 pub type ClimateBox = [[f64; 2]; 6];
 
@@ -66,7 +65,6 @@ impl ClimateRange {
         Some(distance)
     }
 
-    /// Bounds on fitness throughout a climate box, including points between its corners.
     #[inline]
     pub(super) fn distance_bounds(self, bounds: ClimateBox) -> [f64; 2] {
         let mut out = [0.0; 2];

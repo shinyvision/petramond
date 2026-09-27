@@ -1,29 +1,15 @@
-//! `SurfaceSystem` — composes a column's surface material per voxel.
-//!
-//! The driver's skin pass walks each contiguous solid run top-down and calls
-//! `skin_block` with the voxel's `depth_from_top`. The biome's layered
-//! `SurfaceRule` stack resolves the grass/dirt/stone/sand bands by depth and
-//! altitude.
-
 pub mod rule;
 
 use petramond_world::block::Block;
 use petramond_world::chunk::SEA_LEVEL;
 use rule::{SurfaceCtx, SurfaceRule};
 
-/// Deepest `DepthFromTop` band a biome surface rule may carry. Below it every
-/// rule resolves to one depth-independent block, so `fill_section` fills a
-/// whole section column with one block; the biome catalog refuses a rule
-/// whose band reaches deeper (see `SurfaceRule::deepest_band`).
 pub(crate) const MAX_SKIN_BAND_DEPTH: i32 = 8;
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct SurfaceSystem;
 
 impl SurfaceSystem {
-    /// Material for one solid voxel given its surface context and the column's
-    /// (already looked-up) biome surface rule. The rule is passed in so the caller
-    /// looks the biome up once per column, not once per voxel.
     #[inline]
     pub fn skin_block(&self, c: &SurfaceCtx, rule: &SurfaceRule) -> Block {
         let block = rule.resolve(c).unwrap_or(Block::Stone);
@@ -85,9 +71,6 @@ mod tests {
             Block::Grass
         );
 
-        // Snowy biomes cap with ordinary grass — the snow layer above it (and
-        // the snowy side rendering) comes from the vegetation pass, not the
-        // skin.
         let snowy = ctx(SEA_LEVEL + 1, 0, Biome::SNOWY_TUNDRA);
         assert_eq!(
             surface.skin_block(&snowy, spec(Biome::SNOWY_TUNDRA).surface),

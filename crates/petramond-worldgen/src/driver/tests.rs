@@ -4,9 +4,6 @@ use petramond_world::block::Block;
 
 use super::*;
 
-/// A slimmed column must regenerate any section byte-identically: the tree
-/// windows it drops are a pure function of `(seed, cx, cz)`, and the rebuild
-/// path in `generate_section` must reproduce them exactly.
 #[test]
 fn slimmed_column_regenerates_sections_byte_identically() {
     let generator = ChunkGenerator::new(0xDEAD_BEEF);
@@ -14,7 +11,6 @@ fn slimmed_column_regenerates_sections_byte_identically() {
         let full = generator.generate_column_gen(cx, cz);
         let slim = full.slimmed();
         assert!(full.has_feature_windows() && !slim.has_feature_windows());
-        // Cover the surface/tree band and a deep section.
         let (lo, hi) = full.surf_range();
         for cy in [
             lo.div_euclid(16) - 1,
@@ -33,9 +29,6 @@ fn slimmed_column_regenerates_sections_byte_identically() {
     }
 }
 
-/// A column restored from its encoded cache record ("Optimize explored
-/// terrain") must be indistinguishable from a slimmed live column: same
-/// resident data, byte-identical section regeneration.
 #[test]
 fn cache_record_roundtrip_matches_the_live_column() {
     let seed = 0xDEAD_BEEF;
@@ -76,9 +69,6 @@ fn cache_record_roundtrip_matches_the_live_column() {
     }
 }
 
-/// A hook config with one feature after terrain (always writes) and one after
-/// vegetation that defers its first `deferrals` dispatches — the shape of a
-/// pack waiting on a memo fact another worker is deriving.
 struct DeferringHooks {
     deferrals: AtomicUsize,
     terrain_dispatches: AtomicUsize,
@@ -94,7 +84,6 @@ impl DeferringHooks {
         })
     }
 
-    /// One block write inside section `pos`, in a column distinct per feature.
     fn plan(pos: [i32; 3], column: i32, block: Block) -> FeatureOutcome {
         let origin = pos.map(|v| v * SECTION_SIZE as i32);
         FeatureOutcome::Plan(crate::hooks::GenerationPlan {
@@ -157,9 +146,6 @@ fn blocks(section: &Section) -> Vec<u16> {
     section.blocks_iter().collect()
 }
 
-/// A deferred section resumes at the hook that deferred it: the stages and
-/// hooks before it are neither lost nor run again, and the finished section
-/// is byte-identical to one that was never deferred.
 #[test]
 fn a_deferred_section_resumes_at_the_deferring_hook() {
     let seed = 0xDEF0_0001;
@@ -200,9 +186,6 @@ fn a_deferred_section_resumes_at_the_deferring_hook() {
     assert!(section.dirty);
 }
 
-/// The completing entry point waits for the deferred fact through the hook
-/// config — once per deferral, never by polling — and produces the same
-/// section as the non-blocking path.
 #[test]
 fn completing_a_deferred_section_waits_once_per_deferral() {
     let seed = 0xDEF0_0002;

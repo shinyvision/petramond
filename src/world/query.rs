@@ -1,7 +1,6 @@
 use crate::world::{ReplicaWorld, ServerWorld};
 
 impl ServerWorld {
-    /// Anything still generating, loading from disk or waiting on an overlay.
     pub fn has_pending_stream_work(&self) -> bool {
         !self.side.gen.pending.is_empty()
             || !self.side.gen.pending_sections.is_empty()
@@ -11,8 +10,6 @@ impl ServerWorld {
 }
 
 impl ReplicaWorld {
-    /// Work still needed before installed terrain is presentable; parked hidden
-    /// sections do not consume meshing admission and are deliberately excluded.
     pub fn terrain_presentation_backlog(&self) -> (u32, u32) {
         let mesh = self.side.terrain.dirty_meshes.len()
             + self.side.terrain.mesh_jobs_in_flight
@@ -27,15 +24,6 @@ impl ReplicaWorld {
         )
     }
 
-    /// Is any terrain CPU light/mesh work still queued or in flight? Tooling uses this
-    /// to detect when the background pipeline has settled; renderer upload dirtiness is
-    /// tracked separately because headless profilers have no renderer to clear it.
-    ///
-    /// `light_deferred` members count only while a recheck is outstanding: a
-    /// deferred section with no queued recheck is PARKED by design (sealed /
-    /// unsettled-forever neighbourhood) and only an external event — target
-    /// move, topology change, neighbour landing — can wake it, so it is not
-    /// pending work.
     pub fn has_dirty_meshes(&self) -> bool {
         !self.side.terrain.dirty_meshes.is_empty()
             || self.side.terrain.vis_dirty
@@ -47,13 +35,10 @@ impl ReplicaWorld {
             || self.side.terrain.mesh_jobs_in_flight > 0
     }
 
-    /// Number of sections queued for (re)mesh — the streaming backlog.
     pub fn dirty_mesh_count(&self) -> usize {
         self.side.terrain.dirty_meshes.len() + self.side.terrain.light_blocked_meshes.len()
     }
 
-    /// (deep, visible-deep, hidden-parked) counts — a visibility diagnostic for
-    /// streaming/perf tooling.
     pub fn deep_visibility_counts(&self) -> (usize, usize, usize) {
         (
             self.side.terrain.deep_sections.len(),

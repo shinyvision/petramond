@@ -1,27 +1,16 @@
-//! Content-driven GPU needs, checked against the adapter's limits before the
-//! device is created — so a pack too large for the GPU fails naming the
-//! content that overflowed, not with a texture-creation or device error deep
-//! in renderer construction.
-
 use petramond_world::item::ItemType;
 use petramond_world::tile::Tile;
 
-/// Bytes per uv-rect table row (see [`crate::uniforms::UV_RECT_BYTES`]).
 const UV_RECT_BYTES: u64 = crate::uniforms::UV_RECT_BYTES;
-/// Side of one icon-atlas cell, px.
 const ICON_CELL: u32 = 64;
 
-/// What the loaded content asks of the GPU.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ContentNeeds {
-    /// Atlas tiles (animation frames included).
     pub tiles: u32,
-    /// Item types (each bakes an icon and its dyed twin).
     pub items: u32,
 }
 
 impl ContentNeeds {
-    /// The needs of the content loaded in this process.
     pub fn loaded() -> Self {
         Self {
             tiles: Tile::count() as u32,
@@ -30,18 +19,14 @@ impl ContentNeeds {
     }
 }
 
-/// One way the content overflows a limit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Shortfall {
-    /// Whether the renderer cannot run at all (vs. degrading).
     pub fatal: bool,
     pub message: String,
 }
 
-/// Every limit `needs` overflows on a device with `limits`.
 pub(crate) fn shortfalls(needs: ContentNeeds, limits: &wgpu::Limits) -> Vec<Shortfall> {
     let mut out = Vec::new();
-    // The terrain tile array holds every tile and its dye-base twin.
     let layers = 2 * needs.tiles;
     if layers > limits.max_texture_array_layers {
         out.push(Shortfall {
@@ -83,10 +68,6 @@ pub(crate) fn shortfalls(needs: ContentNeeds, limits: &wgpu::Limits) -> Vec<Shor
     out
 }
 
-/// Check the loaded content against `limits` (the ones the device is created
-/// with): degradations are logged, and a fatal overflow is returned with
-/// every problem named, so bring-up fails with a typed error instead of a
-/// panic.
 pub(crate) fn check(limits: &wgpu::Limits) -> Result<(), String> {
     let found = shortfalls(ContentNeeds::loaded(), limits);
     for s in found.iter().filter(|s| !s.fatal) {
@@ -126,7 +107,6 @@ mod tests {
         assert!(shortfalls(needs, &limits(2048, 1 << 27, 8192)).is_empty());
     }
 
-    /// The tile array's twin layers are named with the tile count that fits.
     #[test]
     fn too_many_tiles_for_the_layer_limit_is_fatal_and_says_how_many_fit() {
         let needs = ContentNeeds {
@@ -148,7 +128,6 @@ mod tests {
         );
     }
 
-    /// Icons degrade rather than stop the game.
     #[test]
     fn too_many_icons_degrades() {
         let needs = ContentNeeds {

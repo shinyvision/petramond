@@ -1,23 +1,9 @@
-//! Process-wide GPU texture byte accounting.
-//!
-//! wgpu reports nothing about resident texture memory, and VRAM is the scarce
-//! resource on the target machine (8 GB). Terrain geometry is measured by the
-//! geometry arena; this covers the other half — every texture the renderer
-//! creates, billed by its own descriptor at creation.
-//!
-//! The total is GROSS, not net: a drop is not refunded, so a target recreated
-//! on resize is counted twice. Modelling drops would need the census to own
-//! every texture handle, and a figure that is honest about being an upper
-//! bound is more useful than one that pretends to track a resource wgpu will
-//! not report.
-
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 static TEXTURE_BYTES: AtomicU64 = AtomicU64::new(0);
 static TEXTURE_COUNT: AtomicU64 = AtomicU64::new(0);
 static BY_LABEL: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
 
-/// Bill a texture by its descriptor (all mips, all array layers).
 pub fn note_texture(desc: &wgpu::TextureDescriptor<'_>) {
     let bpp = match desc.format.block_copy_size(None) {
         Some(b) => b as u64,
@@ -41,18 +27,15 @@ pub fn note_texture(desc: &wgpu::TextureDescriptor<'_>) {
     }
 }
 
-/// Create a texture and bill it. Every renderer texture goes through here.
 pub fn create_texture(device: &wgpu::Device, desc: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
     note_texture(desc);
     device.create_texture(desc)
 }
 
-/// `(total texture bytes, texture count)` created so far.
 pub fn texture_totals() -> (u64, u64) {
     (TEXTURE_BYTES.load(Relaxed), TEXTURE_COUNT.load(Relaxed))
 }
 
-/// Texture bytes per descriptor label, largest first.
 pub fn texture_by_label() -> Vec<(String, u64)> {
     let mut v = BY_LABEL.lock().map(|b| b.clone()).unwrap_or_default();
     v.sort_by_key(|(_, b)| std::cmp::Reverse(*b));

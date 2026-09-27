@@ -9,42 +9,25 @@ use petramond_world::mining::{BreakEvent, MiningState};
 use super::game::ServerGame;
 use crate::events::tick::{BlockBrokenEvent, TickEvents, TICK_DT};
 
-/// Who a break is performed by, and where its consequences go.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Breaker {
-    /// Who breaks: the pre-event dispatch acts for this player, or
-    /// actor-less for a mob.
     pub actor: crate::mob::EntityRef,
-    /// Whether the break yields anything: drops, scattered contents.
     pub yields: bool,
-    /// A mob whose carried slots take the drops before they scatter.
     pub collector: Option<u64>,
-    /// The broken face, when known, for the burst's light.
     pub normal: Option<IVec3>,
 }
 
-/// How long a broken cell stays in `pending_break_ack` waiting for its lagged
-/// `BreakFinished` (10 s — far beyond any real finish RTT). An expired entry
-/// only means such a finish is denied with corrective cells, which reconciles
-/// the client anyway; without the TTL an orphaned hold-path break (the client
-/// released on the exact tick the server's timer crossed) grows the set for
-/// the session's lifetime.
 const BREAK_ACK_TTL_TICKS: u64 = 200;
 
-/// Ticks between two instant breaks by one session.
 const INSTANT_BREAK_REPEAT_TICKS: u64 = 3;
 
 impl ServerGame {
-    /// Mining, on the tick: advance the break timer against the block under the
-    /// crosshair while held, AND resolve client `BreakFinished` requests
-    /// (duration/tool/reach validated).
     pub fn tick_mining(&mut self, s: usize, events: &mut TickEvents) {
         let now = self.world.current_tick();
         self.sessions[s]
             .input
             .pending_break_ack
             .retain(|_, broke_at| now.saturating_sub(*broke_at) <= BREAK_ACK_TTL_TICKS);
-        // Last tick's single-block edits have had their hooks run by now.
         self.close_open_edit(s, events);
         for req in self.sessions[s].input.take_break_finished() {
             self.resolve_break_finished(s, req, events);
@@ -64,7 +47,7 @@ impl ServerGame {
         // A barred mine reads exactly like a released button: the timer RESETS
         // rather than pausing, so releasing the claim starts the break over
         // instead of resuming a cell the player stopped looking at. The open
-        // menu that used to be checked separately here is one of the claims.
+        // menu is one of the claims.
         let barred = self.sessions[s]
             .player
             .denied_actions()
@@ -77,19 +60,14 @@ impl ServerGame {
             self.world.data(),
             tool,
         ) {
-            // Hold-path finish: if a TooFast BreakFinished was deferred for
-            // this cell, accept it here. The initiator's own BlockBroken is
-            // stripped only on EVIDENCE they presented locally — a deferred
-            // finish flagged `predicted`. With no request latched the client
-            // may never present at all: its per-frame timer can sit behind
-            // this one (a sub-tick crosshair flicker resets it invisibly to
-            // the tick-sampled look), and the break delta then cancels its
-            // mining before it finishes — stripping on the old "finish must
-            // be in flight" assumption made those breaks SILENT. A finish
-            // that is merely in flight still presents exactly once: the
-            // client's own presented cell suppresses the wire event until
-            // the request resolves (the `predicted_presentation_cells`
-            // belt in `game/replicated.rs`).
+            // Hold-path finish: accept a deferred TooFast BreakFinished for this cell here.
+            // Only strip the initiator's BlockBroken on evidence they presented locally
+            // (deferred finish flagged `predicted`). Without a latched request the client may
+            // never present: its per-frame timer can lag behind a tick-sampled look after a
+            // sub-tick crosshair flicker, so the break delta cancels its mining first.
+            // An in-flight finish still presents exactly once, since the
+            // client's own presented cell suppresses the wire event until the request
+            // resolves (see `predicted_presentation_cells` in `game/replicated.rs`).
             let broken_pos = event.pos;
             let deferred = self.sessions[s]
                 .input
@@ -102,7 +80,6 @@ impl ServerGame {
                     self.push_action_outcome(s, req.request_id, true, None);
                 }
             } else if let Some(req) = deferred {
-                // `block_break_pre` cancelled after a deferred wait.
                 self.deny_break_finished(
                     s,
                     req.request_id,
@@ -111,13 +88,10 @@ impl ServerGame {
                 );
             }
         } else {
-            // Mining abandoned / retargeted: any deferred finish for a cell
-            // that is no longer the active target must deny + correct.
             self.abandon_deferred_break_if_stale(s);
         }
     }
 
-    /// Drop a deferred TooFast finish whose cell is no longer being mined.
     fn abandon_deferred_break_if_stale(&mut self, s: usize) {
         let Some(req) = self.sessions[s].input.deferred_break_finished else {
             return;
@@ -157,10 +131,6 @@ impl ServerGame {
             predicted,
         } = req;
 
-        // The claimed finish is validated like any other client claim, so the
-        // denial is checked HERE too and not only on the hold path: a client
-        // that kept its own timer running (stale mirror, or a forged message)
-        // must not break a cell its body was barred from touching.
         if self.sessions[s]
             .player
             .denied_actions()
@@ -170,9 +140,6 @@ impl ServerGame {
             return;
         }
 
-        // Reach from the claimed eye, BOUNDED by the F1 drift ring — the same
-        // reference the look latch was validated against, so an accepted
-        // mining target can't be denied at the finish by integration drift.
         let eye = crate::server::movement::reach_eye(&self.sessions[s]);
         if !crate::player::block_within_reach(eye, pos) {
             self.deny_break_finished(s, request_id, pos, ActionDenyReason::OutOfReach);
@@ -251,10 +218,6 @@ impl ServerGame {
             return;
         }
 
-        // The claim check compares ROW tools: the wire carries only the item
-        // id, so an instance-data override (a diamond augment) must not read
-        // as a mismatch. The authoritative STACK tool below is what actually
-        // times and harvests the break.
         let auth_row_tool = self.sessions[s]
             .player
             .inventory
@@ -290,7 +253,6 @@ impl ServerGame {
                 .progress()
                 .and_then(|(target, elapsed)| (target == pos).then_some(elapsed));
             if observed.is_none_or(|elapsed| elapsed + 3.0 * TICK_DT < expected) {
-                // Supersede any prior deferred wait for another cell.
                 if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
                     self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
                 }
@@ -311,14 +273,10 @@ impl ServerGame {
             harvested: petramond_world::mining::harvests(block, auth_tool),
         };
         self.sessions[s].sim.mining = MiningState::new();
-        // A successful BreakFinished clears any deferred wait for this cell
-        // (should be empty — we only defer when the window is short).
         if let Some(old) = self.sessions[s].input.deferred_break_finished.take() {
             if old.pos != pos {
                 self.deny_break_finished(s, old.request_id, old.pos, ActionDenyReason::TooFast);
             } else {
-                // Same cell already deferred — answer the older id as denied
-                // (superseded by this accept path).
                 self.push_action_outcome(s, old.request_id, false, Some(ActionDenyReason::TooFast));
             }
         }
@@ -330,8 +288,6 @@ impl ServerGame {
         }
     }
 
-    /// Deny a `BreakFinished` and queue corrective cells for the claimed
-    /// footprint so an optimistic clear cannot linger as phantom air.
     fn deny_break_finished(
         &mut self,
         s: usize,
@@ -343,7 +299,6 @@ impl ServerGame {
         self.queue_break_corrective_cells(s, pos);
     }
 
-    /// Authoritative footprint of `pos` into the session's corrective sync.
     fn queue_break_corrective_cells(&mut self, s: usize, pos: IVec3) {
         let cells = self.world.break_footprint_cells(pos);
         self.sessions[s]
@@ -352,15 +307,6 @@ impl ServerGame {
             .extend(cells);
     }
 
-    /// Apply a finished player break: the shared break funnel as that
-    /// session, then the session's own bookkeeping. Returns whether the block
-    /// actually broke.
-    ///
-    /// `initiator_presented`: whether the breaking client is KNOWN to have
-    /// played the break presentation locally (a finish request flagged
-    /// `predicted`) — gates the echo strip. A client that never presented
-    /// (frozen ledger, replica disagreement, or a hold-path finish that
-    /// outpaced its timer) must still receive its `BlockBroken`.
     pub fn finish_player_break(
         &mut self,
         s: usize,
@@ -384,24 +330,16 @@ impl ServerGame {
             return false;
         }
         events.player(s).broke_block = Some(event.block);
-        // Mining is main-hand by definition (breaks land outside any
-        // acting-hand dispatch).
         self.sessions[s].latch_swing(
             petramond_world::inventory::Hand::Main,
             mod_api::SwingKind::Break,
         );
-        // Echo rule: strip the initiator's BlockBroken only on evidence they
-        // already presented it locally; a client that never presented still
-        // needs the event, and one whose finish is in flight suppresses the
-        // wire copy itself. Observers get the shared event either way.
         if initiator_presented {
             self.sessions[s]
                 .replication
                 .presented_breaks
                 .push(event.pos);
         }
-        // A lagged BreakFinished for this already-cleared cell must accept,
-        // not deny/restore. Tick-stamped for the ack TTL.
         let now = self.world.current_tick();
         self.sessions[s]
             .input
@@ -410,12 +348,6 @@ impl ServerGame {
         true
     }
 
-    /// THE break funnel, whoever breaks: announce `block_break_pre` naming
-    /// the actor (cancel = unbreakable — the block stays; the spent mining
-    /// progress is the cost), then clear the block, scatter block-entity
-    /// contents + harvested drops (into the breaker's collector first, when
-    /// it has one), queue the burst, and emit `block_broken`. Returns whether
-    /// the block actually broke.
     pub(super) fn break_block(
         &mut self,
         breaker: Breaker,
@@ -436,7 +368,6 @@ impl ServerGame {
                 mods,
                 ..
             } = self;
-            // The breaking player acts; a mob's break is actor-less.
             let cancelled = mods.bus_mut().block_break_pre(
                 world,
                 sessions,
@@ -449,10 +380,6 @@ impl ServerGame {
             }
             pre.drops
         };
-        // Breaking a bed takes its spawn point with it — resolved BEFORE the
-        // removal below clears the footprint metadata the group lookup needs.
-        // Checked for EVERY session: any player can break another's spawn bed.
-        // Keyed on bed IDENTITY (the tag), not the sleep-interaction capability.
         if event.block.has_tag(petramond_world::block::BlockTag::BED) {
             self.clear_bed_spawn_at(event.pos);
         }
@@ -467,24 +394,10 @@ impl ServerGame {
             .data()
             .cell_parts(event.pos)
             .map(|parts| self.part_drop_stacks(event.pos, &parts));
-        // A mod container is keyed at the block's container anchor — resolved
-        // BEFORE the removal below clears the model-group metadata the anchor
-        // lookup needs (same ordering constraint as the bed spawn point).
         let container_pos = self.world.container_anchor(event.pos);
-        // Carry courier (break side): snapshot the row's `petramond:carry`
-        // cell-KV entries BEFORE the removal below wipes the cell's KV, and
-        // stamp them onto the block's own item drops as instance data.
         let carry_variant = self.carry_variant_at(container_pos, event.block, 0);
         let broken_tint = self.world.data().cell_burst_tint(event.pos);
-        // A compound block breaks as a whole: removing any cell clears every
-        // member (the 2×2×1 workbench vanishes as one object, a door takes both
-        // halves) and drops one item (the `spawn_drops` below). A client's
-        // animation entry for it lapses once the cell no longer holds it.
         if self.world.remove_compound(event.pos).is_none() {
-            // Plain-cube clears leave the block's break residue (air for
-            // almost everything; melting ice leaves water — see
-            // `Block::break_residue`). The predicted clear applies the same
-            // rule (`World::clear_broken_block`).
             let below = Block::from_id(self.world.data().chunk_block(
                 event.pos.x,
                 event.pos.y - 1,
@@ -497,17 +410,7 @@ impl ServerGame {
                 event.block.break_residue(below),
             );
         }
-        // Forget the broken block's other entity records (machine state,
-        // facing, torch orientation) in one generic sweep — no per-block
-        // ladder to extend for the next facing-bearing block. Keyed at the
-        // ANCHOR resolved above, for the same reason the container is: by now
-        // the footprint is air, so asking for the anchor again would answer
-        // with the clicked cell and leave a multi-cell machine's records —
-        // including its drawing — hanging in the world.
         self.world.forget_block_entity_records(container_pos);
-        // ANY broken container block — chest, furnace, or a mod's — scatters
-        // its whole contents, regardless of tool (the block ITEM's own drop
-        // still gates on harvest below).
         if let Some(container) = self.world.take_container(container_pos) {
             if breaker.yields {
                 for stack in container.slots.into_iter().flatten() {
@@ -515,20 +418,12 @@ impl ServerGame {
                 }
             }
         }
-        // The break burst is presentation: queued as a world event and spawned
-        // client-side after the tick (any observing client can do the same).
         events.world.block_broken.push(BlockBrokenEvent {
             pos: event.pos,
             block: event.block,
             normal: breaker.normal,
             tint: broken_tint,
         });
-        // A drops override from `block_break_pre` is final and spawns
-        // verbatim, harvested or not — the payload showed the handler
-        // `harvested`, so gating is the handler's own policy. A stack of the
-        // broken block's own item still picks up the cell's carried data
-        // (the dye a cauldron holds), matching `spawn_drops`' carry rule,
-        // unless the override already stamped its own instance data.
         if let Some(stacks) = drops_override.filter(|_| breaker.yields) {
             for mut stack in stacks {
                 if carries_to_item(event.block, stack.item)
@@ -558,8 +453,6 @@ impl ServerGame {
         true
     }
 
-    /// Hand one broken block's stack to the breaker's collector (a mob's
-    /// carried slots), scattering whatever it cannot hold.
     fn deliver_break_stack(
         &mut self,
         collector: Option<u64>,
@@ -583,17 +476,8 @@ impl ServerGame {
         }
     }
 
-    /// Drain the blocks the world simulation destroyed this tick (fragile blocks that
-    /// lost support or were washed away by water) and give each the same break a player
-    /// would — the break-particle burst plus its rolled item drops. Particles are purely
-    /// visual (Game-owned), so they're spawned here rather than inside the world tick; the
-    /// drops materialise on this tick like every other entity. The block is already gone
-    /// (the world cleared the cell), so light is sampled from the now-empty cell — which is
-    /// what the burst should glow with.
     pub fn process_natural_breaks(&mut self, events: &mut TickEvents) {
         for (pos, block) in self.world.take_natural_breaks() {
-            // The cell is already cleared, so the group base can't be derived;
-            // re-checking the stored spawn bed still exists covers it.
             if block.has_tag(petramond_world::block::BlockTag::BED) {
                 self.validate_bed_spawn();
             }
@@ -601,22 +485,14 @@ impl ServerGame {
                 pos,
                 block,
                 normal: None,
-                // Natural breaks: the world already cleared the cell (and its
-                // KV) before this drain — no tint to sample.
                 tint: None,
             });
             let (sky, blk) = self
                 .world
                 .data()
                 .dynamic_light_at_world(pos.x, pos.y, pos.z);
-            // A natural break yields exactly what a bare-hand break would: most
-            // fragile blocks are tier-0 (short grass yields nothing, a
-            // flower/torch yields itself), while a tool-gated drop (the snow
-            // layer's shovel-only snowball) is lost — nobody dug it.
             let harvested = petramond_world::mining::harvests(block, None);
             if harvested {
-                // Natural breaks carry nothing: the world cleared the cell
-                // (and its KV) before this drain runs.
                 self.spawn_drops(
                     pos,
                     block,
@@ -624,8 +500,6 @@ impl ServerGame {
                     petramond_world::item::VariantId::NONE,
                 );
             }
-            // Sim-destroyed blocks are not cancellable (no pre event);
-            // observers still hear about them.
             self.mods.emit(PostEvent::BlockBroken {
                 pos,
                 block,
@@ -636,10 +510,6 @@ impl ServerGame {
         }
     }
 
-    /// The interned instance-data variant a break of `block` at `pos` should
-    /// stamp onto the block's own item drop: the row's `petramond:carry` KV
-    /// entries for sub-cell `part`, read while the cell still holds them.
-    /// `NONE` when the row carries nothing or the entries are absent.
     pub fn carry_variant_at(
         &self,
         pos: IVec3,
@@ -666,11 +536,6 @@ impl ServerGame {
         })
     }
 
-    /// The item stacks a COMPOSED cell drops: one per part, of that part's own
-    /// block, carrying that part's own data. Parts merge into one stack only
-    /// when they agree on BOTH item and instance data — two layers of the same
-    /// wool dyed differently are two stacks, which is the same rule
-    /// `can_stack_with` applies everywhere else.
     pub fn part_drop_stacks(
         &self,
         pos: IVec3,
@@ -710,9 +575,6 @@ impl ServerGame {
         }
     }
 
-    /// Roll `block`'s drop table: probabilistic entries first, then each
-    /// count, deterministic on the tick; the block's own item picks up the
-    /// cell's carried data.
     fn roll_drops(
         &mut self,
         block: Block,
@@ -720,15 +582,10 @@ impl ServerGame {
     ) -> Vec<ItemStack> {
         let mut stacks = Vec::new();
         for d in block.drop_spec().drops {
-            // Probabilistic drops (chance < 1, e.g. a leaf's 10% sapling) roll first;
-            // a guaranteed drop (chance 1.0) always passes. Reuses the same seeded
-            // hash the count roll uses, so the roll stays deterministic on the tick.
             let chance_seed = self.seeds.draw();
             if d.chance < 1.0 && crate::entity::hash01(chance_seed as u64) >= d.chance {
                 continue;
             }
-            // Roll a count in [min, max] (a fixed amount when min == max, e.g. the
-            // 2–4 raw copper from copper ore).
             let count_seed = self.seeds.draw();
             let count = if d.min >= d.max {
                 d.min
@@ -749,8 +606,6 @@ impl ServerGame {
         stacks
     }
 
-    /// Spawn `stack` as a dropped item at the centre of block `pos` (e.g. a broken
-    /// furnace scattering its contents). No-op for an empty stack.
     pub(super) fn spawn_item_stack(
         &mut self,
         pos: IVec3,
@@ -768,8 +623,6 @@ impl ServerGame {
     }
 }
 
-/// Visual block variants can drop their placeable form. Matching courier
-/// declarations identify that form without copying data onto unrelated loot.
 fn carries_to_item(block: Block, item: petramond_world::item::ItemType) -> bool {
     item == petramond_world::item::ItemType::from_block(block)
         || (!block.carry().is_empty()

@@ -5,12 +5,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::world::store::LoadTarget;
 
 impl ServerWorld {
-    /// Whether everything the FIRST light/mesh of `sp` could read has landed: each
-    /// 3×3×3 neighbour is loaded, or is provably not coming under `target` — outside
-    /// the wanted shape, deliberately skipped by its landed column (sky / outside the
-    /// vertical+surface window), or out of world range — so absent-as-air is its final
-    /// state. A neighbour still pending (or whose column is pending or wanted but not
-    /// yet landed) means a bake now would just be redone when it arrives.
     fn gen_neighborhood_settled(&self, sp: SectionPos, target: LoadTarget) -> bool {
         for dy in -1..=1 {
             for dz in -1..=1 {
@@ -53,8 +47,6 @@ impl ServerWorld {
     }
 
     pub(super) fn queue_deferred_rechecks_around_column(&mut self, pos: ChunkPos) {
-        // Only loaded sections can be in `light_deferred`; phantoms across the
-        // full vertical range just churn the recheck set and die in the filter.
         for cz in pos.cz - 1..=pos.cz + 1 {
             for cx in pos.cx - 1..=pos.cx + 1 {
                 let cp = ChunkPos::new(cx, cz);
@@ -68,11 +60,6 @@ impl ServerWorld {
         }
     }
 
-    /// Flush deferred sections whose generation neighbourhood has settled:
-    /// request the single light bake (skipped when the section landed with
-    /// clean persisted light) and queue the single first mesh. Sections whose
-    /// saved overlay is still buffered stay parked so the bake reads the saved
-    /// blocks, not the generated base it is about to replace.
     pub(super) fn flush_settled_deferred_if_needed(&mut self, target: LoadTarget) {
         let check: Vec<SectionPos> = if self.data.deferred_recheck_needed {
             self.data.deferred_recheck_needed = false;
@@ -111,24 +98,14 @@ impl ServerWorld {
                 continue;
             };
             let needs_bake = section.light_dirty && !section.all_opaque();
-            // Keep an enclosed mixed section parked, rather than forgetting its
-            // first bake. A target move rechecks the set; once a player is close
-            // enough to already be inside, proximity defeats the sealed skip.
             if needs_bake && self.section_sealed_by_loaded_neighbors(sp) {
                 continue;
             }
             self.data.light_deferred.remove(&sp);
-            // Clean light (persisted, loaded from disk) stands as-is.
-            // Fully-opaque sections skip baking on both sides of the mesh pump's
-            // light gate (their faces cull against solid cells and never sample light).
             if needs_bake {
                 bakes.push(sp);
             }
         }
-        // Streaming first-bakes coalesce into 2×2×2 batch bakes (one shared 64³
-        // flood, ~2× less light worker CPU). Below three members the shared
-        // 64³ cube costs more cells than separate 48³ floods, so small groups
-        // keep the per-section path.
         for (base, members) in crate::world::light::group_positions(&bakes) {
             if members.len() >= 3 {
                 let key = members

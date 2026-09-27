@@ -1,28 +1,3 @@
-//! Chase: hunt the player by steering navigation at their cell.
-//!
-//! While the player is within `radius` of the mob, the node emits the player's
-//! navigation cell as the goal every tick — the navigator re-paths a changed goal at
-//! once and a held goal every `REPATH_TICKS`, so a moving player is tracked without
-//! any extra machinery here. Hysteresis: once engaged the chase only breaks past
-//! `give_up_radius` (≥ `radius`), so a player skirting the aggro edge doesn't flicker
-//! the mob between hunting and roaming.
-//!
-//! Engagement additionally requires collision line of sight ([`los`]) from the mob's
-//! body to the player: a player fully behind colliding blocks (walls, leaves, any
-//! future glass) never aggros mobs through them. Sight gates the START of a chase,
-//! and an engaged chase tolerates brief occlusion: once sight stays blocked for more
-//! than [`LOST_SIGHT_GIVE_UP_TICKS`] consecutive ticks, the mob gives up.
-//!
-//! A SNEAKING player is harder to detect: the row's optional `sneak_radius_penalty`
-//! shrinks the engage radius while the target sneaks. Only detection shrinks —
-//! an engaged chase keeps its ordinary `give_up_radius` (sneaking doesn't make a
-//! mob forget you).
-//!
-//! The goal is a *valid mob foothold* near the player (the same navigation-foothold
-//! test the pathfinder uses), scanned vertically around the player's feet. A player
-//! with no standable cell nearby (flying, deep fluid) yields no goal, and the merge
-//! falls through to lower-priority locomotion.
-
 use serde::Deserialize;
 
 use petramond_math::math::{IVec3, Vec3};
@@ -31,24 +6,14 @@ use super::super::brain::{AiBehavior, AiCtx, BehaviorOutput};
 use super::super::path::is_navigation_foothold_with;
 use super::los;
 
-/// How many cells above/below the player's feet cell to scan for a mob-standable
-/// goal (covers a player on a ledge lip, in shallow water, or mid-jump).
 const GOAL_SCAN_CELLS: i32 = 3;
-/// Consecutive no-LOS ticks tolerated after a chase has already engaged. "More than"
-/// this many ticks means the 201st blocked-sight tick ends the chase.
 const LOST_SIGHT_GIVE_UP_TICKS: u16 = 200;
 
-/// `chase_player` params as written in a `mobs.json` brain row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ChaseParams {
-    /// Engage when the player is within this many blocks.
     radius: f64,
-    /// Once engaged, keep chasing until the player is beyond this (≥ `radius`).
     give_up_radius: f64,
-    /// How many blocks a SNEAKING player shrinks the engage radius by
-    /// (clamped at zero; an already-engaged chase is unaffected — detection is
-    /// harder while sneaking, forgetting is not). Optional; defaults to 0.
     #[serde(default)]
     sneak_radius_penalty: f64,
 }
@@ -62,8 +27,6 @@ pub struct ChasePlayerAi {
 }
 
 impl ChasePlayerAi {
-    /// Penalty-free construction — the tests' shorthand (production always
-    /// builds through [`from_params`](Self::from_params)).
     #[cfg(test)]
     pub fn new(radius: f32, give_up_radius: f32) -> Self {
         Self::with_sneak_penalty(radius, give_up_radius, 0.0)
@@ -79,18 +42,14 @@ impl ChasePlayerAi {
         }
     }
 
-    /// Build from a brain row's `params` — the `chase_player` node factory core.
     pub(super) fn from_params(params: &serde_json::Value) -> Result<Self, String> {
         let p: ChaseParams = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-        // `partial_cmp` (not `<=`) so a NaN radius is rejected too.
         if p.radius.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err("radius must be > 0".into());
         }
         if p.give_up_radius < p.radius {
             return Err("give_up_radius must be >= radius".into());
         }
-        // `partial_cmp` rather than `< 0` so a NaN penalty is rejected too
-        // (it compares as `None`) instead of silently passing.
         if !matches!(
             p.sneak_radius_penalty.partial_cmp(&0.0),
             Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
@@ -104,9 +63,6 @@ impl ChasePlayerAi {
         ))
     }
 
-    /// The engage radius against the CURRENT target: sneaking shrinks it by the
-    /// row's penalty (never below zero — a penalty ≥ radius means a sneaking
-    /// player is never newly detected).
     fn engage_radius(&self, sneaking: bool) -> f32 {
         if sneaking {
             (self.radius - self.sneak_radius_penalty).max(0.0)
@@ -156,11 +112,6 @@ impl AiBehavior for ChasePlayerAi {
     }
 }
 
-/// The navigation-foothold cell nearest `pos` that THIS mob can stand in, or
-/// `None` when no standable cell sits within the vertical scan (target airborne /
-/// over deep fluid). Reuses the pathfinder's foothold test so the emitted goal is
-/// always a cell `find_path` accepts. Shared by every chase-like node
-/// (`chase_player`, `chase_sound`, `retaliate`).
 pub(super) fn goal_cell_near(
     ctx: &AiCtx,
     pos: petramond_math::world_pos::WorldPos,
@@ -172,8 +123,6 @@ pub(super) fn goal_cell_near(
     let params = ctx.path_params();
     let x = pos.x.floor() as i32;
     let z = pos.z.floor() as i32;
-    // `pos` is a body centre (feet + roughly half a body), so its floor is the
-    // feet cell for every practical target height.
     let y0 = pos.y.floor() as i32;
     for d in 0..=GOAL_SCAN_CELLS {
         for y in [y0 - d, y0 + d] {
@@ -224,7 +173,6 @@ mod tests {
         let world = flat_world();
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(10.0, 14.0);
-        // Player 5 blocks away, standing on the floor (body centre at feet + 0.9).
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let player = WorldPos::new(7.5, 64.9, 2.5);
         let goal = ai
@@ -244,7 +192,7 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(4.0, 6.0);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        let player = WorldPos::new(12.5, 64.9, 2.5); // 10 blocks: outside radius 4
+        let player = WorldPos::new(12.5, 64.9, 2.5);
         assert_eq!(ai.tick(&mut ctx(&world, &mut rng, mob, player)).goal, None);
     }
 
@@ -255,24 +203,20 @@ mod tests {
         let mut ai = ChasePlayerAi::new(4.0, 9.0);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
 
-        // Engage inside `radius`...
-        let near = WorldPos::new(5.5, 64.9, 2.5); // 3 blocks
+        let near = WorldPos::new(5.5, 64.9, 2.5);
         assert!(ai
             .tick(&mut ctx(&world, &mut rng, mob, near))
             .goal
             .is_some());
-        // ...keep chasing in the hysteresis band (past radius, short of give_up)...
-        let band = WorldPos::new(9.5, 64.9, 2.5); // 7 blocks
+        let band = WorldPos::new(9.5, 64.9, 2.5);
         assert!(
             ai.tick(&mut ctx(&world, &mut rng, mob, band))
                 .goal
                 .is_some(),
             "an engaged chase persists inside the give_up band"
         );
-        // ...and break it past `give_up_radius`.
-        let far = WorldPos::new(13.5, 64.9, 2.5); // 11 blocks
+        let far = WorldPos::new(13.5, 64.9, 2.5);
         assert_eq!(ai.tick(&mut ctx(&world, &mut rng, mob, far)).goal, None);
-        // Back in the band WITHOUT re-entering `radius`: no re-engage (hysteresis).
         assert_eq!(
             ai.tick(&mut ctx(&world, &mut rng, mob, band)).goal,
             None,
@@ -286,7 +230,6 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::new(30.0, 40.0);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        // Player floating far above the floor: no foothold within the scan.
         let airborne = WorldPos::new(7.5, 80.0, 2.5);
         assert_eq!(
             ai.tick(&mut ctx(&world, &mut rng, mob, airborne)).goal,
@@ -303,7 +246,6 @@ mod tests {
         let mob = WorldPos::new(2.5, 64.0, 2.5);
         let player = WorldPos::new(7.5, 64.9, 2.5);
 
-        // A colliding wall (leaves — sight is collision, not opacity) between them.
         for y in 64..=66 {
             assert!(world.set_block_world(5, y, 2, Block::OakLeaves));
         }
@@ -313,7 +255,6 @@ mod tests {
             "an in-radius player behind colliding blocks does not engage the chase"
         );
 
-        // Open the wall: sight is clear, the chase engages.
         for y in 64..=66 {
             assert!(world.set_block_world(5, y, 2, Block::Air));
         }
@@ -322,7 +263,6 @@ mod tests {
             .goal
             .is_some());
 
-        // Rebuild the wall: the engaged chase persists on distance alone.
         for y in 64..=66 {
             assert!(world.set_block_world(5, y, 2, Block::OakLeaves));
         }
@@ -347,7 +287,6 @@ mod tests {
         let mut rng = MobRng::new(1);
         let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
         let mob = WorldPos::new(2.5, 64.0, 2.5);
-        // 7 blocks away: inside the normal radius (10), outside the sneaking one (5).
         let player = WorldPos::new(9.5, 64.9, 2.5);
 
         let mut c = ctx(&world, &mut rng, mob, player);
@@ -358,13 +297,11 @@ mod tests {
             "a sneaking player at 7 blocks stays undetected"
         );
 
-        // Standing up at the same spot: detected at once.
         assert!(ai
             .tick(&mut ctx(&world, &mut rng, mob, player))
             .goal
             .is_some());
 
-        // Sneaking again does NOT shake an already-engaged chase.
         let mut c = ctx(&world, &mut rng, mob, player);
         c.player_sneaking = true;
         assert!(
@@ -372,9 +309,8 @@ mod tests {
             "sneaking shrinks detection, never an engaged chase"
         );
 
-        // A sneaking player inside the shrunk radius is still detected.
         let mut ai = ChasePlayerAi::with_sneak_penalty(10.0, 14.0, 5.0);
-        let near = WorldPos::new(6.5, 64.9, 2.5); // 4 blocks < 10 - 5
+        let near = WorldPos::new(6.5, 64.9, 2.5);
         let mut c = ctx(&world, &mut rng, mob, near);
         c.player_sneaking = true;
         assert!(ai.tick(&mut c).goal.is_some());

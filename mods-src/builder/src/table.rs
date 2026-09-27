@@ -1,13 +1,3 @@
-//! The schematic table: its blueprint slot, the panel each viewer sees, the
-//! materials page, and the buttons that drive a project.
-//!
-//! - [`panel`] — the table panel's state and what it says.
-//! - [`materials`] — the materials page's bill.
-//! - [`actions`] — the buttons, and what a schematic choice or positioning
-//!   reports back.
-//! - [`blueprint`] — the blueprint in the slot: laid out on the model, bound
-//!   and labelled.
-
 mod actions;
 mod blueprint;
 mod materials;
@@ -23,35 +13,23 @@ use crate::project::{Project, ProjectId};
 pub use actions::{chosen, click, positioned, use_blueprint};
 pub use blueprint::{blueprint_at, follow_blueprints, label_blueprint, placed, show_blueprint};
 
-/// Panels refresh this often, each viewer on a tick of their own.
 const PUBLISH: Cadence = Cadence::every(4);
-/// Every key is sent again this often, changed or not: a state map emptied
-/// without the panel reading as closed would otherwise stay empty.
 const RESEND: Cadence = Cadence::every(40);
-/// How long a refused press stays on the status line (ticks).
 const REFUSAL_TICKS: u64 = 50;
 
-/// What the session remembers per table.
 #[derive(Default)]
 pub struct Tables {
-    /// Whether a blueprint was last laid out on each table's top, and the
-    /// tick that was last checked.
     laid: HashMap<[i32; 3], (bool, u64)>,
-    /// The press each viewer was last refused, and the tick it stops showing.
     refused: HashMap<(PlayerId, [i32; 3]), (crate::jobs::Refusal, u64)>,
 }
 
 impl Tables {
-    /// Let go of tables nobody has looked at for `idle` ticks.
     pub fn sweep(&mut self, now: u64, idle: u64) {
         self.laid.retain(|_, (_, at)| now < *at + idle);
         self.refused.retain(|_, (_, until)| now < *until);
     }
 }
 
-/// The project a table speaks for: the job working from it (its golem
-/// carries the blueprint), else the one its blueprint is bound to, else —
-/// with the slot empty — the last job that finished here, for its report.
 fn project_at(builder: &Builder, table: [i32; 3]) -> Option<ProjectId> {
     if let Some(id) = builder.projects.active_at(table) {
         return Some(id);
@@ -73,7 +51,6 @@ fn table_of(viewer: &GuiViewerData) -> Option<[i32; 3]> {
     }
 }
 
-/// Projects whose table panel someone has open this tick.
 pub fn watched_projects(builder: &Builder, viewers: &[GuiViewerData]) -> Vec<ProjectId> {
     let mut ids = Vec::new();
     for table in viewers.iter().filter_map(table_of) {
@@ -115,8 +92,6 @@ fn publish_to(builder: &mut Builder, viewer: &GuiViewerData, table: [i32; 3], no
     }
 }
 
-/// Panels that closed since last tick. A panel closing is the last moment
-/// its slot could have changed.
 pub fn closed(builder: &mut Builder, closed: &[GuiViewerData], now: u64) {
     for viewer in closed {
         let Some(table) = table_of(viewer) else {

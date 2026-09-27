@@ -1,8 +1,3 @@
-//! The always-on circular minimap overlay: rotated terrain raster, border,
-//! waypoint markers with initials, the fixed player pointer, and the
-//! absolute-bearing cardinal labels. Re-rasterized only when its inputs
-//! (yaw, position, explored cells, waypoints) actually changed.
-
 use crate::*;
 
 const HUD_SIZE: usize = 256;
@@ -13,8 +8,6 @@ const HUD_BLOCKS_PER_PIXEL: f32 = 0.5;
 const HUD_PLAYER_ARROW_WIDTH: usize = 14;
 const HUD_PLAYER_ARROW_HEIGHT: usize = 22;
 
-/// Everything the HUD raster depends on; an unchanged stamp skips the whole
-/// publish (no 256×256 re-raster, no texture upload) for a stationary player.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct HudStamp {
     yaw: u32,
@@ -230,9 +223,6 @@ fn cardinal_text_runs(
     runs
 }
 
-/// Clamp a glyph run's top-left so the run stays inside the HUD with a
-/// one-pixel border. Total: a run wider than the HUD pins to the border
-/// instead of inverting the range.
 fn inside_hud(top_left: i32, extent: u16) -> i32 {
     let max = (HUD_SIZE as i32 - i32::from(extent) - 1).max(1);
     top_left.clamp(1, max)

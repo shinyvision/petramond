@@ -1,41 +1,22 @@
-//! The fuel fire every fuelled machine keeps: burn down a tick at a time,
-//! relight from a fuel slot only when there is work for the heat, and show
-//! how much of the current fuel item is left.
-
 use mod_sdk::*;
 
 use crate::{consume_one, Caches};
 
-/// A fuelled machine's fire — the engine furnace's burn rule, owned once so
-/// an oven, a forge and any later kiln cannot drift apart.
-///
-/// Persisted as two consecutive LE `u32`s (`remaining`, then `max`) inside
-/// the machine's own state record, through [`decode`](Self::decode) /
-/// [`encode`](Self::encode), so the layout is the one both machines already
-/// saved.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Burner {
-    /// Ticks of fire left from the current fuel item.
     pub remaining: u32,
-    /// The current fuel item's whole burn, for the gauge.
     pub max: u32,
 }
 
 impl Burner {
-    /// Whether the fire is burning.
     pub fn lit(self) -> bool {
         self.remaining > 0
     }
 
-    /// One tick of burning.
     pub fn tick(&mut self) {
         self.remaining = self.remaining.saturating_sub(1);
     }
 
-    /// Relight from `fuel` when the fire is out AND the machine wants heat —
-    /// idle fuel is never consumed (the furnace contract). A fuel item's burn
-    /// ticks come from its row through `caches`; an item with none stays in
-    /// the slot. Returns whether the fire caught.
     pub fn relight(
         &mut self,
         wants_heat: bool,
@@ -60,7 +41,6 @@ impl Burner {
         true
     }
 
-    /// The fuel gauge in `[0, 1]`: how much of the current item is left.
     pub fn gauge01(self) -> f32 {
         if self.max == 0 {
             0.0
@@ -69,7 +49,6 @@ impl Burner {
         }
     }
 
-    /// Read the two persisted fields; a missing field reads as out.
     pub fn decode(r: &mut ByteReader) -> Burner {
         Burner {
             remaining: r.u32().unwrap_or(0),
@@ -77,7 +56,6 @@ impl Burner {
         }
     }
 
-    /// Write the two persisted fields.
     pub fn encode(self, w: &mut ByteWriter) {
         w.u32(self.remaining);
         w.u32(self.max);

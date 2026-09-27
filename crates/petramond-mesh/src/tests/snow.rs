@@ -1,16 +1,11 @@
 use super::*;
 
-/// A lowered cube's full 1×1 base is flush with the cell floor, so the full
-/// block beneath it must CULL its top face — the two nearly-coplanar planes
-/// (carrier top at y, snow top at y+1/16) z-fight from far above otherwise.
-/// The lowered cube itself keeps rendering (its sunken top is inside the cell).
 #[test]
 fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
     let mut section = floor_section(Block::Stone);
     section.set_block(8, 1, 8, Block::SnowLayer);
     let m = mesh(&section);
 
-    // Every opaque emitter here pushes 4-vertex quads; group and classify.
     let quads: Vec<&[Vertex]> = m.opaque.chunks_exact(4).collect();
     let covers = |q: &[Vertex], x: f32, z: f32| {
         let (mut xmin, mut xmax, mut zmin, mut zmax) = (
@@ -28,7 +23,6 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
         xmin < x && x < xmax && zmin < z && z < zmax
     };
 
-    // No floor-top quad (y=1, +Y shade) may cover the snow-carrying cell.
     let carrier_top_covered = quads.iter().any(|q| {
         shade_idx(&q[0]) == 0
             && q.iter().all(|v| (v.pos[1] - 1.0).abs() < 1e-3)
@@ -39,7 +33,6 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
         "the block under a snow layer must not emit its covered top face"
     );
 
-    // The snow layer's own sunken top (y = 1 + 1/16) still renders.
     let snow_top = quads.iter().any(|q| {
         shade_idx(&q[0]) == 0
             && q.iter()
@@ -51,7 +44,6 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
         "the snow layer's own top face must keep rendering"
     );
 
-    // An uncovered floor cell still has its top drawn (the cull is per cell).
     let open_top_covered = quads.iter().any(|q| {
         shade_idx(&q[0]) == 0
             && q.iter().all(|v| (v.pos[1] - 1.0).abs() < 1e-3)
@@ -60,11 +52,8 @@ fn a_full_cube_under_a_snow_layer_culls_its_top_face() {
     assert!(open_top_covered, "uncovered floor tops must still render");
 }
 
-/// The covers-below cull is GEOMETRIC, not family-keyed: whatever resolves a
-/// box flush on its own floor that covers the whole cell footprint seals the
-/// face beneath it. A bottom slab is neither opaque nor a lowered cube and
-/// must seal; the same slab flipped to the TOP half must not — proving the
-/// answer is read off the cell's resolved boxes and not off its row.
+/// A bottom slab has to seal the face under it, even though it's not opaque. Flip it to the top
+/// half and it shouldn't. The cull only looks at the resolved boxes.
 #[test]
 fn any_floor_flush_neighbour_seals_the_face_beneath_it() {
     let carrier_top_drawn = |slot: usize| {
@@ -111,18 +100,15 @@ fn any_floor_flush_neighbour_seals_the_face_beneath_it() {
 /// cell displaced, and the blanket is drawn exactly once.
 ///
 /// Worldgen gives a column one cover cell, so a pebble in a snowfield takes the
-/// snow layer's place and used to leave a bare green hole. The bed puts the
-/// blanket back — but half the litter boxes are exactly one texel tall, so
+/// snow layer's place. The bed restores the snow blanket under the litter.
+/// Half the litter boxes are exactly one texel tall, so
 /// their top face lands on the blanket's own plane, which is why the bed joins
 /// the decoration's box set instead of being emitted beside it: one set lets
 /// the emitter's coincidence tie-break pick a winner, two sets would draw both
 /// and z-fight. That is the part worth guarding.
 #[test]
 fn decoration_beside_snow_is_bedded_in_it_without_doubling_the_surface() {
-    // Litter with a one-texel-tall box: `pebbles_small` puts one at
-    // x 2..5, z 9..12, whose top is coplanar with the bed's.
     let coincident = (3.5 / 16.0, 10.5 / 16.0);
-    // A corner of the same cell that no pebble box reaches.
     let bare = (14.0 / 16.0, 2.0 / 16.0);
 
     let tops_at = |neighbour: Option<Block>, at: (f32, f32)| {
@@ -155,13 +141,9 @@ fn decoration_beside_snow_is_bedded_in_it_without_doubling_the_surface() {
             .count()
     };
 
-    // No snow beside it: the pebble is bare ground, and only its own one-texel
-    // box reaches the blanket's height.
     assert_eq!(tops_at(None, coincident), 1, "the pebble's own box top");
     assert_eq!(tops_at(None, bare), 0, "no blanket without snow beside it");
 
-    // Snow beside it: the blanket appears across the cell, and the plane the
-    // pebble already owned is still drawn exactly once.
     assert_eq!(
         tops_at(Some(Block::SnowLayer), bare),
         1,
@@ -215,9 +197,6 @@ fn a_bedded_cell_covers_the_grass_below_it_like_the_snow_it_stands_in() {
     );
 }
 
-/// Snow is a cover, not a body: the layer seals its floor and blocks light,
-/// but the ground beside it keeps its corners open. Before this every snowy
-/// step and wall base wore a dark rim from a plate one texel thick.
 #[test]
 fn a_snow_layer_casts_no_ao_onto_the_ground_beside_it() {
     let m = mesh(&section_with(&[

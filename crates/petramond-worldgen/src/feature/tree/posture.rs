@@ -24,8 +24,6 @@ impl TrunkPosture {
         if self.lean == 0 {
             return (0, 0);
         }
-        // Keep the foot upright, then bend as a whole instead of random-walking
-        // each layer. The shoulder returns toward the lean at the crown.
         let t = ((level - 2) as f32 / (height - 3).max(1) as f32).clamp(0.0, 1.0);
         let along = (self.lean as f32 * t * t * (3.0 - 2.0 * t)).round() as i32;
         let across = (self.shoulder as f32 * 4.0 * t * (1.0 - t)).round() as i32;

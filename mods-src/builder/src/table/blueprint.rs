@@ -1,19 +1,11 @@
-//! The blueprint in a table's slot: shown lying on the table's top, bound to
-//! its project, and labelled with what it builds.
-
 use crate::host::prelude::*;
 
 use crate::content::{INFO_DATA, PROJECT_DATA};
 use crate::jobs::Builder;
 use crate::project::ProjectId;
 
-/// `petramond:info` values fit one instance-data entry.
 const INFO_BYTES: usize = 64;
-/// The table model's blueprint sheet and its paperweights: the row's `parts`,
-/// in order.
 const BLUEPRINT_PARTS: u32 = 0b1_1111;
-/// How often a working project's table is looked at: the golem takes the
-/// blueprint up and hands it back on its own.
 const FOLLOW: Cadence = Cadence::every(10);
 
 pub fn blueprint_at(table: [i32; 3]) -> Option<ItemStackData> {
@@ -23,12 +15,7 @@ pub fn blueprint_at(table: [i32; 3]) -> Option<ItemStackData> {
         .flatten()
 }
 
-/// Lay the blueprint out on the table's top while its slot holds one, and
-/// clear it away when it does not. Said again only when it changes.
 pub fn show_blueprint(builder: &mut Builder, table: [i32; 3], now: u64) {
-    // A project outlives its table (broken, or gone from an older save), and
-    // a part mask set on a block that is not this mod's is an error that
-    // takes the whole mod down.
     if get_block(table) != Some(builder.content.table) {
         builder.tables.laid.remove(&table);
         return;
@@ -45,13 +32,10 @@ pub fn show_blueprint(builder: &mut Builder, table: [i32; 3], now: u64) {
     }
 }
 
-/// A table was placed: it starts with a bare top, whatever stood there
-/// before.
 pub fn placed(builder: &mut Builder, table: [i32; 3]) {
     builder.tables.laid.remove(&table);
 }
 
-/// Keep the tables of working projects showing what their slot holds.
 pub fn follow_blueprints(builder: &mut Builder, now: u64) {
     let due: Vec<[i32; 3]> = builder
         .projects

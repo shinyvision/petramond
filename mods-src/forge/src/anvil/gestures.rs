@@ -1,13 +1,3 @@
-//! The gestures: every arithmetic that turns slots plus a record into a
-//! restamped tool. Carving a socket, tending an occupied one (repair, mount
-//! upgrade), staging what fits, applying it, wearing an augment down — and
-//! [`AnvilSpec::stamp`], the one place the three keys on a tool are written.
-//!
-//! All of it is pure with respect to the machine: it reads slots and answers
-//! new stacks, so `step` owns when anything happens (and owns the sounds —
-//! these functions are driven directly by unit tests, where a host call is a
-//! panic).
-
 use std::collections::HashSet;
 
 use mod_sdk::*;
@@ -18,17 +8,11 @@ use crate::anvil::{AnvilSpec, CellState, SLOTS, SLOT_TOOL, VALUE_CAP, WEAR_STREA
 use crate::augments::{quanta_max, repairable, Entry, Record, AUGMENTS_KEY, LEVEL_MAX};
 
 impl AnvilSpec {
-    /// Carving: the restamped tool plus the cell to consume a socket
-    /// material from, when a tool with locked sockets left shares the anvil
-    /// with one.
     pub(super) fn carve(&self, slots: &[Option<ItemStackData>]) -> Option<(ItemStackData, usize)> {
         let (tool, tool_slots, stats, rec) = self.tool_in(slots)?;
         if rec.carved >= tool_slots.lockable {
             return None;
         }
-        // A gem resting on an OCCUPIED socket is an upgrade gesture
-        // ([`AnvilSpec::tend_sockets`]), never carve fuel — the cell it sits
-        // in is what the gesture means.
         let cell = (1..SLOTS).find(|&c| {
             rec.id_at(c - 1).is_none()
                 && slots[c]
@@ -43,23 +27,10 @@ impl AnvilSpec {
         Some((stamped, cell))
     }
 
-    /// Quanta one material restores when dropped on its augment's occupied
-    /// socket: the INSTALL rate — `cost` materials buy the full base bar
-    /// either way.
     fn repair_quanta(fit: &Fit) -> u16 {
         (100u16).div_ceil(fit.cost.max(1) as u16)
     }
 
-    /// A qualifying wear event on `player`'s held tool: every installed,
-    /// unbroken augment whose fit wears on this event class — plus the one
-    /// whose own behaviour just fired, when `proc_id` names it — loses one
-    /// condition quantum with probability `100 / max`, so the fit's `max`
-    /// sets the expected pool in EVENTS while the stored space stays tiny.
-    /// Any loss restamps the tool in place through the held-stack
-    /// compare-and-set, against the very data map this read: a hand swapped
-    /// since the event, or a stack another writer re-stamped in between,
-    /// refuses harmlessly instead of clobbering. Streams advance only on
-    /// qualifying augments (the gold.rs rule).
     pub(crate) fn wear_held(&self, player: PlayerId, on: WearOn, proc_id: Option<&str>) {
         let Some(held) = player_held(player) else {
             return;
@@ -106,15 +77,12 @@ impl AnvilSpec {
         }
     }
 
-    /// The occupied-socket gestures, committed on the drop like carving:
-    /// the identity's own material REPAIRS its augment at the install rate
-    /// (consuming only what the bar needs), a socket material UPGRADES the
-    /// mount one level per gem up to [`LEVEL_MAX`]. Anything the gestures
-    /// do not consume is left for the workstation sweep.
+    /// Runs on the drop, like carving. Dropping the augment's own material repairs it at the
+    /// install rate and only uses what the bar needs. A gem upgrades the mount one level each, up
+    /// to [`LEVEL_MAX`]. Anything left over waits for the workstation sweep.
     ///
-    /// Returns whether a mount UPGRADE committed, which is the caller's cue
-    /// to sound the gem gesture — repair is silent, and the answer is only
-    /// ever true once the restamp has actually landed on the tool.
+    /// Returns true once an upgrade has landed on the tool, so the caller knows to play the gem
+    /// sound. Repairs don't make one.
     pub(super) fn tend_sockets(&self, slots: &mut [Option<ItemStackData>]) -> bool {
         let (tool, mut rec) = {
             let Some((tool, _, _, rec)) = self.tool_in(slots) else {
@@ -230,9 +198,6 @@ impl AnvilSpec {
         out
     }
 
-    /// The tool with every AFFORDABLE staged fit applied, plus the per-cell
-    /// costs to consume — `None` when nothing affordable is staged or the
-    /// stamped record would cross the engine's value cap.
     pub(super) fn apply_staged(
         &self,
         slots: &[Option<ItemStackData>],
@@ -254,11 +219,6 @@ impl AnvilSpec {
         Some((stamped, consumes))
     }
 
-    /// Stamp `rec` onto the tool: the record itself, and the engine override
-    /// plus overlay art RECOMPUTED from the base row and the full record,
-    /// never incrementally from the previous stamp. `None` when a recorded
-    /// identity has no fit for this tool's kind (a richer pack set wrote
-    /// it), or a stamped value would cross the engine's cap.
     pub(super) fn stamp(
         &self,
         tool: &ItemStackData,
@@ -281,12 +241,7 @@ impl AnvilSpec {
         data.retain(|(k, _)| k != AUGMENTS_KEY && k != TOOL_OVERRIDE_KEY && k != OVERLAY_DATA_KEY);
         data.push((AUGMENTS_KEY.to_owned(), record.into_bytes()));
 
-        // A carved-but-unaugmented tool carries only the record: the engine
-        // override and the art exist exactly when augments do.
         if !fitted.is_empty() {
-            // A BROKEN augment (condition 0) contributes NO stats — the tool
-            // falls back toward its row until repaired — but keeps its
-            // identity (the socket stays occupied) and its art.
             let live = || fitted.iter().filter(|(e, _)| e.cond > 0).map(|(_, f)| f);
             let tier = live().fold(stats.tier, |t, f| t.max(f.tier));
             let speed = live().fold(stats.speed, |s, f| s * f.speed_mult);
@@ -294,9 +249,6 @@ impl AnvilSpec {
                 [d[0] * f.damage_mult, d[1] * f.damage_mult]
             });
             let knockback = live().fold(stats.knockback, |k, f| k * f.knockback_mult);
-            // The IDENTITIES recorded are the fits' canonical overlays; the
-            // ART drawn is the family-resolved list, so a stone pickaxe's tip
-            // hugs the stone silhouette while both record "forge:diamond_tip".
             let arts = fitted
                 .iter()
                 .map(|(_, f)| f.overlay_for(&tool_slots.family))

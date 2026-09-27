@@ -2,11 +2,6 @@ use super::{input::InputController, App};
 use crate::game::GameInput;
 use petramond_world::gui_state::PointerButton;
 
-/// Wheel notches of travel per hotbar slot. One classic detent is `1.0`
-/// (Windows' `WHEEL_DELTA` / 120, as winit normalizes it), so a notched wheel
-/// still advances exactly one slot per click. Hi-res / free-spin mice emit
-/// fractions of a notch many times a frame; requiring a whole notch per slot
-/// and carrying the sub-slot remainder forward keeps selection tied to travel.
 const SCROLL_NOTCHES_PER_SLOT: f32 = 1.0;
 
 #[derive(Default, Copy, Clone, Debug)]
@@ -22,7 +17,6 @@ pub(super) struct PointerState {
     cursor_x: f32,
     cursor_y: f32,
     recenter_pending: bool,
-    /// A cursor warp may emit one synthetic raw-motion sample after recapture.
     discard_next_motion: bool,
 }
 
@@ -44,8 +38,6 @@ impl PointerState {
         self.cursor_y = y;
     }
 
-    /// Set the gameplay break/use state directly — the rebindable
-    /// Attack/Interact controls' landing point (bypasses screen routing).
     pub(super) fn set_gameplay_button(&mut self, button: PointerButton, down: bool) {
         self.set_button(button, down);
     }
@@ -125,11 +117,6 @@ impl PointerState {
         true
     }
 
-    /// Whole wheel notches accumulated since the last call, draining the
-    /// accumulator by the notches consumed and keeping the sub-notch remainder
-    /// for next frame (hi-res wheels emit fractions that sum to a notch).
-    /// Positive = scroll down. Each notch fires the bindings bound to that
-    /// scroll direction (hotbar next/prev by default).
     pub(super) fn take_scroll_notches(&mut self) -> i32 {
         let steps = (self.scroll_delta / SCROLL_NOTCHES_PER_SLOT).trunc();
         self.scroll_delta -= steps * SCROLL_NOTCHES_PER_SLOT;
@@ -154,9 +141,6 @@ impl PointerState {
         self.dx = 0.0;
         self.dy = 0.0;
 
-        // Hotbar stepping is a bound control now (scroll by default, keys by
-        // remap): edges accumulated in the InputController, dropped outside
-        // gameplay like the raw scroll accumulator.
         let steps = input.take_hotbar_steps();
         let hotbar_scroll = if gameplay_enabled {
             steps
@@ -274,7 +258,6 @@ impl App {
 
     pub fn add_scroll_delta(&mut self, delta: f32) {
         if self.options.remap().is_some() {
-            // Remap capture: any wheel movement binds its direction.
             self.remap_capture_scroll(delta);
             return;
         }
@@ -285,22 +268,16 @@ impl App {
             return;
         }
         if self.screen.client_canvas_open() {
-            // Canvas wheel travel goes to the owning client mod, coalesced to
-            // one dispatch per frame. The app's delta is positive = down; the
-            // mod ABI's is positive = up.
             self.queue_client_canvas_scroll(-delta);
             return;
         }
         if self.doc_ui_kind().is_some() {
-            // One wheel notch scrolls ~20 logical px, natural direction.
             self.ui.push_input(petramond_ui::InputEvent::Scroll {
                 delta: (delta * WHEEL_NOTCH_PX) as i32,
             });
             return;
         }
         self.controls.pointer.add_scroll_delta(delta);
-        // Whole notches fire whatever is bound to that scroll direction
-        // (hotbar next/prev by default) — gameplay only, like every binding.
         if self.screen.gameplay_enabled() {
             let notches = self.controls.pointer.take_scroll_notches();
             if notches != 0 {
@@ -334,5 +311,4 @@ impl App {
 #[cfg(test)]
 mod tests;
 
-/// Logical px one wheel notch scrolls a document.
 pub(super) const WHEEL_NOTCH_PX: f32 = 20.0;

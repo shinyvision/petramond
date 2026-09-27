@@ -1,39 +1,18 @@
-//! Document → instance-tree expansion.
-//!
-//! A document is authored once; each frame it expands against the host's
-//! [`UiState`] into a flat arena of instances: list templates are repeated per
-//! item, `visible: false` nodes are dropped (they take no space), and every
-//! binding is resolved to a concrete value. Layout, widgets, and paint all
-//! run over this arena, so binding resolution happens in exactly one place.
-//!
-//! Every instance records which state keys its expansion read. That is what
-//! lets the runtime keep last frame's arena and re-expand only the subtrees
-//! whose inputs changed (see [`reuse`]): a clean subtree moves across frames
-//! wholesale instead of being resolved again.
-
 pub(crate) mod reuse;
 
 use crate::doc::{Document, Node, NodeKind};
 use crate::state::{UiMap, UiState, UiValue};
 use reuse::Prev;
 
-/// A stable per-frame identity for an id-bearing instance: the node id plus
-/// the list item index when the node lives inside a template. Ephemeral
-/// widget state (hover, focus, scroll, editors) keys off this.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InstKey {
     pub id: String,
     pub item: Option<u32>,
 }
 
-/// One expanded node instance: the document node it stamps, plus every
-/// binding resolved ([`InstData`], reachable directly through `Deref`).
 #[derive(Debug)]
 pub struct Inst<'d> {
     pub node: &'d Node,
-    /// The layout this instance arranges by: the node's `compact_layout` when
-    /// the tree expanded in compact form (and the node carries one), else its
-    /// ordinary `layout`.
     pub layout: &'d crate::doc::LayoutProps,
     data: InstData,
 }
@@ -46,67 +25,34 @@ impl std::ops::Deref for Inst<'_> {
     }
 }
 
-/// An instance's resolved state, independent of the document borrow — the
-/// part that survives from one frame to the next.
 #[derive(Debug)]
 pub struct InstData {
-    /// Pre-order index of the stamped node in its document.
     pub node_id: u32,
-    /// The innermost list item index this instance was stamped from.
     pub item: Option<u32>,
-    /// Resolved display text (label/button/badge/alert): binding, else static.
     pub text: Option<String>,
-    /// Resolved `value` binding as f32 (gauge fraction, slider value,
-    /// rotimage radians).
     pub value_f32: Option<f32>,
-    /// Resolved `value` binding as bool (checkbox/toggle on-state).
     pub value_bool: Option<bool>,
-    /// Resolved `selected` binding (list selection index; −1 = none).
     pub selected: Option<i32>,
-    /// Resolved `image` binding: per-instance image-name override.
     pub image: Option<String>,
-    /// Resolved `frame` binding: the authoritative sprite-sheet frame index
-    /// (already truncated to an integer; the paint walk clamps it into the
-    /// sheet's grid).
     pub frame: Option<i32>,
-    /// Resolved `tint` binding as a linear multiply colour.
     pub tint: Option<[f32; 4]>,
-    /// Resolved `item` binding (hook nodes): the game item to draw in the
-    /// hook's rect (empty string resolves to `None` — nothing to show).
     pub item_name: Option<String>,
-    /// Resolved `min_w` binding: this frame's minimum width for a box whose
-    /// content the layout engine cannot measure (host-drawn hooks).
     pub min_w: Option<i32>,
-    /// Resolved `abs_x`/`abs_y` bindings: per-frame overrides of the node's
-    /// authored `layout.abs` position.
     pub abs_x: Option<i32>,
     pub abs_y: Option<i32>,
-    /// Resolved `palette` binding (labels, badges, inputs): the theme palette
-    /// entry that colours the node this frame (empty resolves to `None`).
     pub palette: Option<String>,
-    /// Resolved `scene` binding (canvas nodes): the host scene to paint.
     pub scene: Option<String>,
-    /// Resolved `icon` binding: this frame's icon name (empty = `None`).
     pub icon: Option<String>,
     pub text_opacity: f32,
     pub enabled: bool,
-    /// The enabled state inherited from the parent when this was expanded.
     pub(crate) parent_enabled: bool,
-    /// Arena index of the parent instance (`None` for the root).
     pub parent: Option<u32>,
-    /// Arena indices of this instance's children, in document/item order.
     pub children: Vec<u32>,
-    /// Identity for ephemeral state + events (id-bearing nodes only).
     pub key: Option<InstKey>,
-    /// Instances in this subtree, itself included (it is contiguous in the
-    /// arena: pre-order).
     pub(crate) span: u32,
-    /// Hashes of every state key this instance's expansion read — its own
-    /// bindings plus the visibility of children that expanded to nothing.
     pub(crate) deps: Vec<u64>,
 }
 
-/// The expanded arena. Index 0 is the root.
 #[derive(Debug)]
 pub struct InstTree<'d> {
     pub insts: Vec<Inst<'d>>,
@@ -114,8 +60,6 @@ pub struct InstTree<'d> {
 
 pub const ROOT: u32 = 0;
 
-/// `0xRRGGBB` to a linear multiply colour. Packed as an `I32` because the GUI
-/// state map carries no colour type and a publisher already has the bytes.
 fn unpack_tint(packed: i32) -> [f32; 4] {
     let v = packed as u32;
     [
@@ -127,18 +71,14 @@ fn unpack_tint(packed: i32) -> [f32; 4] {
 }
 
 impl Inst<'_> {
-    /// The effective flow direction for this instance's children.
     pub fn flow_dir(&self) -> crate::doc::Dir {
         self.node.flow_dir_of(self.layout)
     }
 
-    /// The effective cross-axis alignment of this instance's children.
     pub fn effective_align(&self) -> crate::doc::Align {
         self.node.effective_align_of(self.layout)
     }
 
-    /// This frame's icon name for a `button`/`toggle`: the bound override,
-    /// else the authored one.
     pub fn icon_name(&self) -> Option<&str> {
         if let Some(icon) = self.icon.as_deref() {
             return Some(icon);
@@ -149,9 +89,6 @@ impl Inst<'_> {
         }
     }
 
-    /// The effective image name for `image`/`rotimage`/image-backed `button`
-    /// nodes: the bound override, else the node's static name (`None` when
-    /// empty).
     pub fn image_name(&self) -> Option<&str> {
         if let Some(name) = self.image.as_deref() {
             return (!name.is_empty()).then_some(name);
@@ -173,19 +110,10 @@ impl<'d> InstTree<'d> {
         Self::expand_form(doc, state, false)
     }
 
-    /// Expand in normal or compact form (the caller resolves the document's
-    /// breakpoint against its viewport — see [`Document::compact_active`]).
     pub fn expand_form(doc: &'d Document, state: &UiState, compact: bool) -> InstTree<'d> {
         Self::expand_form_hover(doc, state, compact, None)
     }
 
-    /// [`expand_form`](Self::expand_form) with the widget under the cursor
-    /// (one frame old — the same contract as hover-revealed list content): a
-    /// tooltip whose `hover` anchor does not match expands as invisible, so an
-    /// anchored tooltip costs nothing on the frames its widget is not pointed
-    /// at. A tooltip stamped inside a list template matches only its own
-    /// stamp's widget, and binds that stamp's values; one outside matches the
-    /// widget id on any stamp.
     pub fn expand_form_hover(
         doc: &'d Document,
         state: &UiState,
@@ -196,9 +124,6 @@ impl<'d> InstTree<'d> {
         Self::expand_with(doc, &shape, state, compact, hover, None)
     }
 
-    /// The expansion every entry point shares: `prev` (last frame's arena of
-    /// the same document, with its dirty subtrees marked) donates every clean
-    /// subtree instead of it being resolved again.
     pub(crate) fn expand_with(
         doc: &'d Document,
         shape: &reuse::DocShape<'d>,
@@ -247,8 +172,6 @@ impl<'d> InstTree<'d> {
         self.insts.is_empty()
     }
 
-    /// The arena index of the instance keyed `id` (+ optional item), if it
-    /// expanded this frame.
     pub fn find(&self, id: &str, item: Option<u32>) -> Option<u32> {
         self.insts
             .iter()
@@ -260,14 +183,10 @@ impl<'d> InstTree<'d> {
             .map(|i| i as u32)
     }
 
-    /// Detach the arena from the document borrow, keeping every resolved
-    /// value for the next frame.
     pub(crate) fn into_data(self) -> Vec<InstData> {
         self.insts.into_iter().map(|inst| inst.data).collect()
     }
 
-    /// Re-attach a detached arena to its document (`shape` indexes the same
-    /// document the data was expanded from).
     pub(crate) fn from_data(
         shape: &reuse::DocShape<'d>,
         data: Vec<InstData>,
@@ -288,8 +207,6 @@ impl<'d> InstTree<'d> {
     }
 }
 
-/// Where one node is being stamped: the list item it resolves against, its
-/// parent, and its counterpart in last frame's arena (if any).
 #[derive(Clone, Copy)]
 struct At<'m> {
     node_id: u32,
@@ -297,16 +214,10 @@ struct At<'m> {
     item: Option<u32>,
     parent: Option<u32>,
     parent_enabled: bool,
-    /// The previous arena's instance of this same node and item, when one
-    /// exists and may be matched.
     counterpart: Option<u32>,
-    /// Whether clean previous subtrees may be adopted here. Off below a list
-    /// that re-expanded: its rows may resolve against new item maps even when
-    /// no global key they read changed.
     reusable: bool,
 }
 
-/// One expansion pass over a document.
 struct Grow<'t, 'd, 's> {
     tree: &'t mut InstTree<'d>,
     shape: &'s reuse::DocShape<'d>,
@@ -316,7 +227,6 @@ struct Grow<'t, 'd, 's> {
     prev: Option<&'s mut Prev>,
 }
 
-/// Binding reads for one instance, recording every key they touch.
 struct Reads<'a> {
     state: &'a UiState,
     item: Option<&'a UiMap>,
@@ -355,15 +265,12 @@ impl<'a> Reads<'a> {
             | NodeKind::Button { text, .. }
             | NodeKind::Badge { text }
             | NodeKind::Alert { text, .. } => text.clone(),
-            // Inputs show their bound text (editor overlays it while focused).
             _ => None,
         }
     }
 }
 
 impl<'d> Grow<'_, 'd, '_> {
-    /// Expand `node` (and descendants) into the arena; returns its index, or
-    /// `None` when the node resolved invisible.
     fn node(&mut self, node: &'d Node, at: At<'_>) -> Option<u32> {
         if let Some(adopted) = self.adopt(at) {
             return Some(adopted);
@@ -383,16 +290,11 @@ impl<'d> Grow<'_, 'd, '_> {
         if anchored.is_some() {
             reads.deps.push(reuse::HOVER_DEP);
         }
-        // A tooltip stamped inside a list template matches only its own
-        // stamp's widget; one outside matches the widget id on any stamp.
         let hover = self.hover;
         let hovered = |anchor: &str| {
             hover.is_some_and(|h| h.id == anchor && (at.item.is_none() || h.item == at.item))
         };
         if !visible || anchored.is_some_and(|anchor| !hovered(anchor)) {
-            // The parent must know what hid this child, or a clean parent
-            // could be adopted next frame without the child that should
-            // have appeared.
             if let Some(p) = at.parent {
                 self.tree.insts[p as usize]
                     .data
@@ -501,15 +403,11 @@ impl<'d> Grow<'_, 'd, '_> {
         Some(idx)
     }
 
-    /// The previous arena's child of `parent` stamping node `node_id` for
-    /// `item`, if the previous frame had one.
     fn counterpart_of(&self, parent: Option<u32>, node_id: u32, item: Option<u32>) -> Option<u32> {
         let prev = self.prev.as_deref()?;
         prev.child_of(parent?, node_id, item)
     }
 
-    /// Move the previous frame's instance of this node (and its whole
-    /// subtree) into the arena when nothing it read has changed.
     fn adopt(&mut self, at: At<'_>) -> Option<u32> {
         if !at.reusable {
             return None;
@@ -585,7 +483,6 @@ mod tests {
         assert_eq!(list.children.len(), 2, "one template stamp per item");
         assert_eq!(list.selected, Some(1));
 
-        // First row: label text from item map, toggle on + enabled.
         let row0 = tree.get(list.children[0]);
         let label0 = tree.get(row0.children[0]);
         assert_eq!(label0.text.as_deref(), Some("Weather Pack"));
@@ -600,14 +497,12 @@ mod tests {
             })
         );
 
-        // Second row: distinct key, off + disabled.
         let row1 = tree.get(list.children[1]);
         let toggle1 = tree.get(row1.children[1]);
         assert_eq!(toggle1.value_bool, Some(false));
         assert!(!toggle1.enabled);
         assert_eq!(toggle1.key.as_ref().unwrap().item, Some(1));
 
-        // Instance lookup by (id, item) resolves to the per-item stamp.
         assert_eq!(tree.find("mod_on", Some(1)), Some(row1.children[1]));
         assert_eq!(tree.find("mod_on", Some(7)), None);
     }
@@ -632,7 +527,6 @@ mod tests {
         state.set("show_back", UiValue::Bool(false));
         let tree = InstTree::expand(&doc, &state);
         assert_eq!(tree.find("back", None), None);
-        // Default (key absent) is visible.
         let tree = InstTree::expand(&doc, &UiState::new());
         assert!(tree.find("back", None).is_some());
     }

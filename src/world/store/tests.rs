@@ -29,10 +29,6 @@ fn failed_section_mut_lookup_does_not_pollute_the_random_tick_index() {
 
 #[test]
 fn same_height_surface_swap_bumps_the_column_revision() {
-    // Replacing the visible surface block in place (tilling, grass
-    // spread, …) keeps the heightmap, but revision-gated surface
-    // sampling must still see the column move or the swapped color is
-    // never resampled.
     let mut world = ServerWorld::new(0, 0);
     let sp = SectionPos::new(0, 4, 0);
     let mut s = Section::new(0, 4, 0);
@@ -58,9 +54,6 @@ fn same_height_surface_swap_bumps_the_column_revision() {
 
 #[test]
 fn edits_in_total_darkness_skip_light_invalidation_entirely() {
-    // The adaptive relight radius: light values bound how far a plain
-    // solid⇄air edit can matter, so mining inside unlit solid rock (the
-    // hot gameplay path) must trigger NO light invalidation or rebake.
     let mut world = ServerWorld::new(0, 4);
     let pos = SectionPos::new(0, 0, 0);
     let mut section = Section::new(0, 0, 0);
@@ -72,7 +65,6 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
         s.set_skylight(vec![0u8; SECTION_VOLUME].into());
         s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
     }
-    // The fixture insert demands a bake; only the edits below are under test.
     world.data.relight_demand.clear();
     assert!(
         !world.data.sections[&pos].light_dirty,
@@ -86,7 +78,6 @@ fn edits_in_total_darkness_skip_light_invalidation_entirely() {
     );
     assert!(world.data.relight_demand.is_empty());
 
-    // Control: the same break beside cached light must invalidate.
     world
         .data
         .section_mut(pos)
@@ -119,12 +110,6 @@ fn glass_raises_the_visible_surface_without_raising_sky_cover() {
 
 #[test]
 fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
-    // Two adjacent sections persist with clean baked light. An edit in A
-    // then dirties B's light (content change → B's on-disk cubes are
-    // pre-edit stale). If eviction/quit wins the race against B's rebake,
-    // the persist gate must rewrite B's record WITHOUT light so reload
-    // rebakes — the pre-fix gate skipped unmodified light-dirty sections
-    // entirely, stranding the stale cubes as a permanent dark seam.
     let dir = petramond_util::test_dirs::TestScratchDir::new("stale-light");
     let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
     let mut world = ServerWorld::new(0, 0);
@@ -155,8 +140,6 @@ fn eviction_racing_an_edit_relight_rewrites_the_record_lightless() {
         "fixture: B persisted with clean light"
     );
 
-    // The edit in A, one cell from the seam: B's cached AND persisted
-    // light are now stale.
     world.set_block_world(15, 65, 8, Block::Stone);
     assert!(world.data.sections[&b].light_dirty);
 
@@ -434,9 +417,6 @@ fn removing_surface_cover_relights_loaded_sections_below_the_changed_section() {
         "distant light invalidation must be tracked in case eviction beats the rebake"
     );
 
-    // The mark itself demands the rebake (`relight_demand`) — no mesh is
-    // pre-queued for the distant section — and the landed bake's changed
-    // cubes requeue its mesh.
     let mut landed = false;
     for _ in 0..2500 {
         world.pump_light_bakes();

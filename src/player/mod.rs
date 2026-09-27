@@ -1,35 +1,31 @@
-//! First-person player: AABB physics with gravity/jump, swept voxel collision,
-//! spectator noclip movement, and a block raycast used for break/place.
+//! First-person player: AABB physics, gravity/jump, swept voxel collision,
+//! spectator noclip, block raycast for break/place.
 //!
-//! The player is a 0.6 × 1.8 × 0.6 box. `pos` is the *feet centre*: x/z are the
-//! horizontal centre of the box and y is its bottom. The camera eye sits `EYE`
-//! above the feet. Horizontal movement decouples acceleration from friction.
-//! While a direction is held, the velocity ramps toward the wish velocity (input
-//! direction × speed). On the ground this is a snappy redirect toward wish×speed
-//! (responsive starts, stops, and turns); in the air it is a gentle, *additive*
-//! nudge along the input direction that tops you up to walk speed but never
-//! brakes, with total air speed capped at what you launched with — so a jump
-//! keeps its momentum and input can steer the arc but neither brakes nor pumps it
-//! up (no wall-scrape speed exploit). With no input, *friction* alone decays the velocity
-//! toward zero: friction is purely how fast you slow down — 0 keeps motion
-//! forever, 1 stops it instantly — and it never gates how fast you speed up.
-//! Ground friction is high (quick stop), air friction low (a long coast). The
-//! decay is frame-rate independent; the ramp's rate is too, though the exact
-//! frame it reaches top speed can vary by up to one sub-step. Gravity pulls the
-//! player down — eased near the jump apex for a softer arc — and Space jumps.
-//! Spectator mode bypasses gravity and collision entirely, moving through the
-//! full 3-D wish direction.
-//! A grounded player auto-steps up a half-block ledge (a slab / a bbmodel block's low
-//! edge) via the shared `collision::step_horizontal` (`STEP_HEIGHT = 0.5`); a full block
-//! is still a jump-to-climb wall (`JUMP_V0` clears ~1.26 blocks). Step-up is gated on being
-//! solid or fluid support; freely falling bodies cannot step.
+//! Box is 0.6 x 1.8 x 0.6. `pos` is feet centre: x/z centered, y at bottom.
+//! Camera eye sits `EYE` above feet.
+//!
+//! Accel and friction are separate knobs. Hold a direction, velocity ramps
+//! toward wish x speed. Ground: snappy redirect, crisp starts/stops/turns.
+//! Air: just tops you up toward walk speed, never brakes, total air speed
+//! capped at launch speed. So a jump keeps its momentum - steer the arc but
+//! can't brake or pump speed, no wall-scrape trick. Release input and
+//! friction alone decays velocity toward zero (0 never stops, 1 stops
+//! instantly), doesn't touch accel. Ground friction high, air friction low.
+//! Decay and ramp are frame-rate independent, but the frame you hit top
+//! speed can drift up to one sub-step.
+//!
+//! Gravity eases near jump apex, softer arc. Spectator skips gravity and
+//! collision, just moves freely in 3D.
+//!
+//! Grounded players auto-step a half-block ledge via `collision::step_horizontal`
+//! (`STEP_HEIGHT = 0.5`). Full block still needs a jump (`JUMP_V0` clears ~1.26
+//! blocks). Step-up needs solid or fluid support underneath; falling bodies
+//! can't step.
 
 mod abilities;
 mod collision;
 mod creative;
 mod interaction;
-// The session id is a world-level value (the world stores per-player facts
-// keyed by it); the player module keeps its historical name.
 pub use crate::world::session::PlayerId;
 
 pub mod animator;
@@ -54,9 +50,6 @@ pub use creative::creative_flight_speed;
 pub use interaction::block_within_reach;
 pub use interaction::ray_vs_aabb;
 pub use interaction::{RayFilter, RaycastHit, REACH};
-/// Speed caps used by server movement validation (F1): horizontal sprint
-/// speeds plus the vertical envelope (jump take-off up, terminal fall down)
-/// and gravity (correction deadband scaling).
 pub use movement::{GRAVITY, JUMP_V0, SPECTATOR_SPRINT, SPRINT, SWIM_SPEED, TERMINAL, WALK};
 pub use progression::Progression;
 pub use rigs::{Presenter, RigId};

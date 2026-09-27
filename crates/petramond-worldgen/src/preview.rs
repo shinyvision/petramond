@@ -1,7 +1,3 @@
-//! Dev-tool surface: feature previews, macro surface maps, positional
-//! terrain/biome queries — what genmap/genfeature and pack acceptance checks
-//! drive without generating full chunks.
-
 use std::collections::HashMap;
 
 use crate::feature::{FeatureCtx, VoxelSink};
@@ -14,44 +10,24 @@ pub fn generate_chunk(seed: u32, cx: i32, cz: i32) -> Chunk {
     crate::generate_chunk(seed, cx, cz)
 }
 
-/// The underground biome owning each position — the SAME answer the
-/// habitat lining reads. A per-biome census needs it: judging
-/// "did this row line every floor in its territory" by proximity to the
-/// row's own lining block silently counts the neighbouring biome's rim as
-/// a miss.
 pub fn underground_biome_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
     crate::underground_biomes_at(seed, positions)
 }
 
-/// The underground-biome id registered under `name`.
 pub fn underground_biome_id(name: &str) -> Option<u8> {
     crate::data::underground::id_by_name(name)
 }
 
-/// Whether the generated terrain is solid at each position — the same
-/// answer a mod's `terrain_solid_at` gets. A pack that mixes this with the
-/// section snapshot (positional for a neighbour in the next section,
-/// `GenCtx::block` for its own cells) is only sound where the two coincide,
-/// and that is a property of the INSTALLED set, not of bare terrain, so it
-/// wants an instrument outside the engine's own parity test.
 pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
     crate::terrain_solid_at(seed, positions)
 }
 
-// Cubic per-section generation, re-exported so dev tools (genmap's deep
-// cross-section / cave statistics) can inspect terrain below y = 0 — the
-// whole-column `Chunk` preview only covers `[0, CHUNK_SY)`.
 pub use crate::driver::{ChunkGenerator, ColumnGen};
 pub use petramond_world::chunk::{
     SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y,
 };
 pub use petramond_world::section::Section;
 
-/// A kilometre-scale surface overview sampled straight from the climate
-/// graph (no chunk generation): per grid point the classified biome id and
-/// the base surface height. `side` points per edge, `stride` blocks apart,
-/// centred on the origin — for verifying world-scale structure (mountain
-/// belts, valley networks) that a chunk-sized genmap window cannot show.
 pub struct MacroSurfaceMap {
     pub side: usize,
     pub biomes: Vec<u8>,
@@ -115,7 +91,6 @@ pub fn preview_feature(name: &str, seed: u32) -> Option<FeaturePreview> {
     let mut sink = PreviewSink::default();
     let mut ctx = FeatureCtx::new(&mut sink);
     let mut rng = FeatureRng::positional(seed, crate::salts::FEATURE_PREVIEW, 0, 0, 0);
-    // Preview renders the pure shape: every cell is canopy-open.
     cf.feature
         .generate(&mut ctx, &mut |_| true, IVec3::new(0, 0, 0), &mut rng);
 

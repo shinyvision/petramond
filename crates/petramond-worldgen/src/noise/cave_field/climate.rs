@@ -4,7 +4,6 @@ use crate::cache::GenContext;
 use crate::data::underground::ClimatePoint;
 
 thread_local! {
-    /// The last component is surface height until the caller supplies Y.
     static HORIZONTAL: LocalTable<(GenContext, [i32; 2]), ClimatePoint> =
         LocalTable::new(&local::CAVE_CLIMATE);
 }

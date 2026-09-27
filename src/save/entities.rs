@@ -1,18 +1,3 @@
-//! Per-entity (de)serialization for the dropped item-stacks stored inside a
-//! section's save record.
-//!
-//! Item entities live with their owning section — so a stack's lifetime
-//! timer pauses when the section unloads and resumes (with the right
-//! remaining time) when it loads — so this is a helper for the section codec
-//! rather than a standalone file format (see `save::codec`).
-//!
-//! Each entity is an [`EntityRecord`], a tagged record (`save::wire`): a
-//! field gained later reads as its default in older records. An entity this
-//! build cannot represent — its item cannot be resolved (a removed or
-//! disabled mod's item), or it carries fields this build does not know — is
-//! not dropped: it stays a record, kept with its section by the save and
-//! written back unchanged, so it returns with its mod.
-
 use crate::entity::{DroppedItem, Heading, Motion, Stuck};
 use crate::save::codec::DiskSlot;
 use crate::save::palette::Palette;
@@ -35,7 +20,6 @@ petramond_math::wire_enum::wire_enum! {
     default Loose
 }
 
-/// Where a lodged item points and the cell holding it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct StuckRecord {
     yaw: f32,
@@ -44,7 +28,6 @@ struct StuckRecord {
 }
 wire_struct!(StuckRecord { yaw, pitch, anchor });
 
-/// One item entity as stored.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct EntityRecord {
     pos: WorldPos,
@@ -53,7 +36,6 @@ pub struct EntityRecord {
     ticks_lived: u32,
     spin: f32,
     motion: u8,
-    /// Present for a lodged item only.
     stuck: Option<StuckRecord>,
     unknown: UnknownFields,
 }
@@ -93,11 +75,10 @@ impl EntityRecord {
         }
     }
 
-    /// The live drop — `Ok(None)` for an empty stack, which is dropped —
-    /// or the record itself when this build cannot represent it. The drop
-    /// resumes with its saved motion, lifetime and spin (the random spawn
-    /// "pop" is bypassed); a restored lodged item's anchor is unverified
-    /// (see `Stuck::verified`).
+    /// The live drop. `Ok(None)` means an empty stack, which is dropped; `Err` hands back the
+    /// record when this build can't represent it. Motion, lifetime and spin resume from the save,
+    /// skipping the random spawn "pop". A restored lodged item's anchor is unverified (see
+    /// `Stuck::verified`).
     fn resolve(self, pal: &Palette) -> Result<Option<DroppedItem>, Box<EntityRecord>> {
         if !self.unknown.is_empty() {
             return Err(Box::new(self));
@@ -127,8 +108,6 @@ impl EntityRecord {
     }
 }
 
-/// Append the entity list: the live drops, then the records kept from an
-/// earlier load.
 pub fn put_entities(
     buf: &mut Vec<u8>,
     items: &[DroppedItem],
@@ -143,8 +122,6 @@ pub fn put_entities(
     records.put(buf);
 }
 
-/// Read the entity list: the live drops, and the records this build cannot
-/// represent (to keep). `None` on truncated or malformed input.
 pub fn get_entities(
     r: &mut Reader,
     pal: &Palette,
@@ -206,10 +183,6 @@ mod tests {
         assert_eq!(got[1].ticks_lived, 0);
     }
 
-    /// A lodged item reloads lodged, pointing the same way, anchored to
-    /// the same cell but UNVERIFIED (the block may have gone meanwhile); a
-    /// flight reloads as a flight with its owner forgotten (sessions do not
-    /// outlive the process) and its heading re-derived from its velocity.
     #[test]
     fn motion_survives_the_entity_roundtrip() {
         let heading = Heading {
@@ -270,9 +243,6 @@ mod tests {
         );
     }
 
-    /// An entity whose item this world cannot resolve, or which carries a
-    /// field this build does not know, is kept as its record — and written
-    /// back byte for byte.
     #[test]
     fn an_entity_this_build_cannot_represent_is_kept_not_dropped() {
         let pal = Palette::identity();
@@ -284,7 +254,6 @@ mod tests {
             ),
             &pal,
         );
-        // Past every id the identity palette covers: unresolvable.
         strange_item.slot.item = u16::MAX - 1;
         let mut newer = EntityRecord::of(
             &DroppedItem::new(
@@ -307,8 +276,6 @@ mod tests {
         assert_eq!(again, buf, "kept records re-encode unchanged");
     }
 
-    /// A record without the fields a later build added still decodes (the
-    /// missing field reads as its default).
     #[test]
     fn a_record_missing_fields_reads_them_as_defaults() {
         let pal = Palette::identity();
@@ -336,7 +303,6 @@ mod tests {
 
     #[test]
     fn truncated_input_is_none() {
-        // Claims one entity but provides no body.
         let buf = to_bytes(&1u32);
         assert!(get_entities(&mut Reader::new(&buf), &Palette::identity()).is_none());
     }

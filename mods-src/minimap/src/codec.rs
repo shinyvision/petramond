@@ -1,28 +1,16 @@
-//! Region-value codec: one storage value bundles a 4×4 grid of 16×16-cell
-//! tiles (base tiles: one cell per block; mip tiles: one cell per 2×2
-//! blocks). Bundling cuts storage keys 16× versus one-value-per-tile; the
-//! packed encoding shrinks values ~3–5× on typical terrain.
+//! One storage value holds a 4x4 grid of 16x16-cell tiles, so we need 16x fewer keys.
 //!
-//! Layout: `[version]` then 16 sub-tiles in row-major (tz*4 + tx) order.
-//! - `RAW_VERSION`: per sub-tile a marker byte (0 = empty, 1 = data); data =
-//!   256 × (le i16 height + rgb). The trivially mirrorable form — test
-//!   harnesses fabricate it; the decoder accepts it forever.
-//! - `PACKED_VERSION`: same markers; data = a run-length stream of cells:
-//!   `(run varint, Δheight zigzag varint, Δr, Δg, Δb zigzag varints)`, deltas
-//!   against the previous cell in row-major order (starting from zero).
-//!   Uniform areas (water, plains) collapse into runs; tint gradients emit
-//!   1-byte deltas. Sub-tile marker 2 stores raw cells inside a packed
-//!   value — the fallback when packing would exceed raw size, so
-//!   pathological noise never inflates a value.
+//! Layout is `[version]` then 16 sub-tiles, row-major (`tz*4 + tx`). `RAW_VERSION` is plain
+//! height + rgb per cell, easy for test harnesses to fake, and always decodable.
+//! `PACKED_VERSION` run-length codes zigzag deltas against the previous cell, 3-5x smaller on
+//! typical terrain. Marker 2 keeps a sub-tile raw when packing it would come out bigger.
 //!
-//! Any malformed byte stream decodes to `None` — treated exactly like an
-//! absent key, never a partial tile.
+//! Malformed bytes decode to `None`, like a missing key. We never return a partial tile.
 
 use crate::*;
 
 pub(crate) const RAW_VERSION: u8 = 0;
 pub(crate) const PACKED_VERSION: u8 = 1;
-/// Sub-tiles per region edge; a region value covers 4×4 tiles.
 pub(crate) const REGION_TILES: i32 = 4;
 
 fn push_varint(out: &mut Vec<u8>, mut v: u32) {
@@ -58,8 +46,6 @@ fn unzigzag(v: u32) -> i32 {
     ((v >> 1) as i32) ^ -((v & 1) as i32)
 }
 
-/// Encode 16 optional sub-tiles (row-major within the region) as one packed
-/// region value. `None` sub-tiles are empty (never explored).
 pub(crate) fn encode_region(tiles: &[Option<&Tile>; 16]) -> Vec<u8> {
     let mut out = Vec::with_capacity(4096);
     out.push(PACKED_VERSION);
@@ -99,7 +85,6 @@ pub(crate) fn encode_region(tiles: &[Option<&Tile>; 16]) -> Vec<u8> {
             out.push(1);
             out.extend_from_slice(&scratch);
         } else {
-            // Pathological noise: raw is smaller.
             out.push(2);
             for cell in tile.cells {
                 out.extend(cell.height.to_le_bytes());
@@ -110,8 +95,6 @@ pub(crate) fn encode_region(tiles: &[Option<&Tile>; 16]) -> Vec<u8> {
     out
 }
 
-/// Decode one region value into 16 optional sub-tiles. `None` result =
-/// malformed (treat the whole value as absent).
 pub(crate) fn decode_region(bytes: &[u8]) -> Option<[Option<Box<Tile>>; 16]> {
     let version = *bytes.first()?;
     let mut at = 1usize;
@@ -173,7 +156,7 @@ mod tests {
         let mut tile = Box::new(Tile::default());
         for i in 0..256i32 {
             if holes && (i + seed).rem_euclid(11) == 0 {
-                continue; // unknown cells survive the roundtrip too
+                continue;
             }
             tile.cells[i as usize] = Cell {
                 height: ((i * 3 + seed).rem_euclid(120) - 40) as i16,
@@ -187,8 +170,6 @@ mod tests {
         tile
     }
 
-    /// Smooth heights and a small color set — the realistic terrain shape
-    /// the packing targets.
     fn terrain_tile(seed: i32) -> Box<Tile> {
         let palette = [[90, 140, 60], [110, 150, 70], [40, 90, 190], [120, 110, 90]];
         let mut tile = Box::new(Tile::default());
@@ -204,8 +185,6 @@ mod tests {
 
     #[test]
     fn packed_region_roundtrips_and_noise_never_inflates() {
-        // Adversarially noisy cells with holes: exact roundtrip, and the
-        // per-tile raw fallback bounds the size at ~raw.
         let tiles: Vec<Option<Box<Tile>>> = (0..16)
             .map(|i| (i % 3 != 2).then(|| tile(i, i % 2 == 0)))
             .collect();

@@ -1,8 +1,7 @@
 //! Server-side world streaming + per-connection terrain replication.
 //!
 //! Each pump the server streams its OWN world around every session's player
-//! (`update_load_multi` + `poll` + `pump_light_bakes` — the drive that used to
-//! live on the client's per-frame `tick_world`), then diffs each connection's
+//! (`update_load_multi` + `poll` + `pump_light_bakes`), then diffs each connection's
 //! WANTED terrain shape against what it was already sent and emits
 //! `ColumnData`/`SectionData`/`SectionUnload`/`ColumnUnload` messages. Over
 //! the in-process pipe the payloads are `Arc` refcount bumps.
@@ -31,36 +30,22 @@ const TERRAIN_SECTIONS_PER_PUMP: usize = 128;
 /// section reconstruction is expensive. Several may be in flight to cover RTT.
 const MAX_BATCH_MSGS: usize = 96;
 
-/// Loopback has no RTT to hide; the two-deep window exists so the server can
-/// bank the NEXT batch while the client applies the current one (acks land
-/// once per client frame). One 64-message batch per frame capped loopback
-/// delivery at ~3.8k sections/s — below RD32 sprint-flight demand (~5k/s) —
-/// and the replica's coverage collapsed while the server sat loaded; the
-/// widened window keeps the ceiling above demand and leaves pacing to the
-/// client-measured apply rate. The window remains the hard bound on the
-/// unbounded process-local channel.
+/// Two-deep window lets server bank the next batch while client applies the current one (acks land
+/// once per client frame). At 64 msgs/batch loopback delivery capped at ~3.8k sections/s, below
+/// RD32 sprint-flight demand (~5k/s), and replica coverage collapsed under load. Wider window
+/// raises the ceiling above demand; pacing stays client-driven. Window is still the hard bound on
+/// the unbounded channel.
 ///
-/// 192 (was 96): loopback installs adopt `Arc` payloads, so a batch is cheap
-/// to apply and the remote "apply inside one client frame" sizing does not
-/// bind here. At world join the spawn's 3×3 columns are ~2×96 messages —
-/// the wider batch lands them in the client's first receiving frame instead
-/// of trickling batch-per-frame.
+/// 192 (was 96): loopback batches use `Arc` payloads and are cheap to apply, so the remote
+/// per-frame sizing doesn't bind here. Spawn's 3x3 columns are ~2x96 msgs, so the wider batch
+/// lands them in one frame instead of trickling.
 const LOCAL_MAX_BATCH_MSGS: usize = 192;
 
-/// Unacknowledged batches allowed in flight after the FIRST ack proves the
-/// client speaks the ack loop; exactly one before it (vanilla-verified
-/// 1.20.2 values).
 const MAX_UNACKED_BATCHES: u32 = 4;
 const LOCAL_MAX_UNACKED_BATCHES: u32 = 2;
 
-/// The assumed client apply rate (streaming messages/second) before the
-/// first ack reports a measured one. Modest on purpose: it sizes only the
-/// first window-of-one batch.
 const INITIAL_CLIENT_RATE: f32 = 1600.0;
 
-/// Server-side clamp on the client-reported rate: a hostile or broken ack
-/// can neither park streaming near zero nor open the throttle unboundedly
-/// (the queue-headroom allowance still backstops the high end).
 const CLIENT_RATE_BOUNDS: (f32, f32) = (50.0, 50_000.0);
 
 /// Outbound-queue slots the streamer must always leave free for tick
@@ -71,37 +56,21 @@ const CLIENT_RATE_BOUNDS: (f32, f32) = (50.0, 50_000.0);
 /// which the SERVER rate-controls, must never be what fills it.
 const STREAM_QUEUE_RESERVE: usize = crate::net::connection::SERVER_QUEUE_MSGS / 4;
 
-/// Messages this pump may queue for a connection with `queue_room` free
-/// outbound slots. The local pipe passes `usize::MAX` (unbounded channel).
 fn stream_allowance(queue_room: usize) -> usize {
     queue_room.saturating_sub(STREAM_QUEUE_RESERVE)
 }
 
-/// How many sections to PLAN for what remains of a pump's allowance after
-/// light: the flat cap, shrunk so the emitted messages (each section plus
-/// its possible column refresh = up to two) fit. Unload messages pay from
-/// the same allowance during emission, which clips the batch and re-plans —
-/// this is only the plan-size heuristic, not the pacing itself.
 #[cfg(test)]
 fn terrain_budget(allowance: usize) -> usize {
     TERRAIN_SECTIONS_PER_PUMP.min(allowance / 2)
 }
 
-/// One connection's terrain replication state: what it currently holds, plus
-/// the ack-windowed flow-control state for remote connections.
 pub struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
     sent_column_revisions: FxHashMap<ChunkPos, u64>,
     sent: SentSections,
-    /// Sent sections whose fresh server bake is still unshipped — the
-    /// per-connection carryover when a pump's allowance ran out (the ship log
-    /// itself is drained once, globally). Payloads are fetched at SHIP time,
-    /// so rebakes landing while a section waits here coalesce into one
-    /// message. Entries leave with their section's unload.
     pending_light: FxHashSet<SectionPos>,
-    /// The `terrain_send_key` the last executed diff ran under.
     last_send_key: Option<u64>,
-    /// The last diff hit the section budget: keep scanning next pump.
     backlog: bool,
     /// One full nearest-first diff, consumed incrementally across paced batches.
     /// World revisions that arrive while this plan is non-empty are folded into
@@ -120,15 +89,8 @@ pub struct TerrainSync {
     /// declined to park, a divergent claim) heals through `SectionCacheMiss`.
     client_cache: FxHashMap<SectionPos, (u64, u64)>,
     client_cache_stamp: u64,
-    /// Batches sent but not yet `StreamBatchAck`ed. At `max_unacked` the
-    /// streamer sends NOTHING further — a slow client means send slower,
-    /// never kick.
     unacked_batches: u32,
-    /// The in-flight window: 1 until the first ack proves the ack loop, then the
-    /// connection's configured cap (still 1 for loopback).
     max_unacked: u32,
-    /// The client's last reported apply rate (messages/second), clamped to
-    /// [`CLIENT_RATE_BOUNDS`]; [`INITIAL_CLIENT_RATE`] before the first ack.
     client_rate: f32,
     /// Fractional message budget banked from `client_rate × dt` each pump
     /// (capped at one max batch); a batch spends its message count from it.
@@ -167,16 +129,10 @@ impl Default for TerrainSync {
 }
 
 impl TerrainSync {
-    /// Whether the cell's owning section was sent to this connection — the
-    /// per-recipient block-delta filter.
     pub fn covers(&self, pos: IVec3) -> bool {
         SectionPos::from_world(pos.x, pos.y, pos.z).is_some_and(|sp| self.sent.contains(sp))
     }
 
-    /// Apply one `StreamBatchAck`: retire a batch from the window, widen it to
-    /// this connection's configured cap, and adopt the client's
-    /// measured rate (clamped; non-finite reports are ignored entirely —
-    /// a NaN must never poison the quota).
     pub fn apply_batch_ack(&mut self, messages_per_second: f32) {
         self.unacked_batches = self.unacked_batches.saturating_sub(1);
         self.max_unacked = self.window_limit;
@@ -186,14 +142,11 @@ impl TerrainSync {
         }
     }
 
-    /// Believe the client parks `sp` under `hash` (it was just vouched in an
-    /// unload, or claimed in the Join manifest).
     fn note_client_cached(&mut self, sp: SectionPos, hash: u64) {
         let stamp = self.client_cache_stamp;
         self.client_cache_stamp += 1;
         self.client_cache.insert(sp, (hash, stamp));
         if self.client_cache.len() > SECTION_CACHE_CAP {
-            // O(cap) u64 scan per over-cap insert, mirroring the client.
             if let Some(oldest) = self
                 .client_cache
                 .iter()
@@ -205,21 +158,12 @@ impl TerrainSync {
         }
     }
 
-    /// Seed the belief map from a Join manifest, in claim order (the client
-    /// emits claims oldest-first, keeping the shared eviction order intact).
-    /// Claims cost nothing to believe: a stale or fabricated one either
-    /// hash-mismatches into an ordinary full send or heals through
-    /// `SectionCacheMiss`.
     pub fn seed_client_cache(&mut self, claims: &[SectionCacheClaim]) {
         for claim in claims.iter().take(SECTION_CACHE_CAP) {
             self.note_client_cached(claim.pos, claim.hash);
         }
     }
 
-    /// Apply one `SectionCacheMiss`: the client could not honor a
-    /// `SectionCached` re-promotion, so the pos never landed. Forget the
-    /// belief and, if we had marked it sent, queue it for an ordinary full
-    /// send on the next pump.
     pub fn handle_cache_miss(&mut self, pos: SectionPos) {
         self.client_cache.remove(&pos);
         if self.sent.remove(pos) {
@@ -242,8 +186,6 @@ impl TerrainSync {
 }
 
 impl ServerGame {
-    /// Fixture setup for tests that inspect a tick's event batch without
-    /// first driving the terrain transport through its multi-pump install.
     #[cfg(any(test, feature = "test-support"))]
     pub fn mark_section_sent_for_test(&mut self, session: usize, cell: IVec3) {
         let section = SectionPos::from_world(cell.x, cell.y, cell.z).expect("valid test cell");
@@ -254,7 +196,6 @@ impl ServerGame {
             .insert(section);
     }
 
-    /// Every session's streaming anchor: the player's eye section.
     fn load_anchors(&self) -> Vec<LoadAnchor> {
         self.sessions
             .iter()
@@ -264,8 +205,6 @@ impl ServerGame {
                     cx: (eye.x.floor() as i32).div_euclid(16),
                     cy: (eye.y.floor() as i32).div_euclid(16),
                     cz: (eye.z.floor() as i32).div_euclid(16),
-                    // The session's requested view distance; world/streaming
-                    // clamp it to the server budget (`world.data().render_dist`).
                     radius: sess.transport.view_radius,
                 }
             })
@@ -301,13 +240,9 @@ impl ServerGame {
         if anchors.is_empty() {
             return;
         }
-        // Emission runs BEFORE the world's own streaming step: a moved
-        // anchor's plan already drops terrain against the NEW target, and the
-        // world — whose `unload_far` runs the same kept shape — has not
-        // evicted it yet, so unload vouching (`section_payload` at the drop)
-        // still has content to hash. The step's own products just ship one
-        // pump (~5 ms) later: sections it ingests via the next plan, light it
-        // bakes via the ship log drained here next pump.
+        // Emission runs before world's streaming step. Moved anchor's plan drops terrain against
+        // the new target, but unload_far hasn't evicted it yet, so unload vouching still has
+        // content to hash. World's own products (sections, relit chunks) land one pump later.
         let relit = self.world.take_light_ship_log();
         let local_at_zero = self.sessions.has_local_session();
         for (s, msgs) in per_session.iter_mut().enumerate() {
@@ -321,19 +256,9 @@ impl ServerGame {
 
         self.world.update_load_multi(&anchors);
         let _ = self.world.poll();
-        // Headless worlds drain (and request — see `relight_demand`) their
-        // light bakes here; nothing else pumps them without a mesh queue.
         self.world.pump_light_bakes();
     }
 
-    /// Emit at most one ack-windowed streaming batch for remote session `s`:
-    /// nothing while the window is full; otherwise light + terrain up to
-    /// `min(banked quota, queue headroom allowance)` messages, bracketed by
-    /// `StreamBatchStart`/`StreamBatchEnd{count}`. The quota banks
-    /// `client_rate × dt` per pump (capped at one max batch) so the send
-    /// rate tracks what the client MEASURED itself applying; the headroom
-    /// allowance stays as the transport backstop. An empty emission sends no
-    /// markers and consumes no window.
     fn send_batch_for(
         &mut self,
         s: usize,
@@ -371,9 +296,6 @@ impl ServerGame {
         sync.unacked_batches += 1;
     }
 
-    /// Record this pump's freshly-baked sections into the sessions's pending
-    /// carryover. Sections it never received are skipped — their eventual
-    /// `SectionData` carries current light.
     fn bank_light_refreshes(&mut self, s: usize, relit: &[SectionPos]) {
         let sync = &mut self.sessions[s].transport.terrain;
         for &sp in relit {
@@ -383,8 +305,6 @@ impl ServerGame {
         }
     }
 
-    /// Ship `LightData` for pending refreshed sections, up to `allowance`
-    /// messages; the remainder stays in `pending_light`.
     fn send_light_for(&mut self, s: usize, allowance: &mut usize, msgs: &mut Vec<ServerToClient>) {
         let sync = &mut self.sessions[s].transport.terrain;
         if sync.pending_light.is_empty() {
@@ -398,8 +318,6 @@ impl ServerGame {
             .collect();
         for sp in batch {
             sync.pending_light.remove(&sp);
-            // Evicted server-side: nothing to ship (the recipient's copy
-            // unloads through the terrain diff).
             let Some(p) = self.world.light_payload(sp) else {
                 continue;
             };
@@ -466,12 +384,6 @@ impl ServerGame {
             *allowance -= 1;
             sync.sent_columns.remove(&cp);
             sync.sent_column_revisions.remove(&cp);
-            // Vouch the implicitly dropped live sections for the client's
-            // cache, cy-ascending — the order the client parks them in, so
-            // both caps keep evicting the same entries. No vouching for a
-            // section the server world already evicted (nothing to hash) or
-            // with an unshipped rebake in `pending_light` (the client's
-            // light is stale; a re-promotion would resurrect it as current).
             let dropped = sync.sent.take_column(cp);
             let mut cache_hashes = Vec::new();
             for sp in dropped {
@@ -511,7 +423,6 @@ impl ServerGame {
             sync.planned_drop_sections.pop_front();
             *allowance -= 1;
             sync.sent.remove(sp);
-            // Same vouching rules as the column-drop loop above.
             let cache_hash = (!sync.pending_light.remove(&sp))
                 .then(|| self.world.section_payload(sp).map(|p| p.content_hash()))
                 .flatten();
@@ -538,7 +449,7 @@ impl ServerGame {
             sync.planned_sections.pop_front();
             if fresh_column {
                 let Some(column) = self.world.column_payload(cp) else {
-                    continue; // column evicted mid-plan: skip its sections too
+                    continue;
                 };
                 sync.sent_columns.insert(cp);
                 sync.sent_column_revisions.insert(cp, column_revision);
@@ -550,10 +461,6 @@ impl ServerGame {
             };
             sync.sent.insert(sp);
             *allowance -= 1;
-            // A section the client holds cached with unmoved content ships
-            // as a tiny re-promotion instead of the full payload. Either
-            // branch consumes the belief: after this message the section is
-            // live client-side (or a full send superseded the parked copy).
             if let Some(&(hash, _)) = sync.client_cache.get(&sp) {
                 sync.client_cache.remove(&sp);
                 if section.content_hash() == hash {

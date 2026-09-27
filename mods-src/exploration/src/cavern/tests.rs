@@ -8,7 +8,7 @@ use crate::shroom::{self, Giant, Part};
 /// the floor is not an even dusting, and "it clumps" is exactly the kind of
 /// property a later tuning edit silently destroys — drop the falloff and
 /// every number below still looks plausible while the caverns go back to
-/// confetti. Measured three ways over a real column sweep:
+/// confetti. The test checks three spatial properties:
 ///
 /// - the densest columns are far denser than the sparsest (a flat roll
 ///   gives one number everywhere);
@@ -24,8 +24,6 @@ fn ground_flora_grows_in_colonies_not_an_even_dusting() {
             for wx in -60..60 {
                 let (d, _, salt) = patch_at(seed, wx, wz);
                 dens.push(d);
-                // Species agreement with the neighbour to the east, over
-                // cells that are both inside some colony.
                 let (dn, _, sn) = patch_at(seed, wx + 1, wz);
                 if salt != 0 && sn != 0 && d > STRAY_PER_MILLE && dn > STRAY_PER_MILLE {
                     pairs += 1;
@@ -56,11 +54,6 @@ fn ground_flora_grows_in_colonies_not_an_even_dusting() {
     }
 }
 
-/// The margin this feature scans with MUST cover the largest mushroom it
-/// can roll, in both axes. If a roll can reach further than `MAX_REACH` /
-/// `MAX_RISE`, a neighbouring section never iterates that anchor and the
-/// mushroom comes out sliced at the boundary — a corruption that looks like
-/// a rendering bug and is miserable to trace back to here.
 #[test]
 fn rolled_mushrooms_never_escape_the_scan_margin() {
     for i in 0..4000i32 {
@@ -81,11 +74,6 @@ fn rolled_mushrooms_never_escape_the_scan_margin() {
     }
 }
 
-/// COMPETE_PAD must cover the farthest two anchors whose caps can still
-/// interpenetrate — cap radius plus lean offset, for each of the pair. If
-/// a roll can compete from further away, a section resolves the contest
-/// with an incomplete neighbourhood and disagrees with its neighbour, and
-/// the mushroom comes out standing in one section and absent in the next.
 #[test]
 fn compete_pad_covers_every_rolled_cap() {
     let mut worst = 0;
@@ -103,10 +91,6 @@ fn compete_pad_covers_every_rolled_cap() {
     );
 }
 
-/// Of two viable mushrooms whose caps interpenetrate, exactly the smaller
-/// anchor stands; caps that merely touch both stand. The verdict must be
-/// symmetric — `beats` one way implies not-`beats` the other — or two
-/// sections could each keep their own local favourite.
 #[test]
 fn cap_competition_is_deterministic_and_one_sided() {
     let giant = |cap_r: i32| Giant {
@@ -128,13 +112,10 @@ fn cap_competition_is_deterministic_and_one_sided() {
     let a = cand([0, 0, 0], 0, 0, 5);
     let b = cand([1, 0, 0], 8, 0, 5);
     let (ra, rb) = ([0, -30, 0], [8, -30, 0]);
-    // 8 apart with radii 5+5: interpenetrating. Lower lat wins, one-sided.
     assert!(beats(&a, ra, &b, rb));
     assert!(!beats(&b, rb, &a, ra));
-    // Same geometry at exactly the radius sum: touching, both stand.
     let c = cand([1, 0, 0], 10, 0, 5);
     assert!(!beats(&a, ra, &c, [10, -30, 0]));
-    // Vertically separated caps never compete however close in plan.
     assert!(!beats(&a, ra, &b, [8, 30, 0]));
 }
 
@@ -162,20 +143,10 @@ fn giant_prefilter_keeps_every_body_cell_and_possible_winner() {
     }
 }
 
-/// One dispatch's terrain probe is SPLIT at the ABI cap rather than
-/// truncated, so overflowing it can no longer make the host reject the call
-/// and stop giants generating everywhere. What is still worth pinning is
-/// the SIZE: every knob below is a tuning knob, and a change that turned
-/// one dispatch into a dozen crossings would be a watchdog problem long
-/// before it was a correctness one.
 #[test]
 fn one_dispatch_stays_within_a_couple_of_abi_batches() {
-    // Worst case: every lattice cell in the scan window rolls a candidate,
-    // and every candidate probes its whole cell plus the support cell below.
     let cells = |span: i32| (span.div_euclid(ANCHOR_LATTICE) + 2) as usize;
     let giants = cells(16 + 2 * MAX_REACH).pow(2) * cells(16 + MAX_RISE) * PROBE_PER_CANDIDATE;
-    // Every cell of the two boundary rows needs its unseen neighbour, and
-    // every column can carry one margin probe block.
     let dressing = 2 * 256 + 256 * PROBE_PER_MARGIN;
     let worst = giants + dressing;
     assert!(
@@ -185,10 +156,6 @@ fn one_dispatch_stays_within_a_couple_of_abi_batches() {
     );
 }
 
-/// A dispatch consults the cascade cache once per overlapping lattice
-/// cell. The count is what a retune of the cascade lattice would
-/// multiply — each MISS costs a site probe and, for a survivor, a domain
-/// probe (`cascade::tests::probes_stay_within_budget` bounds those).
 #[test]
 fn a_dispatch_consults_only_a_handful_of_cascade_cells() {
     for origin in [[0, 0, 0], [16, -48, -16], [-16, -64, 48]] {
@@ -202,7 +169,7 @@ fn a_dispatch_consults_only_a_handful_of_cascade_cells() {
 /// by the section that OWNS that cell — either because the root is inside
 /// it, or because the root falls in the margin rows it scans over its own
 /// roof. Miss that and curtains end on the `y % 16 == 0` planes, which reads
-/// as a short vine rather than as the seam bug it is.
+/// as a short vine instead of a continuous curtain.
 #[test]
 fn every_cell_of_a_curtain_is_reachable_by_the_section_that_owns_it() {
     for root in -40..40i32 {
@@ -221,19 +188,12 @@ fn every_cell_of_a_curtain_is_reachable_by_the_section_that_owns_it() {
     }
 }
 
-/// The margin must not be WIDER than curtains reach either: a row whose run
-/// cannot touch this section is a positional roll and up to seven terrain
-/// probes, paid per column per section.
 #[test]
 fn the_ceiling_margin_is_no_wider_than_a_curtain_reaches() {
-    // the highest row a run of maximum length can be rooted on and still
-    // put its last cell in row 15
     assert_eq!(CEILING_MARGIN, VINE_MAX_LEN - 1);
     assert_eq!(15 + VINE_MAX_LEN - 1, 15 + CEILING_MARGIN);
 }
 
-/// Solid rock below the section's mid-line, open air above — so the
-/// occupancy predicates have a real floor plane and ceiling plane to find.
 fn split_section(section: [i32; 3]) -> GenCtx {
     let mut blocks = vec![0u16; 4096];
     for ly in 0..8 {
@@ -246,8 +206,6 @@ fn split_section(section: [i32; 3]) -> GenCtx {
     GenCtx::for_test(section, 0xC0FFEE, blocks, vec![64; 256], vec![0; 256], 62)
 }
 
-/// A section of nothing but air: both boundary rows have an unseen
-/// neighbour, which is the case the probes exist for.
 fn open_section(section: [i32; 3]) -> GenCtx {
     GenCtx::for_test(
         section,
@@ -259,11 +217,9 @@ fn open_section(section: [i32; 3]) -> GenCtx {
     )
 }
 
-/// Floor flora reads the cell UNDER the candidate, and on local row 0 that
-/// cell belongs to the section beneath. Answering "not solid" there is what
-/// left every `y % 16 == 0` plane — the world floor at the bottom of the
-/// biome band above all, the widest flat floor in the cavern — with no
-/// flora at all while the giants standing on it generated normally.
+/// Floor flora checks the cell under the candidate. On row 0 that cell is in the section below.
+/// Answering "not solid" there left every `y % 16 == 0` plane without flora, including the world
+/// floor, the widest flat floor in the cavern, while giants standing on it generated fine.
 #[test]
 fn the_bottom_row_asks_the_terrain_for_the_support_it_cannot_see() {
     let ctx = open_section([0, -3, 0]);
@@ -298,9 +254,6 @@ fn the_bottom_row_asks_the_terrain_for_the_support_it_cannot_see() {
     }
 }
 
-/// Inside the section the snapshot is authoritative and no probe is spent:
-/// the cell below a mid-column candidate is one this section owns, so
-/// asking the host about it would be a crossing bought for nothing.
 #[test]
 fn a_candidate_that_can_see_both_neighbours_costs_no_probe() {
     let ctx = split_section([0, -3, 0]);
@@ -316,7 +269,6 @@ fn a_candidate_that_can_see_both_neighbours_costs_no_probe() {
         }
     }
     assert!(inner > 0, "no interior candidate rolled");
-    // rock fills rows 0..8, so every floor candidate rests on that plane
     for d in &floors {
         assert_eq!(d.below, Some(true), "a floor candidate rests on rock");
     }
@@ -353,11 +305,10 @@ fn roots_above_the_roof_are_scanned_when_a_curtain_can_reach_in() {
             c.rows
         );
     }
-    // a section with a sealed roof pays nothing for the margin scan
     let sealed = split_section([0, -3, 0]);
     let mut blocks = vec![3u16; 4096];
     for block in blocks.iter_mut().take(256) {
-        *block = 0; // one open row at the bottom, roof solid
+        *block = 0;
     }
     let sealed = GenCtx::for_test(
         sealed.section_pos(),
@@ -390,13 +341,6 @@ fn test_content() -> Content {
     }
 }
 
-/// A DRESSING block may never replace a STRUCTURAL one.
-///
-/// The two passes want the same cell by construction — a stem's base is the
-/// highest open cell resting on rock, which is the definition of a floor
-/// candidate — and the snapshot cannot separate them, because the giant's
-/// cells are still pending in this dispatch's own write list. Rachel found
-/// this as a cave flower growing inside a mushroom stem.
 #[test]
 fn a_dressing_block_never_replaces_a_structural_block() {
     let ctx = open_section([0, -3, 0]);
@@ -423,7 +367,6 @@ fn a_dressing_block_never_replaces_a_structural_block() {
         "the giant emitted nothing into the section"
     );
 
-    // now let every dressing pass in the module try to take those cells
     for &(p, _) in &structural {
         out.push_if_clear(p, content.species[1].flower);
         out.push_if_clear(p, content.vine);
@@ -434,7 +377,6 @@ fn a_dressing_block_never_replaces_a_structural_block() {
         "a dressing write took a structural cell"
     );
 
-    // and every structural cell still holds its own block
     let mut seen = std::collections::HashSet::new();
     for &(p, b) in out.writes() {
         assert!(seen.insert(p), "the same cell was written twice: {p:?}");
@@ -445,8 +387,6 @@ fn a_dressing_block_never_replaces_a_structural_block() {
     }
 }
 
-/// Species are picked on a coarse grid so a cavern reads as STANDS of one
-/// colour. If this ever became per-cell the place would look like confetti.
 #[test]
 fn species_are_stable_across_a_stand_and_vary_between_stands() {
     let content = test_content();
@@ -462,21 +402,17 @@ fn species_are_stable_across_a_stand_and_vary_between_stands() {
     );
 }
 
-/// A curtain picks each segment from that CELL's world position alone.
+/// Curtain only cares about the cell's world position, nothing else.
 ///
-/// The run is gathered from the DISPATCHING section's own snapshot, so a
-/// choice drawn off the root's rng stream — or off the offset down the run
-/// — comes out differently depending on which section wrote the cell and on
-/// how long that particular curtain happened to roll. Two curtains that
-/// overlap must agree on every shared cell, and the bloom must wear the
-/// colour of the stand the CELL is in, not the one the root is in.
+/// Run is gathered from the dispatching section's own snapshot. Use the root's rng stream or run
+/// offset instead and you get different answers depending on who wrote the cell and how long that
+/// curtain rolled. Overlapping curtains must agree on shared cells. Bloom color follows the cell's
+/// stand, not the root's.
 #[test]
 fn a_curtain_picks_each_segment_from_that_cell_alone() {
     let content = test_content();
     let seed = 0x1D001;
     let run = |root: i32, len: i32| -> Vec<u16> {
-        // A stream the choice must not read: if the bloom ever comes off
-        // the root's draws again, the two runs diverge here.
         let mut stream = GenRng::positional(seed, SALT_CEILING, 4, root, -9);
         (0..len)
             .map(|d| {
@@ -522,9 +458,6 @@ fn a_curtain_picks_each_segment_from_that_cell_alone() {
         "blooms are an accent on a plain strand, not absent and not the \
          norm: {share:.3} of {cells} cells"
     );
-    // Keyed on anything a whole column shares — the root, the run, x/z
-    // alone — curtains go back to all-plain-or-all-glowing, which is the
-    // look this replaced.
     assert!(
         mixed * 4 > curtains.len(),
         "only {mixed} of {} curtains mix plain and flowering segments",
@@ -532,11 +465,6 @@ fn a_curtain_picks_each_segment_from_that_cell_alone() {
     );
 }
 
-/// The engine dispatches this feature for EVERY section, so the pack owns
-/// its own altitude gate. A section clear of the band must cost nothing —
-/// and the gate has to fire before the first host call, which is what this
-/// asserts: off wasm a host call panics, so a regressed gate fails loudly
-/// here rather than quietly burning a lattice sweep per section in flight.
 #[test]
 fn a_section_above_the_biome_band_does_no_work_at_all() {
     let content = test_content();
@@ -545,13 +473,10 @@ fn a_section_above_the_biome_band_does_no_work_at_all() {
     assert!(generate(&content, &ctx).is_ok_and(|writes| writes.is_empty()));
 }
 
-/// Every cell a fake biome query is asked about belongs to biome 7.
 fn all_ours(positions: Vec<[i32; 3]>) -> Vec<u8> {
     vec![7; positions.len()]
 }
 
-/// Rock under the section at `[0, -3, 0]` (world y -48), air everywhere
-/// else — the world floor at the bottom of a biome band.
 fn floor_under_section(positions: Vec<[i32; 3]>) -> Vec<TerrainSpace> {
     positions
         .into_iter()
@@ -565,10 +490,6 @@ fn floor_under_section(positions: Vec<[i32; 3]>) -> Vec<TerrainSpace> {
         .collect()
 }
 
-/// The whole dressing path over an open section standing on the section
-/// below's rock: the bottom row cannot see its support, the positional read
-/// answers it, and the plane gets its flora — and nothing else, because the
-/// open roof over the section holds no curtain.
 #[test]
 fn the_bottom_plane_is_dressed_from_positional_support() {
     let ctx = open_section([0, -3, 0]);

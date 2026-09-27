@@ -1,7 +1,5 @@
 use super::*;
 
-/// A synthetic world: every column in `-r..=r` squared holding `cy` 0..4,
-/// each section's connectivity from `vis`.
 fn world(r: i32, vis: impl Fn(SectionPos) -> SectionVisibility) -> SectionOcclusion {
     let mut occlusion = SectionOcclusion::default();
     for cx in -r..=r {
@@ -32,7 +30,6 @@ fn visible_count(occlusion: &SectionOcclusion, r: i32) -> usize {
     n
 }
 
-/// In the open every admitted section is reachable: culling changes nothing.
 #[test]
 fn an_open_field_hides_nothing() {
     let mut occlusion = world(4, |_| SectionVisibility::ALL);
@@ -40,8 +37,6 @@ fn an_open_field_hides_nothing() {
     assert_eq!(visible_count(&occlusion, 4), 9 * 9 * 4);
 }
 
-/// A camera in a sealed cave sees the cave's own walls — the six sections
-/// around it — and nothing behind them.
 #[test]
 fn a_sealed_cave_hides_everything_behind_its_walls() {
     let camera = SectionPos::new(0, 1, 0);
@@ -68,8 +63,6 @@ fn a_sealed_cave_hides_everything_behind_its_walls() {
     assert_eq!(visible_count(&occlusion, 4), 7);
 }
 
-/// A straight tunnel through rock is seen end to end; the rock beside it is
-/// seen only where it walls the tunnel.
 #[test]
 fn a_tunnel_is_seen_along_its_length_only() {
     let tunnel = SectionVisibility::from_pairs(&[(Face::PosX, Face::NegX)]);
@@ -88,15 +81,11 @@ fn a_tunnel_is_seen_along_its_length_only() {
             "tunnel {cx}"
         );
     }
-    // The walls next to the camera are entered from it; farther along the
-    // tunnel no face of a tunnel section opens sideways.
     assert!(occlusion.is_visible(SectionPos::new(-4, 1, 1)));
     assert!(!occlusion.is_visible(SectionPos::new(0, 1, 1)));
     assert!(!occlusion.is_visible(SectionPos::new(0, 2, 0)));
 }
 
-/// Sight lines only move away from the camera: a corridor that doubles back
-/// past the camera's slab is not followed back.
 #[test]
 fn sight_lines_never_step_back_toward_the_camera() {
     let camera = SectionPos::new(0, 0, 0);
@@ -110,7 +99,6 @@ fn sight_lines_never_step_back_toward_the_camera() {
     assert!(!moves_away(camera, SectionPos::new(0, -3, 0), Face::PosY));
 }
 
-/// Sections nothing is recorded for (air, unmeshed, unloaded) conduct sight.
 #[test]
 fn unrecorded_sections_are_open() {
     let mut occlusion = SectionOcclusion::default();

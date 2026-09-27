@@ -1,15 +1,3 @@
-//! Entity mechanics shared across body kinds (dropped item-stacks, the shore
-//! climb swimmers use) and short-lived particles.
-//!
-//! Owned by `App` (never `World`), so they stay off the worker threads and out
-//! of the chunk save path. Ticked in `App::tick` between `world.poll()` and
-//! `tick_mesh_budget`.
-//!
-//! **Render-agnostic rule:** nothing here may depend on `crate::render`. The
-//! module exposes raw [`DroppedItem`] / `Particle` data (slices/accessors) and
-//! a single `Particle::atlas_uv` helper that resolves absolute atlas UVs via
-//! `crate::atlas`; the App maps these to render instances in a later layer.
-
 mod dropped_item;
 #[cfg(test)]
 pub mod fluid_fixture;
@@ -19,27 +7,17 @@ pub mod shore;
 pub use dropped_item::ATTRACT_RADIUS;
 pub use dropped_item::{DroppedItem, Fate, Flight, Heading, Motion, Stuck};
 
-/// Headroom a body's velocity may carry over its own physics caps:
-/// quantization, transient pushes, and a shore launch past the jump take-off.
-/// The server's claimed-velocity envelope applies this same slack, so an
-/// honest player's launch is always a claim the server accepts.
 pub const VELOCITY_SLACK: f32 = 1.25;
 
-/// A tiny deterministic hash → `f32` in `[0, 1)`. Replaces an RNG so spawns are
-/// reproducible and we never pull in the `rand` crate (banned in workflow
-/// scripts; unnecessary for this much variety). A SplitMix64-style finalizer
-/// gives good bit avalanche from a small incrementing counter.
 #[inline]
 pub fn hash01(seed: u64) -> f32 {
     let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
-    // Top 24 bits → a uniform float in [0, 1). 24 bits is the f32 mantissa.
     ((z >> 40) as f32) / ((1u32 << 24) as f32)
 }
 
-/// Symmetric variant of [`hash01`]: a deterministic value in `[-1, 1)`.
 #[inline]
 pub fn hash_signed(seed: u64) -> f32 {
     hash01(seed) * 2.0 - 1.0
@@ -60,7 +38,6 @@ mod tests {
 
     #[test]
     fn hash01_spreads_across_the_range() {
-        // Crude uniformity check: every decile bucket sees at least one sample.
         let mut buckets = [0u32; 10];
         for i in 0..10_000u64 {
             let b = (hash01(i.wrapping_mul(2_654_435_761)) * 10.0) as usize;

@@ -1,14 +1,8 @@
-//! Every client mod's world marks, composed each frame into the renderer's
-//! [`WorldMarks`]: lines as they are, a point's body and label painted in
-//! window pixels around it. The renderer draws them on the window only, so
-//! they never reach a frame capture.
-
 use mod_api::{ClientSprite, ClientWorldMark};
 use petramond_math::world_pos::WorldPos;
 use petramond_render::{ClientOverlayImage, WorldMark, WorldMarks};
 use petramond_ui::RectI;
 
-/// The backing a label sits on, so it reads over any sky or terrain.
 const LABEL_BACKING: [f32; 4] = [0.0, 0.0, 0.0, 0.5];
 
 pub(super) fn compose(marks: &mut WorldMarks, game: &crate::game::Game, gui_scale: i32) {
@@ -102,8 +96,6 @@ pub(super) fn compose(marks: &mut WorldMarks, game: &crate::game::Game, gui_scal
     });
 }
 
-/// One line under the body (or centred on the point when there is none), in
-/// the theme font at the window's GUI scale, on a translucent backing.
 fn paint_label(
     painter: &mut petramond_ui::Painter<'_>,
     label: &str,
@@ -138,7 +130,6 @@ fn paint_label(
     painter.ellipsized_at(label, text, k, color, None);
 }
 
-/// A `w` × `h` pixel rect centred on the point.
 fn centred(w: f32, h: f32) -> RectI {
     let (w, h) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32);
     RectI {

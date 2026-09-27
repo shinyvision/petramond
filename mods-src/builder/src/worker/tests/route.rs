@@ -7,7 +7,6 @@ use crate::testing::HOME;
 use crate::worker::route::{self, Hubs, Trail};
 use crate::worker::tuning::route::{LEG, MEMORY};
 
-/// A cell walled in on every side, two blocks high: no body gets in or out.
 const PEN: [i32; 3] = [5, 0, -6];
 
 fn pen(world: &Fake) {
@@ -39,7 +38,6 @@ fn a_route_answer_stands_for_its_memory() {
             route::probe(ctx, [0, 0, -6], PEN, Vec::new()),
             Some(Route::Closed)
         );
-        // Cells treated as built are another question.
         assert_eq!(
             route::probe(ctx, [0, 0, -6], [2, 0, -6], vec![[1, 0, -6]]),
             Some(Route::Open),

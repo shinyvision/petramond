@@ -1,10 +1,3 @@
-//! One animated character's animator: the mutable half of a [`Graph`]. A
-//! driver sets params, fires events and plays montages, then calls
-//! [`update`](Animator::update) once per frame and reads the pose and the
-//! markers its clips crossed — or [`advance`](Animator::advance) on a frame
-//! nobody draws it, which keeps its rules and montages live without posing.
-//! A marker the graph maps to an event fires that event on the next update.
-
 use std::sync::Arc;
 
 use super::graph::{
@@ -20,24 +13,17 @@ mod slot;
 use slot::{Montage, Rate, Segment, SlotRt};
 pub use slot::{PlayId, PlaySpec, PlayState, Playing};
 
-/// A marker a clip crossed during the last update.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FiredMarker {
     pub clip: ClipId,
-    /// Index into the clip's `markers()`.
     pub marker: usize,
-    /// Crossed while mirrored: a marker authored on one side belongs to the other.
     pub mirrored: bool,
 }
 
-/// The share of the final pose a clip needs for its markers to fire.
 const MARKER_WEIGHT: f32 = 0.5;
 
-/// The longest step one update integrates; a longer hitch plays as this.
 const MAX_STEP: f32 = 0.25;
 
-/// `anim.time` wraps here: the clock is f64, but an f32 input keeps sub-millisecond
-/// phase only within an hour.
 const TIME_WRAP: f64 = 3600.0;
 
 #[derive(Clone, Copy)]
@@ -57,12 +43,10 @@ impl Default for RuleRt {
     }
 }
 
-/// What an update evaluates the node tree over.
 #[derive(Clone, Copy)]
 enum Ground<'a> {
     Rest,
     Over(&'a LocalPose),
-    /// No evaluation at all: [`Animator::advance`].
     Unposed,
 }
 
@@ -75,26 +59,21 @@ pub struct Animator {
     machines: Vec<eval::MachineRt>,
     slots: Vec<SlotRt>,
     rules: Vec<RuleRt>,
-    /// Each gate's formula as it read when this update's events arrived.
     gates_open: Vec<bool>,
     pending: Vec<EventId>,
     rng: u32,
     time: f64,
     dt: f32,
     frame: u64,
-    /// The last [`PlayId`] handed out; never reset, so a handle from before
-    /// a [`reset`](Animator::reset) can never name a later montage.
     last_play: u64,
     mirrored: bool,
     pose: LocalPose,
     pool: Vec<LocalPose>,
     markers: Vec<FiredMarker>,
-    /// Markers a [`seek`](Animator::seek) passed, reported by the next update.
     sought: Vec<FiredMarker>,
 }
 
 impl Animator {
-    /// A fresh animator; `seed` drives random clip picks.
     pub fn new(graph: Arc<Graph>, seed: u32) -> Self {
         let mut animator = Self {
             vars: Vec::new(),
@@ -122,8 +101,6 @@ impl Animator {
         animator
     }
 
-    /// Back to the graph's initial state: every machine in its initial
-    /// state, every slot empty, params at their defaults.
     pub fn reset(&mut self) {
         let g = &*self.graph;
         self.vars = vec![0.0; g.vars.len];
@@ -159,7 +136,6 @@ impl Animator {
         self.vars.get(param.0 as usize).copied().unwrap_or(0.0)
     }
 
-    /// Set a param by name; `false` when the graph declares no such param.
     pub fn set_named(&mut self, name: &str, value: f32) -> bool {
         let Some(param) = self.graph.param(name) else {
             return false;
@@ -168,9 +144,6 @@ impl Animator {
         true
     }
 
-    /// Queue an event for the next update's rules and `event.*` inputs. An
-    /// event is a level, not a count: firing it twice before an update is one
-    /// firing.
     pub fn fire(&mut self, event: EventId) {
         if (event.0 as usize) < self.graph.events.len() && !self.pending.contains(&event) {
             self.pending.push(event);
@@ -185,9 +158,6 @@ impl Animator {
         true
     }
 
-    /// Start a montage in `slot`, answering the handle that addresses it
-    /// from then on; `None` when a higher-priority montage playing there
-    /// refuses it.
     pub fn play(&mut self, slot: SlotId, spec: &PlaySpec) -> Option<PlayId> {
         if slot.index() >= self.slots.len() || spec.clip.index() >= self.graph.clips.len() {
             return None;
@@ -198,33 +168,24 @@ impl Animator {
             .then_some(id)
     }
 
-    /// Fade out everything playing in `slot` over `fade` seconds.
     pub fn stop(&mut self, slot: SlotId, fade: f32) {
         if let Some(slot) = self.slots.get_mut(slot.index()) {
             slot.stop(fade);
         }
     }
 
-    /// Fade out the one montage `play` names over `fade` seconds; whatever
-    /// else plays in the slot plays on.
     pub fn stop_play(&mut self, slot: SlotId, play: PlayId, fade: f32) {
         if let Some(slot) = self.slots.get_mut(slot.index()) {
             slot.stop_play(play, fade);
         }
     }
 
-    /// Freeze `slot`'s clips (not its fades) for `seconds` — what a rule's
-    /// `hitstop` key does. A longer freeze already running keeps its remainder.
     pub fn freeze(&mut self, slot: SlotId, seconds: f32) {
         if let Some(slot) = self.slots.get_mut(slot.index()) {
             slot.freeze = slot.freeze.max(seconds);
         }
     }
 
-    /// Put the montage `play` names at `seconds` into its current clip — how
-    /// a montage started at rate 0 is SCRUBBED by a clock the caller owns.
-    /// Moving forward fires the markers passed on the way. A play no longer
-    /// in its slot moves nothing, whatever took its place.
     pub fn seek(&mut self, slot: SlotId, play: PlayId, seconds: f32) {
         let graph = Arc::clone(&self.graph);
         let Some(mut rt) = self.slots.get_mut(slot.index()).map(std::mem::take) else {
@@ -241,24 +202,20 @@ impl Animator {
         self.slots[slot.index()] = rt;
     }
 
-    /// Where the montage `play` names stands.
     pub fn play_state(&self, slot: SlotId, play: PlayId) -> PlayState {
         self.slots
             .get(slot.index())
             .map_or(PlayState::Displaced, |rt| rt.state(play))
     }
 
-    /// The newest montage in `slot`, if any.
     pub fn playing(&self, slot: SlotId) -> Option<Playing> {
         self.slots.get(slot.index())?.playing(&self.graph)
     }
 
-    /// The pose the last posed update produced.
     pub fn pose(&self) -> &LocalPose {
         &self.pose
     }
 
-    /// The markers crossed during the last update, each once.
     pub fn markers(&self) -> &[FiredMarker] {
         &self.markers
     }
@@ -267,18 +224,10 @@ impl Animator {
         self.step(dt, Ground::Rest);
     }
 
-    /// [`update`](Self::update) over `ground` instead of rest: the pose the
-    /// root layer stack starts from — a locomotion pose the graph's actions
-    /// override and add to. A ground for a different rig is ignored.
     pub fn update_over(&mut self, dt: f32, ground: &LocalPose) {
         self.step(dt, Ground::Over(ground));
     }
 
-    /// One update's worth of time for a frame that draws nothing: params,
-    /// events, gates, rules, montages and marker events run as in
-    /// [`update`](Self::update), but no node is evaluated, so the pose, the
-    /// layers' clip clocks, machines and the stateful formulas inside nodes
-    /// hold until the next posed update.
     pub fn advance(&mut self, dt: f32) {
         self.step(dt, Ground::Unposed);
     }
@@ -350,7 +299,6 @@ impl Animator {
         self.fire_marker_events(g);
     }
 
-    /// The `slot.*` inputs, from the slots as they stand now.
     fn publish_slot_vars(&mut self, g: &Graph) {
         for (i, slot) in self.slots.iter().enumerate() {
             let base = g.vars.slots + i * SLOT_VARS;
@@ -358,8 +306,6 @@ impl Animator {
         }
     }
 
-    /// Every crossed marker the graph maps to an event fires it for the next
-    /// update.
     fn fire_marker_events(&mut self, g: &Graph) {
         for i in 0..self.markers.len() {
             let crossed = self.markers[i];
@@ -381,9 +327,6 @@ impl Animator {
             {
                 continue;
             }
-            // A play the slot refuses, or whose clip template names nothing
-            // for its param, is no match: the rule keeps its cooldown and its
-            // combo pick, and the next rule gets the event.
             if let Some(play) = &rule.play {
                 if !self.slots[play.slot.index()].accepts(play.priority) {
                     continue;
@@ -416,9 +359,6 @@ impl Animator {
         }
     }
 
-    /// The segments `play` runs with alternative `pick` first, each clip
-    /// template resolved by its param as it stands; `None` when a template
-    /// names no clip for that value.
     fn resolve_segments(&self, g: &Graph, play: &PlayRule, pick: usize) -> Option<Vec<Segment>> {
         std::iter::once(&play.first[pick])
             .chain(&play.then)
@@ -445,8 +385,6 @@ impl Animator {
         }
     }
 
-    /// Start `play`'s montage; `false` when its slot refused it, in which
-    /// case the pick is not committed either.
     fn play_rule(
         &mut self,
         g: &Graph,
@@ -473,8 +411,6 @@ impl Animator {
         started
     }
 
-    /// Which of `choices` alternatives `rule` plays next, without committing
-    /// to it.
     fn pick(&mut self, rule: usize, pick: Pick, choices: usize, since: f64) -> usize {
         if choices <= 1 {
             return 0;

@@ -42,8 +42,6 @@ fn plan(shape: &'static FieldShape, center: [i32; 3], biome: u8) -> Plan<'static
     }
 }
 
-/// Seals and course cells are remembered per tile with what the walk needs
-/// to lay them, and tiles sharing a halo remember the same thing.
 #[test]
 fn seals_and_course_cells_replay_across_negative_section_edges() {
     let shape = shape();
@@ -94,7 +92,6 @@ fn seals_and_course_cells_replay_across_negative_section_edges() {
             }
         }
     }
-    // Both sides of the air column are sealed against water, up the column.
     for y in [-2, 0, 5] {
         for x in [-2, 0] {
             assert_eq!(
@@ -108,8 +105,6 @@ fn seals_and_course_cells_replay_across_negative_section_edges() {
             );
         }
     }
-    // The course rises four cells from the anchor under the column's foot,
-    // each remembering where that anchor is.
     for (y, dy) in [(-3, 0), (-2, -1), (-1, -2), (0, -3)] {
         assert_eq!(
             observed.get(&[-1, y, -1]),
@@ -123,8 +118,6 @@ fn seals_and_course_cells_replay_across_negative_section_edges() {
     );
 }
 
-/// The corner-sampled carve fills exactly the heights a linear cut selects
-/// and reads no terrain to do it.
 #[test]
 fn corner_sampled_carve_fills_the_cut_interior() {
     let shape = shape();
@@ -139,8 +132,6 @@ fn corner_sampled_carve_fills_the_cut_interior() {
     }
 }
 
-/// A cut recipe's margin is the difference of its comparison's sides, and
-/// conjunctions and disjunctions become their minimum and maximum.
 #[test]
 fn cut_recipes_become_signed_margins() {
     let biomes = underground::test_table(&[]);
@@ -167,10 +158,6 @@ fn cut_recipes_become_signed_margins() {
     assert!(at(7.0, -4.0) < 0.0);
 }
 
-/// A projection anchors on the field's floor wherever the column has one,
-/// paints the target column over the rule's admitted range whatever tile
-/// asks, and reads the terrain it replaces as rock under the surface and
-/// water above it.
 #[test]
 fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
     let biomes = underground::test_table(&[]);
@@ -201,8 +188,6 @@ fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
     let field = CaveField::with_tables(123, biomes, table);
     let row = &table.rows[0];
     let shape = row.field().unwrap();
-    // A site the placement grid really puts down: chunk anchors are shared
-    // by every tile over a chunk, so they come from placement, not a tile.
     let site = (-2..2)
         .flat_map(|z| (-2..2).map(move |x| [x, z]))
         .find_map(|cell| site(&field, row, shape, cell))
@@ -231,8 +216,6 @@ fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
             let surfaces = vec![-3; draft.side[0] * draft.side[2]];
             carve(&mut draft, &plans, &surfaces, 123);
             projection::apply(&mut draft, &plans, &surfaces, &field);
-            // Only a tile's own interior is published; its halo may miss
-            // an anchor one column further out.
             let interior = |pos: [i32; 3]| {
                 pos[0] >= ox && pos[0] < ox + 16 && pos[1] >= oy && pos[1] < oy + 16
             };
@@ -271,7 +254,6 @@ fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
         );
     }
     assert_eq!(observed[&[target, 4, cz]], guess(4));
-    // A probe into rock under the field admits the column.
     for y in -40..=-30 {
         assert_eq!(
             observed[&[target, y, cz]],
@@ -281,10 +263,6 @@ fn projected_columns_find_anchors_outside_the_section_and_preserve_materials() {
     }
 }
 
-/// Two anchor columns of one rule reaching the same target through opposite
-/// offsets, with materials that differ because each reads its own column's
-/// surface, settle on the later source column in every tile that paints the
-/// target — never on whichever the tile happened to visit last.
 #[test]
 fn opposite_projections_onto_one_cell_settle_on_the_later_source_column() {
     let biomes = underground::test_table(&[]);
@@ -321,8 +299,6 @@ fn opposite_projections_onto_one_cell_settle_on_the_later_source_column() {
     let mut painted = 0;
     for ox in [tile_x - 16, tile_x, tile_x + 16] {
         let mut draft = Draft::new([ox, -32, oz], padding(shape));
-        // The column east of the target stands above zero, so its anchor
-        // paints gravel; every other column paints dirt.
         let surfaces: Vec<i32> = (0..draft.side[0] * draft.side[2])
             .map(|column| {
                 let x = draft.lo[0] + (column % draft.side[0]) as i32;
@@ -336,8 +312,6 @@ fn opposite_projections_onto_one_cell_settle_on_the_later_source_column() {
         carve(&mut draft, &plans, &surfaces, 123);
         projection::apply(&mut draft, &plans, &surfaces, &field);
         for y in -25..=-21 {
-            // A tile whose halo holds only one of the two anchors cannot
-            // see the tie; it publishes the target from its interior only.
             let (Some(i), Some(_), Some(_)) = (
                 draft.index([cx, y, cz]),
                 draft.index([cx - 1, y, cz]),

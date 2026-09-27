@@ -21,15 +21,11 @@ fn a_project_record_round_trips() {
     );
     assert_eq!(Project::decode(&project.encode()), Some(project.clone()));
 
-    // The scaffolds are stored beside the record, never in it.
     let bare = project.encode();
     project.scaffolds = vec![[1, 2, 3], [4, 5, 6]];
     assert_eq!(project.encode(), bare, "the scaffolds went into the record");
 }
 
-/// Worlds hold version 3 records: the note in words, the scaffolds inline.
-/// They must still read, as the same job, with the note as data again and
-/// the scaffolds carried over for the store to adopt.
 #[test]
 fn a_version_3_record_reads_as_the_same_job() {
     let old = RecordV3 {
@@ -83,7 +79,6 @@ fn a_note_is_data_and_words_only_when_shown() {
     assert_eq!(short_of_stone(3).to_string(), "Missing 3x Stone");
 }
 
-/// What older builds stored as words reads back as the data it said.
 #[test]
 fn legacy_words_read_back_as_data() {
     for note in [
@@ -103,7 +98,6 @@ fn legacy_words_read_back_as_data() {
     ] {
         assert_eq!(Note::from_legacy(&note.to_string()), note);
     }
-    // The golem's own "Missing blueprint" is no shortfall of supplies.
     assert!(!Note::from_legacy("Missing blueprint").is_shortfall());
     let report = "1 block was lost after it was placed";
     assert_eq!(Note::from_legacy(report), Note::Legacy(report.into()));
@@ -130,8 +124,6 @@ fn a_projects_scaffolds_are_stored_beside_it_across_a_reload() {
     );
 }
 
-/// A project saved as version 3 keeps its scaffolds: the store adopts the
-/// list the record carried, and later edits go to the shards.
 #[test]
 fn a_version_3_projects_scaffolds_are_adopted() {
     let session = crate::testing::Session::flat(1);
@@ -163,7 +155,6 @@ fn draft() -> Project {
     Project::new(1, "ada".into(), [0, 0, 0])
 }
 
-/// What the state machine answers, in one tuple.
 fn reads(p: &Project) -> (Phase, Option<Hold>, bool, bool, bool) {
     (p.phase(), p.hold(), p.cancelling(), p.worker(), p.started())
 }
@@ -221,7 +212,6 @@ fn a_job_called_off_winds_down_as_far_as_it_got() {
     assert_eq!(reads(&p), (Phase::Cancelled, None, false, false, true));
     assert!(p.resumable());
 
-    // Called off while it rises: it comes up, then goes straight home.
     let mut p = draft();
     p.summon([1, 0, 0]);
     p.cancel();
@@ -260,7 +250,6 @@ fn a_dead_golem_holds_the_job_for_the_next() {
         assert!(p.brief().lost_worker());
     }
 
-    // A new golem takes the job up where the last left it.
     let mut p = draft();
     p.summon([1, 0, 0]);
     p.emerged();
@@ -269,7 +258,6 @@ fn a_dead_golem_holds_the_job_for_the_next() {
     assert_eq!(reads(&p), (Phase::Emerging, None, false, true, true));
     assert_eq!(p.note, Note::None);
 
-    // With no golem out, calling it off simply ends it.
     let mut p = draft();
     p.summon([1, 0, 0]);
     p.golem_died();
@@ -292,7 +280,6 @@ fn a_tag_names_its_project() {
     assert_eq!(anchored.anchored(), Some(([3; 32], [1, 2, 3], 2)));
 }
 
-/// Finish project `id` the ordinary way.
 fn finish(projects: &mut Projects, id: ProjectId) {
     projects.update(id, |p| {
         p.summon(p.table);

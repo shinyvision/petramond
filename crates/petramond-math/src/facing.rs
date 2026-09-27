@@ -1,22 +1,17 @@
-//! The four-way horizontal facing: a unit direction on the XZ plane, stored
-//! as one wire/save byte. A neutral leaf module — whatever gets oriented by
-//! it is defined above this crate.
-
 use crate::math::{IVec3, Vec3};
 use crate::wire_enum::wire_enum;
 
 wire_enum! {
     pub enum Facing: u8 {
-        North = 0, // front faces -Z
-        South = 1, // +Z
-        West = 2,  // -X
-        East = 3,  // +X
+        North = 0,
+        South = 1,
+        West = 2,
+        East = 3,
     }
     default North
 }
 
 impl Facing {
-    /// The horizontal unit direction this facing points toward.
     #[inline]
     pub fn dir(self) -> IVec3 {
         match self {
@@ -27,9 +22,6 @@ impl Facing {
         }
     }
 
-    /// The facing whose [`dir`](Self::dir) equals `normal`. Only horizontal
-    /// unit normals map; a vertical (`±Y`) or degenerate normal yields `None` —
-    /// wall-mounted placements (ladders, wall torches) key off exactly that.
     #[inline]
     pub fn from_horizontal_normal(normal: IVec3) -> Option<Self> {
         match (normal.x, normal.y, normal.z) {
@@ -41,9 +33,6 @@ impl Facing {
         }
     }
 
-    /// The front facing of a block placed while looking along `forward`: the
-    /// front points back toward the viewer — opposite the horizontal look —
-    /// snapped to the nearest cardinal (an exact diagonal favours X).
     pub fn toward_viewer(forward: Vec3) -> Self {
         let (fx, fz) = (-forward.x, -forward.z);
         if fx.abs() >= fz.abs() {
@@ -76,7 +65,6 @@ mod tests {
 
     #[test]
     fn a_placed_front_faces_back_toward_the_viewer() {
-        // Looking north (-Z) places a front facing south (+Z), and so on.
         assert_eq!(
             Facing::toward_viewer(Vec3::new(0.0, 0.0, -1.0)),
             Facing::South
@@ -93,8 +81,6 @@ mod tests {
             Facing::toward_viewer(Vec3::new(-1.0, 0.0, 0.0)),
             Facing::East
         );
-        // The vertical look component never matters; the larger horizontal
-        // axis wins and an exact diagonal favours X.
         assert_eq!(
             Facing::toward_viewer(Vec3::new(0.2, -0.9, -0.6)),
             Facing::South

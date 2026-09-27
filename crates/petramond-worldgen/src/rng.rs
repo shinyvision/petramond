@@ -1,14 +1,3 @@
-//! Deterministic positional RNG for discrete worldgen work.
-//!
-//! `FeatureRng::positional(world_seed, salt, wx, wy, wz)` is the frozen contract:
-//! derive every independent stream from world seed, signed world coordinates,
-//! and a per-purpose salt. Never draw worldgen decisions from a shared mutable
-//! stream whose state depends on chunk visit order.
-//!
-//! The positional mix is a SplitMix64 finalizer over those inputs; the stream
-//! stepper is xorshift64. Changing either is a worldgen compatibility break and
-//! requires updating the pinned vectors below.
-
 use petramond_world::mathh::smoothstep;
 
 const SALT_MULTIPLIER: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -40,16 +29,11 @@ fn positional_state(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> u64 {
     non_zero_stream_state(z ^ (z >> 31))
 }
 
-/// xorshift64 RNG seeded deterministically from world seed + position + salt.
-/// `Copy` is deliberate: pre-placement probes (e.g. the oak anchoring gate)
-/// dry-run a feature's draw prefix on a copy so the real placement still sees
-/// the unconsumed stream.
 #[derive(Clone, Copy)]
 pub struct FeatureRng {
     state: u64,
 }
 impl FeatureRng {
-    /// Construct directly from a stream state (zero-guarded).
     #[inline]
     pub fn from_state(state: u64) -> Self {
         Self {
@@ -57,9 +41,6 @@ impl FeatureRng {
         }
     }
 
-    /// Positional seeding: mix (seed, salt, world coords) with a splitmix64
-    /// finalizer, then step the same xorshift64 stream. Pure function of the
-    /// inputs, bit-identical across platforms (all `wrapping` u64 ops).
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
         Self::from_state(positional_state(seed, salt, wx, wy, wz))
     }
@@ -82,13 +63,6 @@ impl FeatureRng {
     }
 }
 
-/// Smooth low-frequency value field in `[0,1)` at world `(wx,wz)`: hashed
-/// lattice corners (one positional draw each, `period` blocks apart) with a
-/// smoothstep bilinear blend, so a threshold cuts out organic blobs rather
-/// than a hard grid, and nearby columns share corner samples. Pure function
-/// of `(seed, salt, wx, wz)`, so it is seamless across chunk borders. The ONE
-/// patch field every worldgen stage uses — flower and fern patches, surface
-/// rule clusters, the sea-ice edge.
 pub fn patch_field(seed: u32, salt: u64, wx: i32, wz: i32, period: f32) -> f32 {
     let fx = wx as f32 / period;
     let fz = wz as f32 / period;

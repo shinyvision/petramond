@@ -1,49 +1,31 @@
-//! The rabbit's HOP GAIT — pack policy over the engine's generic velocity
-//! access, no gait vocabulary engine-side: a grounded rabbit whose brain is
-//! walking it somewhere gets a vertical launch, the wish carries the arc, and
-//! the engine's generic walking-launch rules keep the walk clip playing and
-//! phase-locked through it (WIKI-free summary: `mob_drive_vertical` + the
-//! snapshot's `vel`/`on_ground` are the whole seam).
+//! Rabbit hop gait. Pack policy on top of the engine's generic velocity access, with no gait
+//! vocabulary on the engine side. A grounded rabbit whose brain is walking it somewhere gets a
+//! vertical launch, the wish carries the arc, and the engine's walking-launch rules keep the walk
+//! clip playing and phase-locked through it. `mob_drive_vertical` plus the snapshot's
+//! `vel`/`on_ground` is the whole seam.
 //!
-//! Runs every tick right after the mobs move: the launch decision reads this
-//! tick's landing, and the drive intent it issues is consumed by the next
-//! tick's integration — the rabbit touches ground for exactly one tick
-//! between hops, which is the bounce cadence the walk clip is tuned to.
+//! Runs every tick right after the mobs move. The launch decision reads this tick's landing and
+//! the drive intent it issues is consumed by the next tick's integration, so the rabbit is on the
+//! ground for exactly one tick between hops. The walk clip is tuned to that bounce cadence.
 
 use mod_sdk::*;
 
 use crate::content::Content;
 
-/// Upward launch speed (m/s). Height = v²/2g ≈ 0.48 blocks, airtime ≈ 0.42 s
-/// — a bounce that clears nothing the navigator doesn't already route
-/// (deliberately below the one-block step the engine's own jump is sized
-/// for). Balance data.
 const HOP_SPEED: f32 = 4.6;
-/// How far around each player rabbits are swept for launches. Matches the
-/// mob simulation's own player-reactive scale; a rabbit far beyond it walks
-/// flat until a player is near enough to watch it.
 const RANGE: f32 = 96.0;
 /// Consecutive launches from the same neighbourhood (anchor cell ± 1) before
 /// the rabbit CALMS DOWN and walks instead: a hop's ~1-block stride cannot
 /// resolve a pocket smaller than itself, and walking can. Honest travel
 /// re-anchors within a hop or two, so it never accumulates.
 const STALL_LAUNCHES: i64 = 8;
-/// How long a calmed rabbit walks (ticks) before hopping resumes — enough to
-/// thread any local pocket at full walk speed with full steering (7+ blocks
-/// covered), short enough that a watcher reads a brief walk, not a rabbit
-/// that stopped hopping.
 const CALM_TICKS: i64 = 60;
 /// Ticks without a launch after which the launch-site memory is FORGOTTEN.
 /// A trap is CONTINUOUS launching from one neighbourhood (a launch every
 /// ~10 ticks, no pauses); separate short wander legs around the same spot
-/// have idle gaps between them and must never accumulate toward a calm-down
-/// — measured 2026-08-17: cross-leg accumulation tripped one false calm
-/// that suppressed 5 s of honest open-ground hopping (a third of the
-/// session's walking).
+/// have idle gaps between them and must not accumulate toward a calm-down.
 const STALL_MEMORY_GAP: i64 = 40;
 
-/// The rabbit's launch-site memory, per mob on its tag map (per doctrine:
-/// per-mob state is tags, never a guest-side table).
 const ANCHOR: &str = "farming:hop_anchor";
 const STALL: &str = "farming:hop_stall";
 const CALM_UNTIL: &str = "farming:hop_calm_until";
@@ -60,16 +42,14 @@ fn cell_near(a: i64, b: i64) -> bool {
     (ax - bx).abs() <= 1 && (az - bz).abs() <= 1
 }
 
-/// Launch every grounded rabbit whose brain is WALKING it somewhere near a
-/// player — unless it has been launching from the same neighbourhood over
-/// and over, in which case it walks for a while (tight spots are walked,
-/// open ground is hopped). The gate is the snapshot's `moving` — the
-/// deliberate-locomotion fact — never velocity: hopping stems from
-/// NAVIGATING, so a rabbit shoved by a player or bowled over by knockback
-/// slides like any other body instead of bouncing, and a navigating rabbit
-/// momentarily slowed by a wall or a crowd still hops. One sweep covers
-/// every player's range and visits each rabbit ONCE, so overlapping ranges
-/// neither repeat the host calls nor count a launch twice toward a stall.
+/// Launches every grounded rabbit that's walking somewhere near a player. A rabbit that keeps
+/// launching from the same spot walks for a while instead (tight spots get walked, open ground
+/// gets hopped).
+/// The gate is the snapshot's `moving`, never velocity, since hopping comes from navigating: a
+/// rabbit shoved by a player or knocked back slides instead of bouncing, and one just slowed by a
+/// wall or a crowd still hops.
+/// One sweep covers every player's range and visits each rabbit once, so overlapping ranges don't
+/// repeat host calls or double-count a launch toward a stall.
 pub fn on_tick(content: &Content) {
     let tick = current_tick() as i64;
     let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
@@ -87,7 +67,7 @@ pub fn on_tick(content: &Content) {
             })
         };
         if tag(CALM_UNTIL).is_some_and(|until| until > tick) {
-            continue; // walking it out
+            continue;
         }
         let here = packed_cell(snap.pos);
         let continuous = tag(LAST_LAUNCH).is_some_and(|last| tick - last <= STALL_MEMORY_GAP);

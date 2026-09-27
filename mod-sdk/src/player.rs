@@ -1,6 +1,3 @@
-//! Sim-scoped player calls: state, input, the damage funnel, knockback,
-//! items, health, teleports, status effects, and chat delivery.
-
 use mod_api::{
     BodyAction, BonePoseData, EffectStateData, EntityRef, HeldPose, PlayerAttribute, PlayerId,
     PlayerInputData, PlayerSnapshot,
@@ -10,78 +7,48 @@ use crate::__rt::host_fn;
 use crate::__rt::try_host_fn;
 
 try_host_fn! {
-    /// Read inputs, returning a batch-size refusal so callers can split it.
     pub fn try_player_inputs(player_ids: Vec<PlayerId>) -> Vec<Option<PlayerInputData>>
         => PlayerInputs { player_ids } => PlayerInputs
 }
 
-/// The horizontal direction a player yaw faces — PLAYER convention: yaw `0`
-/// faces `+Z` (π apart from the mob convention, [`crate::mob_facing_xz`]);
-/// a mount aligned with its rider takes `player_yaw + π` as its mob yaw.
 pub fn player_facing_xz(yaw: f32) -> [f32; 2] {
     let (s, c) = yaw.sin_cos();
     [s, c]
 }
 
 host_fn! {
-    /// The player the running dispatch acts for — the clicking, eating,
-    /// damaged or dying one — or `None` in an actor-less dispatch (tick
-    /// systems, block hooks, hostile spawn picks, `init`, a mob's action).
     pub fn acting_player() -> Option<PlayerId> => ActingPlayer => ActingPlayer
 }
 
 host_fn! {
-    /// The acting player's current state (position, velocity, look, health,
-    /// flags).
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`player_state_of`] there.
     pub fn player_state() -> Box<PlayerSnapshot> => PlayerState => Player
 }
 
 host_fn! {
-    /// [`player_state`] of a NAMED player. `None` = no such connected player.
     pub fn player_state_of(player: PlayerId) -> Option<Box<PlayerSnapshot>>
         => PlayerStateOf { player } => PlayerOf
 }
 
 host_fn! {
-    /// One player's movement intent this tick (forward/strafe in their own yaw
-    /// frame, jump/sneak, look) — how a vehicle mod reads what its driver is
-    /// pressing. `None` = no such player connected.
     pub fn player_input(player_id: PlayerId) -> Option<PlayerInputData>
         => PlayerInput { player_id } => PlayerInput
 }
 
 host_fn! {
-    /// Read inputs for several players in one host call.
     pub fn player_inputs(player_ids: Vec<PlayerId>) -> Vec<Option<PlayerInputData>>
         => PlayerInputs { player_ids } => PlayerInputs
 }
 
 host_fn! {
-    /// The named session's currently held stack, INSTANCE DATA included — the
-    /// per-player, per-stack read [`player_state`]'s row-level `held` id
-    /// cannot be (an augmented tool's `petramond:tool` override lives in the
-    /// stack's data). `None` = empty hand or no such connected session.
     pub fn player_held(player: PlayerId) -> Option<mod_api::ItemStackData>
         => PlayerHeld { player } => HeldStack
 }
 
 host_fn! {
-    /// Every stack `player` carries — the grid in slot order (hotbar first),
-    /// then the off hand LAST; `None` = empty slot, `None` overall = no such
-    /// reachable session. Legal on the CLIENT for the LOCAL player, off the
-    /// replicated inventory, so a rule gating on it predicts what the server
-    /// decides. The one layout [`take_item`] spends in.
     pub fn player_inventory(player: PlayerId) -> Option<Vec<Option<mod_api::ItemStackData>>>
         => PlayerInventory { player } => ContainerSlots
 }
 
-/// How many of `item` (by registry NAME, any instance data) `player`
-/// carries — [`player_inventory`] summed, the read a rule makes BEFORE
-/// committing to a gesture. `0` for no such reachable session.
 pub fn player_item_count(player: PlayerId, item: &str) -> u32 {
     player_inventory(player)
         .into_iter()
@@ -93,14 +60,6 @@ pub fn player_item_count(player: PlayerId, item: &str) -> u32 {
 }
 
 host_fn! {
-    /// Remove `count` of `item` (by registry NAME) from `player`'s
-    /// inventory, whole or nothing, in [`player_inventory`]'s slot order.
-    /// `data` picks the variant: `None` = the first matching stack's
-    /// instance data (one variant leaves, never a blend), `Some(map)` = only
-    /// stacks carrying exactly `map`. Answers the taken stack (`None` =
-    /// short, unknown item, or no such connected session). The spend half
-    /// of a launch that leaves from somewhere other than the hand doing the
-    /// launching — an arrow out of the pack.
     pub fn take_item(
         player: PlayerId,
         item: &str,
@@ -116,62 +75,26 @@ host_fn! {
 }
 
 host_fn! {
-    /// Consume `count` units of the ACTING player's held stack, atomically, only
-    /// when it holds `item` with at least `count` — the spend primitive for item
-    /// uses that place no block (spawning an entity from an `item_use_pre`
-    /// handler). `false` = consumed nothing.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`consume_held_by`] there.
     pub fn consume_held(item: mod_api::ItemId, count: u32) -> bool
         => ConsumeHeld { item, count } => Bool
 }
 
 host_fn! {
-    /// [`consume_held`] from a NAMED player's acting hand. `false` = consumed
-    /// nothing, or no such connected player.
     pub fn consume_held_by(player: PlayerId, item: mod_api::ItemId, count: u32) -> bool
         => ConsumeHeldBy { player, item, count } => Bool
 }
 
 host_fn! {
-    /// Swap ONE of the held stack for `replacement` (by registry name) when the
-    /// held stack holds at least one of `item`. A single-item stack swaps in
-    /// place; a larger stack consumes one unit and gives the replacement through
-    /// normal inventory fill. `false` = wrong/empty hand, unknown replacement, or
-    /// no room. This is the bucket empty/fill primitive.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`replace_held_one_by`] there.
     pub fn replace_held_one(item: mod_api::ItemId, replacement: &str) -> bool
         => ReplaceHeldOne { item, replacement: replacement.into() } => Bool
 }
 
 host_fn! {
-    /// [`replace_held_one`] in a NAMED player's acting hand. `false` also
-    /// when no such player is connected.
     pub fn replace_held_one_by(player: PlayerId, item: mod_api::ItemId, replacement: &str) -> bool
         => ReplaceHeldOneBy { player, item, replacement: replacement.into() } => Bool
 }
 
 host_fn! {
-    /// Damage `player` through the engine funnel. The victim's global
-    /// engine-owned i-frames and `player_damage_pre` apply. Queued; applied
-    /// at the next in-tick drain point; an unknown session is a no-op.
-    ///
-    /// `attacker` is WHO the hit lands for, exactly as on [`crate::damage_mob`]:
-    /// `None` is the mod's own damage (`DamageSource::Mod`, `origin` spatial
-    /// context only); `Some(EntityRef::Player(..))` is that player's melee
-    /// strike — the victim's `player_damage_pre` sees
-    /// `DamageSource::PlayerAttack` with the `origin` (a shield judges its
-    /// arc from it) and an applied hit shoves them away from it like the
-    /// engine's own hit; `Some(EntityRef::Mob(..))` is that mob's.
-    ///
-    /// To KILL a player, pass their current health ([`players`]) as
-    /// `amount` — same funnel; i-frames or a pre-event handler can still
-    /// reject it. There is no separate kill call.
     pub fn damage_player(
         player: PlayerId,
         amount: i32,
@@ -182,39 +105,20 @@ host_fn! {
 }
 
 host_fn! {
-    /// Add a knockback impulse to the acting player's velocity (spectator
-    /// no-op).
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`apply_knockback_to`] there.
     pub fn apply_knockback(impulse: [f32; 3]) => ApplyKnockback { impulse }
 }
 
 host_fn! {
-    /// [`apply_knockback`] on a NAMED player. `false` = no such connected
-    /// player.
     pub fn apply_knockback_to(player: PlayerId, impulse: [f32; 3]) -> bool
         => ApplyKnockbackTo { player, impulse } => Bool
 }
 
 host_fn! {
-    /// Give the acting player items (by registry NAME) through the normal
-    /// inventory fill; overflow drops at the player's feet. `false` = unknown
-    /// item name.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`give_item_to`] there.
     pub fn give_item(item: &str, count: u8) -> bool
         => GiveItem { item: item.into(), count, data: Vec::new() } => Bool
 }
 
 host_fn! {
-    /// [`give_item`] carrying per-stack instance data (namespaced key →
-    /// value bytes; ≤4 keys, ≤64-byte values — an over-cap map is a hard
-    /// error that disables the mod). Stacks merge only on byte-identical
-    /// data.
     pub fn give_item_data(item: &str, count: u8, data: &[(&str, &[u8])]) -> bool
         => GiveItem {
             item: item.into(),
@@ -224,13 +128,6 @@ host_fn! {
 }
 
 host_fn! {
-    /// [`give_item`] addressed to a NAMED session (the explicit-player
-    /// addressing doctrine): fill THAT player's inventory, drop the overflow
-    /// at that player's feet, `data` as the stack's instance data (pass `&[]`
-    /// for a plain stack). The delivery a machine owes a specific viewer —
-    /// a transient panel returning its contents on close. `false` = unknown
-    /// item name or no such connected session (deliver another way, e.g.
-    /// `spawn_item` at the machine).
     pub fn give_item_to(player: PlayerId, item: &str, count: u8, data: &[(&str, &[u8])]) -> bool
         => GiveItemTo {
             player,
@@ -269,86 +166,47 @@ host_fn! {
 }
 
 host_fn! {
-    /// Overwrite the acting player's health (clamped to `0..=20` half-hearts),
-    /// bypassing the damage funnel — the heal/set primitive, no events fire.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`set_health_of`] there.
     pub fn set_health(value: i32) => SetHealth { value }
 }
 
 host_fn! {
-    /// [`set_health`] on a NAMED player. `false` = no such connected player.
     pub fn set_health_of(player: PlayerId, value: i32) -> bool
         => SetHealthOf { player, value } => Bool
 }
 
 host_fn! {
-    /// Move the acting player's feet to `pos`; fall tracking is cleared so a
-    /// teleport can never land as fall damage.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`teleport_player`] there.
     pub fn teleport(pos: [f64; 3]) => Teleport { pos }
 }
 
 host_fn! {
-    /// [`teleport`] a NAMED player. `false` = no such connected player.
     pub fn teleport_player(player: PlayerId, pos: [f64; 3]) -> bool
         => TeleportPlayer { player, pos } => Bool
 }
 
 host_fn! {
-    /// Grant the player the status effect `key` (an `effects.json` row — engine
-    /// `petramond:*` rows and every pack's rows alike) for `ticks` game ticks. An
-    /// already-active effect is overwritten with the new duration; `0` removes it.
-    /// A state primitive like [`set_health`] — no events fire. `false` = unknown
-    /// effect key.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`effect_apply_to`] there.
     pub fn effect_apply(key: &str, ticks: u32) -> bool
         => EffectApply { key: key.into(), ticks } => Bool
 }
 
 host_fn! {
-    /// [`effect_apply`] on a NAMED player. `false` = unknown effect key or no
-    /// such connected player.
     pub fn effect_apply_to(player: PlayerId, key: &str, ticks: u32) -> bool
         => EffectApplyTo { player, key: key.into(), ticks } => Bool
 }
 
-/// Remove the status effect `key` from the player if active. `false` =
-/// unknown effect key. Sugar for [`effect_apply`] with `ticks: 0` — the
-/// engine has no separate remove call.
 pub fn effect_remove(key: &str) -> bool {
     effect_apply(key, 0)
 }
 
 host_fn! {
-    /// The acting player's active status effects, in application order.
-    ///
-    /// Acts on the dispatch's ACTOR ([`acting_player`]); in an actor-less
-    /// dispatch (a tick system, block hook, `init`) the host refuses it and
-    /// the mod is disabled — name the player with [`effects_active_of`] there.
     pub fn effects_active() -> Vec<EffectStateData> => EffectsActive => Effects
 }
 
 host_fn! {
-    /// A NAMED player's active status effects, in application order. `None`
-    /// = no such connected player.
     pub fn effects_active_of(player: PlayerId) -> Option<Vec<EffectStateData>>
         => EffectsActiveOf { player } => EffectsOf
 }
 
 host_fn! {
-    /// Deliver one server-authored chat line. `targets: None` broadcasts to every
-    /// currently connected client; `Some(ids)` sends only to those player ids
-    /// (unknown / left ids are ignored). Markup `$[fg=color]` is parsed by the
-    /// server. Empty / whitespace-only text returns `false`.
     pub fn chat_send(text: &str, targets: Option<&[PlayerId]>) -> bool
         => ChatSend {
             text: text.into(),
@@ -357,71 +215,25 @@ host_fn! {
 }
 
 host_fn! {
-    /// Every connected player this tick, in session-id order (single player =
-    /// one entry) — the multiplayer-aware roster for spawn/ambience/weather
-    /// policy. Address a specific player through the entry's `id`.
     pub fn players() -> Vec<mod_api::PlayerListEntry> => Players => Players
 }
 
 host_fn! {
-    /// Unlock a crafting recipe for `player`: it joins their recipe browser at
-    /// whatever station the recipe declares, and the server starts accepting it
-    /// from them. Idempotent and persistent — `true` = this call is what
-    /// unlocked it, `false` = already unlocked, unknown recipe key, or unknown
-    /// player.
-    ///
-    /// Unlocking is a CONSEQUENCE of whatever the mod decides earns it; call
-    /// this from an event handler, never from a per-tick poll.
     pub fn unlock_recipe(player: PlayerId, recipe: &str) -> bool
         => UnlockRecipe { player, recipe: recipe.into() } => Bool
 }
 
 host_fn! {
-    /// Has `player` unlocked `recipe`? The read half of [`unlock_recipe`], for
-    /// gating a mod's own hints or follow-up rewards.
     pub fn recipe_unlocked(player: PlayerId, recipe: &str) -> bool
         => RecipeUnlocked { player, recipe: recipe.into() } => Bool
 }
 
 host_fn! {
-    /// Claim a SCALE on one of `player`'s engine quantities
-    /// ([`PlayerAttribute`]): the engine keeps the base — a constant, a
-    /// mode, a formula — and your claim multiplies it. `MoveSpeed` slows or
-    /// hastes the body; `AttackCooldown` at `0.0` removes the engine's melee
-    /// rate limit, for a pack whose own pacing already gates the hand.
-    ///
-    /// Every claimant gets a slot and the engine applies the PRODUCT, beside
-    /// its own claim (the status effects' speed) — your scale and another
-    /// pack's compose instead of stomping, which is also why the claim is a
-    /// multiplier and never an absolute. `1.0` releases yours, `0.0` zeroes
-    /// the quantity, finite values clamp into the attribute's own bound,
-    /// non-finite is a hard error. Transient: re-state it on your own
-    /// cadence. `false` = no such reachable session.
-    ///
-    /// Every attribute is simulation the server enforces, so this is a
-    /// server call; a client instance is refused.
     pub fn set_player_attribute(player: PlayerId, attribute: PlayerAttribute, scale: f32) -> bool
         => SetPlayerAttribute { player, attribute, scale } => Bool
 }
 
 host_fn! {
-    /// Claim a HELD-ITEM POSE on `player`, per hand — an extra Blockbench
-    /// display transform composed onto whatever that hand already holds, in
-    /// first person and on every observer's third-person body.
-    ///
-    /// Author it exactly as a `display` entry: rotation in DEGREES (X, Y, Z),
-    /// translation in 1/16-BLOCK pixels, relative to the item's authored hold.
-    /// One per view ([`HeldPose`]) — the two start from different authored
-    /// poses. The off hand mirrors by Blockbench's own left-hand rule, and
-    /// every held render kind wears it alike.
-    ///
-    /// `None` releases a hand; claims resolve last-wins in claimant order.
-    /// Transient — re-publish on your own cadence; the client eases between
-    /// updates, so a 20 Hz publisher still glides.
-    ///
-    /// Legal on the CLIENT for the LOCAL player ([`PlayerSnapshot::id`]), so
-    /// the pose presents on the frame the input asks for it. Run the same
-    /// predicate on both sides and the two answers cannot disagree.
     pub fn set_player_held_pose(
         player: PlayerId,
         main: Option<HeldPose>,
@@ -430,15 +242,6 @@ host_fn! {
 }
 
 host_fn! {
-    /// Claim what each of `player`'s hands DISPLAYS — an item (by registry
-    /// NAME) whose art draws in place of the held stack's own (both views,
-    /// every observer), `None` releasing a hand. Presentation only: the
-    /// stack, the hotbar and every simulation read stay the real item, and
-    /// a display changing under a hand never restarts its eased pose. Last
-    /// claim in mod-id order wins a hand; transient, re-state it every tick.
-    ///
-    /// Legal on the CLIENT for the LOCAL player, the same predicted path as
-    /// [`set_player_held_pose`].
     pub fn set_player_held_display(player: PlayerId, main: Option<&str>, off: Option<&str>) -> bool
         => SetPlayerHeldDisplay {
             player,
@@ -448,111 +251,51 @@ host_fn! {
 }
 
 host_fn! {
-    /// Claim BONE OFFSETS on `player`'s body — rotate or shift named rig
-    /// bones, composed onto whatever animation is already posing them (a walk
-    /// cycle, a punch, a head-look).
-    ///
-    /// The body counterpart of [`set_player_held_pose`]: that poses what a
-    /// hand is HOLDING, this poses the hand. An offset on a shoulder carries
-    /// through the whole arm and everything in its fist.
-    ///
-    /// Name bones from [`bone`](mod_api::bone) — the arms especially, because
-    /// the rig authors the MAIN hand's arm as the model's left. Degrees about
-    /// the bone's posed pivot, translations in 1/16-block pixels. Every
-    /// claimant's offsets apply; an empty list releases yours, and a name the
-    /// rig lacks is dropped. Transient.
-    ///
-    /// Legal on the CLIENT for the LOCAL player, the same predicted path as
-    /// [`set_player_held_pose`].
     pub fn set_player_bone_pose(player: PlayerId, bones: Vec<BonePoseData>) -> bool
         => SetPlayerBonePose { player, bones } => Bool
 }
 
 host_fn! {
-    /// Take `player`'s current USE GESTURE — one press of the interact button —
-    /// and keep it until they let go. `false` = no such reachable session.
+    /// Grabs player's use gesture (one interact press), holds it till they let go. `false` if no
+    /// reachable session.
     ///
-    /// A gesture has at most one owner. Most interactions resolve inside it and
-    /// leave it free, which is what lets a held button keep placing blocks;
-    /// this is how a CONTINUOUS use says otherwise. While you hold it nothing
-    /// else is offered the button, and [`PlayerSnapshot::holds_use`] answers
-    /// `true` for you and nobody else — write the rule against THAT, never
-    /// against the raw held button.
+    /// Gesture has one owner. Most interactions leave it free, which is what lets a held button
+    /// keep placing blocks. Continuous uses hold it, and nothing else gets the button meanwhile.
+    /// [`PlayerSnapshot::holds_use`] is true only for you, check against that, not the raw button.
     ///
-    /// Call it from a [`EventKind::UseUnclaimed`] handler — the fall-through
-    /// fired once the whole interact chain has passed. Taking the press is not
-    /// an interaction: nothing happened to the world and no hand jabs, so pose
-    /// the body yourself.
+    /// Call from [`EventKind::UseUnclaimed`], the fallback after the interact chain runs. Taking
+    /// the press doesn't touch the world, so pose the body yourself.
     ///
     /// [`EventKind::UseUnclaimed`]: mod_api::EventKind::UseUnclaimed
     pub fn hold_use(player: PlayerId) -> bool => HoldUse { player } => Bool
 }
 
 host_fn! {
-    /// Bar a set of [`BodyAction`]s on `player` — the claim for "these hands
-    /// are busy". An empty list releases yours; `false` = no such reachable
-    /// session.
-    ///
-    /// The sibling of [`set_player_speed_scale`], but resolved by UNION: two
-    /// packs barring different things both get their way, and neither can
-    /// un-bar the other's. Transient — re-state it from whatever tick system
-    /// owns the rule.
-    ///
-    /// SERVER only, and MIRRORED to that player's client so their own
-    /// prediction stops with it: a client still predicting a break the server
-    /// will refuse shows a crack creeping up a block that never breaks.
     pub fn set_player_denied_actions(player: PlayerId, actions: Vec<BodyAction>) -> bool
         => SetPlayerDeniedActions { player, actions } => Bool
 }
 
 host_fn! {
-    /// Set graph PARAMS on `player`'s rig animators
-    /// ([`AnimatorParam`](mod_api::AnimatorParam)) — the animator's `set`
-    /// primitive. TRANSIENT and keyed by mod: the list replaces your previous
-    /// params (empty releases them), the last mod in id order wins a
-    /// contested param, a released one falls back to the engine's value.
-    /// Params feed every formula a graph has — its weights, rule conditions
-    /// and gates — so setting the param a rig's gate reads stands an engine
-    /// gesture down on a hand you animate. `rig` names a registered rig
-    /// ([`rig`](mod_api::rig)). CLIENT-legal for the
-    /// LOCAL player — its own predicted path: a param you set locally is
-    /// yours from then on.
     pub fn set_player_animator_params(player: PlayerId, params: Vec<mod_api::AnimatorParam>) -> bool
         => SetPlayerAnimatorParams { player, params } => Bool
 }
 
 host_fn! {
-    /// Hold montages in SLOTS of `player`'s rig animators
-    /// ([`AnimatorPlay`](mod_api::AnimatorPlay)) — the animator's `play`
-    /// primitive: a clip in a declared slot on your clock
-    /// ([`AnimatorClock`](mod_api::AnimatorClock)). TRANSIENT and keyed by
-    /// mod: the list replaces your previous plays (empty releases them all),
-    /// the last mod in id order wins a contested slot. CLIENT-legal for the
-    /// LOCAL player — its own predicted path.
     pub fn set_player_animator_plays(player: PlayerId, plays: Vec<mod_api::AnimatorPlay>) -> bool
         => SetPlayerAnimatorPlays { player, plays } => Bool
 }
 
 host_fn! {
-    /// Fire a graph EVENT on one of `player`'s rig animators — the
-    /// animator's `fire` primitive; the graph's rules answer it on every
-    /// mirror. An edge, nothing to release. CLIENT-legal for the LOCAL
-    /// player; the server's echo of an event you fired is dropped.
     pub fn fire_player_animator_event(player: PlayerId, rig: &str, event: &str) -> bool
         => FirePlayerAnimatorEvent { player, rig: rig.into(), event: event.into() } => Bool
 }
 
 host_fn! {
-    /// One player-rig clip's length, loop and timeline markers — an `impact`
-    /// marker is where its strike lands. `None` when the rig has no such clip.
     pub fn animation_clip(rig: &str, clip: &str) -> Option<mod_api::AnimationClipInfo>
         => AnimationClip { rig: rig.into(), clip: clip.into() } => AnimationClip
 }
 
 host_fn! {
-    /// A connected player's lasting identity: their stable name (what to key
-    /// state kept past this session by) and whether they are an operator.
-    /// `None` = no such connected player. Server only.
     pub fn player_identity(player: PlayerId) -> Option<mod_api::PlayerIdentityData>
         => PlayerIdentity { player } => Identity
 }

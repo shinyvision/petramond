@@ -1,8 +1,3 @@
-//! A schematic held up for placement: it follows the crosshair on its
-//! rotated footprint's pivot, turns in quarter steps, shifts vertically, and
-//! commits with the place click — as a paste, or as the answer to a
-//! positioning the server opened.
-
 use super::{Game, GameInput};
 use petramond::net::protocol::{ClientToServer, PlayerAction};
 use petramond::player::{RayFilter, RaycastHit};
@@ -12,11 +7,9 @@ use petramond::schematic::{Scene, Schematic, PLACEMENT_REACH};
 use petramond_world::world::raycast;
 use std::sync::Arc;
 
-/// The positioning a preview answers instead of pasting.
 struct Positioning {
     tag: String,
     digest: Digest,
-    /// Where the preview rests while the crosshair holds no target.
     resting_origin: Option<[i32; 3]>,
 }
 
@@ -44,7 +37,6 @@ impl SchematicPreview {
         self.held.as_ref().map(|held| &held.schematic)
     }
 
-    /// The tag of the positioning this preview answers, if it is one.
     pub fn positioning_tag(&self) -> Option<&str> {
         let positioning = self.held.as_ref()?.positioning.as_ref()?;
         Some(&positioning.tag)
@@ -62,7 +54,6 @@ impl SchematicPreview {
         self.held.as_ref().map_or(0, |held| held.vertical_offset)
     }
 
-    /// The meshable scene of the held schematic at its current turn.
     pub fn scene(&self) -> Option<&Arc<Scene>> {
         self.scene.as_ref()
     }
@@ -98,7 +89,6 @@ impl SchematicPreview {
         });
     }
 
-    /// Whether there was a preview to take down.
     pub(super) fn cancel(&mut self) -> bool {
         std::mem::take(self).held.is_some()
     }
@@ -115,7 +105,6 @@ impl SchematicPreview {
         }
     }
 
-    /// Rest the preview against the block face under the crosshair.
     fn aim(&mut self, hit: Option<RaycastHit>) {
         let Some(held) = &mut self.held else {
             return;
@@ -132,8 +121,6 @@ impl SchematicPreview {
 }
 
 impl Game {
-    /// A preview is up that this mode may commit: a paste in creative, or a
-    /// positioning in any mode.
     pub fn schematic_preview_active(&self) -> bool {
         self.tools
             .preview
@@ -169,8 +156,6 @@ impl Game {
         .map(Arc::new)
     }
 
-    /// One frame of a preview that is up: keep its scene current, follow the
-    /// crosshair, and commit on the place click.
     pub(super) fn schematic_preview_input(&mut self, input: &GameInput) {
         self.prepare_preview_scene();
         let hit = raycast::filtered(

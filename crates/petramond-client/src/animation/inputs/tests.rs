@@ -22,8 +22,6 @@ impl BodyMotion for () {
     }
 }
 
-/// Each of the main hand's edge events plays a clip in a slot of its own,
-/// so a playing slot says its event fired.
 fn graph() -> Arc<Graph> {
     let m = rig();
     let mut lib = ClipLibrary::new();
@@ -48,7 +46,6 @@ fn graph() -> Arc<Graph> {
     Arc::new(graph)
 }
 
-/// Publish one frame and answer which edges fired, then clear their slots.
 fn publish(hand: &mut HandInputs, a: &mut Animator, frame: HeldItemFrame) -> [bool; 3] {
     hand.publish(a, &frame);
     a.update(DT);
@@ -67,7 +64,6 @@ fn holding(item: Option<ItemType>) -> HeldItemFrame {
     }
 }
 
-/// Two registered items the hand draws differently.
 fn block_and_sprite() -> (ItemType, ItemType) {
     let of = |want: fn(&ItemRenderKind) -> bool| {
         *ItemType::all()

@@ -1,14 +1,5 @@
-//! Windowing-toolkit-free key identity: a 1:1 mirror of winit 0.30's
-//! `KeyCode`/`MouseButton` variant names, so `client.json` bindings serialize
-//! byte-identically while the core (and the headless server) links no
-//! windowing stack. The client converts at its input boundary
-//! (`petramond-client`'s `keymap`), which has a compile-time exhaustive match
-//! against the real winit enums — a winit upgrade that renames a key fails
-//! there, not silently here.
-
 use serde::{Deserialize, Serialize};
 
-/// Physical key position code (winit `KeyCode` names, verbatim).
 #[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum KeyCode {
@@ -209,7 +200,6 @@ pub enum KeyCode {
 }
 
 impl KeyCode {
-    /// Every code, for name tables and settings UIs.
     pub const ALL: &'static [KeyCode] = &[
         KeyCode::Backquote,
         KeyCode::Backslash,
@@ -407,12 +397,10 @@ impl KeyCode {
         KeyCode::F35,
     ];
 
-    /// The serde/variant name (what `client.json` stores).
     pub fn name(self) -> &'static str {
         NAMES[self as usize]
     }
 
-    /// Inverse of [`name`](Self::name).
     pub fn from_name(name: &str) -> Option<KeyCode> {
         Self::ALL.iter().copied().find(|c| c.name() == name)
     }
@@ -615,7 +603,6 @@ const NAMES: &[&str] = &[
     "F35",
 ];
 
-/// Mouse button identity (winit `MouseButton` shape, verbatim).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,

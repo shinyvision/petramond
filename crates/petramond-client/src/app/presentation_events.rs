@@ -15,8 +15,6 @@ impl App {
         let listener = Some(session.game.listener_position());
         self.sound
             .queue_game_events(&mut session.sounds, events, mining_block, listener, now);
-        // Player damage: the subtle screen/hand shake the next renders decay
-        // (see `App::render`); the hurt bark played with the events above.
         if events.player_damaged {
             session.hud_fx.latch_hurt();
         }

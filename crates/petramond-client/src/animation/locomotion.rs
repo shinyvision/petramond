@@ -1,18 +1,3 @@
-//! The locomotion LAYER TABLE: which authored clips the player body
-//! crossfades, at what phase, weighted by which blend inputs — data in
-//! `assets/animations/player_locomotion.json`, layered like every asset so a
-//! pack overrides a row by `id` or appends its own.
-//!
-//! The body pose driver (`game/body_pose.rs`) publishes a handful of named
-//! 0..1 INPUTS (`Inputs`). The table turns them into per-clip weights: a
-//! layer's weight is the PRODUCT of its factors, where a factor is an input
-//! (`"run"`), its complement (`"!run"`), or a partial complement
-//! (`{"not": "landing", "by": 0.65}` = `1 - 0.65·landing`). `derived` rows
-//! name reusable products; `requires` zeroes an input or derived name when
-//! the model lacks the clips it feeds, so a rig without a `run` clip folds
-//! that weight back into `walk` instead of dropping it. Every weight is
-//! evaluated in one pass; adding a locomotion style is a row edit.
-
 use petramond_world::bbmodel::{Animation, Model};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -20,32 +5,22 @@ use smallvec::SmallVec;
 
 use super::motion::BodyState;
 
-/// Where the shipped table and every pack's layer over it live.
 const TABLE_ASSET: &str = "animations/player_locomotion.json";
 
-/// Layers lighter than this are dropped: they would move nothing visible and
-/// only cost a pose blend.
 const MIN_LAYER_WEIGHT: f32 = 0.001;
 
-/// The blend inputs the pose driver publishes, all in `0..=1`. Names are the
-/// table's vocabulary (`Input::NAMES`), in this order.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Inputs {
     pub walking: f32,
     pub sneak: f32,
     pub run: f32,
     pub backward: f32,
-    /// Unsigned lateral balance.
     pub strafe: f32,
-    /// 1 when the lateral balance leans right, else 0 — a selector between a
-    /// left and a right clip.
     pub right: f32,
     pub airborne: f32,
     pub falling: f32,
     pub landing: f32,
-    /// How far the body is swimming (`0` dry … `1` fully in a fluid).
     pub swim: f32,
-    /// Swimming with the feet on the floor (wading).
     pub floor: f32,
     pub swim_moving: f32,
     pub swim_backward: f32,
@@ -111,7 +86,6 @@ impl Inputs {
         ][index]
     }
 
-    /// The phase each layer samples its clip at, by `phase` source.
     fn phase(state: &BodyState, source: Phase) -> f32 {
         match source {
             Phase::Stride => state.anim_time,
@@ -121,19 +95,14 @@ impl Inputs {
     }
 }
 
-/// Which clock a layer's clip plays on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
-    /// The normalized stride phase (ground speed–driven).
     Stride,
-    /// The swim stroke clock.
     Swim,
-    /// Frame 0 — a held pose the weight alone shapes.
     Rest,
 }
 
-/// One factor as written: `"name"`, `"!name"`, or `{"not": name, "by": k}`.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 enum RawFactor {
@@ -155,7 +124,6 @@ struct RawLayer {
     clip: String,
     phase: Phase,
     factors: Vec<RawFactor>,
-    /// A pack disables an engine row by overriding it with `"enabled": false`.
     #[serde(default = "enabled")]
     enabled: bool,
 }
@@ -175,11 +143,9 @@ struct RawFile {
     layers: Vec<RawLayer>,
 }
 
-/// A resolved factor over the value vector (inputs first, then derived).
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Factor {
     slot: usize,
-    /// `value` when 0, else `1 - by · value`.
     complement_by: f32,
 }
 
@@ -205,18 +171,13 @@ struct Layer {
     factors: Box<[Factor]>,
 }
 
-/// The compiled table: value slots are the 14 inputs followed by the derived
-/// names in definition order; `requires` gates by slot.
 pub struct LocomotionTable {
     derived: Box<[Derived]>,
-    /// Per value slot, the clips that must exist for the slot to read non-zero.
     requires: Box<[Box<[String]>]>,
     layers: Box<[Layer]>,
 }
 
 impl LocomotionTable {
-    /// A table with no layers: bodies stand in their rest pose, and the body
-    /// animator still plays over it.
     #[cfg(test)]
     fn empty() -> Self {
         Self {
@@ -226,8 +187,6 @@ impl LocomotionTable {
         }
     }
 
-    /// Read and merge every asset layer of the table. A missing or malformed
-    /// table is an error for the caller to report, never a panic.
     #[cfg(test)]
     pub fn load() -> Result<Self, String> {
         let layers = petramond_world::assets::read_layers(TABLE_ASSET);
@@ -238,22 +197,15 @@ impl LocomotionTable {
         Self::parse_layers(&texts).map_err(|e| format!("{TABLE_ASSET}: {e}"))
     }
 
-    /// Number of value slots (inputs + derived).
     fn slots(&self) -> usize {
         Inputs::NAMES.len() + self.derived.len()
     }
 
-    /// Evaluate every layer for `inputs` against a model that `has_clip`.
-    /// Yields `(clip, phase source, weight)` for layers above the weight floor
-    /// whose clip exists, in table order.
     pub fn weights<'a>(
         &'a self,
         inputs: &Inputs,
         has_clip: impl Fn(&str) -> bool + 'a,
     ) -> impl Iterator<Item = (&'a str, Phase, f32)> + 'a {
-        // Inputs first, gated by their `requires`; then each derived product
-        // in definition order, so a gate on an input flows through every
-        // product that reads it, and a gated derived slot reads 0 itself.
         let mut values: SmallVec<[f32; 32]> = SmallVec::with_capacity(self.slots());
         let open = |slot: usize| self.requires[slot].iter().all(|c| has_clip(c));
         for i in 0..Inputs::NAMES.len() {
@@ -278,10 +230,6 @@ impl LocomotionTable {
         })
     }
 
-    /// Parse and merge the asset layers (base first). Later layers replace a
-    /// `derived` row or a layer row by name/id and append new ones; `requires`
-    /// merges by key. Every factor name must be an input or a derived name
-    /// defined EARLIER, so evaluation is one forward pass.
     pub fn parse_layers(texts: &[&str]) -> Result<Self, String> {
         let mut requires: FxHashMap<String, Vec<String>> = FxHashMap::default();
         let mut derived: Vec<RawDerived> = Vec::new();
@@ -379,7 +327,6 @@ impl LocomotionTable {
     }
 }
 
-/// The client locomotion table participates in the content load report.
 pub static TABLE: petramond_world::content::Slot<LocomotionTable> =
     petramond_world::content::Slot::new(TABLE_ASSET, &[], load_table);
 
@@ -396,9 +343,6 @@ fn table() -> &'static LocomotionTable {
     TABLE.current()
 }
 
-/// The clip layers for this body this frame: `(clip, time into the clip,
-/// weight)`, ready for [`Model::pose_layers`]. Stack-allocated for the shipped
-/// table's size.
 pub(super) fn layers<'a>(
     model: &'a Model,
     state: &BodyState,
@@ -416,7 +360,6 @@ pub(super) fn layers<'a>(
     out
 }
 
-// The torso pitches into a stroke; the gaze must still follow the look.
 pub(super) fn stabilize_swim_gaze(
     model: &Model,
     pose: &mut [glam::Mat4],

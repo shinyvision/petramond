@@ -23,8 +23,6 @@ fn key(byte: u8) -> PlayerKey {
     PlayerKey([byte; 32])
 }
 
-/// A headless server for the suite: OFFLINE, so a join carries a plain name and
-/// nothing in these tests reaches the account service.
 pub(super) fn headless(
     world_name: &str,
     new_seed: u32,
@@ -36,7 +34,6 @@ pub(super) fn headless(
     server
 }
 
-/// The credential callback for an offline server: the plain name the test joins as.
 pub(super) fn joins_as(
     name: &'static str,
 ) -> impl FnOnce(&ServerOffer) -> Result<crate::net::protocol::JoinCredential, HandshakeError> {
@@ -57,11 +54,6 @@ fn connect(port: u16) -> TcpStream {
     stream
 }
 
-/// Drain `handle` until `f` yields, sleeping between polls; None =
-/// timeout. Acks every streaming batch like a live client so the
-/// server's flow-control window keeps streaming. The sleep only parks an
-/// EMPTY poll — while messages are flowing we re-poll immediately, so a
-/// fast (unthrottled) server isn't rounded up to 10 ms per batch.
 fn drain_until<T>(
     handle: &mut ServerHandle,
     timeout: Duration,
@@ -75,7 +67,7 @@ fn drain_until<T>(
         for msg in msgs.drain(..) {
             if matches!(msg, ServerToClient::StreamBatchEnd { .. }) {
                 let _ = handle.send(ClientToServer::StreamBatchAck {
-                    messages_per_second: 1e9, // server clamps
+                    messages_per_second: 1e9,
                 });
             }
             if let Some(hit) = f(msg) {
@@ -91,10 +83,6 @@ fn drain_until<T>(
     None
 }
 
-/// Duplicate names are never rejected: admission appends the lowest free
-/// numeric suffix (case-insensitive vs every other identity), and the
-/// suffixed name IS the session's display name. The same identity joining
-/// twice, however, is refused.
 #[test]
 fn duplicate_join_names_dedupe_with_the_lowest_free_numeric_suffix() {
     let mut server = crate::server::session_build::build_server_inline("", 3, 2);
@@ -202,15 +190,8 @@ fn headless_disconnect_detaches_before_player_id_reuse() {
     );
 }
 
-/// The full remote-join loop over real TCP on 127.0.0.1: open to LAN on an
-/// ephemeral port, handshake + join a remote client (restored from a
-/// pre-seeded, pre-identity player file it adopts on first join), stream it
-/// terrain, place a block from the remote side and see the delta come back,
-/// dedupe a duplicate name, ignore Pause while remote players exist, and
-/// broadcast joins/leaves.
 #[test]
 fn full_lan_join_place_pause_gate_and_leave() {
-    // Includes worldgen, mod startup, threaded streaming and the TCP narrative.
     let test_end = Instant::now() + Duration::from_secs(30);
     let remain = || {
         let left = test_end.saturating_duration_since(Instant::now());
@@ -223,13 +204,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
 
     let dir = petramond_util::test_dirs::TestScratchDir::new("lan");
     std::fs::create_dir_all(dir.join("players")).expect("temp players dir");
-    // Pre-seed the joining player's save as a PRE-IDENTITY name-keyed file
-    // (the visitor's identity adopts it on first join): standing on the
-    // seed's dry-land
-    // spawn pick (a placement within legitimate reach must exist around
-    // it — the reach eye is ring-bounded, so the visitor builds from
-    // where it actually stands) + dirt to place (a fresh spawn would be
-    // empty-handed).
     let spawn = petramond_worldgen::spawn::find_spawn(7);
     let visitor_feet = WorldPos::new(
         spawn.x as f64 + 0.5,
@@ -238,19 +212,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
     );
     let mut visitor = crate::player::Player::new(visitor_feet);
     visitor.inventory.add(ItemStack::new(ItemType::Dirt, 64));
-    // Written before the world opens: the identity palette is what a fresh
-    // world pins (registry order).
     let pal = crate::save::palette::Palette::identity();
     std::fs::write(
         dir.join("players/Visitor.dat"),
         crate::save::player::encode(&visitor, &pal),
     )
     .expect("player file");
-    // The later join/leave cycles (dedupe + broadcast ordering) get restored
-    // players too — their FINAL names are predictable. A fresh nameless spawn
-    // would run `find_spawn` (~0.4 s of worldgen search) synchronously inside
-    // the server's admit path, dominating this test for no coverage gain
-    // (spawn search has its own tests).
     for extra in ["vISITOR2", "Guest"] {
         std::fs::write(
             dir.join(format!("players/{extra}.dat")),
@@ -265,22 +232,15 @@ fn full_lan_join_place_pause_gate_and_leave() {
     };
     let (mut server, _, _) =
         crate::server::session_build::build_server("", 7, 2, Some(host_player));
-    // A threaded-pool listen server, but still a SUITE server: offline, so the
-    // joins below carry plain names and nothing reaches the account service.
     server.account_policy = crate::account::AccountPolicy::Offline;
     let opened = crate::save::open_at(dir.to_path_buf()).expect("temp save opens");
     server.world.attach_save(opened.save, opened.saved);
-    // Pre-build a tiny stone pad at the visitor's feet (threaded pool, but a
-    // single column) so the place claim targets a known cell instead of
-    // scanning streamed worldgen under CPU contention.
     let (pcx, pcy, pcz) = (
         spawn.x.div_euclid(16),
         spawn.y.div_euclid(16),
         spawn.z.div_euclid(16),
     );
     server.world.update_load(pcx, pcy, pcz);
-    // Stream-finality can refuse writes while gen/overlay is in flight —
-    // poll + retry until the pad sticks (common under a parallel suite).
     'pad: loop {
         let _ = remain();
         server.world.poll();
@@ -312,9 +272,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
     }
     let place_target = IVec3::new(spawn.x + 2, spawn.y, spawn.z);
     let mut host = crate::server::handle::spawn(server);
-    // One fixed tick per loop iteration, compute-bound. The pool stays
-    // THREADED so handshake RTs are not stuck behind inline gen on the
-    // server thread.
     host.unthrottle_for_test();
 
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
@@ -325,7 +282,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
         "a second open reports the same port"
     );
 
-    // A wrong protocol version is refused with HelloReject.
     {
         let mut probe = connect(port);
         write_msg(&mut probe, &ClientToServer::Hello { protocol: 9999 }).expect("send");
@@ -337,9 +293,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
         }
     }
 
-    // The real join. A render distance of 2 streams ~25 columns (enough for
-    // a buildable spot near the visitor's feet) instead of ~1000 — the
-    // wire path under test is identical.
     let visitor_id = identity();
     let mut stream = connect(port);
     let join = client_handshake(
@@ -371,7 +324,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
     let conn = TcpClientConn::spawn(stream, remap).expect("connection threads");
     let mut remote = ServerHandle::from_remote(conn);
 
-    // The host is told about the join.
     let joined = drain_until(&mut host, remain(), |msg| match msg {
         ServerToClient::PlayerJoined { id, name } => Some((id, name)),
         _ => None,
@@ -379,14 +331,10 @@ fn full_lan_join_place_pause_gate_and_leave() {
     .expect("host hears PlayerJoined");
     assert_eq!(joined, (PlayerId(1), "Visitor".to_string()));
 
-    // Wait until the pad's section is in the remote's sent set (deltas are
-    // filtered by `terrain.covers`) and a lit payload has proven light ships.
     let pad_section = SectionPos::from_world(place_target.x, place_target.y, place_target.z)
         .expect("pad is inside the section grid");
     let mut lit_sections = 0usize;
     let mut pad_streamed = false;
-    // The visitor's own row spawns in its first batch and afterwards rides
-    // only when it changed (per-connection deltas), so remember the sighting.
     let mut own_row = false;
     drain_until(&mut remote, remain(), |msg| {
         match msg {
@@ -412,9 +360,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
     let target = place_target;
     let placed_at = IVec3::new(target.x, target.y + 1, target.z);
 
-    // Place from the restored feet (the pre-built pad is within reach of
-    // that pose); the F1 drift ring rejects a hover claim far from the
-    // server's own integration, so we claim where the save put us.
     let update = PlayerUpdate {
         transform: crate::net::protocol::Transform {
             pos: visitor_feet,
@@ -446,9 +391,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
             jabbed: false,
         }))
         .expect("live connection");
-    // Prefer inventory revision (always on self_state) over block_deltas:
-    // deltas are filtered by `terrain.covers`, which can lag under load even
-    // after the pad section streamed once.
     drain_until(&mut remote, remain(), |msg| {
         let ServerToClient::Tick(update) = msg else {
             return None;
@@ -472,7 +414,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     // Pause is ignored while the server has been opened to LAN: ticks
     // keep flowing to the remote client. The pinned clock consumes the
     // Pause message within a couple of iterations, so a short settle
-    // replaces the old wall-clock 200 ms wait.
+    // bounds the wait without relying on a long wall-clock delay.
     host.send(ClientToServer::Pause(true)).expect("live pipe");
     std::thread::sleep(Duration::from_millis(50));
     let mut drained = Vec::new();
@@ -491,11 +433,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
     })
     .expect("ticks keep flowing: Pause is ignored once open to LAN");
 
-    // A second client with the same name (case-insensitive) is ADMITTED
-    // under the lowest free numeric suffix, never refused. It asks for the
-    // same small render distance as the visitor — this connection never
-    // needs terrain, and a big request makes the server generate a huge
-    // load target for nothing.
     {
         let mut dup = connect(port);
         let data = client_handshake(
@@ -518,7 +455,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
             name, "vISITOR2",
             "the requested name gains a numeric suffix"
         );
-        drop(dup); // socket drop -> leave path
+        drop(dup);
         drain_until(&mut host, remain(), |msg| match msg {
             ServerToClient::PlayerLeft { id } if id == dup_id => Some(()),
             _ => None,
@@ -526,8 +463,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .expect("the deduped guest's leave lands before the next join");
     }
 
-    // A third player joins, then vanishes (socket drop, no Disconnect):
-    // everyone else hears PlayerJoined then PlayerLeft.
     let guest_id = {
         let mut guest = connect(port);
         let data = client_handshake(
@@ -546,10 +481,8 @@ fn full_lan_join_place_pause_gate_and_leave() {
             "the guest sees both connected players"
         );
         data.player_id
-        // `guest` drops here: the server reader hits EOF -> leave path.
     };
     for (name, handle) in [("host", &mut host), ("visitor", &mut remote)] {
-        // One pass for both events: they may land in the same drain batch.
         let mut joined = false;
         let mut left = false;
         drain_until(handle, remain(), |msg| {
@@ -566,9 +499,6 @@ fn full_lan_join_place_pause_gate_and_leave() {
         .unwrap_or_else(|| panic!("{name} hears the guest join then leave"));
     }
 
-    // A clean remote quit (farewell Disconnect through the handle drop
-    // path) runs the leave path: the host hears PlayerLeft and the
-    // visitor's player file is saved with the post-placement inventory.
     remote.shutdown_and_join();
     let left = drain_until(&mut host, remain(), |msg| match msg {
         ServerToClient::PlayerLeft { id } => Some(id),
@@ -605,20 +535,12 @@ fn full_lan_join_place_pause_gate_and_leave() {
     host.shutdown_and_join();
 }
 
-/// The HEADLESS server shape end-to-end: built with NO local session,
-/// the world freezes while empty (pause-when-empty), the first TCP join
-/// claims PlayerId(0) and streams terrain through the ack-windowed
-/// batches, and after the last leave the world freezes again — a rejoin
-/// resumes from (nearly) the frozen tick instead of wall-clock time
-/// having passed.
 #[test]
 fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let mut server = headless("", 11, 2);
     assert!(!server.sessions.has_local_session());
     assert!(server.sessions.is_empty());
     assert!(server.clock.lan_ever_opened(), "the pause gate starts open");
-    // In-process smoke first: pumping an EMPTY headless server runs no
-    // ticks, produces no recipients, and panics nowhere.
     let t0 = server.world.current_tick();
     for _ in 0..5 {
         let out = server.pump_tagged(0.05, &mut Vec::new(), &[]);
@@ -629,7 +551,6 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let mut host = crate::server::handle::spawn(server);
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
 
-    // First join claims id 0 — no local session holds it on headless.
     let head = identity();
     let mut stream = connect(port);
     let join = client_handshake(
@@ -646,11 +567,6 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
 
-    // Connected: the world runs and terrain streams (drain_until acks
-    // the batches like a live client). Terrain FIRST — the whole
-    // render-dist-2 window can finish streaming before the first tick
-    // lands, and a drain that waited for a tick would silently discard
-    // every section payload it swept past.
     drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| {
         matches!(msg, ServerToClient::SectionData(_)).then_some(())
     })
@@ -666,9 +582,6 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     })
     .expect("the world advances while a player is connected");
 
-    // Clean leave (farewell Disconnect through the handle drop path):
-    // the session list empties and the world freezes. One second of wall
-    // time is ~20 ticks if the sim kept running; stay under the hard budget.
     remote.shutdown_and_join();
     std::thread::sleep(Duration::from_secs(1));
 
@@ -701,7 +614,6 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     host.shutdown_and_join();
 }
 
-/// Read replies until `f` takes one, skipping keepalives.
 fn reply<T>(stream: &mut TcpStream, mut f: impl FnMut(ServerToClient) -> Option<T>) -> T {
     loop {
         match read_msg::<ServerToClient, _>(stream).expect("a reply") {
@@ -717,7 +629,6 @@ fn reply<T>(stream: &mut TcpStream, mut f: impl FnMut(ServerToClient) -> Option<
     }
 }
 
-/// `Hello` a raw socket; the `HelloAck`'s `(challenge, requires_account, server_id)`.
 fn hello(stream: &mut TcpStream) -> (crate::net::identity::JoinChallenge, bool, String) {
     write_msg(
         stream,
@@ -737,7 +648,6 @@ fn hello(stream: &mut TcpStream) -> (crate::net::identity::JoinChallenge, bool, 
     })
 }
 
-/// A proven `Join` offering `credential`, and the server's `JoinReject` reason.
 fn refused_join(
     stream: &mut TcpStream,
     challenge: &crate::net::identity::JoinChallenge,
@@ -761,13 +671,6 @@ fn refused_join(
     })
 }
 
-/// An ONLINE server's handshake: it advertises what it wants up front, and
-/// refuses the wrong kind of credential BY NAME rather than dropping the socket
-/// — the client was told the policy, so a mismatch is a reason to show.
-///
-/// Redeeming a real ticket is deliberately not exercised here: it is a live
-/// HTTPS round trip to the account service, and a unit suite that reaches the
-/// network is a unit suite that fails on a train.
 #[test]
 fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
     let mut server = headless("", 5, 2);
@@ -789,8 +692,6 @@ fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
         JoinRejectReason::AccountRequired
     );
 
-    // The mirror image: an OFFLINE server cannot redeem a ticket, and the name
-    // it would need lives inside one — so it refuses that too, by its own name.
     let mut offline = crate::server::handle::spawn(headless("", 5, 2));
     offline.unthrottle_for_test();
     let offline_port = offline.open_to_lan(0).expect("bind an ephemeral port");
@@ -810,13 +711,6 @@ fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
     host.shutdown_and_join();
 }
 
-/// A verified account is filed under its stable account id, never its
-/// username: a website rename between visits moves the display name and
-/// nothing else, and one account is one session whatever it is called.
-///
-/// This shipped broken once — the username keyed the record, so a rename (or
-/// a first sign-in) silently opened the world on a fresh spawn with the old
-/// character still on disk.
 #[test]
 fn a_verified_account_is_filed_under_its_id_not_its_username() {
     let mut server = headless("", 13, 2);

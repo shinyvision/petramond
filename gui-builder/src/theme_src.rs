@@ -1,9 +1,3 @@
-//! Theme loading for the builder: the game's theme stack resolved through
-//! the asset layers exactly like the game resolves it (every layer's
-//! `ui/theme/theme.json`, base first, packs overlaying parts by key — so a
-//! pack's chrome previews as it will ship), otherwise petramond-ui's
-//! placeholder.
-
 use crate::assets::AssetRoots;
 use petramond_ui::{Theme, ThemeLayer};
 use std::path::PathBuf;
@@ -11,12 +5,8 @@ use std::sync::Arc;
 
 pub struct ThemeSource {
     pub theme: Arc<Theme>,
-    /// Every part key the theme defines (feeds the inspector's style combo),
-    /// straight from `Theme::style_keys()`.
     pub style_keys: Vec<String>,
-    /// Human-readable origin for the toolbar ("game theme" / "placeholder").
     pub label: String,
-    /// Bumped on every (re)load so the preview cache invalidates.
     pub rev: u64,
 }
 
@@ -41,7 +31,6 @@ pub fn load(roots: &AssetRoots, rev: u64) -> ThemeSource {
     }
 }
 
-/// Every manifest in `paths` (base first) as one theme stack.
 fn load_stack(paths: &[PathBuf]) -> Result<Theme, String> {
     let jsons = paths
         .iter()
@@ -78,8 +67,6 @@ mod tests {
 
     #[test]
     fn style_combo_source_is_the_themes_own_key_list() {
-        // Whichever theme resolves (game kit or placeholder), the combo
-        // source must be exactly Theme::style_keys().
         let src = load(&AssetRoots::new(None, Vec::new()), 0);
         let expect: Vec<String> = src.theme.style_keys().map(str::to_owned).collect();
         assert_eq!(src.style_keys, expect);

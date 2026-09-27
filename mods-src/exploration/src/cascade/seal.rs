@@ -12,14 +12,11 @@ use mod_sdk::FxHashMap;
 use super::basin::{Basins, Col};
 use super::{DAM_MAX, DAM_TALL, DAM_TALL_SHARE_MAX, MIN_POOLS, MIN_POOL_AREA, SIDES};
 
-/// The placed silt of a sealed chain, and the columns dammed at a waterline.
 pub(super) struct Seal {
     pub(super) silt: BTreeSet<[i32; 3]>,
     pub(super) rim_dam: BTreeSet<Col>,
 }
 
-/// Seal the chain, retreating the water wherever the rim cannot hold, until
-/// one pass needs no retreat and leaves no gutted basin behind.
 pub(super) fn seal(
     basins: &mut Basins,
     terrain: &impl Fn([i32; 3]) -> Option<bool>,
@@ -27,9 +24,8 @@ pub(super) fn seal(
     let sealed = loop {
         let (sealed, retreat) = seal_pass(basins, terrain);
         if retreat.is_empty() {
-            // A basin the retreat gutted is gone whole; dropping one changes
-            // the geometry, so the seal runs once more over what is left
-            // rather than leaving its beds and dams behind.
+            // Gutted basins get dropped whole, which changes the geometry - so seal again over
+            // what's left, or its beds and dams stick around.
             let count = basins.counts();
             let before = basins.cols.len();
             basins
@@ -51,9 +47,6 @@ pub(super) fn seal(
     Ok(sealed)
 }
 
-/// One seal over the chain as it stands: beds first, so foundations can rest
-/// on them, then a dam against every open side. Returns the seal and the wet
-/// columns that must retreat for it to hold.
 fn seal_pass(
     basins: &Basins,
     terrain: &impl Fn([i32; 3]) -> Option<bool>,
@@ -93,9 +86,6 @@ fn seal_pass(
     (Seal { silt, rim_dam }, retreat)
 }
 
-/// Carry a dam placed at `top` down to something solid — rock, earlier silt,
-/// or another basin's water. `false` when that takes more than `DAM_MAX`
-/// courses or runs past the probed terrain.
 fn footing(
     basins: &Basins,
     terrain: &impl Fn([i32; 3]) -> Option<bool>,
@@ -123,9 +113,6 @@ fn footing(
     }
 }
 
-/// The anti-bathtub gate, measured on what actually stands: weir faces
-/// between linked basins are legitimately tall, but they are a small share
-/// of the rim, and half the rim running tall is a tank, not a terrace.
 pub(super) fn rim_is_a_wall(silt: &BTreeSet<[i32; 3]>, rim_dam: &BTreeSet<Col>) -> bool {
     let mut height: FxHashMap<Col, i32> = FxHashMap::default();
     for p in silt {

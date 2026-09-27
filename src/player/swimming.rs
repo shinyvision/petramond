@@ -1,6 +1,3 @@
-//! Player swim intent. Fluid resistance and buoyancy are shared world-data
-//! behavior; leaving the fluid follows the shared shore-climb rule.
-
 use super::movement::{GRAVITY, JUMP_V0};
 use super::state::{Input, Player, HALF_W, HEIGHT};
 use crate::entity::shore::{ShoreClimb, Swimmer};
@@ -9,8 +6,6 @@ use petramond_world::collision::DynBox;
 use petramond_world::fluid::{Buoyancy, Immersion};
 
 impl Player {
-    /// The shore climb a held jump asks for this tick. Climbing out is an
-    /// explicit action for players; creatures always try.
     pub(super) fn shore_climb(
         &self,
         swim: Immersion,

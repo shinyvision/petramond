@@ -1,7 +1,3 @@
-//! Block calls: stream-final reads, full-edit-path writes, scheduled
-//! ticks, light queries, collision-shape classification, and the
-//! model-group swap.
-
 use mod_api::{BlockCall, HostRet};
 use petramond_world::world::raycast;
 
@@ -12,15 +8,6 @@ use super::guards::{
     stream_final_cell,
 };
 
-/// The three presentation WRITES below all ask the same question first: does
-/// the caller OWN the placed block it is addressing? A mod dresses ITS OWN
-/// machine, never someone else's block — and none of them may act on a cell
-/// whose streaming state is not final.
-///
-/// What stands at a position is the WORLD's to say, and it changes under a
-/// mod (its machine broken, a save from before it moved): a cell holding
-/// someone else's block answers `false` like any other write that found
-/// nothing to act on, never an error — an error ends the whole mod.
 fn owned_block_at(
     ctx: &mut crate::modding::SimCtx<'_>,
     mod_id: &str,
@@ -40,14 +27,6 @@ fn owned_block_at(
     Ok(block)
 }
 
-/// Whether every float a draw prim carries is finite.
-///
-/// A non-finite one is a loud mod bug rather than a dropped box, and the reason
-/// is the IDEMPOTENCE gate: a machine resubmits its set every tick and the
-/// engine drops an unchanged submission by comparing the submitted prims, but
-/// `NaN != NaN` — so one NaN corner makes every tick a change, replicating a
-/// set that (having been dropped at resolve) draws nothing at all. Refusing it
-/// here is what keeps that comparison total.
 fn draw_prim_finite(prim: &mod_api::DrawPrim) -> bool {
     match prim {
         mod_api::DrawPrim::Cuboid { min, max, .. } => min.iter().chain(max).all(|v| v.is_finite()),
@@ -74,8 +53,6 @@ fn draw_prim_finite(prim: &mod_api::DrawPrim) -> bool {
     }
 }
 
-/// The per-set validation both draw calls run: the prim cap and finiteness.
-/// `what` names the caller for the error line.
 pub(super) fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<HostRet> {
     const MAX: usize = mod_api::DRAW_PRIMS_MAX;
     if prims.len() > MAX {
@@ -90,21 +67,8 @@ pub(super) fn check_draw_set(what: &str, prims: &[mod_api::DrawPrim]) -> Option<
     )))
 }
 
-/// Block calls (all sim-scoped, delegating to World).
 pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
     match call {
-        // The batched presentation writes. They exist because a mod's tick
-        // cost must not scale with how many machines the player has built:
-        // one crossing for the whole kind, not one per placed block.
-        //
-        // The per-SET checks (prim cap, finiteness) fail the WHOLE call like
-        // the single form: they are malformed input, and a mod that sends one
-        // is broken. Per-CELL outcomes — unloaded, or a block that stopped
-        // being this mod's — answer `false` in the parallel reply instead,
-        // where the single form errors: submitting one machine that was
-        // broken this tick is the normal way to lose a race, and taking the
-        // pack down for it would make the batched form unusable.
-        // Pinned by `a_batched_draw_answers_per_entry_where_the_single_call_errors`.
         BlockCall::SetBlockDraws { sets } => {
             if let Some(err) = batch_guard("SetBlockDraws set", sets.len()) {
                 return err;
@@ -155,11 +119,6 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
                     Err(e) => e,
                     Ok(_) => {
                         ctx.world.set_block_draw(IVec3::from(pos), prims.into());
-                        // TRUE = the submission was accepted, which an empty
-                        // (clearing) one is: a mod checking the reply must not
-                        // read its own clear as a refusal. `false` means
-                        // UNLOADED and nothing else — a foreign block already
-                        // left through the `Err` arm above.
                         HostRet::Bool(true)
                     }
                 },
@@ -176,18 +135,12 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
                 },
             )
         }
-        // A READ of the same space `SetBlockDraw` writes in, so it needs no
-        // ownership check: knowing where another mod's spout points is no more
-        // than `GetBlock` already tells you.
         BlockCall::BlockLocalToWorld { pos, points } => {
             if let Some(err) = batch_guard("BlockLocalToWorld point", points.len()) {
                 return err;
             }
             sim_read(move |ctx| {
                 let p = IVec3::from(pos);
-                // Gated like every other mod read: mid-stream the cell shows
-                // the generated base where a saved overlay is about to land,
-                // and a machine's facing is exactly what that overlay carries.
                 if stream_final_cell(ctx, p).is_err() {
                     return HostRet::Points(None);
                 }
@@ -207,10 +160,6 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
         BlockCall::SwapBlock { pos, block } => match checked_block(block) {
             Err(e) => e,
             Ok(b) => {
-                // BOTH sides must be the caller's own: this is a placed thing
-                // flipping ITS row, never a tool for rewriting someone else's
-                // content. The destination is checked here because it needs
-                // no world read.
                 let new_name = petramond_world::registry::names()
                     .blocks
                     .name(b.id())
@@ -229,16 +178,9 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
                 )
             }
         },
-        // Biomes are column-level data fixed at generation (saved overlays
-        // never change them), so a loaded-column read cannot lie: no
-        // stream-final gate needed.
         BlockCall::BiomeAt { pos } => {
             sim_read(move |ctx| HostRet::MaybeByte(ctx.world.data().biome_at_world(pos[0], pos[1])))
         }
-        // The SURFACE can lie mid-stream (the generated base shows where a
-        // saved overlay is about to land), so the found footing must be
-        // stream-final like every block read — else a mod builds on terrain
-        // the player's save is about to replace.
         BlockCall::SurfaceYAt { pos } => sim_read(move |ctx| {
             let y = ctx
                 .world
@@ -247,9 +189,6 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
                 .filter(|&y| ctx.world.block_if_stream_final(pos[0], y, pos[1]).is_some());
             HostRet::MaybeI32(y)
         }),
-        // Mod reads report None ("unloaded") while a section's streamed
-        // content is not final — a half-streamed read would show the
-        // generated base where the player's saved record is about to land.
         BlockCall::GetBlock { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Block(
@@ -323,14 +262,8 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
             }
             sim_read(move |ctx| {
                 let mut found = Vec::new();
-                // Cells outside the world's vertical range are definitionally
-                // empty — they can never match, and treating them as
-                // unreadable would starve every search near the world's top
-                // or bottom. Clamp instead of gating.
                 let y_lo = min[1].max(petramond_world::chunk::WORLD_MIN_Y);
                 let y_hi = max[1].min(petramond_world::chunk::WORLD_MAX_Y - 1);
-                // Scan order (y, then z, then x ascending) is the documented
-                // ABI contract — deterministic for every caller.
                 for y in y_lo..=y_hi {
                     for z in min[2]..=max[2] {
                         for x in min[0]..=max[0] {
@@ -381,11 +314,6 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
             let p = IVec3::from(pos);
             HostRet::Bool(ctx.world.section_stream_final_at(p.x, p.y, p.z))
         }),
-        // Light reads follow the GetBlock contract: the engine's own light
-        // accessors fall back to "open sky / no block light" for absent
-        // sections (the mesh-border fallback), which for a MOD read is a
-        // fabricated value light-driven policy would act on — gate on
-        // stream finality and answer `None` instead.
         BlockCall::LightAt { pos } => sim_read(|ctx| {
             let p = IVec3::from(pos);
             HostRet::Light(ctx.world.block_if_stream_final(p.x, p.y, p.z).map(|_| {
@@ -439,8 +367,6 @@ pub(super) fn handle_block_call(mod_id: &str, call: BlockCall) -> HostRet {
     }
 }
 
-/// A validated `Raycast` — the one ray a mod may cast, against the world it
-/// is asked of: the simulation's, or on a client instance the replica.
 pub(in crate::modding) struct RaycastQuery {
     from: petramond_math::world_pos::WorldPos,
     dir: glam::Vec3,
@@ -504,7 +430,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::ChunkPos;
 
-    /// Publish a SimCtx over `world` and run `f`, as if inside a dispatch.
     fn with_world_ctx(world: &mut ServerWorld, f: impl FnOnce()) {
         let mut nobody = RosterRefs::empty();
         let mut feed = TickEvents::default();
@@ -519,15 +444,9 @@ mod tests {
         scope::enter(&mut ctx, f);
     }
 
-    /// Batched sim/registry calls are hard-capped at [`SIM_BATCH_MAX`]
-    /// elements: the watchdog charges guest compute only, so without the cap
-    /// one maximal batch is unmetered host work that stalls the sim. Over-cap
-    /// = `Error` (mod bug, loud); at-cap batches still answer.
     #[test]
     fn batched_calls_reject_oversized_batches() {
         let mut store = ModStoreData::new("alpha", 1);
-        // The guard fires before any sim access, so over-cap is rejected as
-        // the CAP error even outside a dispatch scope.
         for (name, call) in [
             (
                 "GetBlocks",
@@ -569,7 +488,6 @@ mod tests {
                 other => panic!("{name}: over-cap batch answered {other:?}"),
             }
         }
-        // An at-cap batch is served (registry lane needs no sim scope).
         let got = handle_host_call(
             &mut store,
             HostCall::from(calls::ItemNames {
@@ -591,12 +509,6 @@ mod tests {
         });
     }
 
-    /// The two ray filters answer two different questions about the same
-    /// cells: the crosshair's rule stops on a plant's selection box, a
-    /// body's rule passes it and stops on the solid behind — and the
-    /// distance answers where. A ray past `max` or with nothing in it
-    /// answers `None`; a malformed request is an error, never a fabricated
-    /// miss.
     #[test]
     fn raycast_filters_stop_on_what_they_say_and_report_the_distance() {
         use petramond_world::block::Block;
@@ -663,9 +575,6 @@ mod tests {
         });
     }
 
-    /// `LightAt` follows the block-read contract: an unloaded (or not yet
-    /// stream-final) cell answers `None` — never the engine's open-sky
-    /// fallback — so light-driven policy cannot act on fabricated values.
     #[test]
     fn light_at_answers_none_for_unloaded_cells() {
         let mut store = ModStoreData::new("alpha", 1);
@@ -691,8 +600,6 @@ mod tests {
         });
     }
 
-    /// `CollisionShapeAt` is generic geometry: one full unit cube = `Full`,
-    /// stairs = `Partial`, air and any fluid = `Empty`, unloaded = `None`.
     #[test]
     fn collision_shape_classifies_geometry_and_gates_unloaded() {
         let mut store = ModStoreData::new("alpha", 1);
@@ -718,10 +625,6 @@ mod tests {
         });
     }
 
-    /// `FindBlocks` contract: matches come back in the documented scan order
-    /// (y, then z, then x ascending), a box touching any unreadable cell
-    /// answers `None` whole (never a partial search), and the volume /
-    /// inverted-box guards reject before any sim access.
     #[test]
     fn find_blocks_scans_in_order_and_gates_unreadable_boxes() {
         let mut store = ModStoreData::new("alpha", 1);
@@ -775,11 +678,6 @@ mod tests {
         });
     }
 
-    /// A non-finite prim is REFUSED, not quietly dropped — because the engine
-    /// answers an unchanged resubmission by comparing the submitted prims, and
-    /// `NaN != NaN`. Dropping it would leave a machine at rest logging a
-    /// replication delta every tick for a box that draws nothing, which is a
-    /// pathology with no local symptom at all.
     #[test]
     fn a_non_finite_draw_prim_is_refused_rather_than_dropped() {
         let mut store = ModStoreData::new("alpha", 1);
@@ -790,8 +688,6 @@ mod tests {
             tint: [255, 255, 255],
             emissive: false,
         };
-        // Refused BEFORE the sim scope is consulted (there is none here), so a
-        // malformed submission cannot depend on where the caller was.
         match handle_host_call(
             &mut store,
             HostCall::from(calls::SetBlockDraw {
@@ -804,19 +700,12 @@ mod tests {
         }
     }
 
-    /// A block that is not the caller's answers `false` from both draw
-    /// calls, never an error. What stands at a position is the world's to
-    /// say, and it changes under a mod — a machine broken between the read
-    /// and the write, a position remembered from a save — so an error there
-    /// would end a whole pack for losing a race it cannot avoid. (A single
-    /// submission used to error; a mod died of exactly that.)
     #[test]
     fn a_draw_on_someone_elses_block_answers_false_and_the_mod_lives() {
         let mut store = ModStoreData::new("alpha", 1);
         let mut world = ServerWorld::new(1, 4);
         world.clear_world();
         world.insert_empty_column_for_test(ChunkPos::new(0, 0));
-        // An engine block: loaded, readable, and not this mod's.
         world.set_block_world(4, 64, 4, Block::Stone);
         let foreign = [4, 64, 4];
 
@@ -843,12 +732,6 @@ mod tests {
         });
     }
 
-    /// The router's arms are one long `|` chain per handler, so deleting or
-    /// moving a variant welds the arm that ended on it onto the next
-    /// handler's: every call above that line silently starts going somewhere
-    /// else, and the compiler only notices if a whole handler becomes
-    /// unreachable. Dispatched through `handle_host_call` — going straight to
-    /// `handle_block_call` would prove only that this file has the arm.
     #[test]
     fn block_presentation_calls_route_to_the_block_handler() {
         let mut store = ModStoreData::new("alpha", 1);
@@ -880,11 +763,6 @@ mod tests {
         }
     }
 
-    /// A footprint-local point must land inside the PLACED footprint at every
-    /// facing. This is the whole reason the call exists: an anchor plus a
-    /// fixed world offset is right at one facing and puts the point inside or
-    /// behind the machine at the other three, and a mod re-deriving the
-    /// placement transform is that same rule written a second time.
     #[test]
     fn a_footprint_local_point_follows_the_placed_facing() {
         use petramond_math::facing::Facing;
@@ -895,8 +773,6 @@ mod tests {
             .model_kind()
             .expect("fixture: a model block");
         let size = petramond_world::block_model::def(kind).cells.map(f32::from);
-        // Off centre on every axis, so a lost rotation cannot coincide with
-        // the right answer.
         let local = [size[0] * 0.8, size[1] * 0.2, size[2] * 0.9];
 
         let mut seen: Vec<[f64; 3]> = Vec::new();
@@ -939,9 +815,6 @@ mod tests {
         );
     }
 
-    /// Every other mod read of a cell gates on stream finality; this one has
-    /// the extra reason that a machine's FACING is exactly what the saved
-    /// overlay about to land carries.
     #[test]
     fn local_to_world_gates_an_unreadable_cell() {
         let mut store = ModStoreData::new("alpha", 1);

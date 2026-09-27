@@ -1,25 +1,12 @@
-//! What each row of the content list says: the packs this game has (loaded
-//! or refused, shipped or installed), the site's listing, and the queue and
-//! pending changes folded into one row state with its copy.
-//!
-//! A row's state is two orthogonal facts plus a job: whether it loaded, what
-//! the catalogue says about it, and what the queue is doing. Precedence: a
-//! job, then a pending change, then an available update (an update may be the
-//! fix for a refusal), then a refusal, then the plain catalogue status.
-
 use std::time::Instant;
 
 use petramond::content::{InstallRecord, Kind, ListingRow, Tier};
 
 use crate::app::content::{ContentSession, Pending, PendingKind, Phase};
 
-/// A pack this game has, loaded or refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app) struct Local {
-    /// Stable key: the pack id, or the directory name when it has none.
     pub(in crate::app) key: String,
-    /// The directory name (what a removal is filed under; an install is
-    /// filed under the pack id).
     pub(in crate::app) dir: String,
     pub(in crate::app) id: Option<String>,
     pub(in crate::app) name: String,
@@ -27,9 +14,7 @@ pub(in crate::app) struct Local {
     pub(in crate::app) description: String,
     pub(in crate::app) version: Option<String>,
     pub(in crate::app) tier: Tier,
-    /// Why discovery refused it; `None` = loaded.
     pub(in crate::app) refusal: Option<String>,
-    /// Its install record, when valid.
     pub(in crate::app) record: Option<InstallRecord>,
     pub(in crate::app) touches_world: bool,
     pub(in crate::app) dependencies: Vec<String>,
@@ -41,7 +26,6 @@ impl Local {
     }
 }
 
-/// Every pack discovery found, admitted or not.
 pub(in crate::app) fn locals_from_discovery(dirs: &petramond::content::Dirs) -> Vec<Local> {
     use petramond::content::records;
     use petramond_world::assets::{self, Pack, PackHeader, PackOrigin};
@@ -95,26 +79,17 @@ pub(in crate::app) fn locals_from_discovery(dirs: &petramond::content::Dirs) -> 
     loaded.chain(refused).collect()
 }
 
-/// One place in the list, fixed between rebuilds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Slot {
-    /// The Installed tab has nothing to show.
     NothingInstalled,
-    /// The id filter's banner ("Show all").
     FilterBanner,
-    /// Installs are off (a `PETRAMOND_MODS` override).
     InstallsOff,
-    /// What the listing request came to, when that is not rows.
     ListingStatus,
-    /// Filtered ids petramond.com does not have.
     NotListed,
-    /// A pack this game has, by index into the view's locals.
     Local(usize),
-    /// A listing row, by pack id.
     Listed(String),
 }
 
-/// What a message stamp's button does.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::app) enum MessageAction {
     SignIn,
@@ -146,7 +121,6 @@ impl MessageAction {
     }
 }
 
-/// A message stamp's content.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::app) struct Message {
     pub(in crate::app) text: String,
@@ -176,10 +150,8 @@ pub(in crate::app) const ACCENT: &str = "accent";
 pub(in crate::app) const WARN: &str = "warn";
 pub(in crate::app) const DANGER: &str = "danger";
 
-/// Names in tooltips and confirm copy are cut to this many characters.
 pub(in crate::app) const NAME_CAP: usize = 32;
 
-/// `text` cut to `max` characters, with an ellipsis when cut.
 pub(in crate::app) fn cap(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_owned();
@@ -189,7 +161,6 @@ pub(in crate::app) fn cap(text: &str, max: usize) -> String {
     out
 }
 
-/// At most three names, then "and N more".
 pub(in crate::app) fn name_list(names: &[String]) -> String {
     let shown: Vec<String> = names.iter().take(3).map(|n| cap(n, NAME_CAP)).collect();
     let mut out = match shown.len() {
@@ -204,8 +175,6 @@ pub(in crate::app) fn name_list(names: &[String]) -> String {
     out
 }
 
-/// A size as the rows show it: KB below a megabyte, MB with one decimal
-/// above, so the longest progress line still fits the smallest viewport.
 pub(in crate::app) fn size(bytes: u64) -> String {
     const MB: u64 = 1024 * 1024;
     if bytes < MB {
@@ -215,7 +184,6 @@ pub(in crate::app) fn size(bytes: u64) -> String {
     }
 }
 
-/// `done` of `total` in `total`'s unit: "198/470 KB", "1.9/20.0 MB".
 fn size_of(done: u64, total: u64) -> String {
     const MB: u64 = 1024 * 1024;
     if total < MB {
@@ -229,7 +197,6 @@ fn version_badge(version: &str) -> String {
     format!("v{}", cap(version, 12))
 }
 
-/// The listing-state message, when the Browse tab has one.
 pub(in crate::app) fn listing_message(
     session: &ContentSession,
     available: usize,
@@ -271,7 +238,6 @@ pub(in crate::app) fn not_listed_message(ids: &[String]) -> Message {
     Message::new(format!("Not on petramond.com: {}", name_list(ids)), MUTED)
 }
 
-/// The entry's action column.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(in crate::app) enum Action {
     None,
@@ -280,12 +246,10 @@ pub(in crate::app) enum Action {
     Retry,
     Replace,
     Undo,
-    /// A job runs: the gauge, at this fraction.
     Busy(f32),
 }
 
 impl Action {
-    /// Enter's action on the selected row: never an undo.
     pub(in crate::app) fn is_primary(self) -> bool {
         matches!(
             self,
@@ -294,7 +258,6 @@ impl Action {
     }
 }
 
-/// Everything one entry stamp shows.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::app) struct Entry {
     pub(in crate::app) key: String,
@@ -304,16 +267,13 @@ pub(in crate::app) struct Entry {
     pub(in crate::app) version: Option<String>,
     pub(in crate::app) summary: String,
     pub(in crate::app) description: String,
-    /// What installing it means for worlds, once it is staged.
     pub(in crate::app) world_note: Option<&'static str>,
     pub(in crate::app) detail: String,
     pub(in crate::app) detail_palette: &'static str,
     pub(in crate::app) detail_tip: String,
     pub(in crate::app) action: Action,
     pub(in crate::app) can_delete: bool,
-    /// The row's listing row, when it has one (Get / Update / Replace).
     pub(in crate::app) listed: Option<ListingRow>,
-    /// The action button's tooltip (without a key hint).
     pub(in crate::app) action_tip: String,
     pub(in crate::app) icon: Option<String>,
     pub(in crate::app) touches_world: bool,
@@ -323,7 +283,6 @@ pub(in crate::app) const WORLD_NOTE_TOUCHES: &str =
     "New worlds use it. Turn it on for an existing world in World Settings › Mods.";
 pub(in crate::app) const WORLD_NOTE_PRESENTATION: &str = "Ready in every world after you apply.";
 
-/// A running job's detail line, its tooltip, and the gauge's fraction.
 pub(in crate::app) fn job_detail(
     phase: Phase,
     (done, total): (u64, u64),
@@ -421,11 +380,9 @@ impl Entry {
     }
 }
 
-/// A pack this game has, as its row shows it now.
 pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: Instant) -> Entry {
     let mut entry = Entry::from_local(local);
     let name = cap(&local.name, NAME_CAP);
-    // Content packs are part of Petramond: never listed, never removable.
     if local.shipped() {
         return entry;
     }
@@ -437,7 +394,6 @@ pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: 
         .cloned();
     let from_site = local.record.as_ref().filter(|r| r.content_id.is_some());
     if overlay(&mut entry, local.id.as_deref(), session, now) {
-        // A pending install over a pack already here is an update.
         if let (
             Action::Undo,
             Some(Pending {
@@ -517,7 +473,6 @@ pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: 
     entry
 }
 
-/// A listing row not installed here, as its row shows it now.
 pub(in crate::app) fn listed_entry(
     row: &ListingRow,
     session: &ContentSession,
@@ -528,7 +483,6 @@ pub(in crate::app) fn listed_entry(
     entry
 }
 
-/// Lay the row's job, pending change or failure over it, when it has one.
 fn overlay(entry: &mut Entry, id: Option<&str>, session: &ContentSession, now: Instant) -> bool {
     let name = cap(&entry.name, NAME_CAP);
     if let Some(job) = id.and_then(|id| session.jobs.get(id)) {
@@ -567,8 +521,6 @@ fn overlay(entry: &mut Entry, id: Option<&str>, session: &ContentSession, now: I
     false
 }
 
-/// What Apply now changes, naming at most three packs. `name_of` names
-/// the pack installed under a pending change's folder name or pack id.
 pub(in crate::app) fn apply_tip(
     session: &ContentSession,
     name_of: impl Fn(&str) -> Option<String>,

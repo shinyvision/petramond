@@ -1,5 +1,3 @@
-//! Semantic state authoring; families retain ownership of their cell codecs.
-
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::block::{Block, CellCodec, ShapeState};
@@ -9,8 +7,6 @@ use crate::mathh::IVec3;
 
 use super::PlacementPlan;
 
-/// A clockwise horizontal rotation, viewed from above. Coordinates rotate
-/// around a cell centre, so negative positions and object anchors stay exact.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Turn(u8);
 
@@ -43,8 +39,6 @@ impl Turn {
     }
 }
 
-/// A family consumes only properties it understands. Unconsumed properties
-/// fail compilation, preventing misspellings from silently changing geometry.
 pub struct Inputs<'a> {
     pub anchor: IVec3,
     pub turn: Turn,

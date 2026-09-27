@@ -1,10 +1,3 @@
-//! Live surface-density terrain pipeline.
-//!
-//! This is the Stage 6A bridge from the staged density graph to chunk terrain
-//! fill. It owns only surface terrain: climate biome assignment, density-sign
-//! ground/air fill, sea-level water, and exposed-run surface dressing. Caves and
-//! underground scatter remain external post-surface stages.
-
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
@@ -38,12 +31,10 @@ const BEACH_MAX_CONTINENTALITY: f32 = 0.14;
 const BEACH_SCAN_RADIUS: i32 = 16;
 const BEACH_SCAN_STEP: i32 = 8;
 
-/// Sea ice: frozen (temperature below the top of the climate table's `frozen`
-/// band) shallow water caps its waterline cell with ice — the ice sheet along
-/// cold coasts and frozen rivers. `MIN`/`MAX` bound the capped water depth; a low-frequency cluster
-/// field picks each column's effective threshold in between, so the sheet's
-/// deep-water edge breaks into organic lobes and floes instead of tracing a
-/// bathymetry contour.
+/// Sea ice caps waterline cells in shallow water once temperature drops below the frozen band
+/// top, for the ice sheet along cold coasts and frozen rivers.
+/// MIN/MAX bound how deep it caps. A low-frequency cluster field picks each column's threshold
+/// in between, so the deep-water edge breaks into lobes and floes, not a bathymetry contour.
 const SEA_ICE_MIN_DEPTH: i32 = 2;
 const SEA_ICE_MAX_DEPTH: i32 = 6;
 const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
@@ -51,7 +42,6 @@ const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 #[derive(Clone, Debug)]
 pub struct SurfaceDensitySystem {
     seed: u32,
-    /// Shared with every other system of this world (see `SeedSources`).
     density: std::sync::Arc<TerrainDensityGraph>,
     climate: &'static BiomeClimateIndex,
     surface: SurfaceSystem,
@@ -95,23 +85,10 @@ impl SurfaceDensitySystem {
         surface_heights(&self.density, x0, z0, w, h)
     }
 
-    /// Cubic terrain fill for one 16³ section, driven by the column's precomputed
-    /// biome + density surface (`biomes`/`surf`, the column's 16×16 grids indexed
-    /// `z*16 + x`) instead of a per-section density lattice.
-    ///
-    /// `master_density` is depth-only and exactly linear in Y, so a voxel is
-    /// solid IFF `wy <= surf`, and its surface depth is exactly `surf - wy` — the same
-    /// run-top/`depth_from_top` the lattice walk derives, with no overhangs to track.
-    /// Solid voxels take their skin material, non-solid voxels at or below sea level
-    /// take water, the rest stay air — byte-identical to walking the density lattice
-    /// (pinned by `section_fill_matches_the_lattice_reference`). Works for ANY `cy`
-    /// (incl. below the surface search floor): there, every voxel is far below
-    /// the surface and resolves through the deep fast path.
     pub fn fill_section(&self, section: &mut Section, biomes: &[u8], surf: &[i32]) {
         let (ox, oy, oz) = section.origin_world();
         let section_top = oy + SECTION_SIZE as i32 - 1;
         let seed = self.seed;
-        // Lazy: only the waterline section's frozen-candidate columns touch climate.
         let mut cells: Option<ClimateCellCache<'_>> = None;
         let holds_waterline = oy <= SEA_LEVEL && SEA_LEVEL <= section_top;
         section.edit_ids_bulk(|blocks| {
@@ -131,9 +108,6 @@ impl SurfaceDensitySystem {
                             Block::Water
                         };
 
-                    // Deep fast path: the entire section column is solid and below the
-                    // deepest depth-gated skin band, so every voxel resolves to the SAME
-                    // (depth-independent) block — compute it once and fill the column.
                     if section_top <= s && (s - section_top) > MAX_SKIN_BAND_DEPTH {
                         let deep = self
                             .surface
@@ -172,7 +146,7 @@ impl SurfaceDensitySystem {
                         } else if wy < SEA_LEVEL {
                             Block::Water.id()
                         } else {
-                            continue; // air — section starts zeroed.
+                            continue;
                         };
                         blocks[section_idx(x, ly, z)] = id;
                     }
@@ -189,10 +163,6 @@ impl SurfaceDensitySystem {
         )
     }
 
-    /// The block a submerged column's waterline cell (`y == SEA_LEVEL`) takes:
-    /// ice over frozen shallow water, else water. A pure per-column function of
-    /// `(seed, wx, wz, surf)` — every fill path routes its waterline cell
-    /// through this one rule, so they stay byte-identical.
     fn waterline_block(
         &self,
         cells: &mut ClimateCellCache<'_>,
@@ -200,16 +170,10 @@ impl SurfaceDensitySystem {
         wz: i32,
         surf: i32,
     ) -> Block {
-        // Not submerged (or too deep): plain water. The lower bound lives HERE,
-        // not only in the callers' fast-path gates, so the rule alone is
-        // correct for any caller — a frozen land column must never resolve to
-        // ice at a sub-surface pocket.
         let depth = SEA_LEVEL - surf;
         if !(1..=SEA_ICE_MAX_DEPTH).contains(&depth) {
             return Block::Water;
         }
-        // The same bilinear per-column temperature the biome classifier reads,
-        // so the ice sheet and the snowy shoreline agree on where winter is.
         let temperature = cells
             .climate_at(wx, wz)
             .get(ClimateAxis::Temperature)
@@ -270,11 +234,6 @@ impl SurfaceDensitySystem {
     }
 
     fn near_ocean_climate(&self, cells: &mut ClimateCellCache<'_>, wx: i32, wz: i32) -> bool {
-        // Every probe offset is a multiple of the 4-block climate cell size, so
-        // `surface(wx+dx, wz+dz)` resolves to `query cell + offset/cell` — the
-        // scan's answer is exactly a function of the query's climate cell, and
-        // the cache memoizes it per cell (every column of a cell, and the whole
-        // shoreline band revisiting it, reuses one scan).
         const {
             assert!(BEACH_SCAN_STEP % CLIMATE_SAMPLE_CELL_X == 0);
             assert!(BEACH_SCAN_RADIUS % CLIMATE_SAMPLE_CELL_X == 0);
@@ -302,20 +261,10 @@ impl SurfaceDensitySystem {
     }
 }
 
-/// The world Y range a column's surface is searched in, bottom inclusive and
-/// top exclusive: from the terrain density's floor — at and under which the
-/// density is solid by construction, so no surface lies lower — to the top of
-/// the cubic world. A deeper or taller world moves these bounds, nothing else.
 pub(crate) const SURFACE_SEARCH_Y: std::ops::Range<i32> = 0..WORLD_MAX_Y;
 
-/// The lowest surface a column reports: one below the search range, for a
-/// column with no solid cell in it. Every cell under it is filled, whatever
-/// the landform.
 pub(crate) const SURFACE_FLOOR_Y: i32 = SURFACE_SEARCH_Y.start - 1;
 
-/// The highest solid density cell of each column, `z * w + x`, within
-/// [`SURFACE_SEARCH_Y`]: the surface the terrain fill lays everything at or
-/// under, and air or the sea above.
 pub(crate) fn surface_heights(
     density: &TerrainDensityGraph,
     x0: i32,

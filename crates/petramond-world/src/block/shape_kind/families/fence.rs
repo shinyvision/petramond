@@ -1,12 +1,5 @@
-//! The fence (and any parameterized wall/hedge): post + neighbour-resolved rails.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A fence (or a parameterized wall/hedge): post + arms resolved from neighbours, read
-/// solid by nav, all dimensions/rule/item-form from the connection params.
 pub struct FenceFamily;
 
 impl ShapeSim for FenceFamily {
@@ -52,8 +45,6 @@ impl ShapeSim for FenceFamily {
         _b: Block,
         dir: IVec3,
     ) -> Option<crate::block::shape_kind::facets::FullFace> {
-        // The post's flat top holds a floor mount (a torch on a fence post);
-        // the sides are never a complete wall face.
         (dir.y > 0).then_some(crate::block::shape_kind::facets::FullFace::Shaped)
     }
 
@@ -87,15 +78,6 @@ impl ShapeRender for FenceFamily {
         _state: crate::block_state::HeldBlockState,
         out: &mut Vec<crate::block::ItemBox>,
     ) {
-        // The item is an authored SEGMENT — two posts joined by two rails —
-        // not the bare post a neighbourless cell resolves to. Extents come
-        // from the row's own connection params, so a modded wall's item
-        // matches its placed thickness.
-        //
-        // The ROW decides: a connection shape declaring `item_form: "cube"`
-        // gets the plain cube icon, not this segment. (Before the item form
-        // moved onto the facet, `render::item_cube` branched on the FAMILY and
-        // drew the segment regardless of what the row asked for.)
         let Some(c) = p.connection() else { return };
         if c.item_form != ItemForm::Segment {
             return;
@@ -105,7 +87,6 @@ impl ShapeRender for FenceFamily {
             out.push(crate::block::ItemBox::solid(post.min, post.max));
         }
         for rail in crate::fence::item_rails(post_lo, post_hi) {
-            // Rail ends butt against the posts, so only the long faces draw.
             let mut item = crate::block::ItemBox::solid(rail.min, rail.max);
             item.faces[petramond_math::face::Face::PosX as usize] = false;
             item.faces[petramond_math::face::Face::NegX as usize] = false;

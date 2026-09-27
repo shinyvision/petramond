@@ -1,7 +1,5 @@
 use super::*;
 
-/// The shipped catalog gives each presenter the engine draws its rig, and
-/// every rig loads its animator.
 #[test]
 fn the_shipped_rigs_catalog_has_a_rig_per_presenter() {
     for presenter in [Presenter::Body, Presenter::Viewmodel] {
@@ -10,7 +8,6 @@ fn the_shipped_rigs_catalog_has_a_rig_per_presenter() {
     }
 }
 
-/// root → body → left_item, right_item, camera.
 fn model() -> Model {
     Model::load(
         r#"{
@@ -34,10 +31,6 @@ fn model() -> Model {
     .expect("test model parses")
 }
 
-/// A row is a rig only whole, and only where its presenter is free: a row
-/// naming a bone its model lacks, a render kind that is not one, or a
-/// second rig for a presenter already drawn is refused with its name — and
-/// every other row still loads, its conventions resolved to bone ids.
 #[test]
 fn a_broken_row_or_a_second_rig_for_a_presenter_is_refused_alone() {
     let row = |presenter: &str, grip: &str| {

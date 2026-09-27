@@ -81,13 +81,8 @@ mod tests;
 pub(in crate::world) use announce::FluidAnnounce;
 use sim::FluidSim;
 
-/// Flow checks run per game tick at most. Due checks past the budget stay
-/// queued (oldest first) and run on the following ticks. Sized far above
-/// ordinary play — a pour, a bucket on a pond, a river edit — so only a
-/// large fluid event ever reaches it.
 pub(in crate::world) const FLUID_CHECKS_PER_TICK: usize = 2048;
 
-/// Shared fluid behaviour; scheduling reads the disturbed cell's descriptor.
 pub(super) struct FluidBehavior;
 
 #[inline]
@@ -105,8 +100,6 @@ impl crate::world::engine_behavior::EngineBlockBehavior for FluidBehavior {
         }
     }
 
-    /// A generic scheduled tick at a fluid cell (a mod's `ScheduleTick`):
-    /// run the flow check now, as a batch of one.
     fn scheduled_tick(&self, world: &mut ServerWorld, pos: IVec3) {
         let mut announce = FluidAnnounce::default();
         FluidSim.flow_check(world, pos, &mut announce);
@@ -115,11 +108,6 @@ impl crate::world::engine_behavior::EngineBlockBehavior for FluidBehavior {
 }
 
 impl ServerWorld {
-    /// The fluid phase of the game tick: run up to [`FLUID_CHECKS_PER_TICK`]
-    /// flow checks due at `now`, oldest first, then announce their writes as
-    /// one batch. Checks past the budget stay queued for the next tick. The
-    /// same streaming-finality gate as every scheduled tick applies (see
-    /// `world::sim_guard`). `due` is the tick's reusable batch buffer.
     pub(in crate::world) fn run_fluid_checks(&mut self, now: u64, due: &mut Vec<IVec3>) {
         due.clear();
         while due.len() < FLUID_CHECKS_PER_TICK {
@@ -142,30 +130,20 @@ impl ServerWorld {
         announce.flush(self);
     }
 
-    /// Fluid flow checks still queued, due or not (diagnostics and tests).
     pub fn pending_fluid_checks(&self) -> usize {
         self.data.sim.fluid.len()
     }
 }
 
-/// The singleton every simulated fluid row points at (`behavior: "fluid"`).
 pub(super) static FLUID: FluidBehavior = FluidBehavior;
 
-/// Slope-search depth past the first ring: a drop up to `1 + SLOPE_FIND_DIST`
-/// cells away steers the flow toward it.
 const SLOPE_FIND_DIST: i32 = 4;
 
-/// Encode a flowing cell at the given level (1..=7).
 #[inline]
 fn flowing(level: u8) -> u8 {
     level & LEVEL_MASK
 }
 
-/// Can fluid occupy this block, displacing it? Empty air, or any fragile block —
-/// fluid treats a fragile cell (grass, a flower, a torch) as empty space it may
-/// flow or fall into, washing the block away as it moves in (see
-/// [`fill_with_fluid`]). Matches "flow to the adjacent empty space", with
-/// fragile blocks counting as empty for the flow.
 #[inline]
 fn fillable(block: Block) -> bool {
     block == Block::Air || block.is_fragile()
@@ -176,18 +154,11 @@ fn opposite(d: IVec3) -> IVec3 {
     IVec3::new(-d.x, -d.y, -d.z)
 }
 
-/// Read a block at world coords through a `World`: a one-off read between
-/// writes. Read-only stretches of the flow algorithm (re-levelling, the slope
-/// search) read through one [`SectionCursor`] instead — [`FluidReads`] — so
-/// consecutive probes of one section skip the section-map lookup.
 #[inline]
 fn block_at<S: WorldSide>(world: &World<S>, p: IVec3) -> Block {
     world.data.physics_block(p.x, p.y, p.z)
 }
 
-/// The block/fluid reads the flow algorithm makes, answered through a
-/// [`SectionCursor`] — the exact values of [`block_at`] and
-/// `WorldData::fluid_meta_world`, minus the per-read section lookup.
 pub(super) struct FluidReads<'w> {
     cursor: SectionCursor<'w>,
 }
@@ -211,13 +182,6 @@ impl<'w> FluidReads<'w> {
     }
 }
 
-/// Fill `pos` with fluid of metadata `meta`, first washing away any fragile
-/// block (grass, a flower, a torch) that occupied it — it breaks as the fluid
-/// moves in, dropping and bursting like a hand-break (recorded for the
-/// presentation layer via [`World::note_block_destroyed`]). The single choke
-/// point for fluid ENTERING a cell that was not already fluid, so every flow
-/// path that displaces a fragile block breaks it. The caller has already
-/// checked [`fillable`], so the occupant is air or fragile.
 fn fill_with_fluid(
     world: &mut ServerWorld,
     pos: IVec3,

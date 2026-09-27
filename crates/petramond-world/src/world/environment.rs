@@ -1,21 +1,10 @@
-//! Sim-owned visual shader parameters.
-//!
-//! Neutral data only — no render types. Mods write this on the tick through
-//! HostCalls; `game::environment` snapshots it per frame for the renderer.
-//! NOT persisted: it resets to defaults every time a world opens — the owning
-//! mod re-applies it (its persistence is the mod world KV).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub type ShaderParamMap = BTreeMap<String, [f32; 4]>;
 
-/// The world's presentation-environment state.
 #[derive(Clone, Debug)]
 pub struct WorldEnvironment {
-    /// Named visual shader parameters. Shader packs map names onto fixed GPU
-    /// slots; mods write their own namespace or exposed engine `petramond:*` keys
-    /// through the host API.
     shader_params: Arc<ShaderParamMap>,
 }
 

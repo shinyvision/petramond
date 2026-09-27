@@ -22,8 +22,6 @@ fn work_set_aside_waits_its_time() {
     assert!(!deferrals.blind(Task::Unit(4), [1, 0, 1]));
 }
 
-/// A stance search that found nothing stands while the golem, the site and
-/// the time stay as they were.
 #[test]
 fn a_search_that_found_nothing_stands_until_something_moves() {
     let mut deferrals = Deferrals::default();
@@ -167,7 +165,6 @@ fn a_crew_finds_its_golem_by_its_tag_and_clears_what_it_wore() {
     assert_eq!(session.world.tag(golem, HOLD_TAG), None);
     assert!(session.world.tag(golem, PROJECT_TAG).is_some());
 
-    // Gone, it is looked for again on the search's own period.
     session.world.state_mut().mobs.remove(&golem);
     let now = 5 + SEARCH_EVERY;
     assert_eq!(crew.find(now + 1, 9), None);

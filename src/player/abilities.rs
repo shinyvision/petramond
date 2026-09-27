@@ -1,29 +1,16 @@
-//! What each [`PlayerMode`] permits. Rules ask for the ability they mean;
-//! this table is the only place a mode is translated into behaviour.
-
 use super::{Player, PlayerMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlayerAbilities {
-    /// May switch between walking and collision-bound flight.
     pub flight: bool,
-    /// Currently flying rather than walking.
     pub flying: bool,
-    /// Moves through the world without colliding or interacting.
     pub noclip: bool,
-    /// Takes no damage, knockback or exposure.
     pub invulnerable: bool,
-    /// Placing a block keeps the held stack.
     pub free_placement: bool,
-    /// A break request lands at once, whatever the block's hardness or tool.
     pub instant_break: bool,
-    /// A broken block scatters its drops and contents.
     pub yields_drops: bool,
-    /// May place items that exist only for operators.
     pub restricted_items: bool,
-    /// The inventory key opens the item catalog.
     pub item_catalog: bool,
-    /// May apply bulk cell edits, and every edit enters the edit history.
     pub edits_cells: bool,
 }
 

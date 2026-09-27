@@ -1,5 +1,3 @@
-//! Windows are glazed last: an open panel is a way through until then.
-
 use crate::host::prelude::*;
 
 use crate::fx::HashSet;
@@ -8,10 +6,6 @@ use crate::survey::Known;
 use crate::worker::tuning::window::SCAN;
 use crate::worker::Job;
 
-/// The open panels (panes, railings) whose gap is a way through as the world
-/// stands: standing room level with it or a step down on two opposite sides.
-/// Only those are worth leaving open to the end; an upper window over a drop
-/// is no way anywhere, and left for last it is a climb of its own.
 pub(super) fn ways_through(job: &Job, ceiling: Option<i32>) -> HashSet<usize> {
     let Some(survey) = job.survey.as_ref() else {
         return HashSet::default();
@@ -29,7 +23,6 @@ pub(super) fn ways_through(job: &Job, ceiling: Option<i32>) -> HashSet<usize> {
         })
         .map(|(i, _)| i)
         .collect();
-    // Per panel, per side: level with it, then a step down.
     let asks: Vec<[i32; 3]> = panels
         .iter()
         .flat_map(|i| {
@@ -52,8 +45,6 @@ pub(super) fn ways_through(job: &Job, ceiling: Option<i32>) -> HashSet<usize> {
         .collect()
 }
 
-/// Whether every open placement left is a window pane (or built already):
-/// the glazing goes in.
 pub(super) fn only_glazing_left(
     job: &Job,
     held: Option<&std::collections::BTreeMap<crate::survey::ItemKey, u32>>,
@@ -61,8 +52,6 @@ pub(super) fn only_glazing_left(
     let Some(survey) = job.survey.as_ref() else {
         return false;
     };
-    // Work nothing holds the blocks for cannot go first: with the rest of a
-    // build waiting on a chest, the windows are all there is to do.
     let stocked = |missing: &[ItemStackData]| {
         let Some(held) = held else {
             return true;

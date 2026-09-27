@@ -43,84 +43,8 @@ use super::mobs::DiskMob;
 use super::palette;
 use kept::{KeptBlock, KeptCells};
 
-/// Current section-record version. Flag-gated payloads are appended at the end, so a
-/// new one that fits a free flag bit needs no version bump. The cubic format starts
-/// fresh at `1` (the column-era chunk records are not migrated — saves regenerate).
-/// v2 widens the per-mob record with the shear-regrow counter (see `save::mobs`);
-/// v3 widens it again with the per-mob mod KV map (default-empty for older records).
-/// v4 appends a third flags byte for slab layer state.
-/// v5 unifies all slot storage into one generic container list (chests,
-/// furnaces, mod containers), splits the furnace record into pure machine
-/// state, and adds the shared entity-facing list. v5 is a CLEAN BREAK
-/// (`SECTION_REC_MIN_VERSION` = 5): pre-v5 records do not load — the game is
-/// unreleased, dev worlds regenerate.
-/// v6 RETIRES the sapling-stage map (flags2 bit 0x01, now reserved): growth
-/// stages became distinct block rows riding the ordinary block-id array.
-/// Another clean break — a v5 record could carry a stage payload this build
-/// has no store for.
-/// v6 (same version, uncommitted same-day change) also retires the LADDER's
-/// entity-facing record: ladder facing became four block rows, so the
-/// entity-facing list holds genuine directional block-entity fronts
-/// (chest/furnace) only. No bump — v6 never shipped; decode drops any facing
-/// entry whose cell is not a directional-view block, so a same-day v6 record
-/// with a ladder facing loads clean (the ladder id itself decodes as the
-/// north-facing row).
-/// v7 widens the per-mob record with the confined flag.
-/// v8 replaces the confined boolean with a general mob tag map.
-/// v9 stores the mob tag map's keys in a per-record string table: every tag
-/// carries a u16 table index instead of repeating the full key string (see
-/// `save::mobs`).
-/// v10 retires the per-mob fixed shear-regrow counter AND the per-mob mod KV
-/// map: both moved into the tag map (`petramond:shear_regrow`; the KV seam
-/// was deleted outright), which also newly carries `petramond:health`.
-/// Another clean break — a v9 record's shear/KV bytes have no store to land
-/// in; dev worlds regenerate.
-/// v11 retires the bed_frame block/item: every block id above 94 and item id
-/// above 119 shifted down by one, so older sections would decode to the
-/// wrong blocks/items. Clean break; dev worlds regenerate.
-/// v13 UNIFIES per-cell block state: the seven typed lists (entity facings,
-/// torches, model cells/facings, doors, stairs, slabs, log axes — their flag
-/// bits are now RESERVED) collapse into ONE opaque cell-state list, each
-/// record `[header: len<<4 | id_mask][len bytes]` with id-masked bytes
-/// palette-translated. A new stateful block kind needs NO codec change.
-/// Clean break; dev worlds regenerate.
-/// v14 widens the persisted BLOCK-LIGHT cube from one byte per cell to one
-/// packed RGB `u16` (little-endian, `petramond_world::light::LightRgb`): block light
-/// carries colour now. Skylight is untouched. Clean break — a v13 record's
-/// 4096-byte block-light blob is half the length this build reads; dev worlds
-/// regenerate.
-/// v15 WIDENS the block id to two bytes and palette-compresses the block
-/// array: a record now stores `[distinct: u16][ids: u16 x distinct][index per
-/// cell]`, where the per-cell index is one byte while the section holds ≤ 256
-/// distinct blocks (every real section) and two bytes otherwise. A section's
-/// on-disk block payload therefore stays ~4 KiB even though ids doubled. The
-/// unified cell-state record's header also splits into `[len][id_mask]` and
-/// its id-masked entries are two bytes each. Clean break; dev worlds
-/// regenerate.
-/// v16 (2026-09-03): item entities carry their MOTION (loose / in flight /
-/// lodged in a block, with the heading and anchor of a lodged one) after
-/// the spin. Clean break; dev worlds regenerate.
-/// v17 (2026-09-04): a flight persists its velocity only — its heading is
-/// derived from that on the first step — and the motion tag is a declared
-/// wire enum (`save::entities::MotionKind`). Clean break; dev worlds
-/// regenerate.
-/// v18 (2026-09-13): item entity and mob positions are `f64` world
-/// positions, exact anywhere inside the world border. Clean break; dev
-/// worlds regenerate.
-/// v19 (2026-09-16): saved mobs carry their container slots, and string tags
-/// a u32 length. The oldest version this build reads.
-/// v20 (2026-09-26): every flag-gated payload is framed as `[len: u32][bytes]`,
-/// so a decoder checks each payload consumes exactly its bytes and a future
-/// upgrade step can rewrite one payload and copy the rest untouched. The
-/// first MIGRATED bump: v19 records upgrade through `v19::upgrade` on read.
-/// From here on a layout change adds an upgrade step (see `save::format`);
-/// it is never a clean break.
-/// v21 (2026-09-26): item entities and mobs are tagged records (`save::wire`):
-/// a field they gain later reads as its default in older records, without
-/// another bump. v20 records upgrade through `v20::upgrade` on read.
 const SECTION_REC_VERSION: u8 = 21;
 
-/// The section-record format: v19 and newer decode, older is retired.
 pub(super) const SECTION: Format = Format::new(
     "section record",
     SECTION_REC_VERSION as u32,
@@ -130,90 +54,35 @@ pub(super) const SECTION: Format = Format::new(
 const FLAG_HAS_FLUID: u8 = 0x01;
 const FLAG_HAS_ENTITIES: u8 = 0x02;
 const FLAG_HAS_FURNACES: u8 = 0x04;
-/// The unified per-cell state list (v13+; the bit carried entity facings
-/// before the unification).
 const FLAG_HAS_CELL_STATES: u8 = 0x08;
-// 0x10 (torches), 0x40 (model cells), 0x80 (model facings): RESERVED — their
-// payloads ride the unified cell-state list since v13.
 const FLAG_HAS_MOBS: u8 = 0x20;
-/// Second flags byte (chunk-record v3+). `0` for a v2 record (no such byte).
-/// Bits 0x01 (v5 sapling stages), 0x02 (doors), 0x04 (stairs), 0x10 (log
-/// axes): RESERVED.
 const FLAG2_HAS_CELL_KV: u8 = 0x08;
 const FLAG2_HAS_CONTAINERS: u8 = 0x20;
-/// Third flags byte (section-record v4+). `0` for older records. Bit 0x01
-/// (slabs): RESERVED.
-/// Persisted baked light (skylight / block-light cubes, appended in that
-/// order). Written only when the section's light was CLEAN at snapshot time;
-/// an absent cube simply re-bakes on load, so no version bump is needed.
 const FLAG3_HAS_SKYLIGHT: u8 = 0x02;
 const FLAG3_HAS_BLOCKLIGHT: u8 = 0x04;
-/// Every flag bit this build decodes, per flags byte. A set bit outside these
-/// is a payload a newer build appended: the record is refused, not
-/// half-read, so saving cannot drop it.
 const KNOWN_FLAGS: [u8; 3] = [
     FLAG_HAS_FLUID | FLAG_HAS_ENTITIES | FLAG_HAS_FURNACES | FLAG_HAS_CELL_STATES | FLAG_HAS_MOBS,
     FLAG2_HAS_CELL_KV | FLAG2_HAS_CONTAINERS,
     FLAG3_HAS_SKYLIGHT | FLAG3_HAS_BLOCKLIGHT,
 ];
 
-/// Owned, send-able copy of one 16³ section's save data. The game thread builds one
-/// of these (a cheap array clone) and hands it to the I/O thread, which does the
-/// expensive compression off the game loop. Biome/heightmap are per-column and
-/// regenerated, so they are not part of a section record.
 pub struct SectionSnapshot {
     pub pos: SectionPos,
-    /// Derived explored-terrain cache, not authoritative player/entity state.
-    /// Routing metadata only; it is not encoded inside the section record.
     pub cache_only: bool,
     pub blocks: petramond_world::section::BlockCube,
     pub fluid: Option<Arc<[u8]>>,
-    /// Item entities resting in this section, captured at save time so their
-    /// lifetime timers persist with it. Empty for the common case.
     pub entities: Vec<DroppedItem>,
-    /// Furnace machine state (burn/cook counters) in this section, keyed by
-    /// section-local block index. The slots live in [`containers`](Self::containers).
-    /// Empty for the common section.
     pub furnaces: CellMap<Furnace>,
-    /// Generic item-slot containers (chests, furnaces, mod container blocks),
-    /// keyed by section-local block index. Empty for the common section.
     pub containers: CellMap<Container>,
-    /// The UNIFIED per-cell block state (stair facing, slab layers, door
-    /// pose, torch mount, log axis, model offset+facing, chest/furnace
-    /// front), keyed by section-local block index — opaque bytes owned by
-    /// each block's codec; the id-masked bytes are the only ones this codec
-    /// touches (palette translation). Empty for the common section.
     pub cell_states: CellMap<ShapeState>,
-    /// Baked skylight cube, captured only when the section's light was CLEAN
-    /// (baked and not since invalidated) so a reload can skip the bake
-    /// entirely. `None` re-bakes on load, exactly like the pre-persistence
-    /// behaviour.
     pub skylight: Option<Arc<[u8]>>,
-    /// Baked block-light cube (packed RGB cells); independent of `skylight`
-    /// presence on the wire but only ever written alongside it (absent = no
-    /// emitter in range).
     pub blocklight: Option<Arc<[petramond_world::light::LightRgb]>>,
-    /// Per-cell mod KV entries (`mod_id:key` → bytes), keyed by section-local
-    /// index. Opaque to the engine and PRESERVED byte-exact through load/save —
-    /// unknown keys are never dropped, so an absent mod's data survives. See
-    /// `Section::cell_kv`. Blocks and container slots kept in disk form ride
-    /// here too, under reserved keys (see `kept`).
     pub cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
-    /// Mobs resting in this section, captured at save time so a passive owl reloads
-    /// where it was left. Like [`entities`](Self::entities) these don't live in the
-    /// `Section`, so the world save paths set this from the live mob set. Empty for the
-    /// common section.
     pub mobs: Vec<SavedMob>,
-    /// Content this build cannot bring to life, kept from the section's last
-    /// load and written back unchanged. The save attaches it (see
-    /// `WorldSave::save_sections`); world code leaves it empty.
     pub kept: KeptContent,
 }
 
 impl SectionSnapshot {
-    /// Snapshot a section's terrain with no entities or mobs attached. The world save
-    /// paths set [`entities`](Self::entities) / [`mobs`](Self::mobs) afterwards from the
-    /// active item and mob sets.
     pub fn from_section(s: &Section) -> Self {
         Self {
             pos: SectionPos::new(s.cx, s.cy, s.cz),
@@ -252,17 +121,10 @@ impl KeptContent {
     }
 }
 
-/// Compress a section snapshot into a record: `[version, flags, flags2, flags3, blocks,
-/// fluid meta?, entities?, …]`, zlib-deflated. Each flag-gated payload is appended only
-/// when present, framed with its length, so a terrain-only section pays for just its
-/// block array. Every id is written as the world's disk id through `pal`, and
-/// content kept in disk form goes back exactly as it was read.
 pub fn encode_snapshot(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
     let kept = KeptCells::of(s);
     let cell_states = kept.cell_states(&s.cell_states);
     let cell_kv = kept::stored_kv(&s.cell_kv);
-    // Light baked with a kept block's cell as air would be wrong once the
-    // block is back: withhold it, so the section re-bakes on load.
     let light = kept.blocks.is_empty();
     let has_entities = !s.entities.is_empty() || !s.kept.entities.is_empty();
     let has_mobs = !s.mobs.is_empty() || !s.kept.mobs.is_empty();
@@ -305,10 +167,7 @@ pub fn encode_snapshot(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
     put_u8(&mut payload, flags);
     put_u8(&mut payload, flags2);
     put_u8(&mut payload, flags3);
-    // Block ids are stored as the SAVE's ids (see `super::palette`), so a
-    // future registry renumbering can't corrupt old worlds.
     put_block_cube(&mut payload, &s.blocks, pal, &kept.blocks);
-    // Every flag-gated payload below is framed (`put_framed`), in flag order.
     if let Some(w) = &s.fluid {
         put_framed(&mut payload, |buf| buf.extend_from_slice(w));
     }
@@ -333,8 +192,6 @@ pub fn encode_snapshot(s: &SectionSnapshot, pal: &palette::Palette) -> Vec<u8> {
         });
     }
     if !cell_kv.is_empty() {
-        // Each record is the cell's KV map (idx written by put_indexed);
-        // rec_bytes is a reserve hint only — the record body is variable.
         put_framed(&mut payload, |buf| {
             put_indexed(buf, &*cell_kv, 16, |buf, map| {
                 put_kv_map(buf, map);
@@ -400,9 +257,6 @@ fn put_block_cube(
     }
 }
 
-/// Inverse of [`put_block_cube`]: each cell's runtime block through the save
-/// palette, plus `(cell, disk id)` for every cell whose block this build
-/// cannot resolve (those cells read as air).
 type BlockCube = (Vec<u16>, Vec<(u16, u16)>);
 
 fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<BlockCube> {
@@ -440,8 +294,6 @@ fn get_block_cube(r: &mut Reader, pal: &palette::Palette) -> Option<BlockCube> {
     Some((out, unknown))
 }
 
-/// Append one flag-gated payload as `[len: u32][bytes]`, `body` writing the
-/// bytes.
 fn put_framed(buf: &mut Vec<u8>, body: impl FnOnce(&mut Vec<u8>)) {
     let at = buf.len();
     put_u32(buf, 0);
@@ -450,22 +302,13 @@ fn put_framed(buf: &mut Vec<u8>, body: impl FnOnce(&mut Vec<u8>)) {
     buf[at..at + 4].copy_from_slice(&len.to_le_bytes());
 }
 
-/// A section record's contents.
 pub struct DecodedSection {
     pub section: Section,
-    /// The item entities stored with it that this build can represent.
     pub entities: Vec<DroppedItem>,
-    /// The mobs stored with it that this build can spawn.
     pub mobs: Vec<SavedMob>,
-    /// What it holds that this build cannot bring to life (see
-    /// [`KeptContent`]).
     pub kept: KeptContent,
 }
 
-/// Decode a compressed section record into a `Section` at `pos` plus any item
-/// entities and mobs stored with it, mapping disk ids back through `pal`. An
-/// older record is migrated first; a newer, corrupt or unknown one is a typed
-/// error — never "no record".
 pub fn decode_section(
     pos: SectionPos,
     blob: &[u8],
@@ -480,14 +323,10 @@ pub fn decode_section(
     decode_current(pos, &body, pal)
 }
 
-/// Sequential reader over a current-version record body that hands out its
-/// framed payloads. Error offsets count from the start of the decompressed
-/// record (the version byte precedes the body).
 struct Frames<'a> {
     r: Reader<'a>,
 }
 
-/// One framed payload and where it starts in the record.
 struct Frame<'a> {
     bytes: &'a [u8],
     at: usize,
@@ -499,7 +338,6 @@ impl<'a> Frames<'a> {
         RecordError::corrupt(SECTION.name, what, self.r.offset() + 1)
     }
 
-    /// The next payload when `present`, else `None` (nothing consumed).
     fn payload(
         &mut self,
         present: bool,
@@ -516,7 +354,6 @@ impl<'a> Frames<'a> {
 }
 
 impl<'a> Frame<'a> {
-    /// Decode the payload; the decoder must consume exactly the frame.
     fn decode<T>(self, f: impl FnOnce(&mut Reader<'a>) -> Option<T>) -> Result<T, RecordError> {
         let mut r = Reader::new(self.bytes);
         match f(&mut r) {
@@ -529,13 +366,11 @@ impl<'a> Frame<'a> {
         }
     }
 
-    /// A fixed-size payload (a per-cell cube).
     fn exact(self, len: usize) -> Result<&'a [u8], RecordError> {
         self.decode(|r| r.bytes(len))
     }
 }
 
-/// Decode a current-version record body (after the version byte).
 fn decode_current(
     pos: SectionPos,
     body: &[u8],
@@ -625,13 +460,10 @@ fn decode_current(
         cell_states,
         cell_kv,
     );
-    // Persisted clean light: seed the cache and clear `light_dirty`, so the
-    // streamer's settle flush skips the bake for this section entirely. The
-    // `light_from_persist` flag records that these cubes are the settled
-    // persisted bake — the streamer's cover-change invalidation spares them
-    // when the change's source is itself persisted content. Light baked
-    // with a now-kept block in place does not match the air standing in for
-    // it, so such a section re-bakes.
+    // Light came off disk clean, so seed the cache and clear `light_dirty`; the settle flush then
+    // skips this section. `light_from_persist` tells cover-change invalidation to spare it when the
+    // change is persisted content too. A now-kept block still forces a re-bake, because the light
+    // was baked with it in place, not the air standing in for it.
     if let Some(sky) = skylight.filter(|_| light_is_current) {
         section.set_skylight(Arc::from(sky));
         if let Some(bl) = blocklight {

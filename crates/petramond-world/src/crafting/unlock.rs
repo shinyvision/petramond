@@ -1,44 +1,18 @@
-//! The recipe-unlock index: which recipes a player's discoveries can open.
-//!
-//! Unlocking itself is EVENT DRIVEN — something happens, a handler decides a
-//! recipe is earned, and `Progression::unlock` records it. This module owns
-//! the engine's DEFAULT rule, optional row-data early triggers, and the lookup
-//! that makes both cheap:
-//!
-//! > A recipe unlocks once the player has held at least one item satisfying
-//! > EVERY one of its ingredients.
-//!
-//! That single rule is what "meaningful unlocks" reduces to across the whole
-//! catalog: an oak log opens oak planks, oak planks open oak stairs/slabs/
-//! fences/doors, an iron ingot opens shears, wool opens wool blocks and the
-//! bed, planks open the boat. A pack that ships recipes and no unlock policy
-//! inherits it, so no recipe can be invisible forever — which is the failure
-//! mode of trigger-only policy. A recipe's `petramond:unlock_on` data may name
-//! items or tags that reveal it earlier; the default rule remains in force.
-//!
-//! Each ingredient compiles to an [`ItemSet`] of everything that satisfies it
-//! (one item, or a tag's whole membership), so the test is an AND per
-//! ingredient rather than a walk of the catalog.
-
 use std::collections::HashMap;
 
 use crate::item::{ItemSet, ItemType};
 
 use super::recipe::{CraftingCatalog, IngredientSelector};
 
-/// One recipe's gate: an early trigger, or every ingredient, opens it.
 struct Gate {
     key: String,
     ingredients: Vec<ItemSet>,
     early: ItemSet,
 }
 
-/// Catalog-derived reverse index from an obtained item to the recipes it can
-/// open. Built once per session from the enabled catalog.
 #[derive(Default)]
 pub struct UnlockIndex {
     gates: Vec<Gate>,
-    /// Item id → gates naming it (directly or through a tag it carries).
     by_item: HashMap<u16, Vec<u32>>,
 }
 
@@ -51,9 +25,6 @@ impl UnlockIndex {
                 .iter()
                 .map(|ingredient| satisfying_items(ingredient.selector))
                 .collect();
-            // A gate no item can satisfy would never open; that is a broken
-            // row (empty tag), already refused at load, so treat it as such
-            // rather than shipping a permanently invisible recipe.
             if ingredients.iter().any(ItemSet::is_empty) {
                 continue;
             }
@@ -77,9 +48,6 @@ impl UnlockIndex {
         index
     }
 
-    /// The recipes `obtained` now satisfies that name `item` — what to unlock
-    /// when a player obtains it for the first time. Already-unlocked keys are
-    /// included; `Progression::unlock` is idempotent and reports the change.
     pub fn opened_by<'a>(&'a self, item: ItemType, obtained: &ItemSet) -> Vec<&'a str> {
         let Some(gates) = self.by_item.get(&item.id()) else {
             return Vec::new();
@@ -93,10 +61,6 @@ impl UnlockIndex {
             .collect()
     }
 
-    /// Every recipe `obtained` satisfies — the catch-up pass a session runs
-    /// when a player joins. It is what keeps the record honest across a
-    /// catalog change: a pack installed after the player already held the
-    /// ingredients still shows up, with no per-item replay.
     pub fn opened_by_all<'a>(&'a self, obtained: &'a ItemSet) -> impl Iterator<Item = &'a str> {
         self.gates
             .iter()
@@ -116,8 +80,6 @@ impl Gate {
     }
 }
 
-/// Everything that satisfies one ingredient: the named item, or the tag's
-/// whole membership.
 fn satisfying_items(selector: IngredientSelector) -> ItemSet {
     match selector {
         IngredientSelector::Item(item) => std::iter::once(item).collect(),
@@ -160,10 +122,6 @@ mod tests {
         }
     }
 
-    /// The default rule is CONJUNCTIVE and tag-aware: every ingredient must be
-    /// covered before a recipe opens, a tag ingredient is covered by any
-    /// member, and a recipe that names an item is never reached by an
-    /// unrelated one.
     #[test]
     fn a_recipe_opens_only_once_every_ingredient_is_covered() {
         let catalog = CraftingCatalog::new(vec![
@@ -188,7 +146,6 @@ mod tests {
             "a log opens its own planks and nothing else"
         );
 
-        // One of the tool's two ingredients: the gate stays shut.
         obtained.insert(ItemType::OakPlanks);
         assert!(
             index.opened_by(ItemType::OakPlanks, &obtained).is_empty(),
@@ -201,7 +158,6 @@ mod tests {
             vec!["test:tool"],
             "the last missing ingredient opens the gate"
         );
-        // Any OTHER member of the tag reaches the same gate.
         let mut spruce = ItemSet::EMPTY;
         spruce.insert(ItemType::SprucePlanks);
         spruce.insert(ItemType::Stick);
@@ -212,8 +168,6 @@ mod tests {
         );
     }
 
-    /// The join catch-up sees everything the per-item path would have, which
-    /// is what makes an installed-later pack recoverable.
     #[test]
     fn the_catch_up_pass_agrees_with_the_per_item_path() {
         let catalog = CraftingCatalog::new(vec![

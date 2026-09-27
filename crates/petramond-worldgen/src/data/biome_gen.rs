@@ -1,36 +1,3 @@
-//! The `generation` field of a biome row (`assets/biomes.json`), parsed into
-//! a [`BiomeSpec`]: the surface rule stack the terrain fill skins columns
-//! with, the ground cover the vegetation pass plants, where snow lies, and the
-//! behaviour flags other stages ask about.
-//!
-//! The biome layer carries the object verbatim (`Biome::generation`); this
-//! module owns its vocabulary:
-//!
-//! ```json
-//! "generation": {
-//!   "surface": [{"if": {"depth_from_top": 0}, "then": "petramond:grass"},
-//!               {"if": {"depth_from_top": 3}, "then": "petramond:dirt"},
-//!               "petramond:stone"],
-//!   "vegetation": {"grass": {"tuft": "petramond:short_grass", "density": 0.14},
-//!                  "flowers": {"palette": ["petramond:poppy"], "coverage": 0.1,
-//!                              "density": 0.15},
-//!                  "hemp": 0.0045},
-//!   "snow": "always",
-//!   "flags": ["no_beach"]
-//! }
-//! ```
-//!
-//! A surface rule is a block name, a list (the first entry that yields a
-//! block wins) or `{"if": condition, "then": rule}`. Conditions:
-//! `"underwater"`, `{"depth_from_top": n}`, `{"surface_above_y": y}` and
-//! `{"cluster_noise_below": {"salt", "threshold", "period"}}`. Ground cover
-//! rolls are `{"chance": p, "roll": [[bound, block], ...]}` (see
-//! [`CoverRoll`]): the fixed `sand_cover` / `podzol_cover` / `grass_cover`
-//! slots, plus `covers` for any other ground —
-//! `[{"on": ["petramond:mycelium"], "roll": {...}, "clustered": false}]`
-//! (see [`GroundCover`]). Every row must state its generation: a row without one
-//! would generate as nothing.
-
 use petramond_world::biome::Biome;
 use petramond_world::block::Block;
 use serde::Deserialize;
@@ -40,7 +7,6 @@ use crate::biome::{
 };
 use crate::surface::rule::{SurfaceCond, SurfaceRule};
 
-/// The `generation` object as written on a biome row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawGeneration {
@@ -95,7 +61,6 @@ struct RawVegetation {
     cover_cluster: Option<CoverCluster>,
 }
 
-/// The plain grass-ground scatter: `tuft` with `density` per column.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawGrass {
@@ -103,8 +68,6 @@ struct RawGrass {
     density: f32,
 }
 
-/// Single-species flower patches: where the patch field exceeds
-/// `1 - coverage`, a column flowers with `density`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawFlowers {
@@ -130,7 +93,6 @@ enum RawFlag {
 }
 
 impl RawRule {
-    /// The rule, stored for the process: the table is built once.
     fn resolve(self) -> &'static SurfaceRule {
         Box::leak(Box::new(self.into_rule()))
     }
@@ -165,7 +127,6 @@ impl RawRule {
     }
 }
 
-/// A validated cover roll, stored for the process: the table is built once.
 fn leak_roll(roll: Option<CoverRoll>, what: &str) -> Result<Option<&'static CoverRoll>, String> {
     let Some(roll) = roll else {
         return Ok(None);
@@ -207,7 +168,6 @@ impl RawVegetation {
     }
 }
 
-/// Parse one row's `generation` text for `biome`.
 pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec, String> {
     let text = generation.ok_or("no `generation` object")?;
     let raw: RawGeneration = serde_json::from_str(text).map_err(|e| format!("generation: {e}"))?;
@@ -247,9 +207,6 @@ pub(crate) fn parse(biome: Biome, generation: Option<&str>) -> Result<BiomeSpec,
     })
 }
 
-/// Every biome's generation rules, in id order — a registry stage after the
-/// biome catalog (see [`super::content_stages`]); every bad biome row is
-/// reported.
 pub(crate) static SPECS: petramond_world::content::Slot<Box<[BiomeSpec]>> =
     petramond_world::content::Slot::new(
         "biome generation",
@@ -267,7 +224,6 @@ fn load_specs(_: &petramond_world::content::ContentRegistry) -> Result<Box<[Biom
     }))
 }
 
-/// Every row's result, or every row's error (one per line).
 pub(crate) fn collect_rows<T>(
     rows: impl Iterator<Item = Result<T, String>>,
 ) -> Result<Box<[T]>, String> {
@@ -286,12 +242,10 @@ pub(crate) fn collect_rows<T>(
     }
 }
 
-/// Every biome's generation rules, in id order.
 pub(crate) fn specs() -> &'static [BiomeSpec] {
     SPECS.current()
 }
 
-/// The loaded generation rules of `biome`.
 #[inline]
 pub(crate) fn spec(biome: Biome) -> &'static BiomeSpec {
     &specs()[usize::from(biome.id()) - 1]

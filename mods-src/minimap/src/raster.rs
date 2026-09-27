@@ -1,7 +1,3 @@
-//! Generic pixel primitives shared by every raster: pixels, alpha
-//! blending, supersampled triangles, diamond markers, rect fills,
-//! compositing, and the two-facet pointer faces with their shadow rule.
-
 pub(crate) fn set_pixel(rgba: &mut [u8], width: usize, x: i32, y: i32, rgb: [u8; 3]) {
     set_pixel_alpha(rgba, width, x, y, rgb, 255);
 }
@@ -47,9 +43,6 @@ pub(crate) fn draw_diamond(rgba: &mut [u8], width: usize, x: i32, y: i32, color:
     fill_diamond_rgba(rgba, width, x, y, 7.0, color);
 }
 
-/// Stamp the two-facet player pointer plus its drop shadow into an RGBA
-/// buffer of the pointer sprite's size: fill the dark/light faces, composite
-/// the shadow at the shared offset, then the pointer over it.
 pub(crate) fn stamp_arrow_with_shadow(
     rgba: &mut [u8],
     width: usize,
@@ -245,18 +238,12 @@ pub(crate) fn rects_intersect(a: [i64; 4], b: [i64; 4]) -> bool {
     a[0] < b[0] + b[2] && a[0] + a[2] > b[0] && a[1] < b[1] + b[3] && a[1] + a[3] > b[1]
 }
 
-/// Average colors in HSL space: hue as saturation-weighted unit vectors (hue
-/// is circular, and gray members must not drag it toward 0°), saturation and
-/// lightness arithmetically. Production code goes through the memoized form
-/// (the mip write path); this thin wrapper is the test surface.
 #[cfg(test)]
 pub(crate) fn average_rgb_hsl(colors: &[[u8; 3]]) -> [u8; 3] {
     let mut memo = std::collections::HashMap::new();
     average_rgb_hsl_memo(&mut memo, colors)
 }
 
-/// [`average_rgb_hsl`] through an rgb→hsl memo: terrain colors repeat
-/// massively, so the write-path mip averaging is mostly table lookups.
 pub(crate) fn average_rgb_hsl_memo(
     memo: &mut std::collections::HashMap<[u8; 3], (f32, f32, f32)>,
     colors: &[[u8; 3]],
@@ -294,8 +281,6 @@ pub(crate) fn average_rgb_hsl_memo(
     hsl_to_rgb(hue, saturation / n, lightness / n)
 }
 
-/// RGB → (hue radians, saturation, lightness), all HSL components 0..=1
-/// except the hue angle.
 pub(crate) fn rgb_to_hsl(rgb: [u8; 3]) -> (f32, f32, f32) {
     let r = rgb[0] as f32 / 255.0;
     let g = rgb[1] as f32 / 255.0;
@@ -397,8 +382,6 @@ mod tests {
 
     #[test]
     fn hsl_average_handles_the_hue_wraparound() {
-        // Reds on either side of the 0° hue seam must average to red, not to
-        // the arithmetic-mean hue (cyan).
         let avg = average_rgb_hsl(&[[255, 30, 0], [255, 0, 30]]);
         assert!(avg[0] > 200 && avg[1] < 60 && avg[2] < 60, "{avg:?}");
     }

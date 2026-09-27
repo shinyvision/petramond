@@ -31,7 +31,6 @@ fn renderer() -> Option<Renderer> {
     Some(renderer)
 }
 
-/// Eye at `(8, 8, 4)` of `origin`'s cell space, looking down +z.
 fn camera(origin: IVec3) -> Camera {
     Camera::new(
         WorldPos::block_min(origin) + Vec3::new(8.0, 8.0, 4.0),
@@ -39,7 +38,6 @@ fn camera(origin: IVec3) -> Camera {
     )
 }
 
-/// A horizontal red line across the view at depth `z`.
 fn red_line(origin: IVec3, z: f32, occluded: f32) -> WorldMark {
     let at = |x: f32| WorldPos::block_min(origin) + Vec3::new(x, 8.0, z);
     WorldMark::Line {
@@ -64,10 +62,6 @@ fn red_pixels(rgba: &[u8]) -> usize {
         .count()
 }
 
-/// A stone wall at z = 8..9 between the eye and a line at z = 12: hidden when
-/// the line hides behind the world, shown when it draws through, and a line
-/// in front of the wall always shows — at every scene sampling, since each
-/// keeps the world's depth its own way.
 #[test]
 fn a_mark_hides_behind_the_world_unless_it_draws_through() {
     let origin = IVec3::new(160_000_000, 0, -160_000_000);
@@ -91,8 +85,6 @@ fn a_mark_hides_behind_the_world_unless_it_draws_through() {
         std::thread::yield_now();
     }
     let cam = camera(origin);
-    // A renderer per mode: each must keep the world's depth itself, not read
-    // what an earlier mode left behind.
     for aa in [
         AntiAliasing::Off,
         AntiAliasing::Msaa4x,

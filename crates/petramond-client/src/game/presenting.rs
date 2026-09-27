@@ -1,14 +1,3 @@
-//! A client presenting a world from a mod's files: world-less (no server, no
-//! save, no simulation), opened from the shell by the pack launched there,
-//! which goes on driving it through the presentation desk.
-//!
-//! Each frame, before anything reads the world, the desk's calls take effect
-//! in issue order and the presentation drives: what it lands or releases
-//! arrives as the same world messages a live client ingests (their terrain
-//! already on the replica), through the one pump. The position is the one
-//! owner of presented time: the interpolation pair, the world's frame time
-//! and the shader clock all follow it.
-
 use std::sync::Arc;
 
 use mod_api::ClientPose;
@@ -32,36 +21,21 @@ use petramond_worldgen::density::surface::SurfaceDensitySystem;
 use super::session::ClientBootstrap;
 use super::Game;
 
-/// What this client presents besides a live session's world.
 #[derive(Default)]
 pub(super) struct Presenting {
-    /// The presentation, when this client is one.
     engine: Option<Box<Presentation>>,
-    /// The captured player's first person, presented when they are the view
-    /// subject.
     pub(super) view: super::captured_view::ViewCues,
-    /// The captured player's dig cell.
     dig: Option<IVec3>,
-    /// The position the world's frame time was last taken from.
     last_position: f64,
-    /// The world's frame time this frame: how far the position moved.
     world_step: f32,
-    /// The owner asked to close, or stopped running: the app ends the client.
     closed: bool,
-    /// The owner opened another presentation over this one.
     reopen: Option<Request>,
-    /// The owner placed the viewer: until it does (or a camera claim puts
-    /// one up) there is no window, and nothing is resident.
     viewer_placed: bool,
     replaced: bool,
     time_jumped: bool,
 }
 
 impl Game {
-    /// A client presenting a world with `seed`, whose ids are `tables`: an
-    /// empty replica, a viewer body at `viewer` (PlayerId `u8::MAX`, which no
-    /// capture uses), and `runtime` — the owner carried over beside the
-    /// presented world's own client mods.
     pub fn new_presentation(
         cam: Camera,
         render_dist: i32,
@@ -101,32 +75,23 @@ impl Game {
         game
     }
 
-    /// Whether this client presents a world from mod files.
     pub fn in_presentation(&self) -> bool {
         self.presenting.engine.is_some()
     }
 
-    /// The presentation was closed, or its owner stopped (taken once): the
-    /// app ends this client and gives the owner back to the shell.
     pub fn take_presentation_closed(&mut self) -> bool {
         std::mem::take(&mut self.presenting.closed)
     }
 
-    /// The owner opened another presentation over this one (taken once).
     pub fn take_presentation_reopen(&mut self) -> Option<Request> {
         self.presenting.reopen.take()
     }
 
-    /// End a presentation: its owner back on the shell, or `None` when it
-    /// did not survive (it trapped). The client is spent.
     pub fn into_shell(mut self) -> Option<ClientModRuntime> {
         debug_assert!(self.in_presentation(), "only a presentation has a shell");
         std::mem::replace(&mut self.client_mods, ClientModRuntime::empty()).into_shell()
     }
 
-    /// End a presentation for good, however it was left (its owner closed
-    /// it, or the player left from the pause menu): the owner hears it
-    /// ended, exactly as if it had closed it itself.
     pub fn leave_presentation(self) -> Option<ClientModRuntime> {
         {
             let mut desk = self.client_mods.presented().lock();
@@ -137,19 +102,15 @@ impl Game {
         self.into_shell()
     }
 
-    /// The presented position, fractional ticks.
     pub(crate) fn presentation_position(&self) -> Option<f64> {
         self.presenting.engine.as_ref().map(|e| e.position())
     }
 
-    /// The captured player, whose view the `View` pieces carry.
     pub(super) fn captured_player(&self) -> Option<mod_api::PlayerId> {
         let engine = self.presenting.engine.as_ref()?;
         engine.moment().local_player.map(|p| mod_api::PlayerId(p.0))
     }
 
-    /// The clock world animation runs on (shaders, ambient volumes): a
-    /// presentation's position, else the app's.
     pub fn world_clock(&self, now: f64) -> f64 {
         match self.presentation_position() {
             Some(at) => at * f64::from(petramond::events::tick::TICK_DT),
@@ -157,8 +118,6 @@ impl Game {
         }
     }
 
-    /// Frame time as the presented world experiences it: exactly as far as
-    /// the position moved (none while it holds still).
     pub(super) fn world_dt(&self, dt: f32) -> f32 {
         if self.in_presentation() {
             self.presenting.world_step
@@ -167,8 +126,6 @@ impl Game {
         }
     }
 
-    /// The block the dig loop sounds: the captured player's dig in a
-    /// presentation, this player's own while the break button holds one.
     pub fn dig_loop_block(&self, break_held: bool) -> Option<Block> {
         let cell = if self.in_presentation() {
             self.presenting.dig
@@ -187,9 +144,6 @@ impl Game {
         ))
     }
 
-    /// Carry out the presentation desk's calls, in issue order, and drive
-    /// the presentation one frame. Runs first in the frame: the position it
-    /// leaves is what every later read of presented time sees.
     pub(super) fn drive_presentation(&mut self, dt: f32) {
         if self.presenting.engine.is_none() {
             return;
@@ -245,11 +199,9 @@ impl Game {
         self.publish_presentation(&landed, &failed, None);
     }
 
-    /// Hand what the drive released to the ingest and the presenters.
     fn present_drive(&mut self, out: DriveOut) {
         if out.jumped {
             self.reset_presented_moment();
-            // An events log is one continuous stretch of one world.
             let capture = self.client_mods.presented().lock().capture.clone();
             let mut desk = capture.lock();
             for owner in desk.logs.owners() {
@@ -259,9 +211,6 @@ impl Game {
         }
         for mut msg in out.messages {
             if let ServerToClient::Tick(t) = &mut msg {
-                // The captured player's own state is their HUD's, never the
-                // viewer's; their one-shots are theirs too, but for the hurt
-                // bark, a sound the world made.
                 let own = &mut self.presenting.view.own;
                 t.sections.retain_mut(|section| match section {
                     TickSection::SelfState(state) => {
@@ -293,9 +242,6 @@ impl Game {
         }
     }
 
-    /// Everything that presents a MOMENT of the world starts over: the
-    /// landed apply's moment arrives in full right after, over an empty
-    /// entity store (its lanes spawn what it holds).
     fn reset_presented_moment(&mut self) {
         let self_id = self.replica.entities.self_id();
         self.replica.entities = super::replicated::EntityReplica::new(self_id, []);
@@ -309,8 +255,6 @@ impl Game {
         self.presenting.time_jumped = true;
     }
 
-    /// The owner places the viewer's EYE at `pose`; `flying` flies it free,
-    /// else it walks the resident world with gravity and collision.
     fn place_viewer(&mut self, pose: ClientPose, flying: bool) {
         let eye = WorldPos::new(pose.pos[0], pose.pos[1], pose.pos[2]);
         let feet = eye - Vec3::new(0.0, petramond::player::EYE, 0.0);
@@ -330,7 +274,6 @@ impl Game {
         self.presenting.viewer_placed = true;
     }
 
-    /// Tell the desk where the presentation stands.
     fn publish_presentation(&mut self, landed: &[u64], failed: &[u64], error: Option<String>) {
         let Some(engine) = self.presenting.engine.as_ref() else {
             return;
@@ -352,14 +295,10 @@ impl Game {
             .publish(state, landed, failed);
     }
 
-    /// The world this client presents was swapped since the last frame's
-    /// events (taken once).
     pub(super) fn take_world_replaced(&mut self) -> bool {
         std::mem::take(&mut self.presenting.replaced)
     }
 
-    /// The presented world jumped (an apply landed) since the last frame's
-    /// events (taken once).
     pub(super) fn take_time_jumped(&mut self) -> bool {
         std::mem::take(&mut self.presenting.time_jumped)
     }

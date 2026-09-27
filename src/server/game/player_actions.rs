@@ -1,9 +1,3 @@
-//! One session's per-tick one-shots → the `player_actions` rows observers
-//! animate from. The engine's own gestures resolve through
-//! `player::one_shot` into the same `(rig, event)` rows a mod's
-//! `FirePlayerAnimatorEvent` queues, and the two lists ride one lane:
-//! [`PlayerActionKind::Animator`], observed rigs only.
-
 use petramond_world::inventory::Hand;
 
 use crate::events::tick::PlayerTickEvents;
@@ -11,7 +5,6 @@ use crate::net::protocol::PlayerActionKind;
 use crate::player::one_shot::{self, OneShot};
 use crate::player::rigs;
 
-/// Every action row `p` produces this window, in emission order.
 pub fn player_action_kinds(p: &PlayerTickEvents, mut push: impl FnMut(PlayerActionKind)) {
     let click_hand = if p.click_off_hand {
         Hand::Off
@@ -53,8 +46,6 @@ mod tests {
         out
     }
 
-    /// An engine gesture rides the lane a mod fire rides: the observed
-    /// rigs' resolved graph events, and nothing for an unobserved rig.
     #[test]
     fn engine_one_shots_become_observed_rigs_graph_events() {
         let body = rigs::id(rigs::PLAYER_BODY).expect("body rig");
@@ -74,8 +65,6 @@ mod tests {
         );
     }
 
-    /// The acting hand selects the row: an off-hand click places and
-    /// interacts with the left hand's events.
     #[test]
     fn the_click_hand_picks_the_hand_prefix() {
         let body = rigs::id(rigs::PLAYER_BODY).expect("body rig");

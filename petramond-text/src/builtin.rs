@@ -1,17 +1,7 @@
-//! The built-in 5×7 fallback font: a hardcoded ASCII table.
-//!
-//! It exists so the UI still draws when no font file is present (tests, the
-//! placeholder theme, a pack that ships a broken font). Shipping content uses
-//! the real font asset — see [`crate::Font::from_ttf`].
-
-/// Built-in glyph width in font-pixels.
 pub const GLYPH_W: i32 = 5;
-/// Built-in glyph height in font-pixels.
 pub const GLYPH_H: i32 = 7;
-/// Built-in horizontal advance per glyph (glyph + 1px gap).
 pub const ADVANCE: i32 = GLYPH_W + 1;
 
-/// The lit-cell rows of `ch`, MSB = leftmost of [`GLYPH_W`].
 pub fn glyph(ch: char) -> [u8; GLYPH_H as usize] {
     if ch.is_ascii_lowercase() {
         return lowercase_glyph(ch);

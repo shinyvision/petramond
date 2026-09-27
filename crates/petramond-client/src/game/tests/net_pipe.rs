@@ -1,8 +1,3 @@
-//! Contract tests for the client→server action pipe:
-//! `ServerGame::apply_message` latching semantics — reach validation, the
-//! server-side fall tracker, stable-id mob targeting, and the menu-click
-//! roundtrip. These drive the message path directly, below `Game::tick`.
-
 use super::common::{self, filled_inventory, game, game_on_empty_chunk};
 use petramond::events::tick::TickEvents;
 use petramond::mob::Mob;
@@ -40,11 +35,8 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
     let mut game = game_on_empty_chunk();
     game.server_world_mut()
         .set_block_world(8, 63, 8, Block::Stone);
-    game.server_player_mut().inventory = filled_inventory(); // Dirt in slot 0
+    game.server_player_mut().inventory = filled_inventory();
 
-    // Player standing at (8, 64, 8); a target within reach latches. The
-    // session anchors at the claim — the reach eye is bounded by the F1
-    // drift ring of the server's own integration.
     game.server_player_mut().pos = WorldPos::new(8.5, 64.0, 8.5);
     let mut u = common::player_update(&game, true);
     u.transform.pos = WorldPos::new(8.5, 64.0, 8.5);
@@ -55,7 +47,6 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         "an in-reach target latches"
     );
 
-    // The same target reported from far away is silently dropped...
     game.server_player_mut().pos = WorldPos::new(20.0, 64.0, 20.0);
     let mut far = common::player_update(&game, true);
     far.transform.pos = WorldPos::new(20.0, 64.0, 20.0);
@@ -66,7 +57,6 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
         "a target beyond REACH + 1 latches as no target"
     );
 
-    // ...so the use click that follows it places nothing and keeps the item.
     let held_before = game
         .server_player()
         .inventory
@@ -101,12 +91,6 @@ fn an_out_of_reach_target_latches_none_and_the_tick_mutates_nothing() {
 #[test]
 fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     let mut game = game_on_empty_chunk();
-    // Anchor the session at the drop point: claims must stay NEAR the server's
-    // integrated position to be accepted (the F1 anti-teleport bound). A
-    // cliff-edge topology — a ledge to stand on and a landing floor one
-    // column over — because a grounded claim only counts for the fall
-    // tracker when geometry actually holds the feet, and the falling body
-    // must not clip the ledge on the way down.
     game.server_world_mut()
         .set_block_world(8, 79, 8, Block::Stone);
     game.server_world_mut()
@@ -116,8 +100,6 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     game.server_player_mut().pos = WorldPos::new(8.5, 80.0, 8.5);
     let h0 = game.server_player().health();
 
-    // Grounded on the ledge at y=80, a step off the edge, airborne down to a
-    // landing at y=70 one column over: a 10-block fall.
     let at = |game: &super::common::TestGame, x: f32, y: f32, on_ground: bool| {
         let mut u = common::player_update(game, true);
         u.transform.pos = WorldPos::new(f64::from(x), f64::from(y), 8.5);
@@ -145,7 +127,6 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
     );
     assert!(ev.player_at(0).player_damaged);
 
-    // A second consume finds nothing: the landing was a one-shot.
     let h1 = game.server_player().health();
     game.sim_mut().tick_fall_damage(0, &mut ev);
     assert_eq!(game.server_player().health(), h1);
@@ -154,10 +135,8 @@ fn a_reported_fall_deals_the_same_damage_the_physics_fall_would() {
 #[test]
 fn landing_in_water_resets_the_fall_and_deals_no_damage() {
     let mut game = game_on_empty_chunk();
-    // A pool at the landing point: the swim probe (feet + 0.6) reads water.
     game.server_world_mut()
         .set_block_world(8, 70, 8, Block::Water);
-    // Anchor at the drop point so every claim passes the F1 closeness bound.
     game.server_player_mut().pos = WorldPos::new(8.5, 80.0, 8.5);
     let h0 = game.server_player().health();
 
@@ -175,7 +154,6 @@ fn landing_in_water_resets_the_fall_and_deals_no_damage() {
         apply_update(&mut game, u);
         game.sim_mut().tick_movement(0);
     }
-    // Splashdown: grounded (or not — water cancels either way) inside the pool.
     let u = at(&game, 70.0, true);
     apply_update(&mut game, u);
     game.sim_mut().tick_movement(0);
@@ -200,8 +178,6 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
     let h_before = mobs.instances()[1].health();
     common::aim_server_at_mob(&mut game, 1);
 
-    // Click the second owl, then despawn the FIRST before the tick —
-    // swap_remove renumbers the second owl into index 0.
     game.send_to_server(ClientToServer::Action(PlayerAction::AttackClick {
         mob: Some(second_id),
         player: None,
@@ -227,8 +203,6 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
         "the CLICKED owl was hurt, not whichever mob inherited its index"
     );
 
-    // A click on a mob that vanished entirely degrades to an air punch: the
-    // hand swings, nothing is hurt.
     let gone_id = second_id + 1_000;
     game.send_to_server(ClientToServer::Action(PlayerAction::AttackClick {
         mob: Some(gone_id),
@@ -243,11 +217,11 @@ fn attack_clicks_resolve_the_stable_mob_id_after_indices_shifted() {
 #[test]
 fn menu_click_messages_latch_then_apply_on_the_tick() {
     let mut game = game();
-    game.server_player_mut().inventory = filled_inventory(); // Dirt in slot 0
+    game.server_player_mut().inventory = filled_inventory();
 
     game.send_to_server(ClientToServer::MenuClick {
         slot: MenuSlotWire::from_menu_slot(&MenuSlot::Inventory(0)),
-        button: 0, // primary
+        button: 0,
         shift: false,
         gather: false,
         request_id: 1,
@@ -275,7 +249,7 @@ fn menu_open_click_craft_and_close_execute_in_wire_order() {
     install_test_crafting_recipe(&mut game);
     let inventory = &mut game.server_player_mut().inventory;
     inventory.add(ItemStack::new(ItemType::Coal, 1));
-    inventory.click_slot(0); // begin with the ingredient on the cursor
+    inventory.click_slot(0);
 
     game.send_to_server(ClientToServer::Action(PlayerAction::OpenInventory));
     game.send_to_server(ClientToServer::MenuClick {
@@ -445,8 +419,6 @@ fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget
     let mut game = game();
     let server_rd = game.server_world().data().render_dist;
 
-    // A guest's request moves only its own streaming radius (clamped 4..=64);
-    // the server budget is the host's, not the guest's.
     let s = game
         .sim_mut()
         .add_session_for_test(petramond::server::session_build::spawn_player(1));
@@ -466,8 +438,6 @@ fn set_view_distance_moves_the_session_radius_and_only_the_host_moves_the_budget
         "requests clamp low"
     );
 
-    // The HOST's slider is the server setting: its request moves the budget
-    // with it, so raising the view distance live actually streams wider.
     game.send_to_server(ClientToServer::SetViewDistance { chunks: 12 });
     assert_eq!(game.session().transport().view_radius, 12);
     assert_eq!(game.server_world().data().render_dist, 12);

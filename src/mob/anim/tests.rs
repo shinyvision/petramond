@@ -49,7 +49,6 @@ fn ambient_clocks_are_individual_and_action_starts_at_zero() {
 fn expression_advances_walk_and_eases_the_head() {
     use super::super::brain::HeadLook;
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
-    // A walking tick (integrate sets `moving`), then expression advances the walk.
     owl.integrate(
         1.0 / 60.0,
         owl_def(),
@@ -73,7 +72,6 @@ fn expression_advances_walk_and_eases_the_head() {
         owl.anim_time
     );
 
-    // Head eases toward a look target, then recentres when there's none.
     let look = Expression {
         head_look: Some(HeadLook {
             yaw: 1.0,
@@ -140,9 +138,6 @@ fn named_anim_set_is_sorted_capped_and_idempotent() {
 
 #[test]
 fn named_anim_layers_self_clock_by_their_rates() {
-    // Each layer's phase advances by ITS OWN rate — rate 0 freezes a
-    // layer mid-stroke (an oar pauses in place, never snaps home),
-    // negative reverses — independent of the walk/idle clock.
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("a", true));
     assert!(owl.set_anim_active("b", true));
@@ -153,7 +148,7 @@ fn named_anim_layers_self_clock_by_their_rates() {
     let step = |owl: &mut Instance| {
         owl.apply_expression(0.5, def(Mob::Owl), &[], &Default::default());
     };
-    step(&mut owl); // both at default rate 1
+    step(&mut owl);
     let phase = |owl: &Instance, n: &str| {
         owl.active_anims()
             .iter()
@@ -171,9 +166,6 @@ fn named_anim_layers_self_clock_by_their_rates() {
 
 #[test]
 fn named_anim_seek_lands_exactly_holds_and_yields_to_rate() {
-    // A seek approaches its target DIRECTLY at |rate|/s, lands EXACTLY on
-    // it (no overshoot, then holds at rate 0) — the settle-to-pose
-    // contract an oar's gentle return depends on. A rate call cancels it.
     let mut owl = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
     assert!(owl.set_anim_active("a", true));
     assert!(
@@ -184,7 +176,7 @@ fn named_anim_seek_lands_exactly_holds_and_yields_to_rate() {
         owl.apply_expression(0.5, def(Mob::Owl), &[], &Default::default());
     };
     let phase = |owl: &Instance| owl.active_anims()[0].phase;
-    step(&mut owl); // free-runs to 0.5 at the default rate 1
+    step(&mut owl);
     assert!(owl.set_anim_seek("a", 1.7, 1.0));
     step(&mut owl);
     assert_eq!(phase(&owl), 1.0, "seeking toward the target at |rate|");
@@ -230,10 +222,6 @@ fn named_anim_controls_are_bounded_and_phase_stepping_stays_finite() {
     assert_eq!(layer.rate, 0.0, "a step past the phase envelope parks");
 }
 
-/// A mod-activated ONE-SHOT layer retires itself once it has played
-/// through (fire-and-forget activation — the sheep's `eat` bite ends on
-/// its own); looping clips, deliberate rate-0 holds, and names the model
-/// doesn't carry all stay until deactivated.
 #[test]
 fn a_finished_one_shot_layer_retires_itself() {
     use crate::mob::model_meta::NamedAnimMeta;
@@ -270,8 +258,6 @@ fn a_finished_one_shot_layer_retires_itself() {
         "an unknown name is the mod's business"
     );
 
-    // A rate-0 hold is a deliberate pose — it never expires, and resuming
-    // playback lets it finish and retire.
     assert!(owl.set_anim_active("bite", true));
     assert!(owl.set_anim_rate("bite", 0.0));
     for _ in 0..30 {
@@ -308,7 +294,6 @@ fn the_head_gathers_speed_settles_without_overshoot_and_lands_on_its_target() {
     assert!(steps[1] > steps[0], "it starts gently: {steps:?}");
     let peak = steps.iter().copied().fold(0.0, f32::max);
     assert!(steps[6] < peak, "and slows into the target: {steps:?}");
-    // An action judged along the gaze needs the head to ARRIVE, not approach.
     assert_eq!(owl.head_yaw, 1.2);
     assert_eq!(owl.head_pitch, -0.8);
 }

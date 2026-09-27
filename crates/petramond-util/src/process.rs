@@ -1,12 +1,6 @@
-//! Handing things to the operating system: showing a file in the player's
-//! file manager, and starting this program again.
-
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-/// Show `path` in the platform file manager — a file selected in its
-/// directory where the platform can, else its directory opened. Detached:
-/// the game never waits on it. `false` = nothing could be started.
 pub fn reveal(path: &Path) -> bool {
     let dir = if path.is_dir() {
         path
@@ -42,14 +36,8 @@ pub fn reveal(path: &Path) -> bool {
         .is_ok()
 }
 
-/// Variables that act once, on the launch that set them: a relaunch must not
-/// repeat them (an auto-opened world would open again).
 const ONE_SHOT: &[&str] = &["PETRAMOND_WORLD", "PETRAMOND_START"];
 
-/// Start this program again — the same executable (the AppImage when running
-/// from one), arguments and working directory, and this environment without
-/// its one-shot variables — with `PETRAMOND_START` set to `start_route` for
-/// the new process to honour once.
 pub fn spawn_self(start_route: &str) -> std::io::Result<()> {
     let exe = match std::env::var_os("APPIMAGE") {
         Some(image) if !image.is_empty() => std::path::PathBuf::from(image),

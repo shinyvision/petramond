@@ -10,7 +10,6 @@ fn new_is_empty() {
     let inv = Inventory::new();
     assert_eq!(inv.active_slot(), 0);
     assert!(inv.cursor().is_none());
-    // Every slot starts empty: the player gathers items from the world.
     for i in 0..TOTAL_SLOTS {
         assert!(inv.slot(i).is_none(), "slot {i} should be empty");
     }
@@ -28,15 +27,12 @@ fn selected_follows_active() {
 
 #[test]
 fn replace_selected_one_swaps_in_place_and_splits_stacks() {
-    // A single-count stack swaps type in its own slot (keeps hotbar position).
     let mut inv = empty_inv();
     inv.slots[0] = Some(item(ItemType::WoodenBucket, 1));
     assert!(inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
     assert_eq!(inv.selected().unwrap().item, ItemType::WaterBucket);
     assert_eq!(inv.selected().unwrap().count, 1);
 
-    // One of a larger stack converts; the rest stays selected and the
-    // replacement lands in another slot.
     let mut inv = empty_inv();
     inv.slots[0] = Some(item(ItemType::WoodenBucket, 3));
     assert!(inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
@@ -52,8 +48,6 @@ fn replace_selected_one_swaps_in_place_and_splits_stacks() {
 
 #[test]
 fn replace_selected_one_refuses_when_replacement_has_no_room() {
-    // Every other slot full and a >1 selected stack: the conversion has
-    // nowhere to put the replacement, so NOTHING may change.
     let mut inv = empty_inv();
     for i in 1..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
@@ -63,7 +57,6 @@ fn replace_selected_one_refuses_when_replacement_has_no_room() {
     assert_eq!(inv.selected().unwrap().item, ItemType::WoodenBucket);
     assert_eq!(inv.selected().unwrap().count, 2);
 
-    // An empty hand has nothing to swap.
     let mut inv = empty_inv();
     assert!(!inv.replace_selected_one(item(ItemType::WaterBucket, 1)));
     assert!(inv.selected().is_none());
@@ -83,35 +76,29 @@ fn scroll_active_wraps() {
     let mut inv = Inventory::new();
     inv.set_active(0);
     inv.scroll_active(-1);
-    assert_eq!(inv.active_slot(), (HOTBAR_LEN - 1) as u8); // wrap to 8
+    assert_eq!(inv.active_slot(), (HOTBAR_LEN - 1) as u8);
     inv.scroll_active(1);
-    assert_eq!(inv.active_slot(), 0); // wrap back to 0
-                                      // Large magnitudes reduce modulo HOTBAR_LEN.
+    assert_eq!(inv.active_slot(), 0);
     inv.set_active(0);
-    inv.scroll_active(10); // 10 % 9 == 1
+    inv.scroll_active(10);
     assert_eq!(inv.active_slot(), 1);
-    inv.scroll_active(-11); // (1 - 11) rem_euclid 9 == 8
+    inv.scroll_active(-11);
     assert_eq!(inv.active_slot(), 8);
 }
 
 #[test]
 fn add_merges_into_existing_then_overflows() {
     let mut inv = Inventory::new();
-    // Drain hotbar/main of dirt first: start empty for clarity.
     let mut inv = {
-        // build an empty inventory by clearing slots
         for i in 0..TOTAL_SLOTS {
             inv.slots[i] = None;
         }
         inv
     };
-    // Seed slot 0 with 60 dirt.
     inv.slots[0] = Some(item(ItemType::Dirt, 60));
-    // Adding 10 should top slot 0 to 64 (max) and put 6 into the next empty slot.
     let leftover = inv.add(item(ItemType::Dirt, 10));
     assert!(leftover.is_none());
     assert_eq!(inv.slot(0).unwrap().count, 64);
-    // First empty slot after slot 0 is slot 1.
     assert_eq!(inv.slot(1).unwrap().item, ItemType::Dirt);
     assert_eq!(inv.slot(1).unwrap().count, 6);
 }
@@ -122,7 +109,6 @@ fn add_splits_large_stack_across_empty_slots() {
     for i in 0..TOTAL_SLOTS {
         inv.slots[i] = None;
     }
-    // 64 is the max, so adding a fresh 64 lands in exactly one slot.
     let leftover = inv.add(item(ItemType::Stone, 64));
     assert!(leftover.is_none());
     assert_eq!(inv.slot(0).unwrap().count, 64);
@@ -131,8 +117,6 @@ fn add_splits_large_stack_across_empty_slots() {
 
 #[test]
 fn add_returns_leftover_when_full() {
-    // A one-slot-only inventory: fill every slot with a different full stack
-    // so neither merge nor empty-slot placement can absorb more dirt.
     let mut inv = Inventory::new();
     for i in 0..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
@@ -140,12 +124,11 @@ fn add_returns_leftover_when_full() {
     let leftover = inv.add(item(ItemType::Dirt, 5));
     assert_eq!(leftover, Some(item(ItemType::Dirt, 5)));
 
-    // Partial absorption: one matching slot with 2 spaces left.
     let mut inv = Inventory::new();
     for i in 0..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
     }
-    inv.slots[5] = Some(item(ItemType::Dirt, 62)); // 2 spaces
+    inv.slots[5] = Some(item(ItemType::Dirt, 62));
     let leftover = inv.add(item(ItemType::Dirt, 5));
     assert_eq!(inv.slot(5).unwrap().count, 64);
     assert_eq!(leftover, Some(item(ItemType::Dirt, 3)));
@@ -170,7 +153,6 @@ fn decrement_selected_clears_at_zero() {
     assert_eq!(inv.selected().unwrap().count, 1);
     inv.decrement_selected();
     assert!(inv.selected().is_none());
-    // No-op on empty.
     inv.decrement_selected();
     assert!(inv.selected().is_none());
 }
@@ -183,12 +165,10 @@ fn click_slot_pick_and_drop() {
     }
     inv.slots[0] = Some(item(ItemType::Stone, 10));
 
-    // cursor empty, slot full -> pick whole stack.
     inv.click_slot(0);
     assert!(inv.slot(0).is_none());
     assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 10)));
 
-    // cursor full, slot empty -> drop into slot.
     inv.click_slot(5);
     assert!(inv.cursor().is_none());
     assert_eq!(inv.slot(5), Some(&item(ItemType::Stone, 10)));
@@ -267,7 +247,6 @@ fn click_slot_merge_same_item() {
     inv.slots[0] = Some(item(ItemType::Dirt, 60));
     inv.cursor = Some(item(ItemType::Dirt, 10));
 
-    // both full, same item -> merge up to max (64), remainder (6) on cursor.
     inv.click_slot(0);
     assert_eq!(inv.slot(0).unwrap().count, 64);
     assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 6)));
@@ -295,7 +274,6 @@ fn click_slot_swap_different_item() {
     inv.slots[0] = Some(item(ItemType::Stone, 5));
     inv.cursor = Some(item(ItemType::Dirt, 7));
 
-    // both full, different item -> swap.
     inv.click_slot(0);
     assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 7)));
     assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 5)));
@@ -307,7 +285,6 @@ fn click_slot_swap_when_slot_full_same_item() {
     for i in 0..TOTAL_SLOTS {
         inv.slots[i] = None;
     }
-    // Slot already at max -> no room to merge, so swap even if same item.
     inv.slots[0] = Some(item(ItemType::Dirt, 64));
     inv.cursor = Some(item(ItemType::Dirt, 7));
     inv.click_slot(0);
@@ -319,7 +296,7 @@ fn click_slot_swap_when_slot_full_same_item() {
 fn click_slot_out_of_range_is_noop() {
     let mut inv = Inventory::new();
     inv.cursor = Some(item(ItemType::Dirt, 1));
-    inv.click_slot(TOTAL_SLOTS); // out of range
+    inv.click_slot(TOTAL_SLOTS);
     assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 1)));
 }
 
@@ -335,7 +312,6 @@ fn empty_inv() -> Inventory {
 fn right_click_splits_odd_stack_dragging_larger_half() {
     let mut inv = empty_inv();
     inv.slots[0] = Some(item(ItemType::Stone, 5));
-    // 5 -> drag ceil(5/2)=3, leave 2 behind.
     inv.right_click_slot(0);
     assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 3)));
     assert_eq!(inv.slot(0), Some(&item(ItemType::Stone, 2)));
@@ -389,14 +365,12 @@ fn right_click_last_held_item_clears_cursor() {
 
 #[test]
 fn right_click_different_item_or_full_is_noop() {
-    // Different item: leave both untouched.
     let mut inv = empty_inv();
     inv.slots[3] = Some(item(ItemType::Stone, 5));
     inv.cursor = Some(item(ItemType::Dirt, 4));
     inv.right_click_slot(3);
     assert_eq!(inv.slot(3), Some(&item(ItemType::Stone, 5)));
     assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 4)));
-    // Same item but slot already full: no room, leave both untouched.
     let mut inv = empty_inv();
     inv.slots[3] = Some(item(ItemType::Dirt, 64));
     inv.cursor = Some(item(ItemType::Dirt, 4));
@@ -409,14 +383,13 @@ fn right_click_different_item_or_full_is_noop() {
 fn collect_to_cursor_gathers_matching_until_full() {
     let mut inv = empty_inv();
     inv.cursor = Some(item(ItemType::Dirt, 5));
-    inv.slots[0] = Some(item(ItemType::Dirt, 10)); // hotbar
-    inv.slots[3] = Some(item(ItemType::Dirt, 20)); // hotbar
-    inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 40)); // main grid
-    inv.slots[2] = Some(item(ItemType::Stone, 30)); // different item: untouched
+    inv.slots[0] = Some(item(ItemType::Dirt, 10));
+    inv.slots[3] = Some(item(ItemType::Dirt, 20));
+    inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 40));
+    inv.slots[2] = Some(item(ItemType::Stone, 30));
 
     inv.collect_to_cursor();
 
-    // 5 + 10 + 20 + 40 = 75, capped at 64, with 11 dirt left behind.
     assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
     assert!(inv.slot(0).is_none(), "first partial fully drained");
     assert!(inv.slot(3).is_none(), "second partial fully drained");
@@ -436,13 +409,11 @@ fn collect_to_cursor_gathers_matching_until_full() {
 fn collect_to_cursor_drains_partials_before_breaking_full_stacks() {
     let mut inv = empty_inv();
     inv.cursor = Some(item(ItemType::Dirt, 1));
-    inv.slots[0] = Some(item(ItemType::Dirt, 64)); // full stack, before the partial
-    inv.slots[1] = Some(item(ItemType::Dirt, 5)); // partial
+    inv.slots[0] = Some(item(ItemType::Dirt, 64));
+    inv.slots[1] = Some(item(ItemType::Dirt, 5));
 
     inv.collect_to_cursor();
 
-    // Partial taken first (1 + 5 = 6); the cursor then pulls the remaining 58
-    // from the full stack, leaving it with 6 rather than splitting it first.
     assert_eq!(inv.cursor(), Some(&item(ItemType::Dirt, 64)));
     assert!(inv.slot(1).is_none(), "partial consumed");
     assert_eq!(
@@ -456,8 +427,8 @@ fn collect_to_cursor_drains_partials_before_breaking_full_stacks() {
 fn collect_to_cursor_leaves_full_stacks_intact_when_partials_suffice() {
     let mut inv = empty_inv();
     inv.cursor = Some(item(ItemType::Dirt, 60));
-    inv.slots[0] = Some(item(ItemType::Dirt, 64)); // full
-    inv.slots[1] = Some(item(ItemType::Dirt, 4)); // exactly tops the cursor off
+    inv.slots[0] = Some(item(ItemType::Dirt, 64));
+    inv.slots[1] = Some(item(ItemType::Dirt, 4));
 
     inv.collect_to_cursor();
 
@@ -468,14 +439,12 @@ fn collect_to_cursor_leaves_full_stacks_intact_when_partials_suffice() {
 
 #[test]
 fn collect_to_cursor_is_noop_when_cursor_empty_or_full() {
-    // Empty cursor: nothing to fill, slots untouched.
     let mut inv = empty_inv();
     inv.slots[0] = Some(item(ItemType::Dirt, 10));
     inv.collect_to_cursor();
     assert!(inv.cursor().is_none());
     assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 10)));
 
-    // Full cursor: no room, slots untouched.
     let mut inv = empty_inv();
     inv.cursor = Some(item(ItemType::Dirt, 64));
     inv.slots[0] = Some(item(ItemType::Dirt, 10));
@@ -506,27 +475,24 @@ fn take_cursor_takes_the_whole_stack() {
     inv.cursor = Some(item(ItemType::Dirt, 3));
     assert_eq!(inv.take_cursor(), Some(item(ItemType::Dirt, 3)));
     assert!(inv.cursor().is_none());
-    // Empty cursor: None.
     assert!(inv.take_cursor().is_none());
 }
 
 #[test]
 fn shift_move_hotbar_to_main_grid_uses_first_empty() {
     let mut inv = empty_inv();
-    inv.slots[2] = Some(item(ItemType::Stone, 20)); // hotbar
+    inv.slots[2] = Some(item(ItemType::Stone, 20));
     inv.shift_move_slot(2);
     assert!(inv.slot(2).is_none(), "source slot emptied");
-    // First main-grid slot is index HOTBAR_LEN (9).
     assert_eq!(inv.slot(HOTBAR_LEN), Some(&item(ItemType::Stone, 20)));
 }
 
 #[test]
 fn shift_move_main_to_hotbar_merges_then_fills() {
     let mut inv = empty_inv();
-    inv.slots[0] = Some(item(ItemType::Dirt, 60)); // hotbar, room for 4
-    inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 10)); // main grid
+    inv.slots[0] = Some(item(ItemType::Dirt, 60));
+    inv.slots[HOTBAR_LEN] = Some(item(ItemType::Dirt, 10));
     inv.shift_move_slot(HOTBAR_LEN);
-    // 4 merge into slot 0 (to 64), remaining 6 fill the next empty hotbar slot.
     assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 64)));
     assert_eq!(inv.slot(1), Some(&item(ItemType::Dirt, 6)));
     assert!(inv.slot(HOTBAR_LEN).is_none());
@@ -535,13 +501,11 @@ fn shift_move_main_to_hotbar_merges_then_fills() {
 #[test]
 fn shift_move_leaves_remainder_when_destination_full() {
     let mut inv = empty_inv();
-    // Fill the whole main grid with non-matching full stacks.
     for i in HOTBAR_LEN..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
     }
-    inv.slots[0] = Some(item(ItemType::Dirt, 30)); // hotbar source
+    inv.slots[0] = Some(item(ItemType::Dirt, 30));
     inv.shift_move_slot(0);
-    // No room in the main grid: the stack stays put (click ignored).
     assert_eq!(inv.slot(0), Some(&item(ItemType::Dirt, 30)));
 }
 
@@ -554,18 +518,14 @@ fn shift_move_empty_slot_is_noop() {
 
 #[test]
 fn click_external_slot_matches_internal_semantics() {
-    // The external-slot click logic must mirror click_slot exactly.
     let mut inv = empty_inv();
     let mut ext: Option<ItemStack> = Some(item(ItemType::Stone, 10));
-    // cursor empty, slot full -> pick up.
     inv.click_external_slot(&mut ext);
     assert!(ext.is_none());
     assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 10)));
-    // cursor full, slot empty -> drop.
     inv.click_external_slot(&mut ext);
     assert_eq!(ext, Some(item(ItemType::Stone, 10)));
     assert!(inv.cursor().is_none());
-    // right-click split off the larger half.
     inv.right_click_external_slot(&mut ext);
     assert_eq!(inv.cursor(), Some(&item(ItemType::Stone, 5)));
     assert_eq!(ext, Some(item(ItemType::Stone, 5)));
@@ -575,7 +535,6 @@ fn click_external_slot_matches_internal_semantics() {
 fn can_add_checks_full_fit() {
     let mut inv = empty_inv();
     assert!(inv.can_add(item(ItemType::Dirt, 64)));
-    // Fill the grid: slot 0 a partial dirt (room for 4), the rest full stone.
     inv.slots[0] = Some(item(ItemType::Dirt, 60));
     for i in 1..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
@@ -586,11 +545,9 @@ fn can_add_checks_full_fit() {
 
 #[test]
 fn fits_count_reports_how_many_would_land() {
-    // Empty inventory: the whole stack fits.
     let mut inv = empty_inv();
     assert_eq!(inv.fits_count(item(ItemType::Dirt, 40)), 40);
 
-    // One slot at 63 dirt, the rest full of stone: room for exactly one dirt.
     inv.slots[0] = Some(item(ItemType::Dirt, 63));
     for i in 1..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
@@ -602,14 +559,12 @@ fn fits_count_reports_how_many_would_land() {
         "exactly fills it"
     );
 
-    // That slot now maxed: no room at all.
     inv.slots[0] = Some(item(ItemType::Dirt, 64));
     assert_eq!(inv.fits_count(item(ItemType::Dirt, 5)), 0);
 
-    // Two partial matching stacks accumulate their room (2 + 4 = 6 spaces).
     let mut inv = empty_inv();
-    inv.slots[0] = Some(item(ItemType::Dirt, 62)); // room 2
-    inv.slots[1] = Some(item(ItemType::Dirt, 60)); // room 4
+    inv.slots[0] = Some(item(ItemType::Dirt, 62));
+    inv.slots[1] = Some(item(ItemType::Dirt, 60));
     for i in 2..TOTAL_SLOTS {
         inv.slots[i] = Some(item(ItemType::Stone, 64));
     }
@@ -624,7 +579,6 @@ fn fits_count_reports_how_many_would_land() {
         "capped at the stack"
     );
 
-    // An empty stack fits nothing.
     assert_eq!(inv.fits_count(item(ItemType::Dirt, 0)), 0);
 }
 
@@ -637,12 +591,10 @@ fn off_hand_swaps_with_a_named_slot_both_ways() {
     assert!(inv.selected().is_none());
     assert_eq!(inv.off_hand().map(|s| s.count), Some(5));
 
-    // The empty slot takes the stack back out.
     inv.swap_off_hand_with_slot(0);
     assert_eq!(inv.selected().map(|s| s.count), Some(5));
     assert!(inv.off_hand().is_none());
 
-    // A both-empty swap moves nothing and marks nothing changed.
     let before = inv.revision();
     inv.set_active(4);
     let after_select = inv.revision();
@@ -670,7 +622,6 @@ fn the_cell_swap_is_all_or_nothing_under_a_refusing_spec() {
     };
     let coal = ItemType::by_key("petramond:coal").expect("engine item");
 
-    // A refused deposit swaps NOTHING — unlike a click, which still takes.
     let mut inv = empty_inv();
     *inv.off_hand_mut() = Some(item(ItemType::Stone, 1));
     let mut cell = Some(item(coal, 3));
@@ -678,17 +629,14 @@ fn the_cell_swap_is_all_or_nothing_under_a_refusing_spec() {
     assert_eq!(cell.map(|s| s.count), Some(3), "the cell keeps its stack");
     assert_eq!(inv.off_hand().map(|s| s.item), Some(ItemType::Stone));
 
-    // An admitted stack swaps whole.
     *inv.off_hand_mut() = Some(item(coal, 2));
     assert!(inv.swap_off_hand_with_cell(Some(&fuel_only), None, &mut cell));
     assert_eq!(cell.map(|s| s.count), Some(2));
     assert_eq!(inv.off_hand().map(|s| s.count), Some(3));
 
-    // A take-only cell refuses the deposit half outright…
     let mut output = Some(item(coal, 4));
     assert!(!inv.swap_off_hand_with_cell(Some(&take_only), None, &mut output));
     assert_eq!(output.map(|s| s.count), Some(4));
-    // …but an EMPTY off-hand is a pure take, which take-only never gates.
     *inv.off_hand_mut() = None;
     assert!(inv.swap_off_hand_with_cell(Some(&take_only), None, &mut output));
     assert!(output.is_none());
@@ -697,7 +645,6 @@ fn the_cell_swap_is_all_or_nothing_under_a_refusing_spec() {
 
 #[test]
 fn pickup_tops_up_a_matching_off_hand_first_and_never_a_foreign_one() {
-    // Same item: the off-hand fills first, the remainder routes to the grid.
     let mut inv = empty_inv();
     *inv.off_hand_mut() = Some(item(ItemType::Dirt, 60));
     assert_eq!(inv.pickup_fits_count(item(ItemType::Dirt, 10)), 10);
@@ -717,19 +664,15 @@ fn pickup_tops_up_a_matching_off_hand_first_and_never_a_foreign_one() {
         "the remainder routes through the ordinary insertion"
     );
 
-    // A different item never touches the off-hand.
     let mut inv = empty_inv();
     *inv.off_hand_mut() = Some(item(ItemType::Dirt, 1));
     assert!(inv.pickup(item(ItemType::Stone, 3)).is_none());
     assert_eq!(inv.off_hand().map(|s| s.count), Some(1));
 
-    // An EMPTY off-hand is never a pickup destination either.
     let mut inv = empty_inv();
     assert!(inv.pickup(item(ItemType::Dirt, 3)).is_none());
     assert!(inv.off_hand().is_none());
 
-    // The planner twin agrees when ONLY the off-hand has room: grid full of
-    // stone, off-hand holds a partial dirt stack.
     let mut inv = empty_inv();
     for slot in inv.slots.iter_mut() {
         *slot = Some(item(ItemType::Stone, 64));
@@ -764,13 +707,11 @@ fn held_in_and_decrement_resolve_per_hand() {
 
 #[test]
 fn replace_held_one_swaps_the_off_hand_in_place() {
-    // The bucket swap against the off-hand: a single item swaps in place.
     let mut inv = empty_inv();
     *inv.off_hand_mut() = Some(item(ItemType::Dirt, 1));
     assert!(inv.replace_held_one(Hand::Off, item(ItemType::Stone, 1)));
     assert_eq!(inv.off_hand().map(|s| s.item), Some(ItemType::Stone));
 
-    // Of a larger stack, one converts and the replacement finds a slot.
     *inv.off_hand_mut() = Some(item(ItemType::Dirt, 3));
     assert!(inv.replace_held_one(Hand::Off, item(ItemType::Grass, 1)));
     assert_eq!(inv.off_hand().map(|s| s.count), Some(2));
@@ -783,7 +724,6 @@ fn replace_held_one_swaps_the_off_hand_in_place() {
         Some(1)
     );
 
-    // An empty off-hand refuses.
     *inv.off_hand_mut() = None;
     assert!(!inv.replace_held_one(Hand::Off, item(ItemType::Stone, 1)));
 }
@@ -802,7 +742,6 @@ fn gather_sweeps_the_off_hand_and_shift_ships_it_to_the_grid() {
     );
     assert!(inv.off_hand().is_none());
 
-    // Shift-move ships the off-hand stack into the ordinary grid.
     *inv.cursor_mut() = None;
     *inv.off_hand_mut() = Some(item(ItemType::Stone, 9));
     inv.shift_move_off_hand();
@@ -816,7 +755,6 @@ fn gather_sweeps_the_off_hand_and_shift_ships_it_to_the_grid() {
         9
     );
 
-    // `add` (world pickup) never routes INTO the off-hand.
     let mut inv = empty_inv();
     assert!(inv.add(item(ItemType::Dirt, 1)).is_none());
     assert!(inv.off_hand().is_none());

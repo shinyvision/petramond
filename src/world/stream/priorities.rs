@@ -48,10 +48,8 @@ impl ServerWorld {
         self.side.worker.reprioritize(columns.chain(sections));
     }
 
-    /// Discard queued section work that no current anchor will use. Only
-    /// tickets actually removed from the pool release their pending slots;
-    /// running jobs still report normally. Saved overlays keep their read
-    /// handshake.
+    /// Drops queued section work no anchor wants anymore. Only removed tickets free the pool slot,
+    /// running jobs keep reporting. Saved overlays still keep their read handshake.
     pub(super) fn prune_stale_section_requests(&mut self) {
         let targets = self.generation_targets();
         let stale = self
@@ -137,8 +135,6 @@ impl ServerWorld {
                     (!nearest.contains(pos)).then_some(job.as_ref()?.ticket)
                 }),
             );
-        // Removing a queue entry is atomic with starting it. Running jobs and
-        // disk reads keep their pending slots until their results arrive.
         self.side.gen.pending.retain(|_, job| {
             job.as_ref()
                 .is_none_or(|job| !removed.contains(&job.ticket))

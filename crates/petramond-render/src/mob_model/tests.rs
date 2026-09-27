@@ -36,8 +36,6 @@ fn instance(anim_time: f32, moving: bool) -> MobRenderInstance {
     }
 }
 
-/// Pose `insts` of one species into a fresh batch, their ranges addressing
-/// `layers`.
 fn pose_with(
     model: &Model,
     scale: f32,
@@ -63,7 +61,6 @@ fn pose_with(
     batch
 }
 
-/// Pose `insts` of one species, none of which addresses an arena row.
 fn pose(model: &Model, scale: f32, insts: &[MobRenderInstance], rig: &MobRig) -> SkinBatch {
     let layers = MobLayers {
         arena: &crate::MobArena::default(),
@@ -72,13 +69,11 @@ fn pose(model: &Model, scale: f32, insts: &[MobRenderInstance], rig: &MobRig) ->
     pose_with(model, scale, insts, layers, rig)
 }
 
-/// Pose one instance and skin it: the render-local positions the GPU draws.
 fn skin(model: &Model, scale: f32, inst: &MobRenderInstance, rig: &MobRig) -> Vec<Vec3> {
     let batch = pose(model, scale, std::slice::from_ref(inst), rig);
     skin_positions(&rig.mesh(model, scale), &batch, 0)
 }
 
-/// Skin instance `i` of `insts`, posed against `layers`.
 fn skin_with(
     model: &Model,
     insts: &[MobRenderInstance],
@@ -106,7 +101,6 @@ fn each_instance_gets_its_own_palette_run() {
     assert_eq!(batch.palette.len() as u32, 2 * slots);
     assert_eq!(batch.instances[0].bone_base, 0);
     assert_eq!(batch.instances[1].bone_base, slots);
-    // Species draw ranges follow on from whatever is already in the batch.
     let mut batch = batch;
     let range = pose_mob_instances(
         MobPoseSpecies {
@@ -129,10 +123,6 @@ fn each_instance_gets_its_own_palette_run() {
 
 #[test]
 fn every_pose_carries_its_look_to_the_instance() {
-    // Live and ragdolling mobs alike hand the shader their hurt flash, fire
-    // tint, self-lighting and sampled light — the inputs the CPU bake folded
-    // into every vertex's tint (`skinned` pins the shader's fold against
-    // `body_tint`).
     let model = owl_model();
     let rest = model.rest_pose();
     let arena = crate::MobArena {
@@ -199,7 +189,6 @@ fn scale_sizes_the_posed_model() {
     let inst = instance(0.0, false);
     let v1 = skin(&m, 0.25, &inst, &rig);
     let v2 = skin(&m, 0.5, &inst, &rig);
-    // Same geometry, double scale -> double the vertical extent above the feet.
     let span = |v: &[Vec3]| v.iter().map(|x| x.y).fold(f32::MIN, f32::max) - 64.0;
     let (s1, s2) = (span(&v1), span(&v2));
     assert!(
@@ -210,8 +199,6 @@ fn scale_sizes_the_posed_model() {
 
 #[test]
 fn moving_plays_walk_idle_uses_rest_pose() {
-    // A moving mob at two phases differs (legs swing); two idle mobs are identical
-    // regardless of anim_time (both render the rest pose).
     let m = owl_model();
     let rig = MobRig::resolve(&m, None, None);
     let at = |t: f32, moving: bool| skin(&m, 0.25, &instance(t, moving), &rig);
@@ -233,9 +220,6 @@ fn moving_plays_walk_idle_uses_rest_pose() {
 
 #[test]
 fn shorn_hides_exactly_the_wool_named_cubes() {
-    // A shorn sheep draws without its `wool` cubes; a model with no wool-named
-    // cubes (the owl) draws identically shorn or not — proving the hiding keys
-    // on the cubes the rig names as coat, not on the shorn flag alone.
     let sheep = Model::load(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../assets/models/sheep.bbmodel"
@@ -278,8 +262,6 @@ fn shorn_hides_exactly_the_wool_named_cubes() {
 
 #[test]
 fn head_look_rotates_the_head_when_idle() {
-    // Idle (rest pose, no head animation): a non-zero head_yaw must move the head
-    // cubes, confirming head-look is wired into the pose.
     let m = owl_model();
     let rig = MobRig::resolve(&m, None, None);
     let looking = |head_yaw: f32| {
@@ -295,10 +277,6 @@ fn head_look_rotates_the_head_when_idle() {
     );
 }
 
-/// Each instance's arena ranges address only its own rows: a named layer
-/// (an interned id naming the walk clip) and a fading gait pose their own
-/// body exactly as the base walk would, an unknown name poses nothing, and a
-/// neighbour with no rows in the arena stays at rest.
 #[test]
 fn arena_ranges_pose_each_instance_from_its_own_layers() {
     let m = owl_model();
@@ -347,9 +325,6 @@ fn arena_ranges_pose_each_instance_from_its_own_layers() {
     assert_eq!(skin_with(&m, &insts, layers, &rig, 3), rest);
 }
 
-/// A resolved id is reused while the table still names it the same way, and
-/// resolves afresh against another session's table that reuses the id for a
-/// different name.
 #[test]
 fn anim_clips_follow_the_table_that_names_the_id() {
     let m = owl_model();

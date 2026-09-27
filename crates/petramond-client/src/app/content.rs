@@ -1,12 +1,3 @@
-//! The content library's state the app keeps for the whole process: the
-//! listing petramond.com last gave, the download queue, the icons, what waits
-//! to be applied, what the last apply did (shown once — a release build
-//! may have no console), and the start route a relaunch came back with.
-//!
-//! It lives on the App, not on the browser screen: downloads outlive the
-//! screen, and the title shows their progress. Every network call runs on a
-//! worker thread under a generation guard; nothing on the frame speaks HTTP.
-
 mod icons;
 mod jobs;
 
@@ -23,20 +14,14 @@ pub(super) use jobs::Phase;
 use super::shell_docs::ContentView;
 use super::{App, AppScreen, ExitKind};
 
-/// Where a relaunch asked to land (`PETRAMOND_START`), honoured once and
-/// never passed on.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct StartRoute {
     pub screen: String,
-    /// Where that screen's Back leads, when not the title: `connect:<addr>`
-    /// or `world:<save dir>`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub back: Option<String>,
 }
 
 impl StartRoute {
-    /// The route this process was started with, taken out of the environment
-    /// so nothing this process starts inherits it.
     pub fn take_from_env() -> Option<Self> {
         if cfg!(test) {
             return None;
@@ -52,7 +37,6 @@ impl StartRoute {
         }
     }
 
-    /// The browser, with Back leading to `back`.
     #[cfg(test)]
     pub(super) fn content(back: Option<String>) -> Self {
         Self {
@@ -68,22 +52,15 @@ impl StartRoute {
 
 type ListingAnswer = Result<Vec<ListingRow>, ServiceError>;
 
-/// What the listing request last came to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ListingState {
-    /// Nobody is signed in (or the sign-in just expired): the listing needs
-    /// a bearer.
-    SignedOut {
-        expired: bool,
-    },
+    SignedOut { expired: bool },
     Loading,
     Ready,
     Failed(String),
-    /// The player abandoned the request.
     Cancelled,
 }
 
-/// A staged change, as the browser shows it before applying.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Pending {
     pub(super) dir: String,
@@ -95,7 +72,6 @@ pub(super) enum PendingKind {
     Install {
         name: String,
         version: String,
-        /// Read from the staged files, which admission already accepted.
         touches_world: bool,
         dependencies: Vec<String>,
     },
@@ -104,38 +80,25 @@ pub(super) enum PendingKind {
 
 pub(super) struct ContentSession {
     pub(super) dirs: Dirs,
-    /// The shipped packs' ids: never installed over, never listed.
     pub(super) shipped: BTreeSet<String>,
-    /// Whether discovery reads the installed root (not under a
-    /// `PETRAMOND_MODS` override): an install that could never load is never
-    /// staged.
     pub(super) installs_enabled: bool,
     pub(super) listing: ListingState,
-    /// The last good listing, kept for the process so a reopen draws at once.
     pub(super) rows: Vec<ListingRow>,
-    /// `rows` came from a successful listing (some time this process).
     pub(super) rows_known: bool,
-    /// When the running listing request started, for the sweeping gauge.
     pub(super) listing_started: f64,
     listing_gen: u64,
     listing_rx: Option<Receiver<(u64, ListingAnswer)>>,
     pub(super) jobs: jobs::Jobs,
-    /// Why a download failed, by pack id, until retried or refreshed.
     pub(super) failed: BTreeMap<String, String>,
     pub(super) pending: Vec<Pending>,
     pub(super) icons: icons::Icons,
-    /// Quit or restart the moment the queue drains with every job staged.
     pub(super) exit_when_idle: Option<ExitKind>,
-    /// The open browser's own state (`None` while it is closed).
     pub(super) view: Option<ContentView>,
-    /// Network workers run only outside tests: the suite never touches
-    /// petramond.com.
     network: bool,
 }
 
 impl Default for ContentSession {
     fn default() -> Self {
-        // The suite never reads the player's own content state.
         let dirs = if cfg!(test) {
             let scratch = std::env::temp_dir().join("petramond-content-unused");
             Dirs {
@@ -173,8 +136,6 @@ impl ContentSession {
         session
     }
 
-    /// Re-read what waits to be applied. Called where it can have changed:
-    /// the browser opening, a job staging, an undo or a delete.
     pub(super) fn reload_pending(&mut self) {
         self.pending = install::pending(&self.dirs)
             .into_iter()
@@ -202,10 +163,6 @@ impl ContentSession {
         self.pending.iter().find(|p| p.dir == dir)
     }
 
-    /// The pending change a row stands for: the one filed under its folder,
-    /// or an install filed under its pack id `key` (an install lands at
-    /// `mods/<id>` over whichever folder holds that id, so a folder named
-    /// otherwise is still the pack it replaces).
     pub(super) fn pending_of(&self, dir: &str, key: &str) -> Option<&Pending> {
         self.pending_for(dir).or_else(|| {
             self.pending_for(key)
@@ -213,8 +170,6 @@ impl ContentSession {
         })
     }
 
-    /// The listing's row for `mod_id`, when the listing can be trusted to
-    /// say what petramond.com has (a successful fetch, shown or refreshing).
     pub(super) fn listed(&self, mod_id: &str) -> Option<&ListingRow> {
         self.listing_trusted()
             .then(|| self.rows.iter().find(|r| r.mod_id == mod_id))
@@ -225,7 +180,6 @@ impl ContentSession {
         self.rows_known && matches!(self.listing, ListingState::Ready | ListingState::Loading)
     }
 
-    /// Start fetching the listing (abandoning any request already running).
     pub(super) fn fetch_listing(&mut self, now: f64) {
         self.listing_gen += 1;
         self.listing_rx = None;
@@ -247,7 +201,6 @@ impl ContentSession {
         }
     }
 
-    /// Abandon the running listing request: its answer becomes stale.
     pub(super) fn cancel_listing(&mut self) {
         if self.listing == ListingState::Loading {
             self.listing_gen += 1;
@@ -256,8 +209,6 @@ impl ContentSession {
         }
     }
 
-    /// A listing answer, however it arrived (the listing worker, or a
-    /// download that re-fetched it).
     pub(super) fn listing_arrived(&mut self, answer: Result<Vec<ListingRow>, ServiceError>) {
         match answer {
             Ok(rows) => {
@@ -278,8 +229,6 @@ impl ContentSession {
         }
     }
 
-    /// The stored sign-in is gone: the listing needs a new one, and every
-    /// queued download goes back to Get.
     pub(super) fn signed_out(&mut self, expired: bool) {
         self.listing_gen += 1;
         self.listing_rx = None;
@@ -288,7 +237,6 @@ impl ContentSession {
         self.exit_when_idle = None;
     }
 
-    /// Queue a download of `row`, unless it could never install.
     pub(super) fn get(&mut self, row: &ListingRow) -> Result<(), String> {
         if !self.installs_enabled {
             return Err("Installing is off while PETRAMOND_MODS is set.".to_owned());
@@ -305,20 +253,17 @@ impl ContentSession {
         Ok(())
     }
 
-    /// Withdraw the pending change to `dir`.
     pub(super) fn undo(&mut self, dir: &str) {
         install::undo(&self.dirs, dir);
         self.reload_pending();
     }
 
-    /// Stage removing the installed directory `dir`.
     pub(super) fn remove(&mut self, dir: &str) -> Result<(), String> {
         let staged = install::stage_remove(&self.dirs, dir);
         self.reload_pending();
         staged
     }
 
-    /// Drain the listing worker, the download queue and the icon worker.
     fn poll(&mut self) -> Vec<jobs::Event> {
         let mut events = Vec::new();
         if let Some(rx) = self.listing_rx.as_ref() {
@@ -326,9 +271,6 @@ impl ContentSession {
                 Ok((gen, answer)) => {
                     self.listing_rx = None;
                     if gen == self.listing_gen {
-                        // A dead sign-in reads the same whoever found it: the
-                        // app must re-read the cleared credential, or the
-                        // browser sees the stale one and fetches again.
                         if matches!(answer, Err(ServiceError::SignInRequired(_))) {
                             events.push(jobs::Event::SignedOut);
                         } else {
@@ -349,7 +291,6 @@ impl ContentSession {
     }
 }
 
-/// Whether an installed pack is a Petramond Addon, by the one classifier.
 pub(super) fn is_addon(pack: &petramond_world::assets::Pack) -> bool {
     petramond::content::tier(pack) == petramond::content::Tier::Addon
 }
@@ -383,7 +324,6 @@ impl App {
         }
     }
 
-    /// What the startup apply of pending content changes did.
     pub fn set_content_report(&mut self, report: ApplyReport) {
         self.content_report = report;
     }
@@ -392,13 +332,10 @@ impl App {
         &self.content_report
     }
 
-    /// The start route this launch was given, once.
     pub fn take_start_route(&mut self) -> Option<StartRoute> {
         self.start_route.take()
     }
 
-    /// Every frame, whatever the screen: downloads run on without the
-    /// browser, and the title shows their progress.
     pub(super) fn poll_content(&mut self) {
         if let Some(route) = self.take_start_route() {
             if route.screen == "content" && self.session.is_none() {
@@ -421,7 +358,6 @@ impl App {
                         .failed
                         .insert(id, "No longer on petramond.com".to_owned());
                     self.content.exit_when_idle = None;
-                    // Merged, so the failed row and its reason stay put.
                     let now = self.now();
                     self.content.fetch_listing(now);
                 }
@@ -442,8 +378,6 @@ impl App {
         }
     }
 
-    /// Open the browser. `back` is where its Back leads (see
-    /// [`StartRoute::back`]); `filter` shows only those pack ids.
     pub(super) fn open_content(&mut self, back: Option<String>, filter: Option<Vec<String>>) {
         if !cfg!(test) {
             self.refresh_account_view();
@@ -460,7 +394,6 @@ impl App {
         } else if !matches!(self.content.listing, ListingState::Loading) {
             self.content.fetch_listing(now);
         }
-        // The last start's failures show once: here as failed rows.
         for (dir, why) in std::mem::take(&mut self.content_report.failed) {
             self.content.failed.insert(dir, why);
         }
@@ -471,7 +404,6 @@ impl App {
         self.set_screen(AppScreen::Content);
     }
 
-    /// Leave the browser for where it was opened from. Downloads keep going.
     pub(super) fn close_content(&mut self) {
         let back = self.content.view.take().and_then(|v| v.back);
         self.content.cancel_listing();
@@ -490,7 +422,6 @@ impl App {
         }
     }
 
-    /// Whether any download is queued or running.
     pub(super) fn content_jobs_running(&self) -> bool {
         !self.content.jobs.is_empty()
     }
@@ -498,8 +429,6 @@ impl App {
 
 #[cfg(test)]
 impl ContentSession {
-    /// A session over scratch directories, with no network and nothing
-    /// shipped: tests arrange everything themselves.
     pub(super) fn for_test(dirs: Dirs) -> Self {
         let mut session = Self::new(dirs, false);
         session.installs_enabled = true;

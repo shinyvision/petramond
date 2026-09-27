@@ -27,8 +27,6 @@ fn uncovered_grass_survives() {
 
 #[test]
 fn grass_under_no_grass_decay_cover_survives() {
-    // A solid cover tagged NoGrassDecay (leaves being the canonical carrier) does
-    // not smother the grass below: it stays grass instead of dying back to dirt.
     let mut w = world_with_chunk();
     let p = IVec3::new(8, 70, 8);
     w.set_block_world(p.x, p.y, p.z, Block::Grass);
@@ -39,8 +37,6 @@ fn grass_under_no_grass_decay_cover_survives() {
 
 #[test]
 fn flooded_grass_dies_to_dirt() {
-    // Water directly overhead drowns grass — it reverts to dirt, so the spread
-    // can never leave grass sitting under water.
     let mut w = world_with_chunk();
     let p = IVec3::new(8, 70, 8);
     w.set_block_world(p.x, p.y, p.z, Block::Grass);

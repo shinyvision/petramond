@@ -20,8 +20,6 @@ fn the_shipped_viewmodel_rig_and_graph_load() {
     assert_eq!(animator.bones().len(), animator.row.model.bones().len());
 }
 
-/// A driver over `source` on the synthetic rig, with a half-second `swing`
-/// whose `impact` marker passes at 0.2 s and a looping `dig`.
 fn driver(source: &str) -> Driver {
     let m = rig();
     let rising = |len: f32, deg: f32| {
@@ -47,7 +45,6 @@ fn hands(mining: bool) -> [HeldItemFrame; 2] {
     [HeldItemFrame { mining, ..frame }, frame]
 }
 
-/// The row an engine gesture or a mod's fire on this rig resolves to.
 fn fired(driver: &Driver, event: &str) -> [(RigId, u16); 1] {
     [(
         RIG,
@@ -63,9 +60,6 @@ fn standing(target: AimTarget) -> LocalMotion {
     }
 }
 
-/// The graph's `markers` table fires `strike` once a playing clip's `impact`
-/// marker passes; what a strike does is the graph's rule, here a hit-stop
-/// that only a strike landing on something — the driver's `target` — takes.
 #[test]
 fn a_strike_that_lands_holds_the_swing_for_the_graphs_hitstop_and_a_whiff_does_not() {
     let frozen_frames = |target| {
@@ -112,10 +106,6 @@ fn a_strike_that_lands_holds_the_swing_for_the_graphs_hitstop_and_a_whiff_does_n
     );
 }
 
-/// A click on a block fires the swing and starts the dig, in either order
-/// across frames. The hand publishes the mining level in the same frame as
-/// the fired gesture, so a rule can refuse the swing while digging and the
-/// dig loop keeps playing for as long as the dig holds.
 #[test]
 fn a_click_that_starts_mining_keeps_the_dig_loop_over_the_swing() {
     for mining_on_click in [false, true] {

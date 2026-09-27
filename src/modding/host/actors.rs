@@ -1,7 +1,3 @@
-//! Actor calls: a live mob digs, places and uses blocks under the rules a
-//! player's clicks meet, and asks where it would have to look to. Each request
-//! is judged here and re-proven at its turn in the tick (`server::actors`).
-
 use mod_api::{
     ActionRefusal, ActorCall, BlockRecord, DigProgress, EntityRef, HostRet, PlaceRequest,
 };
@@ -45,8 +41,6 @@ pub(super) fn handle_actor_call(mod_id: &str, call: ActorCall) -> HostRet {
                 return HostRet::Bool(false);
             };
             let pos = IVec3::from_array(pos);
-            // What the block does when used is the drain's to say (reported
-            // as `actor_acted`); here only whether the actor can click it.
             let reached = ctx
                 .world
                 .actor(mob_id)
@@ -131,7 +125,6 @@ pub(super) fn handle_actor_call(mod_id: &str, call: ActorCall) -> HostRet {
     }
 }
 
-/// Imagined feet positions, each refused unless finite.
 fn feet_of(
     from: &[[f64; 3]],
     what: &str,
@@ -139,8 +132,6 @@ fn feet_of(
     from.iter().map(|&feet| finite_pos(feet, what)).collect()
 }
 
-/// The record a placement builds, if this mod may build it: anything it pays
-/// for, and its own rows for free.
 fn payable_record(mod_id: &str, record: &BlockRecord, pay: bool) -> Result<Record, ActionRefusal> {
     let record = record_in(record).map_err(|_| ActionRefusal::Unsupported)?;
     let owned = petramond_world::registry::names()
@@ -154,8 +145,6 @@ fn payable_record(mod_id: &str, record: &BlockRecord, pay: bool) -> Result<Recor
     }
 }
 
-/// One tick of a mob's dig; the break is queued once the block's whole break
-/// time has accrued on consecutive ticks.
 fn dig(
     ctx: &mut SimCtx<'_>,
     actor: EntityRef,
@@ -190,7 +179,6 @@ fn dig(
     })
 }
 
-/// Check a mob's construction placement now and queue it for this tick.
 fn place(
     ctx: &mut SimCtx<'_>,
     actor: EntityRef,
@@ -219,8 +207,6 @@ fn place(
     }
 }
 
-/// The placement rules' verdict for `actor` building `record` at `pos`, with
-/// the bodies standing in the world: `Queued` = it would be accepted.
 fn judge(
     ctx: &SimCtx<'_>,
     actor: &crate::world::actor::Actor,

@@ -1,8 +1,6 @@
-//! The Apply contract: after any sequence of applies, plays and window
-//! moves, the presented world equals applying the same pieces and events to
-//! a replica NAIVELY (every piece installed in order and every message
-//! ingested on the frame, with no window, no provenance, no cache and no
-//! fold), and a key whose content did not change keeps its `Arc`.
+//! Apply contract. Mix applies, plays and window moves any way you like - the presented world
+//! still has to match a naive replica: pieces in order, messages on their own frame, no window,
+//! no provenance, no cache, no fold. Unchanged content keeps its `Arc`.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
@@ -35,8 +33,6 @@ use crate::world::{
     detached_section_payload, DetachedFold, PieceRange, ReplicaWorld, SectionContent, ServerWorld,
 };
 
-// --- capture files, written the way the format lays them out ---------------
-
 struct CaptureFile {
     rel: &'static str,
     bytes: Vec<u8>,
@@ -62,8 +58,6 @@ impl CaptureFile {
         }
     }
 
-    /// A State record: head · pieces · envelope. Answers each piece's key
-    /// and absolute range, and the record's.
     fn state(&mut self, tick: u64, pieces: Vec<Vec<u8>>) -> Snapshot {
         let at = self.bytes.len() as u64;
         let mut body = Vec::new();
@@ -108,7 +102,6 @@ impl CaptureFile {
         }
     }
 
-    /// A Frame record: head · envelope · pieces, in one piece of bytes.
     fn frame(&mut self, seq: u64, tick: u64, pieces: Vec<Vec<u8>>) -> [u64; 2] {
         let at = self.bytes.len() as u64;
         let mut envelope_len = 0usize;
@@ -169,8 +162,6 @@ struct Snapshot {
 mod focused;
 mod profile;
 
-// --- a session that changes every tick --------------------------------------
-
 struct Rng(u64);
 
 impl Rng {
@@ -214,16 +205,11 @@ fn own_state(n: u64) -> SelfState {
     }
 }
 
-/// A recorded session: an events file with one frame per tick, and a state
-/// file with a full state record every few ticks.
 struct Session {
     state: CaptureFile,
     events: CaptureFile,
     snapshots: Vec<Snapshot>,
-    /// Tick `t`'s frame record, at index `t - 1`.
     frames: Vec<[u64; 2]>,
-    /// After tick `t` (index `t - 1`): every section its frame wrote, stated
-    /// in full — the restatement a capturing mod writes a frame after a change.
     restated: Vec<Snapshot>,
 }
 
@@ -319,7 +305,6 @@ fn state_pieces(truth: &ReplicaWorld, moment: &Moment, tick: u64) -> Vec<Vec<u8>
     out
 }
 
-/// Bodies by kind, without naming each type at the call.
 mod erased {
     use super::*;
 
@@ -383,7 +368,6 @@ fn frame_pieces(msgs: &[ServerToClient]) -> Vec<Vec<u8>> {
     out
 }
 
-/// What a replica ingests, as the presentation's naive twin applies it.
 fn ingest(world: &mut ReplicaWorld, moment: &mut Moment, msgs: &[ServerToClient]) {
     let mut installed = Vec::new();
     for msg in msgs {
@@ -528,8 +512,6 @@ fn record_session(side: i32, last_tick: u64, seed: u64, full_every: u64) -> Sess
         let side_blocks = side as u64 * 16;
         let block_deltas = (0..1 + rng.next(3))
             .map(|_| {
-                // Most writes land near the ground; some clear a pillar top,
-                // so a heightmap scans down.
                 let y = if rng.chance(20) {
                     64
                 } else {
@@ -561,8 +543,6 @@ fn record_session(side: i32, last_tick: u64, seed: u64, full_every: u64) -> Sess
         } else {
             Vec::new()
         };
-        // One dropped item at a time; its id moves on every 40 ticks, and
-        // the old one leaves the lane as the new one enters it.
         let item = |t: u64| 1 + (t / 40);
         let mut update = TickUpdate::new(t, t * 3);
         update.push_list::<BlockDelta>(block_deltas);
@@ -599,8 +579,6 @@ fn record_session(side: i32, last_tick: u64, seed: u64, full_every: u64) -> Sess
         msgs.push(ServerToClient::Tick(Box::new(update)));
         ingest(&mut truth, &mut moment, &msgs);
         if t == 1 {
-            // A loop the capturing client heard start before the capture did:
-            // the state states it, and batch 40 stops it.
             moment.loops.insert(9, looping());
         }
         let frame = session.events.frame(t - 1, t, frame_pieces(&msgs));
@@ -634,7 +612,6 @@ fn record_session(side: i32, last_tick: u64, seed: u64, full_every: u64) -> Sess
     session
 }
 
-/// A looping sound, as the command that started it.
 fn looping() -> SpatialSoundMsg {
     SpatialSoundMsg::PlayAt {
         handle: 9,
@@ -645,7 +622,6 @@ fn looping() -> SpatialSoundMsg {
     }
 }
 
-/// The sections `msgs` write, in position order.
 fn sections_written(msgs: &[ServerToClient]) -> Vec<SectionPos> {
     let key = |p: SectionPos| (p.cx, p.cy, p.cz);
     let cell = |p: IVec3| SectionPos::from_world(p.x, p.y, p.z).map(key);
@@ -680,9 +656,6 @@ fn sections_written(msgs: &[ServerToClient]) -> Vec<SectionPos> {
         .collect()
 }
 
-// --- the naive twin -----------------------------------------------------------
-
-/// A replica applying every apply naively: the reference.
 struct Naive {
     world: ReplicaWorld,
     moment: Moment,
@@ -707,7 +680,6 @@ impl Naive {
         }
     }
 
-    /// `pieces` are the state pieces in the order the apply lists them.
     fn apply(
         &mut self,
         files: &Files,
@@ -723,7 +695,6 @@ impl Naive {
             let (head, body_bytes) = unpack::checked(&bytes, range, "naive", &vocab)?;
             decoded.push((key, head, body_bytes.to_vec()));
         }
-        // Checks first: a failing apply changes nothing.
         let stated: BTreeSet<ClientStateKey> = pieces.iter().map(|p| p.0).collect();
         let mut moment = self.moment.clone();
         moment.previous = None;
@@ -826,8 +797,6 @@ impl Naive {
     }
 }
 
-// --- the presented world, read back whole --------------------------------------
-
 struct Files {
     by_incarnation: BTreeMap<u64, Vec<u8>>,
 }
@@ -877,8 +846,6 @@ fn world_terrain(world: &ReplicaWorld) -> Terrain {
     (sections, columns)
 }
 
-/// Everything the presentation states: resident from the replica, away
-/// from its index (reading ranges, applying what waits on them).
 fn presented_terrain(p: &Presentation, replica: &ReplicaWorld, files: &Files) -> Terrain {
     let (mut sections, mut columns) = world_terrain(replica);
     for (&c, away) in &p.stated.away {
@@ -943,14 +910,10 @@ fn first_difference(a: &Terrain, b: &Terrain) -> Option<String> {
     None
 }
 
-/// The resident sections' `Arc`s.
 fn resident_arcs(world: &ReplicaWorld) -> BTreeMap<(i32, i32, i32), SectionContent> {
     world_terrain(world).0
 }
 
-// --- driving -----------------------------------------------------------------
-
-/// Drive until every call has taken effect and the window is loaded.
 fn settle(p: &mut Presentation, replica: &mut ReplicaWorld) -> super::DriveOut {
     let mut out = super::DriveOut::default();
     loop {
@@ -1053,10 +1016,8 @@ impl Harness {
     }
 }
 
-/// One apply as both sides take it.
 struct ApplyCase {
     state: Vec<FileRanges>,
-    /// The state pieces in the order the apply lists them.
     pieces: Vec<(ClientStateKey, PieceRange)>,
     events_from: u64,
     events_count: u64,
@@ -1066,7 +1027,6 @@ struct ApplyCase {
 fn random_apply(h: &Harness, rng: &mut Rng) -> ApplyCase {
     let snaps = &h.session.snapshots;
     let snap = &snaps[rng.next(snaps.len() as u64) as usize];
-    // Each part is one ranges list and the pieces it lists, in order.
     let part = |snap: &Snapshot, rng: &mut Rng, whole: bool, keep: u64| {
         if whole {
             return (
@@ -1091,7 +1051,6 @@ fn random_apply(h: &Harness, rng: &mut Rng) -> ApplyCase {
     let whole = rng.chance(30);
     let mut parts = vec![part(snap, rng, whole, 70)];
     if rng.chance(30) {
-        // Another capture's pieces over (or under) these: the last wins.
         let other = &snaps[rng.next(snaps.len() as u64) as usize];
         parts.push(part(other, rng, false, 20));
         if rng.chance(50) {
@@ -1168,8 +1127,6 @@ fn every_apply_equals_the_naive_apply_and_keeps_unchanged_arcs() {
                     );
                     match (&expected, out.failed.first()) {
                         (Ok(()), None) => {
-                            // The loops still sounding restart on the landed
-                            // moment's newest batch.
                             let newest = out.messages.iter().rev().find_map(|m| match m {
                                 ServerToClient::Tick(t) => {
                                     Some(t.events().cloned().unwrap_or_default())
@@ -1216,7 +1173,6 @@ fn every_apply_equals_the_naive_apply_and_keeps_unchanged_arcs() {
                     let count = rng.next(8) + 1;
                     p.push(Op::Queue(vec![h.frames_from(from, count)]));
                     naive.queue.extend(h.decoded_frames(from, count));
-                    // What the position already needs releases at once.
                     naive.time(naive.position);
                     settle(&mut p, &mut replica);
                     ("queued", false)
@@ -1235,9 +1191,6 @@ fn every_apply_equals_the_naive_apply_and_keeps_unchanged_arcs() {
         assert_eq!(p.position, naive.position, "step {step}: position");
         assert_eq!(p.released_through, naive.released, "step {step}: released");
         if landed && !window_moved {
-            // A key whose content did not change keeps its `Arc`, its mesh and
-            // its light, unless a neighbour's change remeshes it (marking a
-            // section for a remesh is a write to it).
             let after = resident_arcs(&replica);
             let changed: BTreeSet<(i32, i32, i32)> = before
                 .iter()
@@ -1272,8 +1225,6 @@ fn every_apply_equals_the_naive_apply_and_keeps_unchanged_arcs() {
         "every path taken: {counts:?}"
     );
 }
-
-// --- a capturing mod's seek ----------------------------------------------------
 
 /// What a seek to `tau` passes when the world presents through batch `from`
 /// (`None`: nothing yet): the piece holding each key's content at the

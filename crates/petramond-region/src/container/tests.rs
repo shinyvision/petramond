@@ -3,7 +3,6 @@ use petramond_util::test_dirs::TestScratchDir;
 use std::fs;
 use std::path::PathBuf;
 
-/// The scratch dir must outlive the test body: dropping it removes the file.
 fn temp_path(tag: &str) -> (TestScratchDir, PathBuf) {
     let dir = TestScratchDir::new(&format!("region-{tag}"));
     let path = dir.join("region.dat");
@@ -17,7 +16,6 @@ fn read(path: &Path, lidx: u16) -> Option<Vec<u8>> {
         .expect("record reads")
 }
 
-/// A v2 file laid out by hand: the contiguous header table, then the bodies.
 fn write_v2(path: &Path, records: &[(u16, &[u8])]) {
     let mut out = Vec::new();
     out.extend(MAGIC_V2.to_le_bytes());
@@ -60,8 +58,6 @@ fn merge_preserves_untouched_records() {
     assert_eq!(read(&path, 100), None);
 }
 
-/// The point of v3: replacing one record appends it and a new index; every
-/// byte already in the file stays where it was, except the header slot.
 #[test]
 fn a_merge_appends_instead_of_rewriting_the_file() {
     let (_dir, path) = temp_path("append");
@@ -85,8 +81,6 @@ fn a_merge_appends_instead_of_rewriting_the_file() {
     assert_eq!(read(&path, 8), Some(vec![8; 1000]));
 }
 
-/// A reader opened before an append keeps reading what it indexed: nothing
-/// it points at is overwritten.
 #[test]
 fn an_open_reader_survives_an_append() {
     let (_dir, path) = temp_path("reader");
@@ -97,15 +91,11 @@ fn an_open_reader_survives_an_append() {
     assert_eq!(read(&path, 1), Some(vec![2; 30]));
 }
 
-/// A torn (or never flushed) newest slot fails its checksum, and so does a
-/// slot whose index never reached the disk: the reader falls back to the
-/// previous slot, which still names the state before the merge.
 #[test]
 fn a_torn_slot_or_index_falls_back_to_the_previous_state() {
     let (_dir, path) = temp_path("torn");
     merge_region(&path, [(3, vec![1; 8])], MergePolicy::Durable).unwrap();
     merge_region(&path, [(3, vec![2; 8])], MergePolicy::Durable).unwrap();
-    // The first write was a compaction into slot 0; the append used slot 1.
     let mut bytes = fs::read(&path).unwrap();
     bytes[Slot::offset(1) as usize + 3] ^= 0xFF;
     fs::write(&path, &bytes).unwrap();
@@ -119,8 +109,6 @@ fn a_torn_slot_or_index_falls_back_to_the_previous_state() {
     assert_eq!(read(&path, 3), Some(vec![1; 8]), "torn index");
 }
 
-/// Bytes a crashed append left past the index are garbage no slot names:
-/// readers ignore them and the next merge appends after them.
 #[test]
 fn trailing_bytes_from_a_crashed_append_are_ignored() {
     let (_dir, path) = temp_path("trailing");
@@ -134,9 +122,6 @@ fn trailing_bytes_from_a_crashed_append_are_ignored() {
     assert_eq!(read(&path, 6), Some(vec![6; 16]));
 }
 
-/// Rewriting the same records over and over compacts once the garbage
-/// outweighs the live data: the file stays bounded by a small multiple of
-/// what it holds.
 #[test]
 fn garbage_is_compacted_away() {
     let (_dir, path) = temp_path("compact");
@@ -191,7 +176,7 @@ fn v1_interleaved_files_are_rejected() {
     let (_dir, path) = temp_path("v1");
     let mut out = Vec::new();
     out.extend(MAGIC_V2.to_le_bytes());
-    out.extend(1u16.to_le_bytes()); // the old interleaved version
+    out.extend(1u16.to_le_bytes());
     out.extend(1u16.to_le_bytes());
     out.extend(7u16.to_le_bytes());
     out.extend(3u32.to_le_bytes());

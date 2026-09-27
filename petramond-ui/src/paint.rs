@@ -1,19 +1,5 @@
-//! Paint primitives: the renderer-agnostic [`DrawList`] and the emission
-//! helpers that fill it.
-//!
-//! Vertices are in **physical pixels, top-left origin, y down** — the game's
-//! wgpu adapter converts to NDC on upload; the software rasterizer consumes
-//! them directly. All logical→physical scaling happens here (one multiply, in
-//! [`Painter`]), so layout stays integer-logical and draw/hit can't diverge.
-//!
-//! Paint semantics are deliberately tiny so two backends stay bit-identical:
-//! axis-aligned textured quads (plus rotated quads for `rotimage`), nearest
-//! sampling, straight-alpha over-blending, per-batch scissor clips.
-
 use crate::layout::RectI;
 
-/// A single UI vertex. `uv = (-1, -1)` is the solid-color sentinel (no
-/// texture sample) — same convention as the game's `ui.wgsl`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct UiVertex {
@@ -22,24 +8,16 @@ pub struct UiVertex {
     pub color: [f32; 4],
 }
 
-/// uv sentinel marking a solid-color quad.
 pub const SOLID_UV: [f32; 2] = [-1.0, -1.0];
 
-/// Which texture a batch samples. The host maps each to a real binding.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TexId {
-    /// No texture: solid vertex color.
     Solid,
-    /// A theme atlas page ([`crate::Theme::pages`]).
     ThemePage(u16),
-    /// The UI font's glyph atlas ([`crate::Theme::font_atlas`]).
     Font,
-    /// A document-local image, by the host's per-document registry index.
     DocImage(u16),
 }
 
-/// One contiguous vertex range drawn with one texture and one optional
-/// scissor rect (physical px).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Batch {
     pub tex: TexId,
@@ -48,20 +26,10 @@ pub struct Batch {
     pub clip: Option<[i32; 4]>,
 }
 
-/// The CPU-built frame: every quad of one GUI in paint order. Buffers are
-/// reused across frames (cleared, capacity kept).
-///
-/// Batches split into two tiers at [`DrawList::overlay_start`]: the base
-/// document, then anything that floats above the host's own content (tooltip
-/// subtrees). The host draws the base tier, then its item icons, then the
-/// overlay tier — otherwise host content painted over the whole draw list
-/// would show through a floating panel.
 #[derive(Default, Debug)]
 pub struct DrawList {
     pub vertices: Vec<UiVertex>,
     pub batches: Vec<Batch>,
-    /// First overlay-tier batch index (== `batches.len()` when the frame has
-    /// no overlay).
     pub overlay_start: usize,
 }
 
@@ -76,26 +44,18 @@ impl DrawList {
         self.vertices.is_empty()
     }
 
-    /// Close the base tier: every batch pushed from here on is overlay tier.
-    /// Sealing also stops batch merging across the boundary, so the two tiers
-    /// can always be drawn as separate ranges.
     pub fn begin_overlay(&mut self) {
         self.overlay_start = self.batches.len();
     }
 
-    /// The base-tier batches (everything under the host's content).
     pub fn base_batches(&self) -> &[Batch] {
         &self.batches[..self.overlay_start.min(self.batches.len())]
     }
 
-    /// The overlay-tier batches (everything over the host's content).
     pub fn overlay_batches(&self) -> &[Batch] {
         &self.batches[self.overlay_start.min(self.batches.len())..]
     }
 
-    /// Push one quad given its four physical-px corners (tl, tr, br, bl) and
-    /// matching UVs, merging into the previous batch when texture and clip
-    /// agree.
     pub fn push_quad(
         &mut self,
         tex: TexId,
@@ -116,8 +76,6 @@ impl DrawList {
             v(br, uv_br),
             v(tr, uv_tr),
         ]);
-        // Never merge across the tier boundary: the two ranges are drawn at
-        // different times.
         let mergeable = self.batches.len() > self.overlay_start;
         match self.batches.last_mut().filter(|_| mergeable) {
             Some(b) if b.tex == tex && b.clip == clip && b.start + b.count == start => {
@@ -132,8 +90,6 @@ impl DrawList {
         }
     }
 
-    /// Axis-aligned quad from a physical-px rect and a pixel rect within a
-    /// texture of `tex_size`.
     pub fn push_rect(
         &mut self,
         tex: TexId,
@@ -158,9 +114,6 @@ impl DrawList {
     }
 }
 
-/// Where a sprite's pixels come from: a texture, the pixel rect within it,
-/// and the texture's size (resolved once from the theme or the document's
-/// image registry).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct SpriteSrc {
     pub tex: TexId,
@@ -174,7 +127,6 @@ impl SpriteSrc {
     }
 }
 
-/// How a primitive is tinted and clipped (logical clip rect).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct PaintStyle {
     pub color: [f32; 4],
@@ -182,7 +134,6 @@ pub struct PaintStyle {
 }
 
 impl PaintStyle {
-    /// Untinted, optionally clipped.
     pub fn plain(clip: Option<RectI>) -> PaintStyle {
         PaintStyle {
             color: [1.0; 4],
@@ -191,30 +142,18 @@ impl PaintStyle {
     }
 }
 
-/// How a sprite fills its destination rect.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Fit {
-    /// Stretched over the whole rect.
     Stretch,
-    /// Aspect kept, source cropped so the rect is fully covered.
     Cover,
-    /// Repeated at natural size with partial edge tiles.
     Tile,
-    /// 9-sliced with `[l, t, r, b]` insets.
     NineSlice([i32; 4]),
-    /// Rotated by `angle` radians around `pivot` (logical px from the rect's
-    /// top-left; `None` = centre).
     Rotated { angle: f32, pivot: Option<[f32; 2]> },
 }
 
-/// Scaled emission over a [`DrawList`]: all inputs are *logical* px; the one
-/// logical→physical multiply lives here.
 pub struct Painter<'a> {
     pub list: &'a mut DrawList,
     pub scale: i32,
-    /// The font every text call measures AND samples. Carried explicitly
-    /// rather than read from the process default, so a host that paints a
-    /// theme it never installed still draws the glyphs it measured.
     pub font: &'a crate::text::Font,
 }
 
@@ -254,7 +193,6 @@ impl Painter<'_> {
         );
     }
 
-    /// Draw `src` over the logical rect `r`, filled as `fit` says.
     pub fn sprite(&mut self, src: &SpriteSrc, r: RectI, fit: Fit, style: PaintStyle) {
         let clip = self.phys_clip(style.clip);
         let color = style.color;
@@ -271,8 +209,6 @@ impl Painter<'_> {
         }
     }
 
-    /// Preserve the aspect ratio, cropping the source symmetrically so the
-    /// destination is fully covered.
     fn cover(&mut self, src: &SpriteSrc, r: RectI, color: [f32; 4], clip: Option<[i32; 4]>) {
         if r.w <= 0 || r.h <= 0 || src.rect[2] == 0 || src.rect[3] == 0 {
             return;
@@ -292,8 +228,6 @@ impl Painter<'_> {
             .push_rect(src.tex, dst, crop, src.tex_size, color, clip);
     }
 
-    /// Repeat the source at its natural 1x-art size (logical px), with
-    /// partial tiles at the right/bottom edges.
     fn tiled(&mut self, src: &SpriteSrc, r: RectI, color: [f32; 4], clip: Option<[i32; 4]>) {
         let (tile_w, tile_h) = (src.rect[2].max(1) as i32, src.rect[3].max(1) as i32);
         let mut y = 0;
@@ -317,8 +251,6 @@ impl Painter<'_> {
         }
     }
 
-    /// 9-slice: corners stay 1:1 (slice insets are 1x-art px = logical px),
-    /// edges and centre stretch.
     fn nine_slice(
         &mut self,
         src: &SpriteSrc,
@@ -330,8 +262,6 @@ impl Painter<'_> {
         let [sl, st, sr, sb] = slice.map(|v| v.max(0) as f32);
         let [sx, sy, sw, sh] = src.rect_f32();
         let [dx, dy, dw, dh] = self.phys(r);
-        // Destination insets scale with the gui scale so corner pixels stay
-        // on the pixel grid; clamp so tiny rects degrade to plain stretch.
         let s = self.s();
         let (dl, dr2) = clamp_pair(sl * s, sr * s, dw);
         let (dt, db) = clamp_pair(st * s, sb * s, dh);
@@ -360,8 +290,6 @@ impl Painter<'_> {
         }
     }
 
-    /// Rotate by `angle` radians around `pivot` (logical px from `r`'s
-    /// top-left; `None` = centre).
     fn rotated(
         &mut self,
         src: &SpriteSrc,
@@ -401,20 +329,15 @@ impl Painter<'_> {
         );
     }
 
-    /// Single-line text at logical `(x, y)` (top-left of the run).
     pub fn text(&mut self, s: &str, x: i32, y: i32, color: [f32; 4], clip: Option<RectI>) {
         self.text_scaled(s, x, y, 1, color, clip);
     }
 
-    /// Single-line text constrained to its solved layout box. Runs that do
-    /// not fit end in an ASCII ellipsis, and the box is intersected with any
-    /// inherited scroll clip so labels never paint over adjacent widgets.
     pub fn text_ellipsized(&mut self, s: &str, rect: RectI, color: [f32; 4], clip: Option<RectI>) {
         let k = self.scale;
         self.ellipsized_at(s, rect, k, color, clip);
     }
 
-    /// [`Self::text_ellipsized`] one gui-scale step smaller.
     pub fn text_ellipsized_small(
         &mut self,
         s: &str,
@@ -426,9 +349,6 @@ impl Painter<'_> {
         self.ellipsized_at(s, rect, k, color, clip);
     }
 
-    /// [`Self::text_ellipsized`] at an explicit `k` physical px per font
-    /// pixel, for a host placing text in its own pixel space (a painter at
-    /// scale 1) at a glyph size it chose.
     pub fn ellipsized_at(
         &mut self,
         s: &str,
@@ -442,15 +362,11 @@ impl Painter<'_> {
             return;
         }
         let font = self.font;
-        // Fit in FONT pixels: the box is logical, the run is drawn at `k`
-        // physical px per font pixel, so both steps share one rule.
         let room_font_px = rect.w * self.scale / k.max(1);
         if font.width(s) <= room_font_px {
             self.text_at(s, rect.x, rect.y, k, color, Some(clip));
             return;
         }
-        // Reserve the ellipsis first, then fit what is left — with
-        // proportional glyphs the truncation point depends on the characters.
         let dots = "...";
         let room = room_font_px - font.width(dots);
         if room <= 0 {
@@ -477,14 +393,9 @@ impl Painter<'_> {
         clip: Option<RectI>,
     ) {
         let font = self.font;
-        // Char offsets from the editor -> measured x, so the caret and the
-        // selection always sit on the glyph boundaries they name.
         let run_x = |chars: usize| -> i32 {
             font.width(&view.text.chars().take(chars).collect::<String>())
         };
-        // Caret and selection cover the text BODY, not the whole glyph box:
-        // the cell reserves headroom for accented capitals that ordinary text
-        // leaves empty, and a caret sized to it fills the input box.
         let (body_top, body_h) = font.body_span();
         if let Some((s0, s1)) = view.selection {
             let (x0, x1) = (run_x(s0), run_x(s1));
@@ -514,7 +425,6 @@ impl Painter<'_> {
         }
     }
 
-    /// Single-line text with a glyph-size multiplier (headings).
     pub fn text_scaled(
         &mut self,
         s: &str,
@@ -528,29 +438,21 @@ impl Painter<'_> {
         self.text_at(s, x, y, k, color, clip);
     }
 
-    /// Physical px per font pixel for text drawn one gui-scale step down.
-    /// A bitmap font has one crisp size, but the UI is drawn at an integer
-    /// scale, so a smaller INTEGER multiple is still exactly on the pixel
-    /// grid. At scale 1 there is no smaller step.
     pub fn small_text_step(&self) -> i32 {
         (self.scale - 1).max(1)
     }
 
-    /// Single-line text one gui-scale step smaller (secondary text).
     pub fn text_small(&mut self, s: &str, x: i32, y: i32, color: [f32; 4], clip: Option<RectI>) {
         let k = self.small_text_step();
         self.text_at(s, x, y, k, color, clip);
     }
 
-    /// Emit one run at `k` PHYSICAL px per font pixel, from a logical origin.
     fn text_at(&mut self, s: &str, x: i32, y: i32, k: i32, color: [f32; 4], clip: Option<RectI>) {
         let clip = self.phys_clip(clip);
         let font = self.font;
         let (tw, th) = font.atlas_size();
         let (mut cx, py) = (x * self.scale, y * self.scale);
         for ch in s.chars() {
-            // Each glyph is its own tight bitmap, placed against the pen and
-            // the line top; blank glyphs (spaces) emit nothing.
             let glyph = font.glyph(ch);
             let [dx, dy, w, h] = glyph.bounds();
             if w > 0 && h > 0 {
@@ -572,10 +474,6 @@ impl Painter<'_> {
         }
     }
 
-    /// Word-wrapped text that stops after `max_lines`, the last kept line
-    /// carrying the rest of the text ellipsized; `small` draws one gui-scale
-    /// step down. Breaks are computed in FONT pixels at the drawn step, so the
-    /// lines the layout reserved room for are the lines drawn.
     #[allow(clippy::too_many_arguments)]
     pub fn text_wrapped_lines(
         &mut self,
@@ -614,7 +512,6 @@ impl Painter<'_> {
         }
     }
 
-    /// Word-wrapped text inside a logical rect (top-left aligned lines).
     pub fn text_wrapped(&mut self, s: &str, r: RectI, color: [f32; 4], clip: Option<RectI>) {
         let mut y = r.y;
         let advance = self.font.line_advance();
@@ -624,10 +521,6 @@ impl Painter<'_> {
         }
     }
 
-    /// [`Self::text_wrapped`] one gui-scale step smaller. Wrap breaks are
-    /// computed in FONT pixels at the smaller step (the same conversion
-    /// `Self::ellipsized_at` uses), so the lines the layout reserved room
-    /// for are the lines drawn.
     pub fn text_wrapped_small(&mut self, s: &str, r: RectI, color: [f32; 4], clip: Option<RectI>) {
         let k = self.small_text_step();
         let room_font_px = r.w * self.scale / k.max(1);
@@ -640,8 +533,6 @@ impl Painter<'_> {
     }
 }
 
-/// Clamp a leading/trailing inset pair so it never exceeds the available
-/// span (shrinks both proportionally when it would).
 fn clamp_pair(lead: f32, trail: f32, span: f32) -> (f32, f32) {
     let sum = lead + trail;
     if sum <= span || sum <= 0.0 {
@@ -665,7 +556,6 @@ mod tests {
             scale: 2,
             font: &font,
         };
-        // Room for exactly "Abc..." at the current font.
         let rect = RectI {
             x: 4,
             y: 5,
@@ -674,8 +564,6 @@ mod tests {
         };
         p.text_ellipsized("A long recipe name", rect, [1.0; 4], None);
 
-        // Whatever fits, the run always ends in the three-dot ellipsis and
-        // never exceeds the box it was measured against.
         let glyphs = dl.vertices.len() / 6;
         assert!(glyphs > 3, "some of the text survives: {glyphs}");
         assert!(
@@ -768,7 +656,7 @@ mod tests {
             None,
         );
         assert_eq!(dl.vertices[0].pos, [15.0, 21.0]);
-        assert_eq!(dl.vertices[2].pos, [45.0, 27.0]); // br corner
+        assert_eq!(dl.vertices[2].pos, [45.0, 27.0]);
     }
 
     #[test]
@@ -802,7 +690,6 @@ mod tests {
         assert_eq!(dl.vertices[2].uv, [0.75, 1.0]);
     }
 
-    /// A 16×16 part at the origin of a 64×64 theme page.
     const PAGE0: SpriteSrc = SpriteSrc {
         tex: TexId::ThemePage(0),
         rect: [0, 0, 16, 16],
@@ -830,10 +717,8 @@ mod tests {
             PaintStyle::plain(None),
         );
         assert_eq!(dl.vertices.len(), 9 * 6);
-        // Top-left corner cell: 4 logical px → 8 physical px square.
         assert_eq!(dl.vertices[0].pos, [0.0, 0.0]);
         assert_eq!(dl.vertices[2].pos, [8.0, 8.0]);
-        // Corner uv spans exactly the 4px src inset.
         assert_eq!(dl.vertices[0].uv, [0.0, 0.0]);
         assert_eq!(dl.vertices[2].uv, [4.0 / 64.0, 4.0 / 64.0]);
     }
@@ -847,7 +732,6 @@ mod tests {
             scale: 1,
             font: &font,
         };
-        // Dst exactly two insets wide: no middle column.
         p.sprite(
             &PAGE0,
             RectI {
@@ -871,7 +755,6 @@ mod tests {
             scale: 1,
             font: &font,
         };
-        // 90° around the rect centre maps tl -> tr.
         let src = SpriteSrc {
             tex: TexId::DocImage(0),
             rect: [0, 0, 10, 10],

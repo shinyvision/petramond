@@ -4,9 +4,6 @@ use super::builders::{
 };
 use crate::uniforms::{ShaderParams, Uniforms};
 
-/// Load a pack shader row's declared texture paths into the four fixed
-/// slots, blank-filling missing/undecodable slots, and bind them at
-/// `slot*2`/`slot*2+1`. Shared by the sky and environment hooks.
 pub(super) fn create_shader_texture_bind(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -59,7 +56,6 @@ pub(super) fn create_shader_texture_bind(
     })
 }
 
-/// The values the sky pass hands back to [`PipelineResources`].
 pub(super) struct SkyResources {
     pub(super) pipe: crate::pipeline::SampledPipeline,
     pub(super) bind: wgpu::BindGroup,
@@ -68,10 +64,6 @@ pub(super) struct SkyResources {
     pub(super) light_param_key: Option<String>,
 }
 
-/// Sky-background pipeline.
-/// Uses a sky-specific group 0 (frame uniforms + mod shader params) and a
-/// fixed sky-texture group 1. It does not use terrain atlas resources or the
-/// block pipeline's uv-rect table.
 pub(super) fn create_sky_pipeline(
     device: &wgpu::Device,
     queue: &wgpu::Queue,

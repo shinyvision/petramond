@@ -1,41 +1,19 @@
-//! The fragile-block break behaviour: plants and torches that cannot stand once the
-//! support they rest on is gone.
-//!
-//! Lives here in `world` (not `block`) for the same reason water does — it drives the
-//! natural-break hand-off ([`World::note_block_destroyed`]), world internals a
-//! `block`-side behaviour can't reach — while still implementing the `block`-defined
-//! `BlockBehavior`. Carried by every block tagged [`BlockTag::FRAGILE`](petramond_world::block::BlockTag::FRAGILE) (see
-//! `block::data`): the tag is the categorisation (the water sim reads it to know which
-//! cells it may flow into), this behaviour is what such a block DOES when its support
-//! changes.
-
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_world::block::Block;
 
-/// Break behaviour for fragile blocks (the cross-plants and the torch). A block update
-/// that takes away the block's support resolves the verdict at the update itself: the
-/// dispatch re-reads the cell (a later write in the same tick may have won it) and,
-/// only if the block is still fragile and still unsupported, shatters it — dropping
-/// and bursting exactly as a player's hand-break would (see
-/// [`World::note_block_destroyed`]). Support is a pure predicate of the live
-/// neighbourhood, so there is nothing to wait for and nothing to reschedule.
 pub struct Fragile;
 
 impl crate::world::engine_behavior::EngineBlockBehavior for Fragile {
     fn neighbor_update(&self, world: &mut ServerWorld, pos: IVec3) {
-        // Dispatch already read this cell as the fragile block when the update was
-        // queued; re-read — the cell may hold something else now (mined, replaced).
         let block = Block::from_id(world.data.chunk_block(pos.x, pos.y, pos.z));
         if !block.is_fragile() || world.data.fragile_supported(pos, block) {
             return;
         }
-        // Shatter it as a natural break — drops + burst, exactly as a hand-break.
         world.break_block_naturally(pos);
     }
 }
 
-/// The fragile singleton a row points at (`behavior: &behavior::FRAGILE`).
 pub static FRAGILE: Fragile = Fragile;
 
 #[cfg(test)]
@@ -48,7 +26,6 @@ mod tests {
     use petramond_world::crafting::Recipes;
     use petramond_world::torch::TorchPlacement;
 
-    /// A world with one empty loaded chunk at the origin.
     fn world() -> ServerWorld {
         let mut w = ServerWorld::new(0, 4);
         w.insert_chunk_for_test(ChunkPos::new(0, 0), Chunk::new(0, 0));
@@ -83,7 +60,6 @@ mod tests {
             w.set_block_world(p.x, p.y, p.z, b);
             petramond_world::block::full_face_at(w.data(), p, dir)
         };
-        // A one-texel cover: its floor is against the boundary, its top is not.
         assert_eq!(
             face(Block::SnowLayer, -IVec3::Y),
             Some(petramond_world::block::FullFace::Shaped),
@@ -94,8 +70,6 @@ mod tests {
             None,
             "a cover's top is a texel up, not at the boundary — nothing stands on it"
         );
-        // The cactus: cap plate = matter (though it does not collide), side
-        // planes = face carriers (they draw, and are not matter).
         assert_eq!(
             face(Block::Cactus, IVec3::Y),
             Some(petramond_world::block::FullFace::Shaped),
@@ -106,29 +80,22 @@ mod tests {
             None,
             "an `occludes: false` face carrier is not something to mount on"
         );
-        // …and it is SHAPED, never CUBE: the material rules that bind a cube
-        // face (opaque-only fence joins) must not start binding box sets.
         assert_eq!(
             face(Block::Stone, IVec3::Y),
             Some(petramond_world::block::FullFace::Cube)
         );
     }
 
-    /// A row that DECLARED what its floor must be keeps that rule once placed,
-    /// so the gate that let it be placed and the rule that keeps it there
-    /// cannot disagree — a mushroom rooted on a stair top by anything other
-    /// than a player click still sheds.
+    /// A row that declared its floor requirement keeps that rule once placed, so the gate that
+    /// allowed placement and the rule that keeps it standing can't disagree. A mushroom rooted on
+    /// a stair top by anything other than a player click still sheds.
     ///
-    /// It has to be checked BEFORE `rests_flat_on_floor`, which probes octant
-    /// VOLUMES: anything with a foot on the floor reads as lying flat and would
-    /// otherwise take the cover rule (any full collision cube) instead of its
-    /// own declaration.
+    /// Must run before `rests_flat_on_floor`. That check probes octant volumes, so anything with a
+    /// foot on the floor looks flat and would fall through to the generic cover rule instead of
+    /// using its own declaration.
     #[test]
     fn a_declared_floor_requirement_is_also_the_survival_rule() {
         let mut w = world();
-        // `petramond:brown_mushroom` declares `roots_face: "full_cube"`.
-        // Both sites stay clear of the lone chunk's borders, like the snow
-        // test above — the streaming-finality guard drops breaks near them.
         w.set_block_world(6, 64, 8, Block::Stone);
         w.set_block_world(6, 65, 8, Block::BrownMushroom);
         let stair = IVec3::new(10, 64, 8);
@@ -151,9 +118,6 @@ mod tests {
         );
     }
 
-    /// The compass mapping of a wall support. Getting this backwards puts every
-    /// wall-mounted block's support cell on the far side of the wall, where it
-    /// is usually air — and the block then breaks at the update that placed it.
     #[test]
     fn a_wall_supports_row_reads_the_cell_its_side_names() {
         for (dir, facing) in [
@@ -176,11 +140,9 @@ mod tests {
         let plant = IVec3::new(8, 65, 8);
         w.set_block_world(ground.x, ground.y, ground.z, Block::Dirt);
         w.set_block_world(plant.x, plant.y, plant.z, Block::Poppy);
-        run_ticks(&mut w, 2); // settle: supported, nothing happens
+        run_ticks(&mut w, 2);
         assert_eq!(block(&w, plant), Block::Poppy);
 
-        // Dig the support out: the flower dies inside the first tick's update
-        // dispatch — the verdict resolves at the update, no delay lane involved.
         w.set_block_world(ground.x, ground.y, ground.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
@@ -188,7 +150,6 @@ mod tests {
             Block::Air,
             "unsupported flower must break at the undermining update"
         );
-        // ...and it was handed to the presentation layer as a hand-style break.
         let breaks = w.take_natural_breaks();
         assert!(
             breaks.iter().any(|&(p, b)| p == plant && b == Block::Poppy),
@@ -198,16 +159,14 @@ mod tests {
 
     #[test]
     fn a_cactus_breaks_with_the_update_that_undermines_it() {
-        // The cactus is fragile just like the dead bush: undermine it and it shatters.
         let mut w = world();
         let sand = IVec3::new(8, 64, 8);
         let cactus = IVec3::new(8, 65, 8);
         w.set_block_world(sand.x, sand.y, sand.z, Block::Sand);
         w.set_block_world(cactus.x, cactus.y, cactus.z, Block::Cactus);
-        run_ticks(&mut w, 2); // settle: the sand holds it up, nothing happens
+        run_ticks(&mut w, 2);
         assert_eq!(block(&w, cactus), Block::Cactus);
 
-        // Dig the sand out: the cactus breaks at the undermining update.
         w.set_block_world(sand.x, sand.y, sand.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
@@ -229,7 +188,6 @@ mod tests {
         let mut w = world();
         w.set_block_world(8, 64, 8, Block::Dirt);
         w.set_block_world(8, 65, 8, Block::Poppy);
-        // A change next to the plant (its support untouched) must not break it.
         w.set_block_world(9, 65, 8, Block::Dirt);
         run_ticks(&mut w, 3);
         assert_eq!(block(&w, IVec3::new(8, 65, 8)), Block::Poppy);
@@ -240,8 +198,6 @@ mod tests {
     fn a_wall_torch_breaks_when_the_wall_it_leans_on_is_removed() {
         let mut w = world();
         let torch = IVec3::new(8, 65, 8);
-        // A West-leaning torch is mounted on the wall to its +X (see `TorchPlacement`):
-        // its support is sideways, the one non-data-driven case.
         let wall = TorchPlacement::West.support_cell(torch);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
         w.set_block_world(torch.x, torch.y, torch.z, Block::Torch);
@@ -249,8 +205,6 @@ mod tests {
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, torch), Block::Torch, "held up by its wall");
 
-        // Mine the wall: the torch loses its sideways support and breaks at the
-        // undermining update.
         w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
@@ -266,15 +220,12 @@ mod tests {
     fn a_ladder_breaks_with_the_update_that_mines_its_wall() {
         let mut w = world();
         let ladder = IVec3::new(8, 65, 8);
-        // An east-facing ladder (its own block row) hangs on the wall to its west.
         let wall = petramond_world::ladder::support_cell(ladder, Facing::East);
         w.set_block_world(wall.x, wall.y, wall.z, Block::Stone);
         w.set_block_world(ladder.x, ladder.y, ladder.z, Block::LadderEast);
         run_ticks(&mut w, 2);
         assert_eq!(block(&w, ladder), Block::LadderEast, "held up by its wall");
 
-        // Mine the wall: the ladder loses its support and breaks at the update's
-        // dispatch (the same announce → resolve-at-update cadence as the wall torch).
         w.set_block_world(wall.x, wall.y, wall.z, Block::Air);
         run_ticks(&mut w, 1);
         assert_eq!(
@@ -293,12 +244,7 @@ mod tests {
 
     #[test]
     fn a_snow_layer_rests_on_any_full_cube_but_sheds_off_partial_shapes() {
-        // Both sites stay >= SIM_READ_REACH cells from the lone chunk's
-        // borders, or the streaming-finality guard drops the dispatched break.
         let mut w = world();
-        // Leaves are a full collision cube without being opaque: canopy snow
-        // must persist (the weather mod lays it there; it used to shatter on
-        // the placement's own block update).
         w.set_block_world(7, 64, 8, Block::OakLeaves);
         w.set_block_world(7, 65, 8, Block::SnowLayer);
         run_ticks(&mut w, 3);
@@ -308,7 +254,6 @@ mod tests {
             "canopy snow must persist on leaves"
         );
 
-        // A stair is not a full cube: the layer sheds on the next tick.
         let stair = IVec3::new(9, 64, 8);
         assert!(w.place_stair(
             stair,
@@ -340,16 +285,13 @@ mod tests {
         assert_eq!(block(&w, torch), Block::Torch, "stair back holds torch");
     }
 
-    /// A block row declaring `support: "above"` hangs from its ceiling, and a
-    /// run of them unzips DOWNWARD from a cut at the top while a cut at the
-    /// bottom takes nothing with it.
+    /// A row with `support: "above"` hangs from its ceiling. A run of them unzips downward from a
+    /// cut at the top; a cut at the bottom takes nothing with it.
     ///
-    /// No engine row hangs, so this needs a pack row: the block registry is a
-    /// process-wide `LazyLock`, so the fixture must be in place before ANY
-    /// test in this binary touches it — hence the established re-spawn
-    /// pattern (this test writes a content-only pack and runs the `#[ignore]`d
-    /// inner test below in a child process with `PETRAMOND_MODS` set).
-    /// Deterministic regardless of test order.
+    /// No engine block hangs, so this needs a pack fixture. The block registry is a process-wide
+    /// `LazyLock` and must be seeded before any test touches it, hence the re-spawn pattern: write
+    /// a content-only pack, then run the `#[ignore]`d inner test in a child process with
+    /// `PETRAMOND_MODS` set.
     #[test]
     fn a_hanging_row_breaks_downward_and_never_upward() {
         let root = petramond_util::test_dirs::TestScratchDir::new("hangpack");
@@ -360,8 +302,6 @@ mod tests {
             r#"{ "name": "Hang Test", "id": "hangtest", "description": "support-direction fixture" }"#,
         )
         .unwrap();
-        // Two DIFFERENT hanging rows (a curtain mixes them) plus one ordinary
-        // standing row, so the direction is proven to be per-row data.
         let row = |name: &str, support: &str| {
             format!(
                 r#"{{ "block": "hangtest:{name}", "shape": "cross", "flags": ["transparent"], "tags": ["fragile"], "behavior": "fragile", "interaction": "none", "collision": [], "emission": 0{support}, "tiles": ["poppy", "poppy", "poppy"], "material": "plant", "hardness": 0, "drops": [] }}"#
@@ -386,8 +326,6 @@ mod tests {
         run.assert_passed();
     }
 
-    /// Runs ONLY in the child process spawned above (needs `PETRAMOND_MODS`
-    /// pointing at the fixture pack before first registry touch).
     #[test]
     #[ignore = "spawned by a_hanging_row_breaks_downward_and_never_upward with a fixture pack env"]
     fn hanging_support_inner() {
@@ -404,14 +342,8 @@ mod tests {
         let standing = by_name("hangtest:standing");
 
         let mut w = world();
-        // LEAVES, not stone: a full collision cube that is NOT opaque. A pack's
-        // solid-but-translucent ceiling (a glowing mushroom cap) is the common
-        // real anchor, and an `is_opaque` accept rule would drop every curtain
-        // hanging under one while still passing under rock.
         let ceiling = IVec3::new(8, 70, 8);
         w.set_block_world(ceiling.x, ceiling.y, ceiling.z, Block::OakLeaves);
-        // A five-cell curtain of MIXED hanging rows: chaining is a property of
-        // the declaration, not of block identity.
         let curtain: Vec<IVec3> = (65..=69).rev().map(|y| IVec3::new(8, y, 8)).collect();
         for (i, c) in curtain.iter().enumerate() {
             let b = if i % 2 == 0 { vine } else { vine_lit };
@@ -422,8 +354,6 @@ mod tests {
             assert_ne!(block(&w, *c), Block::Air, "hung curtain must stand: {c:?}");
         }
 
-        // An edit BESIDE the curtain announces to every cell of it; under the
-        // old ground rule that shattered the whole run.
         w.set_block_world(9, 67, 8, Block::Stone);
         run_ticks(&mut w, 3);
         for c in &curtain {
@@ -434,7 +364,6 @@ mod tests {
             );
         }
 
-        // Cut the BOTTOM: nothing above it lost its own support.
         let bottom = curtain[4];
         w.set_block_world(bottom.x, bottom.y, bottom.z, Block::Air);
         run_ticks(&mut w, 6);
@@ -446,8 +375,6 @@ mod tests {
             );
         }
 
-        // Cut the TOP: the whole remaining run unzips downward, one cell per
-        // tick, and each cell is handed over as a natural break (drops + burst).
         let _ = w.take_natural_breaks();
         let top = curtain[0];
         w.set_block_world(top.x, top.y, top.z, Block::Air);
@@ -466,10 +393,6 @@ mod tests {
             "every cascaded cell breaks naturally, exactly once: {breaks:?}"
         );
 
-        // PLACEMENT must accept exactly what the rule above keeps. A hanging
-        // row has no substrate vocabulary — `roots_on` names GROUNDS and its
-        // support is a ceiling — so without a gate it places on open air and
-        // this very tick shatters it, eating the item.
         let mut never_occupied = |_: IVec3, _: &[petramond_world::block::Aabb]| false;
         let mut plan = |w: &ServerWorld, p: IVec3, b: Block| {
             w.data
@@ -494,8 +417,6 @@ mod tests {
             "and so does another hanging row, so a curtain extends downward"
         );
 
-        // The direction is PER ROW: the same fixture's default row is still
-        // held from below and is not held by a ceiling.
         w.set_block_world(7, 64, 7, Block::Dirt);
         w.set_block_world(7, 65, 7, standing);
         w.set_block_world(9, 66, 9, Block::Stone);

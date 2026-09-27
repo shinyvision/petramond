@@ -1,9 +1,6 @@
 use super::*;
 use petramond_world::chunk::{SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
 
-/// The vein table as it was compiled into the scatter pass before it moved
-/// to `ores.json` (block, salt, count, shape, Y band, depth ramp; every vein
-/// hosted by stone), in its fixed placement order.
 pub(crate) fn legacy_veins() -> Vec<OreVein> {
     const STONE: &[Block] = &[Block::Stone];
     let blob = |block, salt, count, size, y_min, y_max| OreVein {
@@ -39,8 +36,6 @@ pub(crate) fn legacy_veins() -> Vec<OreVein> {
     ]
 }
 
-/// The compiled section-skip band the scatter pass used before its span
-/// was derived from the loaded rows.
 const LEGACY_Y_SPAN: (i32, i32) = (WORLD_MIN_Y, 154);
 
 fn base() -> String {
@@ -49,15 +44,12 @@ fn base() -> String {
         .0
 }
 
-/// The shipped table is the compiled one, row for row in placement order.
 #[test]
 fn shipped_rows_match_the_compiled_vein_table() {
     let table = parse_layers(&[&base()]).expect("shipped ores load");
     assert_eq!(table.veins, legacy_veins().as_slice());
 }
 
-/// The derived Y span gates exactly the sections the hand-derived constant
-/// did (it is tighter, but only inside the top section either reaches).
 #[test]
 fn derived_span_gates_the_same_sections_as_the_compiled_constant() {
     let table = parse_layers(&[&base()]).expect("shipped ores load");
@@ -80,8 +72,6 @@ fn derived_span_gates_the_same_sections_as_the_compiled_constant() {
     assert_eq!(table.max_reach, widest);
 }
 
-/// A pack adds an ore after the engine rows (so it never moves them) and may
-/// retune an engine row in place; its hosts may be any blocks.
 #[test]
 fn packs_add_ores_after_the_engine_rows_and_retune_engine_rows() {
     let pack = r#"{"ores": [
@@ -109,7 +99,6 @@ fn packs_add_ores_after_the_engine_rows_and_retune_engine_rows() {
     }
 }
 
-/// Rows the scatter pass could not place seamlessly or at all are refused.
 #[test]
 fn malformed_rows_are_refused() {
     let row = |fields: &str| {
@@ -138,8 +127,6 @@ fn malformed_rows_are_refused() {
     }
 }
 
-/// A row without a pinned salt derives one from its namespaced name, so a
-/// pack author never picks an integer; a salt two rows share is refused.
 #[test]
 fn salts_derive_from_names_and_never_repeat() {
     let pack = r#"{"ores": [{"ore": "mymod:tin", "block": "petramond:gold_ore",

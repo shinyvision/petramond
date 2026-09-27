@@ -1,10 +1,3 @@
-//! Biome-blended vertex tints for the chunk mesher.
-//!
-//! Grass tops, foliage (leaves), and water are tinted by the biome colour, blended
-//! over a 5x5 column window so the colour transitions smoothly across biome borders
-//! The blend is precomputed once per section in
-//! [`biome_window`]; the per-face loop then just looks the column up.
-
 use petramond_world::biome::Biome;
 use petramond_world::chunk::{CHUNK_SX, CHUNK_SZ};
 use petramond_world::tile::TileTint;
@@ -20,11 +13,8 @@ const SUM_Z: usize = BIOME_PAD_Z + 1;
 const SUM_CHANNELS: usize = 9;
 const INV_BLEND_AREA: f32 = 1.0 / (BLEND_DIAMETER * BLEND_DIAMETER) as f32;
 
-/// The untinted (white) tint used for tiles with no biome colour.
 pub(super) const NO_TINT: [f32; 3] = [1.0, 1.0, 1.0];
 
-/// The grass / foliage / water biome tints for every column of one chunk, each
-/// 5x5-window blended. Indexed by the column index `z * CHUNK_SX + x`.
 pub(super) struct BiomeTints {
     pub grass: [[f32; 3]; COLUMNS],
     pub foliage: [[f32; 3]; COLUMNS],
@@ -41,10 +31,6 @@ impl BiomeTints {
         }
     }
 
-    /// The blended tint for a tile at column `ci`, by its
-    /// [`world_tint`](petramond_world::tile::Tile::world_tint) class (untinted tiles get
-    /// [`NO_TINT`]). The classification is atlas-manifest data, so a modded
-    /// texture joins a tint class by declaring it — never a code edit here.
     #[inline]
     pub(super) fn tile(&self, kind: Option<TileTint>, ci: usize) -> [f32; 3] {
         match kind {
@@ -57,10 +43,6 @@ impl BiomeTints {
     }
 }
 
-/// Precompute the biome-blended grass / foliage / water tint of every column in
-/// the chunk at origin `(ox, oz)`, averaging each biome colour over a 5x5 window
-/// of columns around it (`neighbour_biome(wx, wz)` reads the biome id at a world
-/// column, crossing chunk borders).
 pub(super) fn biome_window(
     ox: i32,
     oz: i32,
@@ -185,9 +167,6 @@ mod tests {
     }
 
     fn assert_close(a: [f32; 3], b: [f32; 3]) {
-        // Tolerance is f32 summed-area drift, not exactness: the SAT subtracts
-        // large running sums, so the last bits depend on the palette values
-        // themselves. Real algorithmic breakage differs at percent level.
         for i in 0..3 {
             assert!((a[i] - b[i]).abs() < 0.0001, "{a:?} != {b:?}");
         }

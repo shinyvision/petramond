@@ -1,57 +1,40 @@
-//! Held world tools: an item row names the tool it is while held
-//! ([`ItemType::world_tool`](petramond_world::item::ItemType::world_tool)),
-//! and the tool of that name takes the frame's clicks instead of the
-//! ordinary break/place path.
-
 use super::selection_tool::{SelectionTool, SELECTION_TOOL};
 use super::{Game, GameInput};
 use petramond::schematic::{Selection, SelectionFace};
 use petramond::world::ReplicaWorld;
 use petramond_render::camera::Camera;
 
-/// What a tool reads and reports while it handles a frame.
 pub struct ToolContext<'a> {
     pub cam: &'a Camera,
     pub world: &'a ReplicaWorld,
-    /// A refusal to show the player; left alone when nothing went wrong.
     pub notice: &'a mut String,
 }
 
-/// What a tool asks the renderer's selection overlay to show.
 #[derive(Default, Clone, Copy)]
 pub struct ToolOverlay<'a> {
     pub selection: Option<&'a Selection>,
-    /// The two corners of a box being defined.
     pub corners: Option<([i32; 3], [i32; 3])>,
     pub face: Option<&'a SelectionFace>,
 }
 
 pub trait WorldTool {
-    /// One frame while held with nothing else claiming the clicks. The caller
-    /// consumes the frame's clicks afterwards.
     fn input(&mut self, ctx: &mut ToolContext<'_>, input: &GameInput);
 
     fn overlay(&self) -> ToolOverlay<'_>;
 
-    /// Drop every unfinished operation; whether there was one.
     fn cancel(&mut self) -> bool;
 
-    /// Step the tool's setting by whole notches; whether anything changed.
     fn adjust(&mut self, steps: i32) -> bool;
 
-    /// Undo the tool's last edit, an unfinished operation first.
     fn undo(&mut self);
 
     fn redo(&mut self);
 
-    /// Whether look input is claimed by a drag this frame.
     fn holds_camera(&self) -> bool;
 
-    /// The name of the current setting, announced when it changes.
     fn setting_label(&self) -> &'static str;
 }
 
-/// Every world tool by the name item rows use.
 #[derive(Default)]
 pub struct WorldTools {
     pub selection: SelectionTool,
@@ -78,16 +61,12 @@ impl WorldTools {
 }
 
 impl Game {
-    /// The world tool in hand, wherever the player may hold it: always in
-    /// creative, and outside it once its row is no longer creative-only.
     pub fn held_world_tool(&self) -> Option<&'static str> {
         let stack = self.replica.self_view.inventory.selected()?;
         let name = stack.item.world_tool()?;
         (self.creative_mode() || !stack.item.creative_only()).then_some(name)
     }
 
-    /// The held tool while it owns the edit controls: a placement preview
-    /// takes them over.
     pub(super) fn editing_tool(&mut self) -> Option<&mut dyn WorldTool> {
         if self.tools.preview.is_up() {
             return None;
@@ -96,15 +75,11 @@ impl Game {
         self.tools.world.get_mut(name)
     }
 
-    /// The held tool's current setting, for the change notice.
     pub fn held_tool_setting(&self) -> Option<&'static str> {
         let tool = self.tools.world.get(self.held_world_tool()?)?;
         Some(tool.setting_label())
     }
 
-    /// Step whatever is adjustable by whole notches: a preview's height
-    /// (positive = up) first, else the held tool's setting (positive = next).
-    /// `false` = nothing took the notches.
     pub fn adjust_tool(&mut self, steps: i32) -> bool {
         if self.raise_schematic_preview(steps.saturating_neg()) {
             return true;
@@ -121,16 +96,12 @@ impl Game {
         }
     }
 
-    /// Take down the placement preview and every unfinished tool operation;
-    /// whether there was anything to take down.
     pub fn cancel_world_tools(&mut self) -> bool {
         self.cancel_pending_paste();
         self.tools.library.set_previewed(None);
         self.tools.world.cancel_all() | self.tools.preview.cancel()
     }
 
-    /// What the selection overlay shows: the held tool's view, and in
-    /// creative the selection even with the tool put away.
     pub fn tool_overlay(&self) -> Option<ToolOverlay<'_>> {
         match self.held_world_tool().and_then(|n| self.tools.world.get(n)) {
             Some(tool) => Some(tool.overlay()),
@@ -148,12 +119,9 @@ impl Game {
                 .is_some_and(|tool| tool.holds_camera())
     }
 
-    /// Route the frame's clicks: a placement preview first, then the held
-    /// world tool; with neither, the ordinary break/place path keeps them.
     pub(super) fn world_tool_input(&mut self, input: &mut GameInput) {
         self.poll_schematic_library();
         if self.tools.preview.is_up() && !self.schematic_preview_active() {
-            // A paste preview never outlives creative mode.
             self.cancel_world_tools();
         }
         let held = self.held_world_tool();

@@ -1,17 +1,9 @@
-//! Create-world controller: a tabbed screen — the World tab (name + optional
-//! seed; the document's text inputs own the editing, mirrored into bound
-//! state so `Create` enablement and the duplicate-name warning stay live) and
-//! the Mods tab (pick the new world's enabled packs; buffered in the session
-//! and written as the world's `settings.json` on Create).
-
 use super::mods_tab;
 use super::{ScreenCtx, ShellCommand};
 use crate::app::shell_state::SettingsTab;
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
-/// Taken when the directory exists OR any listed world displays the name
-/// (renamed worlds keep their original directory).
 fn name_taken(ctx: &ScreenCtx, name: &str) -> bool {
     petramond::save::world_exists(name)
         || ctx

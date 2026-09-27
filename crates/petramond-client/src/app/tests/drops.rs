@@ -17,8 +17,6 @@ fn drop_key_drops_one_held_item_while_playing() {
 
 #[test]
 fn sprint_plus_drop_drops_the_whole_held_stack() {
-    // The whole-stack modifier is the SPRINT control (wherever it's bound),
-    // per design — not the physical Ctrl modifier.
     let mut app = app_with_grass();
     assert!(app.inventory().selected().is_some());
     app.handle_control(Control::Sprint, true);
@@ -33,9 +31,6 @@ fn sprint_plus_drop_drops_the_whole_held_stack() {
 
 #[test]
 fn physical_ctrl_without_the_sprint_control_drops_one() {
-    // Ctrl only counts when it IS the sprint binding (the default). Here only
-    // the tracked physical modifier is set — the sprint control never fired —
-    // so the drop stays a single item. Guards the coupling direction.
     let mut app = app_with_grass();
     app.set_modifiers(Modifiers {
         ctrl: true,

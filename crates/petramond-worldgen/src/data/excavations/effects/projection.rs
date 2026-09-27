@@ -2,7 +2,6 @@ use super::{block, Material, RawMaterial};
 use crate::formula::{Expression, Formula};
 use serde::{Deserialize, Serialize};
 
-/// Project a field column's lowest matching cell onto neighbouring columns.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawProjection {
@@ -16,7 +15,6 @@ pub struct RawProjection {
     pub range: [Expression; 2],
     #[serde(default)]
     pub probe: Option<RawProbe>,
-    /// A negative result leaves the cell alone; other results select the palette.
     pub material: Expression,
     pub palette: Vec<RawMaterial>,
     #[serde(default)]
@@ -31,7 +29,6 @@ pub struct RawProjection {
 #[serde(deny_unknown_fields)]
 pub struct RawAnchor {
     pub range: [Expression; 2],
-    /// The matching predicate changes only from false to true over this range.
     #[serde(default)]
     pub monotone: bool,
 }

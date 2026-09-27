@@ -1,7 +1,3 @@
-//! The batched 2×2×2 bake must equal the per-section bake byte for byte —
-//! including every kind of light override the gather knows (stair state AND
-//! WASM custom-shape apertures).
-
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -15,10 +11,6 @@ use crate::section::Section;
 use super::batch::{run_light_bake_batch, snapshot_batch, GROUP};
 use super::test_fixture::{report_first_diff, Fixture, Rng};
 
-/// Randomized rough terrain with caves, stairs (some under custom apertures),
-/// torches and glass across the whole 4×4×4 span (some sections absent),
-/// members straddling the surface band so Full, Dark, and Flood
-/// classifications all occur across rounds.
 #[test]
 fn batched_bake_matches_per_section_bakes() {
     let base = SectionPos::new(0, 0, 0);
@@ -61,10 +53,6 @@ fn batched_bake_matches_per_section_bakes() {
     }
 }
 
-/// A torch at one end of a sealed stone corridor, a stair half-way along it.
-/// The stair's baked custom aperture decides whether the far end is lit — in
-/// BOTH bakes. The batched gather used to drop custom apertures entirely, so a
-/// closed custom gate baked in a batch passed light as if open.
 #[test]
 fn a_custom_aperture_gates_light_identically_in_both_bakes() {
     let pos = SectionPos::new(0, 0, 0);

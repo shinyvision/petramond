@@ -1,13 +1,3 @@
-//! The packed vertex words as a WGSL module, spelled from the Rust lane
-//! constants in [`super`].
-//!
-//! Every shader that reads `packed` / `packed2` (the terrain, the held and
-//! icon cubes, the break decal, and any pack shader that imports
-//! `petramond::vertex`) decodes through the helpers emitted here instead of
-//! its own shifts. Moving or widening a lane is therefore one Rust edit: the
-//! shaders pick the new layout up the next time the pipelines are built, and
-//! nothing can decode a lane the mesher no longer writes there.
-
 use std::fmt::Write;
 
 use super::transition::UV_MODE_TRANSITION;
@@ -20,18 +10,11 @@ use super::{
 };
 use crate::face::{Face, FaceShading};
 
-/// Width of the two-bit lanes (corner, shade index, AO).
 const TWO_BITS: u32 = 0x3;
-/// Width of the six-bit light lanes (skylight, each block-light channel).
 const LIGHT_BITS: u32 = 0x3F;
-/// Width of the UV-mode lane.
 const UV_MODE_MASK: u32 = 0x7;
-/// Width of one greedy-span nibble inside the overlay payload.
 const SPAN_NIBBLE: u32 = 0xF;
 
-/// The whole `petramond::vertex` module: lane decoders, the UV-mode and
-/// face-normal vocabulary, the block-light reassembly, and the transition
-/// payload decode.
 pub fn layout() -> String {
     let mut text = String::from(
         "// petramond::vertex — generated from petramond_mesh::vertex; do not copy.\n",
@@ -42,7 +25,6 @@ pub fn layout() -> String {
     text
 }
 
-/// UV modes, face-normal codes and the normal → shade-index table.
 fn vocabulary() -> String {
     let mut text = String::new();
     for (name, value) in [
@@ -50,7 +32,6 @@ fn vocabulary() -> String {
         ("UV_MODE_THIN_U", UV_MODE_THIN_U),
         ("UV_MODE_THIN_V", UV_MODE_THIN_V),
         ("UV_MODE_CELL_LOCAL", UV_MODE_CELL_LOCAL),
-        // Modes from here up are transition faces; the low bits are set bits.
         ("UV_MODE_TRANSITION", UV_MODE_TRANSITION),
     ] {
         writeln!(text, "const {name}: u32 = {value}u;").unwrap();
@@ -66,8 +47,6 @@ fn vocabulary() -> String {
     for (face, name) in Face::ALL.into_iter().zip(names) {
         writeln!(text, "const {name}: u32 = {}u;", face.normal_code()).unwrap();
     }
-    // A cube face's shade index is a function of its normal, so a vertex that
-    // spends its shade lane on other data can recover it here.
     text.push_str("fn face_shade_idx(ncode: u32) -> u32 {\n    switch ncode {\n");
     for face in Face::ALL {
         writeln!(
@@ -82,9 +61,6 @@ fn vocabulary() -> String {
     text
 }
 
-/// One `fn name(word: u32) -> u32` extracting `(word >> shift) & mask`.
-/// Spelled with literals (formatted from the constants) so the generated
-/// text reads like the hand decodes it replaced.
 fn lane(text: &mut String, name: &str, word: &str, shift: u32, mask: u32) {
     let written = if shift == 0 {
         writeln!(
@@ -100,10 +76,8 @@ fn lane(text: &mut String, name: &str, word: &str, shift: u32, mask: u32) {
     written.unwrap();
 }
 
-/// Every plain lane of both words, plus the helpers that combine lanes.
 fn lane_decoders() -> String {
     let mut text = String::new();
-    // `packed`.
     lane(&mut text, "vtx_tile", "packed", 0, TILE_MASK);
     lane(&mut text, "vtx_corner", "packed", CORNER_SHIFT, TWO_BITS);
     lane(&mut text, "vtx_shade", "packed", SHADE_SHIFT, TWO_BITS);
@@ -130,7 +104,6 @@ fn lane_decoders() -> String {
         CHROMA_HI_SHIFT,
         CHROMA_HI_MASK,
     );
-    // `packed2`.
     lane(&mut text, "vtx_block_red", "packed2", 0, BLOCK_LIGHT_MASK);
     lane(
         &mut text,
@@ -181,8 +154,6 @@ fn lane_decoders() -> String {
         OVERLAY_SHIFT2,
         OVERLAY_MASK,
     );
-    // Both greedy-span nibbles at once: the T-junction nudge's "was this quad
-    // merged at all" gate.
     lane(
         &mut text,
         "vtx_greedy_payload",
@@ -198,12 +169,10 @@ fn lane_decoders() -> String {
          return ((packed >> {lo}u) & 0x1u) | (((packed2 >> {hi}u) & 0x1u) << 1u);\n}}"
     )
     .unwrap();
-    // The explicit tile-local UV, in tiles (the lanes hold 1/16ths).
     text.push_str(
         "fn vtx_cell_uv(packed2: u32) -> vec2<f32> {\n    \
          return vec2<f32>(f32(vtx_cell_u(packed2)), f32(vtx_cell_v(packed2))) / 16.0;\n}\n",
     );
-    // A greedy quad's merged span `(w, h)`, each 1..=16.
     let span_hi = OVERLAY_SHIFT2 + 4;
     writeln!(
         text,
@@ -212,10 +181,11 @@ fn lane_decoders() -> String {
          f32(((packed2 >> {span_hi}u) & {SPAN_NIBBLE:#X}u) + 1u));\n}}"
     )
     .unwrap();
-    // The block light's three channels from the three words they are split
-    // across (see `BlockLightVertexExt`): red in `packed2`, green and blue in
-    // the chroma word — its low byte in the tint alpha lane, its high nibble
-    // in `packed` — each stored XOR red.
+    // Light RGB is split across words, see `BlockLightVertexExt`.
+    // Red comes from `packed2`.
+    // Green and blue come from the chroma word: its low byte is the tint alpha lane, its high
+    // nibble is in `packed`.
+    // Each channel is stored XOR'd with red.
     writeln!(
         text,
         "fn block_light_rgb(packed: u32, packed2: u32, chroma_lo: f32) -> vec3<f32> {{\n    \

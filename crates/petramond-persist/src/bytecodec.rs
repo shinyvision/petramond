@@ -1,12 +1,6 @@
-//! Little-endian byte codec primitives + zlib helpers shared by the save
-//! layer and the worldgen column-cache records: bounds-checked sequential
-//! reads, length-prefixed writes, kv/indexed table helpers, deflate/inflate.
-
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
 
-/// Sequential little-endian reader. Every read is bounds-checked and returns
-/// `None` past the end, so a truncated / corrupt file fails cleanly.
 pub struct Reader<'a> {
     bytes: &'a [u8],
     off: usize,
@@ -16,11 +10,9 @@ impl<'a> Reader<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, off: 0 }
     }
-    /// Bytes consumed so far — the position a decode error reports.
     pub fn offset(&self) -> usize {
         self.off
     }
-    /// Whether every byte has been consumed.
     pub fn is_at_end(&self) -> bool {
         self.off == self.bytes.len()
     }
@@ -87,10 +79,6 @@ pub fn put_f64(buf: &mut Vec<u8>, v: f64) {
     buf.extend_from_slice(&v.to_le_bytes());
 }
 
-// Io-stream counterparts of [`Reader`] / `put_*`, for container files (regions)
-// that seek past record bodies instead of slurping the whole file into a slice.
-// Same widths, same little-endian order — keep them paired with the above.
-
 pub fn read_u16(r: &mut impl Read) -> io::Result<u16> {
     let mut bytes = [0u8; 2];
     r.read_exact(&mut bytes)?;
@@ -111,12 +99,6 @@ pub fn write_u32(w: &mut impl Write, v: u32) -> io::Result<()> {
     w.write_all(&v.to_le_bytes())
 }
 
-/// Append a mod KV map: `u16` entry count, then per entry a `u16`-length-
-/// prefixed key + `u32`-length-prefixed value. BTreeMap iteration is sorted,
-/// so identical maps encode identically (the determinism the byte-exact
-/// preservation contract rests on). An entry with an oversized key (> u16 —
-/// the HostCall boundary caps keys far below this) is skipped defensively.
-/// Shared by the per-cell (section), per-mob, and world (`level.dat`) KV payloads.
 pub fn put_kv_map(buf: &mut Vec<u8>, map: &BTreeMap<String, Vec<u8>>) {
     let entries: Vec<(&String, &Vec<u8>)> = map
         .iter()
@@ -132,8 +114,6 @@ pub fn put_kv_map(buf: &mut Vec<u8>, map: &BTreeMap<String, Vec<u8>>) {
     }
 }
 
-/// Read a mod KV map written by [`put_kv_map`]; `None` on truncated or
-/// non-UTF-8 input.
 pub fn get_kv_map(r: &mut Reader) -> Option<BTreeMap<String, Vec<u8>>> {
     let n = r.u16()? as usize;
     let mut out = BTreeMap::new();
@@ -146,17 +126,12 @@ pub fn get_kv_map(r: &mut Reader) -> Option<BTreeMap<String, Vec<u8>>> {
     Some(out)
 }
 
-/// zlib-compress a payload.
 pub fn deflate(payload: &[u8]) -> Vec<u8> {
-    // Explored-terrain persistence writes thousands of small records while the
-    // player is moving. Level 1 preserves the zlib format while avoiding a full
-    // core of background compression for marginal size gains on palette-like data.
     let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
     let _ = e.write_all(payload);
     e.finish().unwrap_or_default()
 }
 
-/// zlib-decompress; `None` on corrupt input.
 pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
     let mut d = flate2::read::ZlibDecoder::new(blob);
     let mut out = Vec::new();
@@ -164,13 +139,6 @@ pub fn inflate(blob: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Append a `u16`-length-prefixed list of `(local index, record)` entries to
-/// `buf`, in ascending index order (the map's own order) so identical state
-/// encodes identically however it was built. Owns only the list FRAME — the
-/// count (capped at `u16::MAX`, since a chunk never holds anywhere near that
-/// many), the `2 + n * rec_bytes` reserve, and the per-entry `u16` index —
-/// and defers the record body to `body`. Shared by the section record's
-/// sparse-map codecs.
 pub fn put_indexed<T>(
     buf: &mut Vec<u8>,
     map: &BTreeMap<u16, T>,
@@ -186,9 +154,6 @@ pub fn put_indexed<T>(
     }
 }
 
-/// Read an indexed list written by [`put_indexed`]: the `u16` count, then each
-/// `u16` index paired with a record decoded by `body`. `None` on truncated
-/// input (propagated from either the index read or `body`).
 pub fn get_indexed<T>(
     r: &mut Reader,
     mut body: impl FnMut(&mut Reader) -> Option<T>,

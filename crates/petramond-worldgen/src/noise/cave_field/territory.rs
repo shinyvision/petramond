@@ -23,22 +23,11 @@ use super::{CaveField, LATTICE_STEP};
 use crate::cache::local::{self, LocalTable};
 use crate::data::underground::{ClimatePoint, IdSet, UndergroundBiomes};
 
-/// Leaf granularity in world blocks: two lattice cells per axis. Coarser reuses
-/// better but snaps a query box further outward, and the whole value of the gate
-/// is how tightly it bounds the caller's actual reach.
 const BLOCK: i32 = 2 * LATTICE_STEP;
-/// Leaves per grid axis: 32-block grids keep a first-touch computation short,
-/// so workers needing the same grid at once wait only briefly for it.
 const GRID: i32 = 4;
 const GRID_BLOCKS: i32 = GRID * BLOCK;
 const LEAVES: usize = (GRID * GRID * GRID) as usize;
 
-/// Everything a grid's leaf sets are a function of. The PARTITION TABLE belongs
-/// in here as much as the seed does: the set is a fact about a table's bands,
-/// and the seed alone does not name one — a second table can be interned in the
-/// same process (a test bench, a re-layered pack) and would otherwise read the
-/// first one's answers out of these slots. The context names the table by
-/// its content; excavations are not part of a grid.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(super) struct Key {
     context: crate::cache::GenContext,
@@ -47,19 +36,14 @@ pub(super) struct Key {
 
 pub(super) struct Grid {
     leaves: Box<[IdSet; LEAVES]>,
-    /// The union of every leaf, for a box that covers the whole grid.
     all: IdSet,
 }
 
-// A query touches at most eight grids and the next section's query the same
-// ones, so a small per-thread copy fronts the shared slots' locks.
 thread_local! {
     static LOCAL: LocalTable<Key, Arc<Grid>> = LocalTable::new(&local::CAVE_TERRITORY);
 }
 
 impl CaveField {
-    /// The conservative set of underground biome ids that can own a cell inside
-    /// the inclusive world box `lo..=hi`, snapped outward to the leaf grid.
     pub fn underground_biome_ids_in_box(&self, lo: [i32; 3], hi: [i32; 3]) -> IdSet {
         let mut out = IdSet::default();
         super::volumes::claims::include(self, lo, hi, &mut out);
@@ -142,7 +126,6 @@ impl CaveField {
         Grid { leaves, all }
     }
 
-    /// One leaf on its own, the reference the grid must agree with.
     #[cfg(test)]
     fn compute_block_ids(&self, sp: [i32; 3]) -> IdSet {
         let lo = [sp[0] * BLOCK, sp[1] * BLOCK, sp[2] * BLOCK];
@@ -158,8 +141,6 @@ impl CaveField {
     }
 }
 
-/// The ids that can own a cell of the leaf whose bottom is `y_lo`, from its
-/// nine climate columns (row-major, west to east then north to south).
 fn leaf_ids(table: &UndergroundBiomes, columns: &[ClimatePoint; 9], y_lo: i32) -> IdSet {
     let mut out = IdSet::default();
     for cz in 0..2 {

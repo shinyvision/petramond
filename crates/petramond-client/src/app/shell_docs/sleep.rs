@@ -1,10 +1,3 @@
-//! Sleep overlay controller: the "Leave bed" button cancels the sleep (ESC
-//! stays on the global close-screen control path, which does the same). The
-//! darkening backdrop is the host dim quad, driven by the tick-owned sleep
-//! progress. With other players connected, an "x/y players sleeping" line
-//! (the server's headcount) shows who the morning skip is still waiting on;
-//! hidden in single-player.
-
 use super::{ScreenCtx, ShellCommand};
 use petramond_ui::{UiEvent, UiState, UiValue};
 

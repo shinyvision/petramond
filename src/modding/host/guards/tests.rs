@@ -10,8 +10,6 @@ use petramond_world::block::Block;
 
 use super::read_only_permits;
 
-/// A world with one stone-floored loaded chunk, a world KV entry and a cell
-/// KV entry at (1, 64, 1) — something for every delete to target.
 fn fixture_world() -> ServerWorld {
     let mut world = ServerWorld::new(1, 1);
     let mut c = petramond_world::chunk::Chunk::new(0, 0);
@@ -26,10 +24,6 @@ fn fixture_world() -> ServerWorld {
     world
 }
 
-/// The read-only promise is the HOST's, not each handler's: during a
-/// read-only dispatch every write — including the deletes that once went
-/// through the read wrapper — is refused, and the world is untouched, while
-/// the listed reads still answer.
 #[test]
 fn a_read_only_dispatch_refuses_every_write_and_answers_reads() {
     let mut world = fixture_world();
@@ -121,8 +115,6 @@ fn a_read_only_dispatch_refuses_every_write_and_answers_reads() {
     assert_eq!(world.block_if_stream_final(1, 64, 1), Some(Block::Stone));
 }
 
-/// Outside a read-only dispatch the same deletes work — the refusal above
-/// is the scope's, not a broken handler.
 #[test]
 fn an_ordinary_dispatch_still_deletes() {
     let mut world = fixture_world();

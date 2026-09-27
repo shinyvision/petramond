@@ -1,25 +1,3 @@
-//! Melee: strike the brain's current target when in reach.
-//!
-//! The node strikes ONLY the entity the brain's winning perception/chase node
-//! locked last tick (`AiCtx::target`) — a player or another mob. No lock means
-//! no strike: attack nodes execute on the perception layer's decision, they
-//! never perceive on their own. That is what lets a blind hearing hunter share
-//! a room with a silent player — nothing locked, nothing bitten — while a
-//! sighted chaser (`chase_player`) publishes its lock long before melee range,
-//! so classic hostiles fight exactly as before.
-//!
-//! A strike lands when the target is within `reach` of the mob's body (centre
-//! distance minus the bodies' widths), the mob is roughly facing it, the strike
-//! line is not blocked by world collision, and the per-node cooldown has
-//! elapsed — then the node emits an [`AttackIntent`] naming the target. It
-//! never touches the target itself: the intent flows instance → manager →
-//! `Game`, where the damage runs through the target's own pipeline
-//! (`player_damage_pre` for players — a cancel drops the knockback too — or
-//! the mob damage pipeline for mobs).
-//!
-//! Cooldown state lives here (deterministic tick counting); a mob under knockback
-//! stagger still counts its cooldown down like any other tick.
-
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 use serde::Deserialize;
@@ -30,29 +8,17 @@ use super::super::brain::{AiBehavior, AiCtx, AttackIntent, BehaviorOutput};
 use super::super::{def, EntityRef};
 use super::los;
 
-/// Widest angle (radians) the player may sit off the mob's facing for a strike to
-/// land — 90° either side ("rough facing"): a chasing mob turns toward its travel,
-/// so this only stops hits from a mob walking squarely away.
 const MAX_FACING_OFF: f32 = FRAC_PI_2;
 
-/// `melee_attack` params as written in a `mobs.json` brain row.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MeleeParams {
-    /// Strike range in blocks, measured from the mob's body edge.
     reach: f64,
-    /// Damage per strike, in half-heart points.
     damage: f64,
-    /// Horizontal knockback speed (m/s) imparted on the player.
     knockback: f64,
-    /// Game ticks between strikes.
     cooldown_ticks: u32,
-    /// Ticks between announcing a strike (its clip starts, the target is
-    /// latched) and landing it; 0 = land on the announcing tick. Must be
-    /// shorter than the cooldown so a strike lands before the next may start.
     #[serde(default)]
     windup_ticks: u32,
-    /// Model clip started when a strike is announced (the wind-up read).
     #[serde(default)]
     animation: Option<String>,
 }
@@ -62,7 +28,6 @@ pub struct MeleeAttackAi {
     damage: f32,
     knockback: f32,
     cooldown_ticks: u32,
-    /// Ticks until the next strike may land.
     cooldown: u32,
     windup_ticks: u32,
     pending: Option<(EntityRef, u32)>,
@@ -83,10 +48,8 @@ impl MeleeAttackAi {
         }
     }
 
-    /// Build from a brain row's `params` — the `melee_attack` node factory core.
     pub(super) fn from_params(params: &serde_json::Value) -> Result<Self, String> {
         let p: MeleeParams = serde_json::from_value(params.clone()).map_err(|e| e.to_string())?;
-        // `partial_cmp` (not `<=`) so a NaN reach is rejected too.
         if p.reach.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return Err("reach must be > 0".into());
         }
@@ -137,11 +100,6 @@ impl AiBehavior for MeleeAttackAi {
         if self.cooldown > 0 && !impact {
             return BehaviorOutput::default();
         }
-        // Resolve the strike target: the brain's current lock ONLY — no lock,
-        // no strike (perception decides, this node executes). A locked target
-        // that has vanished or died strikes nothing this tick. `pad` widens
-        // the reach by a mob target's own half-width; players keep the
-        // historical body-centre rule.
         let (target, target_pos, pad) = match ctx.target {
             None => return BehaviorOutput::default(),
             Some(EntityRef::Player(pid)) => match ctx.players.iter().find(|a| a.id == pid) {
@@ -155,7 +113,6 @@ impl AiBehavior for MeleeAttackAi {
                 match ctx.live_mob(id) {
                     Some(m) => {
                         let size = def(m.kind).size;
-                        // `AiMob::pos` is feet; strike geometry wants the body centre.
                         let centre = m.pos + Vec3::new(0.0, size.height * 0.5, 0.0);
                         (EntityRef::Mob(id), centre, size.half_width)
                     }
@@ -163,9 +120,6 @@ impl AiBehavior for MeleeAttackAi {
                 }
             }
         };
-        // Body distance: from the mob's body centre to the target's, less both
-        // bodies' horizontal extent, so reach is measured edge-to-edge and a
-        // wide mob (or target) doesn't need to overlap to connect.
         let centre = ctx.pos + Vec3::new(0.0, ctx.head_height * 0.5, 0.0);
         let gap = (target_pos - centre).length() - ctx.half_width - pad;
         if gap > self.reach
@@ -196,8 +150,6 @@ impl AiBehavior for MeleeAttackAi {
     }
 }
 
-/// Rough facing check: the target sits within [`MAX_FACING_OFF`] of the mob's body
-/// yaw. A target directly on top of the mob (no horizontal offset) always counts.
 fn facing_target(
     yaw: f32,
     pos: petramond_math::world_pos::WorldPos,
@@ -208,12 +160,10 @@ fn facing_target(
     if dx * dx + dz * dz <= 1e-6 {
         return true;
     }
-    // Same convention as the instance: the model faces -Z at yaw 0.
     let target = (-dx).atan2(-dz);
     wrap_angle(target - yaw).abs() <= MAX_FACING_OFF
 }
 
-/// Wrap an angle into `[-PI, PI]`.
 fn wrap_angle(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
 }

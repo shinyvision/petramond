@@ -5,10 +5,6 @@ use crate::server::admissions::self_restore_from;
 use crate::server::game::{wire_world_events, ServerGame};
 
 impl ServerGame {
-    /// The LOCAL session's join payload — the in-process twin of the
-    /// `JoinAccept` a remote client receives, so the listen client boots
-    /// through the same `JoinData` path instead of reading server memory.
-    /// `None` on a headless server (no local session).
     pub fn local_join_data(&self) -> Option<Box<JoinData>> {
         if !self.sessions.has_local_session() {
             return None;
@@ -72,10 +68,6 @@ impl ServerGame {
     }
 }
 
-/// The identity a verified Petramond account joins under: derived from the
-/// account's stable id, so the record survives a website rename. It has no
-/// secret half, so no identity proof can ever claim it: only a redeemed
-/// ticket reaches it.
 pub(in crate::server) fn account_key(user_id: i64) -> PlayerKey {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"petramond/account-identity/v1\0");

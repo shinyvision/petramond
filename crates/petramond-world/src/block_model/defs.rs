@@ -4,25 +4,9 @@ use crate::facing::Facing;
 
 use super::MAX_MODEL_PARTS;
 
-// ---------------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------------
-
-/// A bbmodel kind — the registry key, one per authored model (an opaque runtime
-/// id indexing the loaded def table + `MODELS`/`INSTANCES`). Engine kinds own
-/// the low ids in the frozen const order below; mod packs register additional
-/// kinds through namespaced `models.json` rows (see [`crate::registry`]) and
-/// reference them from a block row's `shape` field (`{"model": "<key>"}`, the
-/// model shape family). A model block
-/// names its kind there; an ITEM-ONLY model item (no block, e.g. the bucket)
-/// names its kind via `ItemType::render_kind` instead, so its
-/// placement/collision machinery simply never runs.
-///
-/// Serde carries a kind as its registry KEY string (`furniture_workbench`).
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BlockModelKind(pub u16);
 
-/// Engine model-kind consts, named like the enum variants they replaced.
 #[allow(non_upper_case_globals)]
 impl BlockModelKind {
     pub const FurnitureWorkbench: BlockModelKind = BlockModelKind(0);
@@ -32,8 +16,6 @@ impl BlockModelKind {
     pub const ChiselingStation: BlockModelKind = BlockModelKind(5);
 }
 
-/// Engine model keys in frozen id order — the completeness oracle
-/// `models.json` is validated against.
 const ENGINE_MODEL_KEYS: &[&str] = &[
     "petramond:furniture_workbench",
     "petramond:bucket",
@@ -69,65 +51,35 @@ impl<'de> Deserialize<'de> for BlockModelKind {
     }
 }
 
-/// Every registered kind in id order (engine + pack-registered).
 pub fn all() -> &'static [BlockModelKind] {
     &DEFS.current().kinds
 }
 
-/// How a bbmodel block's player collision is derived. Resolved PER CELL: a multi-block
-/// intersects the chosen shape with each occupied cell.
 #[derive(Copy, Clone)]
 pub enum CollisionSpec {
-    /// Auto: the model's footprint bounds, split per cell (the default).
     FromModel,
 }
 
-/// How a placed model orients its authored X axis relative to the placing player
-/// (multi-cell models and `DIRECTIONAL_VIEW` blocks orient on placement — see
-/// `game::placement`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementOrientation {
     #[default]
-    /// Authored X spans LEFT-TO-RIGHT across the player's view; the authored front
-    /// (−Z) faces the player. Furniture you stand in front of (the workbench).
     LeftToRight,
-    /// The half turn of [`LeftToRight`](Self::LeftToRight): the authored +Z side
-    /// faces the player, so a model authored with its working front on +Z (the
-    /// chiseling station) presents that front when placed. The clicked cell is
-    /// still the near-left bottom cell, which for this pose is authored
-    /// `[0, 0, fp_z − 1]`.
     BackToFront,
-    /// Quarter-turned from [`LeftToRight`](Self::LeftToRight): authored X runs
-    /// FRONT-TO-BACK along the player's view, with the clicked cell at the near,
-    /// authored-max-X end and authored −X growing away — a bed placed foot-first,
-    /// headboard at the far end.
     FrontToBack,
-    /// No player-facing orientation at all: the footprint CENTRES on the clicked
-    /// cell (horizontal centre, TOP layer — a hanging fixture grows downward from
-    /// the cell it is placed against) and the stored facing is always the default.
-    /// For radially symmetric pieces (a chandelier); pairs with
-    /// [`FitMode::Centered`].
     Centered,
 }
 
 impl PlacementOrientation {
-    /// The stored facing for a model placed by a player whose facing (front toward
-    /// the player, from `facing_from_forward`) is `player_facing`.
     pub fn apply(self, player_facing: Facing) -> Facing {
         match self {
             PlacementOrientation::LeftToRight => player_facing,
-            // The half turn that keeps the clicked cell the model's near side
-            // while pointing the authored −Z front AWAY from the player (the
-            // authored +Z face meets them instead).
             PlacementOrientation::BackToFront => match player_facing {
                 Facing::North => Facing::South,
                 Facing::South => Facing::North,
                 Facing::West => Facing::East,
                 Facing::East => Facing::West,
             },
-            // The quarter turn that sends the authored −X (far) end away from the
-            // player: N→W, W→S, S→E, E→N.
             PlacementOrientation::FrontToBack => match player_facing {
                 Facing::North => Facing::West,
                 Facing::West => Facing::South,
@@ -139,83 +91,47 @@ impl PlacementOrientation {
     }
 }
 
-/// What a row does with one authored cube of its `.bbmodel`. Rows sharing one
-/// file give its cubes different roles (a machine's lit and unlit twins, the
-/// sixteen forms of a rail) — the per-ROW filter over the cache's FULL model.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PartRole {
-    /// Drawn, collided with, picked by its opaque texels — the default.
     #[default]
     Visible,
-    /// Absent: not drawn, not collided with, not picked.
     Hidden,
-    /// Drawn and picked, never collided with — detail a body passes through
-    /// (water in a trough, a flame, a curtain).
     PassThrough,
-    /// Exists only to be AIMED at: never drawn, never collided with, casting
-    /// no self-AO and no contact shadow, but picked by its BOUNDS whatever
-    /// texel the ray would have met. The targeting box a piece whose art is
-    /// a cutout needs (a rail's plane is mostly the ground showing through
-    /// it; a chain's link is thinner than a crosshair): without it a player
-    /// aiming at the piece breaks the block behind the gaps. Author it as a
-    /// plain cube over the piece's silhouette.
     Hitbox,
 }
 
 impl PartRole {
-    /// Whether the cube emits faces, casts self-AO and stamps contact shadow.
     pub fn draws(self) -> bool {
         matches!(self, PartRole::Visible | PartRole::PassThrough)
     }
 
-    /// Whether the cube's posed box is a collision box.
     pub fn collides(self) -> bool {
         self == PartRole::Visible
     }
 
-    /// Whether a ray crossing the cube's box picks it regardless of texels.
     pub fn picks_by_bounds(self) -> bool {
         self == PartRole::Hitbox
     }
 }
 
-/// The role of the cube `name` under a row's name-sorted `roles` and its
-/// `other` role for every cube not named.
 pub fn part_role(roles: &[(&str, PartRole)], other: PartRole, name: &str) -> PartRole {
     roles
         .binary_search_by(|(n, _)| (*n).cmp(name))
         .map_or(other, |i| roles[i].1)
 }
 
-/// The data row for one bbmodel block: its cache key, source file, cell footprint,
-/// and collision policy. The geometry/texture come from `model_file` (read through
-/// the asset roots, so a mod pack can override the art); this row carries only what
-/// the source can't express. Rows live in `models.json` (a layered catalog like
-/// `blocks.json`): known engine keys are `petramond:*`, mod additions are
-/// `mod_id:*`, and bare keys error.
 pub struct BlockModelDef {
     pub key: &'static str,
     pub model_file: &'static str,
-    /// The block's footprint in CELLS `(sx, sy, sz)` — what the placed block
-    /// OCCUPIES (placement gating, collision, selection, per-cell split).
-    /// `(1, 1, 1)` is an ordinary single-cell block. How the model's geometry
-    /// maps into it is [`fit`](Self::fit).
     pub cells: [u8; 3],
     pub collision: CollisionSpec,
-    /// How the model turns to meet the placing player (workbench across the view,
-    /// bed away from it).
     pub orientation: PlacementOrientation,
-    /// How the authored geometry maps onto the footprint (see [`FitMode`]).
     pub fit: FitMode,
     /// This row's [`PartRole`] per authored cube NAME (name-sorted), applied
     /// after the cache load so rows sharing one `.bbmodel` show, collide with
     /// and aim at different parts of it. Empty for most rows.
     pub part_roles: &'static [(&'static str, PartRole)],
-    /// The role of every cube `part_roles` does not name: `visible` for an
-    /// ordinary row, `hidden` for a row that picks ONE piece out of a file
-    /// holding many (a rail form names its own cube and its hitbox, the
-    /// other fourteen pieces fall away).
     pub other_parts: PartRole,
     /// Per-row translations of named cubes, in AUTHORED PIXELS (applied after
     /// the cache load, before the part roles) — how rows sharing one
@@ -223,39 +139,30 @@ pub struct BlockModelDef {
     /// with the composter's stages, a fluid level, a gauge needle.
     /// Name-sorted for deterministic application; empty for most rows.
     pub part_offsets: &'static [(&'static str, [f32; 3])],
-    /// Authored cube NAMES that are OPTIONAL per placed instance, in a fixed
-    /// order: bit `i` of a cell's parts mask shows `parts[i]`. Hidden unless
-    /// the mask says otherwise, so a row that declares them looks like its
-    /// base self until a mod sets the mask (`BlockCall::SetModelParts`).
+    /// Authored cube names that are optional per placed instance, in a fixed order: bit `i` of a
+    /// cell's parts mask shows `parts[i]`. They stay hidden until a mod sets the mask
+    /// (`BlockCall::SetModelParts`), so the row looks like its base self until then.
     ///
-    /// This is what a machine with several INDEPENDENT visual states uses
-    /// instead of a block row per combination: the forge's basin holds any of
-    /// five moulds, with or without metal in it, while the furnace is lit or
-    /// not — 48 rows enumerated, one row with a mask.
+    /// A machine with independent visual states uses this instead of a row per combination. The
+    /// forge's basin holds any of five moulds, with or without metal, while the furnace is lit
+    /// or not: 48 rows, or one row with a mask.
     ///
-    /// RENDER ONLY. Collision and selection stay the row's, so a placed
-    /// machine's hitbox never changes under the player.
+    /// Render only. Collision and selection stay the row's, so a placed machine's hitbox never
+    /// changes under the player.
     pub parts: &'static [&'static str],
-    /// Authored cube NAMES the cell's `petramond:tint` multiplies. Empty (the
-    /// usual case) means the row ignores cell tint entirely.
     pub tint_parts: &'static [&'static str],
     pub surfaces: &'static [super::SurfaceMaterial],
 }
 
 impl BlockModelDef {
-    /// The role this row gives the authored cube `name`.
     pub fn part_role(&self, name: &str) -> PartRole {
         part_role(self.part_roles, self.other_parts, name)
     }
 }
 
-/// How a model's authored geometry maps onto its footprint cell box.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FitMode {
-    /// The default: uniform-scale the model's baked bounds to FILL the cell
-    /// box (largest axis flush), X/Z centred, resting on the floor. Right for
-    /// furniture that should exactly span its cells (workbench, bed, oven).
     #[default]
     Fill,
     /// Authored pixels map 1:1 onto the footprint grid — cell `(i,j,k)` IS
@@ -266,41 +173,25 @@ pub enum FitMode {
     /// Right for machines whose occupied space is smaller than their
     /// silhouette. Author the model resting at `y = 0` inside `0..16·cells`.
     Native,
-    /// [`Native`](Self::Native) pixels, but the authored X/Z origin maps to
-    /// the footprint's horizontal CENTRE and the geometry TOP-RESTS: the
-    /// authored top lands flush with the footprint top, so a hanging fixture
-    /// stays snug against whatever it was placed under even when it is
-    /// shorter than its footprint. Right for radially symmetric pieces
-    /// authored about the origin (a chandelier); pairs with
-    /// [`PlacementOrientation::Centered`].
     Centered,
 }
 
-/// One model row as written in `models.json`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawModelDef {
     key: String,
     model_file: String,
     cells: [u8; 3],
-    /// Unread for a row without `directional_view` (such a block never
-    /// turns), so it defaults.
     #[serde(default)]
     orientation: PlacementOrientation,
     #[serde(default)]
     fit: FitMode,
-    /// `{"cube_name": "<role>"}` (BTreeMap: the leaked slice stays
-    /// name-ordered for the binary search).
     #[serde(default)]
     part_roles: std::collections::BTreeMap<String, PartRole>,
     #[serde(default)]
     other_parts: PartRole,
-    /// `{"cube_name": [dx, dy, dz]}` in authored pixels (BTreeMap: the
-    /// leaked slice stays name-ordered, deterministic).
     #[serde(default)]
     part_offsets: std::collections::BTreeMap<String, [f32; 3]>,
-    /// Optional-per-instance cube names, bit-indexed IN THIS ORDER (so the
-    /// order is part of the row's contract with the mod that drives it).
     #[serde(default)]
     parts: Vec<String>,
     #[serde(default)]
@@ -309,16 +200,11 @@ struct RawModelDef {
     surfaces: Vec<super::SurfaceMaterial>,
 }
 
-/// One content registry's model defs, id-ordered, with the kind list.
 pub(crate) struct ModelDefs {
     rows: &'static [BlockModelDef],
     kinds: Box<[BlockModelKind]>,
 }
 
-/// The block-model catalog stage of every content registry. Composed over
-/// EVERY installed pack like the tile manifest: the client bakes the model
-/// atlas once, so a world's mod switches must not renumber model kinds. A
-/// missing or inconsistent `models.json` fails the registry build.
 pub(crate) static DEFS: crate::content::Slot<ModelDefs> = crate::content::Slot::new(
     crate::content::stage::MODELS,
     &[crate::content::stage::TILES],
@@ -346,13 +232,6 @@ fn defs() -> &'static [BlockModelDef] {
     DEFS.current().rows
 }
 
-/// Rows sharing one `.bbmodel` must agree on their `parts` order.
-///
-/// The mask is per PLACED BLOCK and survives a row swap — a lit machine and its
-/// unlit twin are the same instance — so a bit that means "coals" on one row and
-/// "lever" on the other is a silent corruption of every placed block, visible
-/// only as a machine that changes shape when it lights. A row with NO optional
-/// parts is not a disagreement; it simply switches nothing.
 fn check_shared_part_lists(rows: &[BlockModelDef]) -> Result<(), String> {
     let mut seen: Vec<(&str, &BlockModelDef)> = Vec::new();
     for row in rows.iter().filter(|r| !r.parts.is_empty()) {
@@ -398,10 +277,6 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
                     r.parts.len()
                 ));
             }
-            // A name binds to the FIRST bit that carries it, so a repeat gives
-            // the later bit an empty run: a mask bit that shows nothing, on a
-            // row whose every name matches a real cube (so the missing-cube
-            // warning never fires either).
             if let Some(dup) = r
                 .parts
                 .iter()
@@ -442,7 +317,6 @@ fn parse_layers(texts: &[&str]) -> Result<crate::registry::Catalog<BlockModelDef
     )
 }
 
-/// The registry row for `kind`.
 #[inline]
 pub fn def(kind: BlockModelKind) -> &'static BlockModelDef {
     &defs()[kind.0 as usize]

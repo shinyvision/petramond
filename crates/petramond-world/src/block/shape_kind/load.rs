@@ -1,20 +1,6 @@
-//! The `blocks.json` shape loader: the raw authored forms (`RawShape`,
-//! `RawBox`, `RawCustomShape`) and their resolution into registry params.
-//!
-//! Kept apart from the vocabulary it produces, the way `block/load.rs` is kept
-//! apart from `block.rs`.
-
 use super::corner_form::{donor_list, intersect_lists, turned_list, union_bounds, union_lists};
 use super::*;
 
-/// The `shape` field of a `blocks.json` row, before resolution to a
-/// [`BlockShapeKind`]. A bare family name (`"cube"`, `"stair"`, …), or an
-/// externally-tagged parameterized form (`{"lowered_cube": 15}`,
-/// `{"model": "petramond:bed"}`). Resolved by [`resolve`](Self::resolve) at
-/// load. A parameterized kind adds a `{"custom": {...}}` variant here.
-/// Serialize is kept (derived) for `RawBlockDef`'s derive; deserialize is manual
-/// so a bare namespaced string (`"mymod:gate"`) resolves to [`RawShape::Named`],
-/// the custom-shape reference, alongside the enum forms.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RawShape {
@@ -31,43 +17,26 @@ pub enum RawShape {
     Model(BlockModelKind),
     Door,
     Trapdoor,
-    /// A mod-parameterized connection shape: `{"custom": {"family":
-    /// "fence", "post_thickness": 6, …}}`.
     Custom(RawCustomShape),
-    /// A custom shape referenced by name (`"shape": "mymod:gate"`),
-    /// declared in the pack's `shapes.json`.
     Named(String),
-    /// A vertical RUN: `{"run": {"root": "down", "forms": {...}}}` — a box
-    /// set whose form follows the cell's place in a same-kind run.
     Run(RawRun),
 }
 
-/// The most boxes one authored shape may list. Shares the guest-bake cap: a
-/// static shape and a WASM-baked one land in the same mesher and the same
-/// per-cell budget.
 const MAX_AUTHORED_BOXES: usize = crate::world::shape_bake_validate::MAX_SHAPE_BOXES;
 
-/// Resolve `{"boxes": [...]}` to its family, leaked params, and canonical key.
-/// The key spells the whole authored list (and the corners flag), so two rows
-/// with identical boxes share ONE shape kind (every plain cactus is one row in
-/// the table) and two that differ never collide.
 fn resolve_box_set(
     raw: &[RawBox],
     corners: bool,
 ) -> Result<(ShapeFamily, ShapeParams, String), String> {
     let boxes = resolve_box_list(raw)?;
     if corners && boxes.iter().any(|b| b.pose.is_some()) {
-        // A corner form is the INTERSECTION of the shape with its quarter
-        // turn, and the intersection of two posed boxes is not a box.
         return Err("'corners' cannot compose a shape with rotated boxes".into());
     }
     let key = format!("#boxes/{}", box_list_key(&boxes)) + if corners { "+corners" } else { "" };
-    // The AUTHORED-space forms, the stair rule lifted to box lists: straight,
-    // outer = self INTERSECT quarter-turned self (the matter both orientations
-    // agree on), inner = self UNION quarter-turned self — one clockwise and
-    // one counter-clockwise of each corner. A kind that does not corner-join
-    // has exactly ONE form; the five slots stay so indexing is uniform, but
-    // they share one list rather than five identical copies of it.
+    // Stair rule for box lists: outer = self INTERSECT quarter-turned self, inner = self UNION
+    // quarter-turned self, one clockwise and one counter-clockwise per corner.
+    // A kind that doesn't corner-join has a single form shared by all five slots, so indexing
+    // stays uniform.
     let authored: &'static [BoxDef] = Box::leak(boxes.clone().into_boxed_slice());
     let mut authored_forms: [&'static [BoxDef]; 5] = [authored; 5];
     if corners {
@@ -98,7 +67,6 @@ fn resolve_box_set(
     let mut forms: [[&'static [BoxDef]; 5]; 4] = [[&[]; 5]; 4];
     let mut collision: [[&'static [Aabb]; 5]; 4] = [[&[]; 5]; 4];
     let mut targets: [[&'static [crate::block::PosedBox]; 5]; 4] = [[&[]; 5]; 4];
-    // Every slot is written below; this is only the array's initial value.
     let mut bounds = [[Aabb {
         min: [0.0; 3],
         max: [0.0; 3],
@@ -145,7 +113,6 @@ fn resolve_box_set(
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
 }
 
-/// Resolve an authored box list, bounding its length.
 fn resolve_box_list(raw: &[RawBox]) -> Result<Vec<BoxDef>, String> {
     if raw.is_empty() {
         return Err("a box list needs at least one box".into());
@@ -159,18 +126,12 @@ fn resolve_box_list(raw: &[RawBox]) -> Result<Vec<BoxDef>, String> {
     raw.iter().map(RawBox::resolve).collect()
 }
 
-/// The canonical spelling of a box list — the kind key's body. Texel-exact
-/// geometry (fractional texels print as such), every face flag, and the
-/// tiles and UV of every face: two rows that differ at all never share a
-/// kind, and two that agree always do.
 fn box_list_key(boxes: &[BoxDef]) -> String {
     boxes
         .iter()
         .map(|b| {
             let t = |v: f32| format!("{}", (v * 16.0 * 1000.0).round() / 1000.0);
             let faces: String = b.faces.iter().map(|&f| if f { '1' } else { '0' }).collect();
-            // Tiles are part of the shape's identity: two rows whose boxes
-            // agree but whose face art does not are different kinds.
             let tiles: String = b
                 .tiles
                 .iter()
@@ -223,34 +184,21 @@ fn box_list_key(boxes: &[BoxDef]) -> String {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawRun {
-    /// `"up"` (hangs from the cell above) or `"down"` (stands on the cell
-    /// below).
     pub root: String,
     pub forms: RawRunForms,
 }
 
-/// A run's authored forms, each a box list. `merge` is what a free end
-/// becomes when it meets an opposing run's free end (two spikes forming a
-/// column); absent, the free end keeps its `tip` form there.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawRunForms {
-    /// The free end.
     pub tip: Vec<RawBox>,
-    /// The segment behind the free end.
     pub frustum: Vec<RawBox>,
-    /// An interior segment.
     pub middle: Vec<RawBox>,
-    /// The attached end.
     pub base: Vec<RawBox>,
     #[serde(default)]
     pub merge: Option<Vec<RawBox>>,
 }
 
-/// Resolve a `{"run": {...}}` shape. The key spells the root and every form,
-/// so a stalagmite row and a stalactite row are two kinds (they never join
-/// into one run — they MERGE), and two rows authoring identical forms with
-/// the same root share one.
 fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), String> {
     let root = match raw.root.as_str() {
         "up" => RunRoot::Up,
@@ -269,7 +217,6 @@ fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), Strin
     let mut authored: [&'static [BoxDef]; 5] = [&[]; 5];
     for (slot, (name, list)) in authored.iter_mut().zip(named) {
         let boxes = resolve_box_list(list).map_err(|e| format!("run form '{name}': {e}"))?;
-        // Authored standing; a hanging run is the mirror image.
         let boxes = match root {
             RunRoot::Down => boxes,
             RunRoot::Up => boxes.iter().map(BoxDef::mirrored_y).collect(),
@@ -277,8 +224,6 @@ fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), Strin
         key.push_str(&format!("/{name}={}", box_list_key(&boxes)));
         *slot = Box::leak(boxes.into_boxed_slice());
     }
-    // A run never turns (a vertical run has no facing), so the four turn
-    // slots share one resolution of each form.
     let mut collision: [&'static [Aabb]; 5] = [&[]; 5];
     let mut targets: [&'static [crate::block::PosedBox]; 5] = [&[]; 5];
     let mut bounds = [Aabb {
@@ -303,60 +248,31 @@ fn resolve_run(raw: &RawRun) -> Result<(ShapeFamily, ShapeParams, String), Strin
     Ok((ShapeFamily::BoxSet, ShapeParams::BoxSet(params), key))
 }
 
-/// One box of a `{"boxes": [...]}` shape, as authored. Extents are TEXELS
-/// (`0..=16`); `from` defaults to the cell origin and `to` to the far corner,
-/// so a plain full cube is `{}` and farmland is `{"to": [16, 15, 16]}`.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawBox {
-    /// Texels, fractional allowed, and a box may reach PAST its cell (up to
-    /// one cell either side): the overhang is drawn but reserves nothing.
-    /// `from == to` on one axis is a flat plane (decoration: two faces, no
-    /// collision whatever its pose).
     #[serde(default)]
     pub from: Option<[f32; 3]>,
     #[serde(default)]
     pub to: Option<[f32; 3]>,
-    /// Rotation in DEGREES about `origin`, composed X first, then Y, then Z
-    /// — the same convention a Blockbench cube's `rotation` uses, so a cube
-    /// transcribes verbatim. Absent or all zero = axis-aligned.
     #[serde(default)]
     pub rotation: Option<[f32; 3]>,
-    /// The pivot of `rotation`, in texels (default: the box's centre).
     #[serde(default)]
     pub origin: Option<[f32; 3]>,
-    /// Per-face tile rectangle `[u0, v0, u1, v1]` in tile texels, stretched
-    /// over the whole face, keyed like `faces`. Absent = the cell-local
-    /// carve; a box longer than its cell keeps its whole tile only this way.
     #[serde(default)]
     pub uv: Option<std::collections::BTreeMap<String, [u8; 4]>>,
-    /// Per-face UV rotation in degrees (`0`, `90`, `180`, `270`, clockwise
-    /// on the face), keyed like `faces` — how one curve tile serves every
-    /// corner row.
     #[serde(default)]
     pub uv_rotation: Option<std::collections::BTreeMap<String, u16>>,
-    /// Which faces this box draws: any of `up`, `down`, `sides`, `all`, or the
-    /// individual `+x`/`-x`/`+y`/`-y`/`+z`/`-z`. Absent = all six.
     #[serde(default)]
     pub faces: Option<Vec<String>>,
-    /// Per-face tile overrides, keyed by the same face names as `faces`
-    /// (`{"up": "mymod:shelf_top"}`). Absent faces keep the row's
-    /// `[top, bottom, side]`. Naming a face the box does not draw is a load
-    /// error — it is always a typo, never a no-op worth shipping.
     #[serde(default)]
     pub tiles: Option<std::collections::BTreeMap<String, String>>,
-    /// Whether the box is matter — shadows and blocks light (default yes).
     #[serde(default = "yes")]
     pub occludes: bool,
-    /// Whether the box obstructs movement (default yes).
     #[serde(default = "yes")]
     pub collides: bool,
-    /// Draw the box's faces from both sides (default no) — for a CUTOUT face
-    /// whose art must stay whole from every angle.
     #[serde(default)]
     pub double_sided: bool,
-    /// Whether the box's matter darkens its surroundings with AO (default
-    /// yes). `false` still seals light and buries faces — a snow cover.
     #[serde(default = "yes")]
     pub casts_ao: bool,
 }
@@ -365,9 +281,6 @@ fn yes() -> bool {
     true
 }
 
-/// The canonical face indices a box's face name covers (`+X, -X, +Y, -Y, +Z,
-/// -Z` order). One vocabulary for both `faces` and `tiles`, so a name that
-/// selects faces to draw selects the same faces to texture.
 fn face_group(name: &str) -> Result<&'static [usize], String> {
     Ok(match name {
         "all" => &[0, 1, 2, 3, 4, 5],
@@ -387,12 +300,9 @@ fn face_group(name: &str) -> Result<&'static [usize], String> {
     })
 }
 
-/// How far past its cell a box may reach, in texels — one cell either side,
-/// the same room a model block's overhang has.
 const OVERHANG_TEXELS: f32 = 16.0;
 
 impl RawBox {
-    /// Resolve to the engine form, validating extents and face names.
     fn resolve(&self) -> Result<BoxDef, String> {
         let texel = |v: f32, name: &str| -> Result<f32, String> {
             if !v.is_finite() || !(-OVERHANG_TEXELS..=16.0 + OVERHANG_TEXELS).contains(&v) {
@@ -448,7 +358,6 @@ impl RawBox {
                 None
             }
         };
-        // Canonical face order: +X, -X, +Y, -Y, +Z, -Z.
         let mut faces = [self.faces.is_none(); 6];
         for name in self.faces.iter().flatten() {
             for &i in face_group(name)? {
@@ -508,8 +417,6 @@ impl RawBox {
             collides: self.collides,
             double_sided: self.double_sided,
             casts_ao: self.casts_ao,
-            // Authored geometry: every face's art is in the shape's own frame.
-            // Only a corner form's inherited faces ever offset this.
             art_turns: [0; 6],
             uv,
             uv_turns,
@@ -518,48 +425,31 @@ impl RawBox {
     }
 }
 
-/// The body of a `{"custom": {…}}` shape: a parameterized member of an existing
-/// family (no WASM). Dimensions are in texels (`0..=16`).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawCustomShape {
-    /// The family to parameterize: `"fence"` or `"pane"`.
     pub family: String,
-    /// Post thickness in texels (fence default 4, pane default 2).
     #[serde(default)]
     pub post_thickness: Option<u8>,
-    /// Post low-edge offset in texels; centred when omitted.
     #[serde(default)]
     pub post_offset: Option<u8>,
-    /// `"opaque_or_same_family"` | `"solid_or_same_family"` | `"same_family_only"`
-    /// | `"never"`. Defaults per family (fence opaque, pane solid).
     #[serde(default)]
     pub connection_rule: Option<String>,
-    /// `"segment"` | `"sprite"` | `"cube"`. Defaults per family.
     #[serde(default)]
     pub item_form: Option<String>,
-    /// Cross/crop billboard-plane inset from the cell edge, texels (cross
-    /// default 0 = full-cell; crop default 2).
     #[serde(default)]
     pub inset: Option<u8>,
-    /// Cross plane count — the diagonal cross is two planes; only `2` is valid.
     #[serde(default)]
     pub plane_count: Option<u8>,
-    /// Crop lattice vertical drop, texels (default 1).
     #[serde(default)]
     pub drop: Option<u8>,
-    /// Wall-panel thickness, texels (default 1 — the ladder slab).
     #[serde(default)]
     pub thickness: Option<u8>,
-    /// Wall-panel / crop visible height, texels (default 16 = full).
     #[serde(default)]
     pub height: Option<u8>,
 }
 
 impl RawShape {
-    /// Resolve this raw shape to its `(family, params, canonical key)`.
-    /// `corners` is the row's corner-joining flag; only a box set consumes
-    /// it, so any other shape refuses it.
     pub fn resolve(&self, corners: bool) -> Result<(ShapeFamily, ShapeParams, String), String> {
         if corners && !matches!(self, RawShape::Boxes(_)) {
             return Err("'corners' requires a '{\"boxes\": [...]}' shape".into());
@@ -652,7 +542,6 @@ impl RawCustomShape {
         }
     }
 
-    /// A texel dimension (`0..=16`) as a cell fraction, or its default.
     fn texel(&self, value: Option<u8>, default: u8, name: &str) -> Result<f32, String> {
         let v = value.unwrap_or(default);
         if v > 16 {
@@ -661,10 +550,6 @@ impl RawCustomShape {
         Ok(v as f32 / 16.0)
     }
 
-    /// Error on any of the listed `(name, present)` fields that is set. Each
-    /// family lists the parameters OUTSIDE its own vocabulary, so a misplaced
-    /// field (a `height` on a cross, an `inset` on a wall panel) is a load error
-    /// rather than a value the resolver silently drops.
     fn reject_fields(&self, fields: &[(&str, bool)]) -> Result<(), String> {
         if let Some((name, _)) = fields.iter().find(|(_, present)| *present) {
             return Err(format!("family '{}' takes no '{name}' field", self.family));
@@ -672,8 +557,6 @@ impl RawCustomShape {
         Ok(())
     }
 
-    /// Reject the connection-only fields on a dimension family (a stray
-    /// `post_thickness` or `item_form` on a crop is almost certainly a mistake).
     fn reject_connection_fields(&self) -> Result<(), String> {
         self.reject_fields(&[
             ("post_thickness", self.post_thickness.is_some()),
@@ -683,8 +566,6 @@ impl RawCustomShape {
         ])
     }
 
-    /// Reject the dimension fields on a connection family (fence/pane take only
-    /// the post/rule/item vocabulary).
     fn reject_dimension_fields(&self) -> Result<(), String> {
         self.reject_fields(&[
             ("inset", self.inset.is_some()),
@@ -695,10 +576,8 @@ impl RawCustomShape {
         ])
     }
 
-    /// `cross`: a two-plane diagonal billboard, `inset` texels in from the edges.
     fn resolve_cross(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
         self.reject_connection_fields()?;
-        // Cross reads only `inset` + `plane_count`.
         self.reject_fields(&[
             ("drop", self.drop.is_some()),
             ("thickness", self.thickness.is_some()),
@@ -723,11 +602,8 @@ impl RawCustomShape {
         Ok((ShapeFamily::Cross, ShapeParams::Dimensions(params), key))
     }
 
-    /// `crop`: a four-plane lattice, `inset` in from the edges and `drop` texels
-    /// toward the floor (the engine crop is inset 2, drop 1).
     fn resolve_crop(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
         self.reject_connection_fields()?;
-        // Crop reads only `inset` + `drop`.
         self.reject_fields(&[
             ("plane_count", self.plane_count.is_some()),
             ("thickness", self.thickness.is_some()),
@@ -752,12 +628,8 @@ impl RawCustomShape {
         Ok((ShapeFamily::Crop, ShapeParams::Dimensions(params), key))
     }
 
-    /// `wall_panel`: the ladder family with a retuned slab `thickness` and
-    /// `height` (the engine ladder is thickness 1, height 16). Facing is per-cell
-    /// block state, as for the ladder.
     fn resolve_wall_panel(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
         self.reject_connection_fields()?;
-        // Wall panel reads only `thickness` + `height`.
         self.reject_fields(&[
             ("inset", self.inset.is_some()),
             ("plane_count", self.plane_count.is_some()),
@@ -785,7 +657,6 @@ impl RawCustomShape {
         Ok((ShapeFamily::Ladder, ShapeParams::Dimensions(params), key))
     }
 
-    /// `fence` / `pane`: the parameterized connection families.
     fn resolve_connection(&self) -> Result<(ShapeFamily, ShapeParams, String), String> {
         self.reject_dimension_fields()?;
         let family = match self.family.as_str() {
@@ -827,13 +698,9 @@ impl RawCustomShape {
             Some("cube") => ItemForm::Cube,
             Some(other) => return Err(format!("unknown item_form '{other}'")),
         };
-        // Only the fence family builds a no-neighbour item segment (posts +
-        // rails); a pane/bar with `item_form: "segment"` has no such geometry.
         if item_form == ItemForm::Segment && family != ShapeFamily::Fence {
             return Err("item_form 'segment' requires the 'fence' family".into());
         }
-        // A mod's custom shape leaks its box table + params once (deduped by the
-        // interner key, so identical customs share one).
         let boxes: &'static [connect::Shape; 16] =
             Box::leak(Box::new(connect::make_shapes(post_lo, post_hi)));
         let params: &'static ConnectionParams = Box::leak(Box::new(ConnectionParams {
@@ -859,11 +726,6 @@ mod tests {
         serde_json::from_str(text).expect("box parses")
     }
 
-    /// A rotated box resolves to a pose about its authored pivot, and what it
-    /// RESERVES is its posed bounds clipped to the cell: a 45° plane longer
-    /// than the cell targets the whole cell and collides nowhere (a flat
-    /// plane is decoration whatever its pose), while a tilted SLAB collides
-    /// as the clipped extent it spans.
     #[test]
     fn a_rotated_box_reserves_its_clipped_posed_bounds() {
         let plane = raw(
@@ -888,8 +750,6 @@ mod tests {
             .resolve()
             .expect("resolves");
         let c = slab.collision_volume().expect("a solid box collides");
-        // Turned on its side about the box centre: a vertical slab two
-        // texels wide through the cell's middle.
         assert!((c.min[0] - 7.0 / 16.0).abs() < 1e-4 && (c.max[0] - 9.0 / 16.0).abs() < 1e-4);
         assert!(
             c.min[1] < 1e-4 && c.max[1] > 1.0 - 1e-4,
@@ -897,9 +757,6 @@ mod tests {
         );
     }
 
-    /// The authoring vocabulary refuses what the geometry cannot honour:
-    /// corner composition of a posed box, a UV rotation off the quarter
-    /// grid, a pivot with nothing to pivot, and a box flat on two axes.
     fn run_shape(root: &str) -> RawShape {
         serde_json::from_str(&format!(
             r#"{{"run":{{"root":"{root}","forms":{{
@@ -912,9 +769,6 @@ mod tests {
         .expect("run parses")
     }
 
-    /// A run is authored STANDING; the hanging row is the same set reflected
-    /// through the cell's mid-plane, face by face — so one authored set
-    /// serves both roots and the two are distinct kinds.
     #[test]
     fn a_hanging_run_is_the_standing_run_mirrored() {
         let (_, down, key_down) = run_shape("down").resolve(false).expect("standing resolves");
@@ -934,10 +788,8 @@ mod tests {
                 assert_eq!(u.faces[3], d.faces[2]);
                 assert_eq!(u.tiles[2], d.tiles[3], "a face's tile travels with it");
             }
-            // Every turn slot holds the one resolution: a run never turns.
             assert_eq!(down.boxes(1, form), down.boxes(0, form));
         }
-        // The merge form defaults to the tip, and collision follows the form.
         assert_eq!(down.boxes(0, RUN_MERGE), down.boxes(0, RUN_TIP));
         assert_eq!(down.collision(0, RUN_BASE).len(), 2);
         assert!(

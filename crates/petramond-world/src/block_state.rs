@@ -1,10 +1,3 @@
-//! Centralized per-cell block state owned by a [`Section`](crate::section::Section).
-//!
-//! The block id buffer remains dense and minimal (`u8` per cell). Runtime state that
-//! changes how a placed block behaves or renders lives here instead of in scattered
-//! section fields. Fluid state keeps a dense optional buffer because it can fill whole
-//! sections; rarer block states stay sparse and keyed by `section_idx` (`u16`).
-
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -15,9 +8,7 @@ use crate::wire_enum::wire_enum;
 
 wire_enum! {
     pub enum StairHalf: u8 {
-        /// Right-side-up stair: full lower slab plus upper back half.
         Bottom = 0,
-        /// Upside-down stair: full upper slab plus lower back half.
         Top = 1,
     }
     default Bottom
@@ -25,7 +16,6 @@ wire_enum! {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct StairState {
-    /// The low/open horizontal side of the stair.
     pub facing: Facing,
     pub half: StairHalf,
 }
@@ -62,8 +52,6 @@ wire_enum! {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct SlabState {
     pub split: SlabSplit,
-    /// Slot 0 is the negative/lower half of the split axis, slot 1 the
-    /// positive/upper half. `Air` means that slot is empty.
     pub layers: [Block; 2],
 }
 
@@ -145,8 +133,6 @@ impl crate::block::CellView for StairState {
     }
 }
 impl crate::block::CellCodec for StairState {
-    /// The PLACED bits only (byte 0); the refine cascade appends the corner
-    /// byte ([`crate::stair::StairShape`] is its read view).
     fn to_cell(&self) -> ShapeState {
         ShapeState::new(&[self.encode()])
     }
@@ -156,7 +142,6 @@ impl crate::block::CellView for SlabState {
     fn owns(block: Block) -> bool {
         crate::slab::is_slab(block)
     }
-    /// RAW (un-normalized) — readers normalize with the cell's block.
     fn from_cell(s: ShapeState) -> Self {
         if s.is_empty() {
             return SlabState::EMPTY;
@@ -171,12 +156,8 @@ impl crate::block::CellView for SlabState {
 impl crate::block::CellCodec for SlabState {
     fn to_cell(&self) -> ShapeState {
         if self.is_empty() {
-            // An empty stack clears its entry (the cell stops being a slab).
             return ShapeState::NONE;
         }
-        // The two layer slots are BLOCK IDS — two bytes each, declared
-        // through the id mask so the save palette / net transport rewrite them
-        // generically.
         let [a_lo, a_hi] = ShapeState::id_bytes(self.layers[0].id());
         let [b_lo, b_hi] = ShapeState::id_bytes(self.layers[1].id());
         ShapeState::with_ids(&[self.encode_meta(), a_lo, a_hi, b_lo, b_hi], 0b0_1010)
@@ -197,8 +178,6 @@ impl crate::block::CellView for LogAxis {
         block.is_log()
     }
     fn from_cell(s: ShapeState) -> Self {
-        // The default vertical axis is NOT the zero byte (`X` is 0), so
-        // absence is checked explicitly.
         if s.is_empty() {
             return LogAxis::default();
         }
@@ -208,16 +187,12 @@ impl crate::block::CellView for LogAxis {
 impl crate::block::CellCodec for LogAxis {
     fn to_cell(&self) -> ShapeState {
         if *self == LogAxis::Y {
-            // Vertical stays stateless — worldgen forests never pay a record.
             return ShapeState::NONE;
         }
         ShapeState::new(&[self.to_u8()])
     }
 }
 
-/// A directional block-entity's front (chest/furnace) as cell state. Cell
-/// state like every other orientation — it survives a block-row swap only
-/// through `World::swap_block_skin`'s explicit carry.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct EntityFront(pub Facing);
 
@@ -235,10 +210,6 @@ impl crate::block::CellCodec for EntityFront {
     }
 }
 
-// `pub`, not `pub`, to match the `pub` fields of `render::HeldItemView`
-// / `HeldItemFrame` that carry it — `block_state` is a private module, so this
-// is still crate-visible either way, and the mismatch was a live
-// `private_interfaces` warning.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum HeldBlockState {
     #[default]
@@ -248,17 +219,8 @@ pub enum HeldBlockState {
     Log(LogAxis),
 }
 
-/// A section's sparse per-cell map, keyed by section-local index
-/// (`section_idx`). Ordered, so every walk (save records, wire payloads,
-/// furnace ticks, light overrides, mesh snapshots) visits cells in ascending
-/// index order: two sections holding the same logical state iterate — and
-/// therefore encode and tick — identically, however their entries were
-/// inserted. A process-seeded hash map would leak its per-run order into
-/// anything that walks it.
 pub type CellMap<V> = BTreeMap<u16, V>;
 
-/// A shared empty [`CellMap`], so absent sparse state can hand out a map
-/// reference without allocating. Each expansion site owns one static.
 macro_rules! empty_map {
     ($V:ty) => {{
         static EMPTY: $crate::block_state::CellMap<$V> = std::collections::BTreeMap::new();
@@ -267,17 +229,8 @@ macro_rules! empty_map {
 }
 pub(crate) use empty_map;
 
-/// The two sparse per-cell stores, boxed behind `Option` in [`BlockStates`]:
-/// the common generated section carries neither, and inline map headers
-/// dominated `size_of::<Section>()`.
 #[derive(Clone, Default)]
 struct SparseStates {
-    /// THE unified per-cell block state: one opaque [`ShapeState`] per
-    /// stateful cell (stair facing, slab layers, door pose, torch mount, log
-    /// axis, model offset+facing, chest/furnace front — every former typed
-    /// map). The bytes are meaningful only to the owning family/behavior's
-    /// codec (`crate::block::encode_*` / `decode_*`); the store, the save
-    /// record, and the replication delta never interpret them.
     cell_states: CellMap<ShapeState>,
     cell_kv: CellMap<BTreeMap<String, Vec<u8>>>,
 }
@@ -291,16 +244,10 @@ impl SparseStates {
 #[derive(Clone, Default)]
 pub struct BlockStates {
     fluid: Option<Arc<[u8]>>,
-    /// Count of nonzero fluid-meta cells (fluid mid-flow, either kind). O(1)
-    /// "anything flowing?" for the streamed-fluid kick; the buffer is dropped
-    /// when the last cell settles, so `fluid` is `Some` iff this is nonzero.
     flowing_count: u16,
-    /// Allocated on the first sparse-state insert; `None` for the common section.
     sparse: Option<Box<SparseStates>>,
 }
 
-/// The same per-cell state, however it came to be stored (an emptied sparse
-/// store equals none).
 impl PartialEq for BlockStates {
     fn eq(&self, other: &Self) -> bool {
         let Self {
@@ -355,7 +302,6 @@ impl BlockStates {
         self.fluid.clone()
     }
 
-    /// `(fluid buffer ptr, fluid len, sparse heap bytes)` for the memory census.
     pub fn memory_parts(&self) -> (Option<usize>, usize, u64) {
         let sparse = self.sparse.as_ref().map_or(0, |s| {
             let states = (s.cell_states.len() * (2 + std::mem::size_of::<ShapeState>() + 1)) as u64;
@@ -392,8 +338,6 @@ impl BlockStates {
 
     #[inline]
     pub fn clear_fluid_meta(&mut self, idx: usize) {
-        // Read before `make_mut`: clearing an already-settled cell (the common
-        // block edit) must not clone a buffer a mesh job still shares.
         let Some(w) = self.fluid.as_mut() else { return };
         if w[idx] == 0 {
             return;
@@ -420,7 +364,6 @@ impl BlockStates {
         *cell = meta;
     }
 
-    /// Whether any cell holds nonzero fluid meta (fluid mid-flow, either kind).
     #[inline]
     pub fn has_flowing(&self) -> bool {
         self.flowing_count > 0
@@ -434,13 +377,6 @@ impl BlockStates {
         };
         let key = idx as u16;
         s.cell_states.remove(&key);
-        // Mod cell KV is per-BLOCK state like the cell state above: a broken
-        // machine's burn state must die with the block — air holds no data.
-        // (A block-row swap that must KEEP its per-cell state carries it
-        // across explicitly — see `World::swap_block_skin` /
-        // `World::swap_block`. A disabled mod's KV is untouched by
-        // this: its sections load their KV wholesale, not through per-cell
-        // block writes.)
         s.cell_kv.remove(&key);
     }
 
@@ -449,8 +385,6 @@ impl BlockStates {
         crate::chunk::section_idx(x, y, z) as u16
     }
 
-    /// The cell's opaque per-cell block state ([`ShapeState::NONE`] when it
-    /// carries none). The store never interprets the bytes.
     #[inline]
     pub fn cell_state(&self, x: usize, y: usize, z: usize) -> ShapeState {
         match &self.sparse {
@@ -463,9 +397,6 @@ impl BlockStates {
         }
     }
 
-    /// Store a cell's opaque state; an EMPTY state removes the entry. NOTE:
-    /// presence is meaningful (a door's all-zero pose byte is a valid stored
-    /// state) — only a zero-LENGTH state clears.
     #[inline]
     pub fn set_cell_state(&mut self, x: usize, y: usize, z: usize, state: ShapeState) {
         let key = Self::key(x, y, z);
@@ -478,8 +409,6 @@ impl BlockStates {
         }
     }
 
-    /// The whole unified per-cell state map (save codec, wire payload, light
-    /// snapshot, mesh-pad capture).
     #[inline]
     pub fn cell_states(&self) -> &CellMap<ShapeState> {
         match &self.sparse {
@@ -526,9 +455,6 @@ impl BlockStates {
         }
     }
 
-    /// Detach one cell's whole mod-KV map, for a state-PRESERVING block swap
-    /// (`set_block` clears cell KV like every other per-cell state, so a swap
-    /// that must keep it takes it out first and restores it after).
     pub fn cell_kv_take(
         &mut self,
         x: usize,
@@ -541,7 +467,6 @@ impl BlockStates {
             .remove(&Self::key(x, y, z))
     }
 
-    /// Re-attach a map detached by [`cell_kv_take`](Self::cell_kv_take).
     pub fn cell_kv_restore(
         &mut self,
         x: usize,

@@ -32,29 +32,14 @@ use mod_sdk::*;
 use crate::content::Content;
 use crate::rest::Rests;
 
-/// One in this many random ticks on an attracting crop rolls an attempt.
-/// A random tick reaches one given cell about every 70 s, so a modest field
-/// rolls a few times a minute while the player is away from it.
 const ATTRACT_CHANCE_IN: u64 = 40;
-/// How far from the crop a spawn site may be picked (blocks) — the prompt's
-/// ten: close enough that the newcomer finds the field it came for.
 const SITE_RADIUS: i32 = 10;
-/// Candidate sites tried per attempt before giving up (the next random tick
-/// re-rolls, so a crowded neighbourhood simply waits).
 const SITE_TRIES: u32 = 6;
-/// Closest a spawn may appear to ANY player (blocks). Mirrors the engine's
-/// own natural-spawn band: the animal is found, never witnessed arriving.
 const MIN_PLAYER_DIST: f32 = 50.0;
-/// How far a site may sit above or below the crop that attracted it. Without
-/// it a column probe lands on whatever roof or overhang tops the column, and
-/// the visitor arrives on the barn instead of in the field.
 const SITE_DY: i32 = 4;
-/// Radius the local headcount is taken over, and the count that stops
-/// attracting. Two is a visit; a dozen is an infestation nobody asked for.
 const NEAR_RADIUS: f32 = 16.0;
 const NEAR_MAX: usize = 2;
 
-/// One random tick on a cultivated crop: roll for a visitor.
 pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block: BlockId) {
     let Some((def, _)) = content.crop_stage(block) else {
         return;
@@ -70,9 +55,6 @@ pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block
     }
     let field = [pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5];
     let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
-    // Standing over your own field is the common case, and no site within
-    // reach of this crop could clear the band from there — settle it once,
-    // against the crop, before paying for the headcount or any site probe.
     if anchors
         .iter()
         .any(|p| near(*p, field, MIN_PLAYER_DIST - SITE_RADIUS as f32))
@@ -91,7 +73,6 @@ pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block
         let dx = (rng_u64(&def.attract_key) % (SITE_RADIUS as u64 * 2 + 1)) as i32 - SITE_RADIUS;
         let dz = (rng_u64(&def.attract_key) % (SITE_RADIUS as u64 * 2 + 1)) as i32 - SITE_RADIUS;
         let (x, z) = (pos[0] + dx, pos[2] + dz);
-        // `None` = unloaded or not stream-final: no verdict, try elsewhere.
         let Some(ground) = surface_y_at([x, z]) else {
             continue;
         };
@@ -108,8 +89,6 @@ pub fn on_random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3], block
         }
         let yaw = (rng_u64(&def.attract_key) % 628) as f32 / 100.0;
         if spawn_mob_checked(species, at, yaw).is_some() {
-            // The rest covers the same neighbourhood the headcount judges,
-            // so a field straddling a column line is one area, not two.
             rests.begin(pos, NEAR_RADIUS as i32);
             return;
         }

@@ -1,18 +1,11 @@
-//! The replicated bodies a frame presents, as client mods read them
-//! (`ClientEntities`), and the camera anchor resolved against them — built
-//! from the same interpolated rows the frame draws, so a mod's follow camera
-//! and the body it follows never disagree about where that body is.
-
 use mod_api::{ClientEntityData, EntityRef};
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
 
 use super::Game;
 
-/// A player body's collision footprint, `[width, height]`.
 const PLAYER_SIZE: [f32; 2] = [0.6, 1.8];
 
-/// A player-convention look (camera yaw/pitch) as a unit vector.
 fn player_look(yaw: f32, pitch: f32) -> [f32; 3] {
     let cp = pitch.cos();
     Vec3::new(yaw.sin() * cp, pitch.sin(), yaw.cos() * cp)
@@ -20,7 +13,6 @@ fn player_look(yaw: f32, pitch: f32) -> [f32; 3] {
         .to_array()
 }
 
-/// A mob-convention look (its yaw and pitch) as a unit vector.
 fn mob_look(yaw: f32, pitch: f32) -> [f32; 3] {
     let cp = pitch.cos();
     Vec3::new(-yaw.sin() * cp, pitch.sin(), -yaw.cos() * cp)
@@ -29,8 +21,6 @@ fn mob_look(yaw: f32, pitch: f32) -> [f32; 3] {
 }
 
 impl Game {
-    /// Every player and mob this frame draws, interpolated as drawn. The
-    /// local body is one of them unless it has none (a spectator).
     pub(crate) fn presented_entities(&self) -> Vec<ClientEntityData> {
         let alpha = self.tick_alpha();
         let per_tick = 1.0 / petramond::events::tick::TICK_DT;
@@ -97,9 +87,6 @@ impl Game {
         rows
     }
 
-    /// Where an anchored claim's offset is measured from: the anchor's feet
-    /// as this frame presents them, or — when it is not in the frame — its
-    /// last presented feet, flagged missing.
     pub(super) fn anchor_feet(&mut self, anchor: EntityRef) -> Option<WorldPos> {
         let found = self
             .presented_entities_cache
@@ -121,13 +108,10 @@ impl Game {
         }
     }
 
-    /// Whether this frame's anchored camera lost its anchor.
     pub fn camera_anchor_missing(&self) -> bool {
         self.anchor_missing
     }
 
-    /// Rebuild the frame's entity rows and hand them to the client mods.
-    /// Once per frame, before the view claims resolve.
     pub fn publish_presented_entities(&mut self) {
         self.presented_entities_cache = self.presented_entities();
         self.client_mods.presented().lock().entities = self.presented_entities_cache.clone();

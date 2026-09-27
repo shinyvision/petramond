@@ -21,26 +21,19 @@ use super::{
 };
 use petramond_world::texture_transition::{MAX_MATERIALS_PER_SET, MAX_SETS};
 
-/// UV modes at or above this are transition faces; the low two bits of the
-/// mode are the low two bits of the set id.
 pub const UV_MODE_TRANSITION: u32 = 4;
 const SET_LOW_BITS: u32 = 2;
 const SET_LOW_MASK: u32 = (1 << SET_LOW_BITS) - 1;
 const MATERIAL_BITS: u32 = 4;
 const SLOTS: usize = 9;
 
-/// The `packed` lanes a transition face overwrites.
 const WORD1: u32 = TILE_MASK | (3 << SHADE_SHIFT) | (7 << UV_MODE_SHIFT) | OVERLAY_FLAG | (1 << 31);
-/// The `packed2` lanes a transition face overwrites.
 const WORD2: u32 = (0x3ff << CELL_UV_U_SHIFT) | DYED_FLAG2 | (0x7ff << OVERLAY_SHIFT2) | (1 << 31);
 
 const _: () = assert!(MAX_SETS == 1 << (SET_LOW_BITS + 2));
 const _: () = assert!(MAX_MATERIALS_PER_SET == (1 << MATERIAL_BITS) - 1);
 const _: () = assert!(CELL_UV_MASK == 0x1f && 0x3ff == CELL_UV_MASK | (CELL_UV_MASK << 5));
 
-/// One face's transition: which set renders it, and the local material of the
-/// source followed by its eight neighbours in row-major order (centre
-/// skipped); zero = no donor.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Transition {
     pub set: u8,
@@ -48,7 +41,6 @@ pub struct Transition {
 }
 
 impl Transition {
-    /// Encode onto a freshly pushed cube face.
     pub fn apply(self, vertices: &mut [Vertex], tint: [f32; 3]) {
         debug_assert!((self.set as usize) < MAX_SETS);
         let mut data = 0u64;
@@ -71,21 +63,16 @@ impl Transition {
         }
     }
 
-    /// Whether `v` carries a transition payload.
     #[inline]
     pub fn carried_by(v: &Vertex) -> bool {
         Self::carried_by_word(v.packed)
     }
 
-    /// Whether a vertex whose `packed` word is `packed` carries a transition
-    /// payload — for the sealed [`TerrainVertex`](super::TerrainVertex) streams
-    /// as much as the builder's.
     #[inline]
     pub fn carried_by_word(packed: u32) -> bool {
         (packed >> UV_MODE_SHIFT) & 7 >= UV_MODE_TRANSITION
     }
 
-    /// The Rust mirror of the shader's decode, for tests.
     #[cfg(test)]
     pub fn decode(v: &Vertex) -> Option<Self> {
         if !Self::carried_by(v) {
@@ -106,11 +93,8 @@ impl Transition {
     }
 }
 
-/// The shader decode of [`Transition::apply`]'s payload, for the generated
-/// `petramond::vertex` module: the 36 material bits reassembled as a low word
-/// (tile lane, overlay flag, `packed` bit 31, cell-local UV, then the low bits
-/// of the `packed2` tail) and a high nibble, plus the set id from the UV-mode
-/// and shade lanes. Spelled from the same constants `apply` writes with.
+/// The generated `petramond::vertex` module's decode of whatever [`Transition::apply`] packed. We
+/// spell it with the constants `apply` writes with, so a layout change there follows here.
 pub(super) fn wgsl() -> String {
     let tile_bits = TILE_MASK.count_ones();
     let overlay = OVERLAY_FLAG.trailing_zeros();

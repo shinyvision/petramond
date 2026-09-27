@@ -15,14 +15,11 @@ use rodio::{ChannelCount, SampleRate, Source};
 
 use super::DecodedSound;
 
-/// Interleaved samples of a clip read so far by one player.
 #[derive(Clone, Default)]
 pub(super) struct Playhead(Arc<AtomicU64>);
 
-/// Where a voice started in its clip and how far it has read since.
 #[derive(Clone, Default)]
 pub(super) struct ClipCursor {
-    /// The clip frame the player began at.
     start_frame: usize,
     head: Playhead,
 }
@@ -35,8 +32,6 @@ impl ClipCursor {
         }
     }
 
-    /// The clip frame this voice is at, wrapped for a loop; `None` once a
-    /// one-shot has played to its end.
     pub(super) fn frame(&self, clip: &DecodedSound, looped: bool) -> Option<usize> {
         let channels = clip.channels.get() as u64;
         let frames = clip.samples.len() / clip.channels.get() as usize;
@@ -53,9 +48,6 @@ impl ClipCursor {
     }
 }
 
-/// `clip` from `start_frame` on (a loop wraps back round to the clip's start
-/// forever), counting what is read into the returned cursor. The voice reads
-/// the clip's shared samples in place: nothing is copied per play.
 pub(super) fn clip_from(
     clip: &DecodedSound,
     start_frame: usize,
@@ -85,14 +77,11 @@ pub(super) fn clip_from(
     (Box::new(source), cursor)
 }
 
-/// A read cursor over a clip's shared samples.
 struct SharedClip {
     samples: Arc<[f32]>,
     channels: ChannelCount,
     sample_rate: SampleRate,
-    /// The next interleaved sample to read.
     at: usize,
-    /// A one-shot's samples from where it started.
     span: usize,
     looped: bool,
     head: Playhead,
@@ -188,8 +177,6 @@ mod tests {
         assert_eq!(cursor.frame(&clip, false), None, "played to its end");
     }
 
-    /// Every voice reads the one decoded copy: a play holds a reference to
-    /// the clip's samples, never a copy of them.
     #[test]
     fn voices_share_the_decoded_samples() {
         let clip = clip(8);

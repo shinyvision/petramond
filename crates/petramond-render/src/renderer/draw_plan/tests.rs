@@ -1,6 +1,5 @@
 use super::*;
 
-/// A deterministic xorshift, so the property tests are reproducible.
 struct Rng(u64);
 
 impl Rng {
@@ -34,14 +33,11 @@ fn section(dist_sq: f32, cx: i32, cz: i32) -> VisibleSection {
     }
 }
 
-/// `count` elements of `stream` in the section's spans.
 fn with(mut section: VisibleSection, stream: SectionStream, count: u32) -> VisibleSection {
     section.spans[stream.index()].count = count;
     section
 }
 
-/// Columns over a `side × side` grid centred on the origin, each with a
-/// random section span (some empty), in a random order.
 fn columns(rng: &mut Rng, side: i32) -> Vec<ColumnCull> {
     let mut out = Vec::new();
     for cx in -side / 2..side / 2 {
@@ -118,10 +114,6 @@ fn cull_regions_do_not_depend_on_the_column_maps_order() {
     );
 }
 
-/// The region test is an accelerator, never a verdict of its own: it may
-/// only reject a region none of whose columns is visible, and a region it
-/// calls enclosed must hold columns whose visibility the skipped frustum
-/// test would not have changed.
 #[test]
 fn the_region_test_never_changes_what_is_visible() {
     let mut rng = Rng(0xFACADE);
@@ -183,22 +175,18 @@ const STREAMS: ColumnStreams = ColumnStreams {
 
 #[test]
 fn a_column_batches_its_opaque_stream_when_its_sections_agree() {
-    // All detailed: the whole stream in one draw.
     assert_eq!(
         batch_column(visible(true, false, true), STREAMS, false).opaque,
         Some(false)
     );
-    // All far-capable sections far: the leading far region in one draw.
     assert_eq!(
         batch_column(visible(true, true, true), STREAMS, false).opaque,
         Some(true)
     );
-    // Mixed LOD: every section draws for itself.
     assert_eq!(
         batch_column(visible(true, true, false), STREAMS, false).opaque,
         None
     );
-    // Nothing opaque in view, or nothing in the stream.
     assert_eq!(
         batch_column(visible(false, false, true), STREAMS, false).opaque,
         None
@@ -214,9 +202,6 @@ fn a_column_batches_its_opaque_stream_when_its_sections_agree() {
     );
 }
 
-/// A whole-column draw also covers culled sections: with indirect draws it is
-/// taken only when none holds opaque geometry, while a device where every
-/// draw is a CPU call keeps it.
 #[test]
 fn a_culled_opaque_section_splits_the_column_unless_draws_are_direct() {
     let column = VisibleColumn {
@@ -235,8 +220,6 @@ fn model_and_contact_batches_follow_their_own_presence_bits() {
     };
     let batch = batch_column(column, STREAMS, false);
     assert!(batch.model && !batch.contact);
-    // A multi-cell model's contact stamps can sit in a section without model
-    // faces: contact visibility never rides the model bit.
     let column = VisibleColumn {
         has_contact: true,
         ..VisibleColumn::default()
@@ -277,17 +260,12 @@ fn sections_covered_by_whole_column_draws_are_dropped() {
         contact: false,
     };
     retain_uncovered(&mut sections, 1, batch);
-    // The earlier column's section is untouched; of this column only the
-    // one with fluid still draws for itself — and it knows its opaque share
-    // is batched.
     assert_eq!(sections.len(), 2);
     assert_eq!(sections[0].column_pos, ChunkPos::new(9, 9));
     assert!(!sections[0].opaque_batched);
     assert_eq!(sections[1].dist_sq, 3.0);
     assert!(sections[1].opaque_batched && sections[1].model_batched);
 
-    // Unbatched, every section with geometry draws itself — except a far
-    // section's leaf tail, which only draws at detailed LOD.
     let mut sections = vec![opaque, leafy_far, water, model];
     retain_uncovered(
         &mut sections,
@@ -306,10 +284,7 @@ fn sections_covered_by_whole_column_draws_are_dropped() {
 fn the_section_sort_is_a_total_order_independent_of_input_order() {
     let mut rng = Rng(0xD15EA5E);
     let mut sections: Vec<VisibleSection> = (0..300)
-        .map(|_| {
-            // Few distinct distances and columns: ties everywhere.
-            section(rng.range(0, 8) as f32, rng.range(-3, 3), rng.range(-3, 3))
-        })
+        .map(|_| section(rng.range(0, 8) as f32, rng.range(-3, 3), rng.range(-3, 3)))
         .collect();
     let mut shuffled = sections.clone();
     rng.shuffle(&mut shuffled);

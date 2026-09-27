@@ -5,9 +5,6 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::ChunkPos;
 
-/// A ctx whose brain has the (default-id) player LOCKED — melee only
-/// strikes a published lock, so the classic strike tests provide one.
-/// The anchor slice is leaked: test-only, and `AiCtx` borrows it.
 fn ctx<'a>(
     world: &'a ServerWorld,
     rng: &'a mut MobRng,
@@ -31,7 +28,6 @@ fn ctx<'a>(
     c
 }
 
-/// A player one block in front of the mob's face (-Z), inside a 1.5 reach.
 fn in_reach() -> (WorldPos, f32, WorldPos) {
     (
         WorldPos::new(8.5, 64.0, 8.5),
@@ -121,7 +117,6 @@ fn strikes_in_reach_then_is_gated_by_the_cooldown() {
         "the intent names the locked player"
     );
 
-    // The next strike only lands once the cooldown has fully elapsed.
     for i in 0..9 {
         assert!(
             ai.tick(&mut ctx(&world, &mut rng, pos, yaw, player))
@@ -145,14 +140,12 @@ fn out_of_reach_or_facing_away_lands_nothing() {
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
     let pos = WorldPos::new(8.5, 64.0, 8.5);
 
-    // 5 blocks away: out of reach.
     let far = WorldPos::new(8.5, 64.9, 3.5);
     assert!(ai
         .tick(&mut ctx(&world, &mut rng, pos, 0.0, far))
         .attack
         .is_none());
 
-    // In reach at -Z but the mob faces +Z (yaw PI): squarely behind it.
     let behind = WorldPos::new(8.5, 64.9, 7.2);
     assert!(
         ai.tick(&mut ctx(&world, &mut rng, pos, PI, behind))
@@ -160,7 +153,6 @@ fn out_of_reach_or_facing_away_lands_nothing() {
             .is_none(),
         "a player behind the mob is not struck"
     );
-    // The cooldown was never armed by those misses.
     assert!(
         ai.tick(&mut ctx(&world, &mut rng, pos, 0.0, behind))
             .attack
@@ -197,9 +189,6 @@ fn block_between_mob_and_player_prevents_strike_without_cooldown() {
 
 #[test]
 fn no_lock_means_no_strike_even_in_reach() {
-    // Attack executes on perception's decision; it never perceives on its
-    // own. An unlocked mob standing on top of the player swings at nothing
-    // — this is what makes a silent player safe beside a blind hunter.
     let world = ServerWorld::new(0, 1);
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 2.0, 5.0, 10);
@@ -207,7 +196,6 @@ fn no_lock_means_no_strike_even_in_reach() {
     let mut c = ctx(&world, &mut rng, pos, yaw, player);
     c.target = None;
     assert!(ai.tick(&mut c).attack.is_none());
-    // And the non-strike never armed the cooldown.
     assert!(ai
         .tick(&mut ctx(&world, &mut rng, pos, yaw, player))
         .attack
@@ -221,9 +209,6 @@ fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
     let mut rng = MobRng::new(1);
     let mut ai = MeleeAttackAi::new(1.5, 4.0, 5.0, 10);
     let pos = WorldPos::new(8.5, 64.0, 8.5);
-    // A victim mob one block in front of the striker's face (-Z), well
-    // inside reach once its own half-width pads the gap. The player is far
-    // away — a locked mob target must NOT fall back to the player.
     let victim = AiMob {
         id: 7,
         kind: crate::mob::Mob::Sheep,
@@ -244,8 +229,6 @@ fn a_locked_mob_target_is_struck_and_a_vanished_one_fizzles() {
         "the intent names the locked mob"
     );
 
-    // The same lock with the victim gone (dead / despawned): no strike, no
-    // player fallback, and the miss never armed the cooldown.
     let mut c = ctx(&world, &mut rng, pos, 0.0, far_player);
     c.target = Some(EntityRef::Mob(7));
     assert!(

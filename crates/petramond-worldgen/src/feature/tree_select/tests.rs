@@ -47,8 +47,6 @@ fn same(a: &SpeciesTable, b: &SpeciesTable) -> bool {
     std::ptr::eq(a, b)
 }
 
-/// Flat plains with one River column at `target` (relative to `origin`), that
-/// asserts every read stays within `radius` of the origin.
 struct Habitat {
     origin: (i32, i32),
     target: Option<(i32, i32)>,

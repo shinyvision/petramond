@@ -69,43 +69,27 @@ use super::cube_region_changes;
 use super::flood::{face_mask, DOWN};
 use super::shape::{collect_light_overrides, resolve_word};
 
-/// The farthest (L1, in cells) a single changed cell can move any light
-/// value: the flood loses [`DECAY`] per step from at most `SKY_FULL`.
 pub const CHANGE_REACH: i32 = (SKY_FULL / DECAY) as i32 - 1;
 
-/// Region radius: the change reach plus the increase frontier's ring.
 const REGION_REACH: i32 = CHANGE_REACH + 1;
 
-/// Edits one relight takes on. A bulk edit past this (a schematic paste, a
-/// blast) amortises better as full rebakes, which also run off-thread.
 pub const MAX_EDITS: usize = 1024;
 
-/// Neighbour steps in the flood's face order (`k` in [`face_mask`]'s
-/// convention: the source's outgoing face is `k ^ 1`, the destination's
-/// incoming face `k`).
 const STEPS: [IVec3; 6] = crate::mathh::FACE_NEIGHBORS;
 
-/// One section whose cubes an incremental relight changed.
 pub struct RelitSection {
     pub pos: SectionPos,
     pub skylight: Arc<[u8]>,
     pub blocklight: Arc<[LightRgb]>,
-    /// Which mesh-sampling regions changed (see [`super::cube_region_changes`]).
     pub mask: u32,
 }
 
-/// Whether `block`'s light apertures depend on its cell's stored state — the
-/// ids for which a state write alone (a shape refine, a custom bake) is a
-/// light change.
 pub fn light_depends_on_state(block: Block) -> bool {
     crate::block::light_cells()
         .get(block.id() as usize)
         .is_some_and(|&w| w & LIGHT_CELL_SHAPED != 0)
 }
 
-/// Whether a change at `cell` could be relit incrementally against the loaded
-/// sections as they stand (see the module doc's decline rules). A cheap
-/// early answer; [`relight_edits`] re-checks the whole batch.
 pub fn edit_relightable(sections: &FxHashMap<SectionPos, Arc<Section>>, cell: IVec3) -> bool {
     let mut positions = Vec::with_capacity(27);
     let Some(home) = SectionPos::from_world(cell.x, cell.y, cell.z) else {
@@ -119,11 +103,6 @@ pub fn edit_relightable(sections: &FxHashMap<SectionPos, Arc<Section>>, cell: IV
         })
 }
 
-/// Relight after `edits` — world cells whose light-relevant content (block,
-/// shape state, custom aperture) changed since the stored cubes were baked,
-/// with the sky-cover map unchanged. Returns the sections whose cubes changed,
-/// or `None` when any edit's region cannot be trusted (see the module doc);
-/// the caller then falls back to full rebakes for every edit.
 pub fn relight_edits(
     sections: &FxHashMap<SectionPos, Arc<Section>>,
     columns: &FxHashMap<ChunkPos, Arc<Column>>,
@@ -140,8 +119,6 @@ pub fn relight_edits(
     region.finish()
 }
 
-/// L1 distance from a section-local cell to the nearest cell of the
-/// neighbouring section at axis delta `d` (0 within this section).
 #[inline]
 fn axis_gap(local: usize, d: i32) -> i32 {
     match d {
@@ -151,8 +128,6 @@ fn axis_gap(local: usize, d: i32) -> i32 {
     }
 }
 
-/// Push every section within [`REGION_REACH`] of `cell`. `false` when the
-/// cell or any of those sections lies outside the world's vertical range.
 fn region(cell: IVec3, out: &mut Vec<SectionPos>) -> bool {
     let Some((center, lx, ly, lz)) = WorldData::split_world(cell.x, cell.y, cell.z) else {
         return false;
@@ -174,13 +149,9 @@ fn region(cell: IVec3, out: &mut Vec<SectionPos>) -> bool {
     true
 }
 
-/// Where a region section's starting values come from.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Source {
-    /// Its clean baked cubes.
     Stored,
-    /// Fully opaque with no changed cell: no light enters an opaque cell, so
-    /// its sky is dark and each emitter cell holds exactly its own emission.
     Implied,
 }
 
@@ -227,25 +198,17 @@ fn with_channel(c: LightRgb, ch: usize, v: u8) -> LightRgb {
     LightRgb::new(rgb[0], rgb[1], rgb[2])
 }
 
-/// One region section's working state.
 struct Work<'a> {
     pos: SectionPos,
     section: &'a Section,
     source: Source,
-    /// World Y of the section's lowest cell layer.
     oy: i32,
-    /// The owning column's sky-cover map (`[lz][lx]`).
     cover: &'a [i32],
-    /// Per-cell aperture overrides (section index → aperture word), from the
-    /// same producer the full bakes gather through.
     overrides: FxHashMap<u16, u32>,
     sky: Box<[u8]>,
     block: Box<[LightRgb]>,
 }
 
-/// The sections an incremental relight may read and write, addressed by world
-/// cell through a cached last-section handle (the BFS walks neighbours, so the
-/// section almost always repeats).
 struct Region<'a> {
     works: Vec<Work<'a>>,
     index: FxHashMap<SectionPos, usize>,
@@ -292,7 +255,6 @@ impl<'a> Region<'a> {
             };
             let mut states = Vec::new();
             collect_light_overrides(section, section_idx, &mut states);
-            // Later entries win, exactly as the gathers' densify does.
             let overrides = states
                 .into_iter()
                 .map(|s| (s.idx as u16, s.masks))
@@ -317,8 +279,6 @@ impl<'a> Region<'a> {
         })
     }
 
-    /// The region work and section index holding world cell `c`, or `None`
-    /// outside the region.
     #[inline]
     fn locate(&mut self, c: IVec3) -> Option<(usize, usize)> {
         let (sp, lx, ly, lz) = WorldData::split_world(c.x, c.y, c.z)?;
@@ -333,8 +293,6 @@ impl<'a> Region<'a> {
         Some((w, section_idx(lx, ly, lz)))
     }
 
-    /// The cell's light word — [`super::shape::LightCells::word`]'s rule over
-    /// the live section.
     #[inline]
     fn word(&self, w: usize, i: usize) -> u32 {
         let work = &self.works[w];
@@ -343,8 +301,6 @@ impl<'a> Region<'a> {
         })
     }
 
-    /// Whether the cell sits above its column's sky cover — pinned at full
-    /// skylight, the flood's pre-fill.
     #[inline]
     fn above_cover(&self, w: usize, i: usize) -> bool {
         let work = &self.works[w];
@@ -366,8 +322,6 @@ impl<'a> Region<'a> {
             };
             let old = self.works[w].sky[i];
             if old > 0 {
-                // A pinned cell keeps its value but still clears whatever it
-                // fed through its old shape.
                 if !self.above_cover(w, i) {
                     self.works[w].sky[i] = 0;
                 }
@@ -432,8 +386,6 @@ impl<'a> Region<'a> {
         }
     }
 
-    /// Restore an emitter cell's own emission on channel `ch` and queue it to
-    /// radiate again.
     fn reseed(&mut self, w: usize, i: usize, p: IVec3, ch: usize, add: &mut VecDeque<IVec3>) {
         let e = channel(self.emission(w, i), ch);
         if e == 0 {
@@ -487,8 +439,6 @@ impl<'a> Region<'a> {
             let Some((w, i)) = self.locate(p) else {
                 continue;
             };
-            // The emitter's own emission steps straight out, gated only on
-            // the neighbour accepting it — the full flood's seeding rule.
             let e = channel(self.emission(w, i), ch);
             if e > DECAY {
                 for (k, &d) in STEPS.iter().enumerate() {
@@ -544,9 +494,6 @@ impl<'a> Region<'a> {
         }
     }
 
-    /// The changed stored sections. An implied section can never change (no
-    /// light enters an opaque cell); if one did, the region's premise was
-    /// wrong and the whole relight is declined.
     fn finish(self) -> Option<Vec<RelitSection>> {
         let mut relit = Vec::new();
         for work in self.works {

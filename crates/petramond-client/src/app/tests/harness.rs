@@ -8,10 +8,6 @@ use petramond_world::gui_state::{MenuSlot, PointerButton};
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
 
-/// The app test fixture: a real [`App`] whose game session rides a LOOPBACK
-/// server pipe, with the `ServerGame` held here — the same shape as the game
-/// tests' `TestGame` (`src/game/tests/common.rs`), so app tests keep driving
-/// latched actions and asserting session state synchronously.
 pub(super) struct TestApp {
     pub(super) app: App,
     server: ServerGame,
@@ -37,8 +33,6 @@ impl TestApp {
         Self { app, server, pipe }
     }
 
-    /// Start a second loopback world in the SAME App after its first session
-    /// ended. This exercises the real adoption path and fresh session scope.
     pub(super) fn restart_session(&mut self) {
         assert!(self.app.session.is_none());
         let (server, bootstrap) = crate::game::tests::bootstrap::build_session_inline("", 1, 1);
@@ -90,15 +84,10 @@ impl TestApp {
         self.server.sessions()[0].player().craft_craftable_only
     }
 
-    /// Click the open document menu at the current cursor and then apply the
-    /// latched container edit / drop, standing in for the game tick that
-    /// resolves it in play. Returns whether a document menu consumed the click
-    /// (false with no menu open, so the click would fall through to gameplay).
     pub(super) fn click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
         self.press_screen_for_test(screen, now, PointerButton::Primary)
     }
 
-    /// Right-click counterpart of [`click_screen_for_test`](Self::click_screen_for_test).
     pub(super) fn right_click_screen_for_test(&mut self, screen: (u32, u32), now: f64) -> bool {
         self.press_screen_for_test(screen, now, PointerButton::Secondary)
     }
@@ -120,8 +109,6 @@ impl TestApp {
         true
     }
 
-    /// Hold one physical menu button across an ordered set of real document
-    /// slot cells, release it, then apply the resulting atomic drag action.
     pub(super) fn drag_screen_for_test(
         &mut self,
         screen: (u32, u32),
@@ -145,16 +132,12 @@ impl TestApp {
         self.apply_latched_actions_for_test();
     }
 
-    /// Flush the game's queued messages to the server, apply the latched
-    /// actions, and refresh the replicated read models — what the game tests'
-    /// harness does, reached through the App.
-    /// One app frame with the loopback server pumped afterwards, standing in
-    /// for one iteration of the production server thread: terrain streams
-    /// into the replica with one frame of latency. The app clock is backdated
-    /// one fixed tick so each headless frame banks a real tick (streaming
-    /// requests and acks ride ticks).
-    /// Returns (client→server, server→client) message counts and tallies the
-    /// message variants — stream-health diagnostics.
+    /// One app frame plus a pumped loopback server, like one pass of the production server
+    /// thread. Terrain reaches the replica a frame late.
+    /// Backdates the app clock one tick so the headless frame banks a real tick. Streaming
+    /// requests and acks ride ticks.
+    /// Returns (client->server, server->client) message counts and tallies the variants for
+    /// stream-health diagnostics.
     pub(super) fn frame_and_pump_recorded(
         &mut self,
         screen: (u32, u32),
@@ -189,7 +172,6 @@ impl TestApp {
             self.server.apply_message(0, msg);
         }
         self.server.apply_latched_actions_for_test();
-        // Refresh the replicated self/menu views the way the next batch would.
         self.server.sessions_mut()[0]
             .replication_mut()
             .last_sent_inventory_revision = None;
@@ -198,8 +180,6 @@ impl TestApp {
         game.apply_views_for_test(&state, sync);
     }
 
-    /// Build the exact content snapshot the renderer receives, including an
-    /// in-progress slot gesture's presentation-only distribution overlay.
     pub(super) fn menu_snapshot_for_test(&self) -> petramond::gui::UiSnapshot {
         let preview = self.app.ui.menu_drag_preview();
         let preview = preview
@@ -213,7 +193,6 @@ impl TestApp {
         )
     }
 
-    /// The SESSION inventory — the authoritative one the sim mutates.
     pub(super) fn inventory(&self) -> &Inventory {
         &self.server.sessions()[0].player().inventory
     }
@@ -223,8 +202,6 @@ impl TestApp {
             .player_mut()
             .inventory
             .add(stack);
-        // Recipe affordance is presentation-side and therefore reads the
-        // replicated inventory, just like the real client after a batch.
         self.server.sessions_mut()[0]
             .replication_mut()
             .last_sent_inventory_revision = None;

@@ -5,7 +5,6 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-/// A grass floor at `y = 63` over one chunk, so footholds sit at `y = 64`.
 fn flat_world() -> ServerWorld {
     let mut world = ServerWorld::new(0, 1);
     let mut chunk = Chunk::new(0, 0);
@@ -34,7 +33,6 @@ fn a_one_cell_goal_drift_keeps_the_route_until_the_hold_expires() {
     nav.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
     assert_eq!(nav.recomputes(), 1);
 
-    // The target stepped one cell sideways: the live route is kept.
     let drifted = IVec3::new(10, 64, 2);
     for _ in 0..GOAL_DRIFT_REPATH_TICKS {
         nav.update_goal_when_supported(Some(drifted), start, &world, true, &NavInputs::none());
@@ -97,7 +95,6 @@ fn an_exhausted_budget_suspends_the_search_and_the_mob_waits_for_it() {
     let mut reference = Navigator::new(1, 0.25, 0.9);
     reference.update_goal_when_supported(Some(goal), start, &world, true, &NavInputs::none());
 
-    // Room for only a few expansions per tick.
     let budget = PathBudget::with_capacity(5);
     let mut nav = Navigator::new(1, 0.25, 0.9);
     budget.refill(0);
@@ -162,12 +159,10 @@ fn waiting_searches_get_a_reserved_share_fresh_requests_cannot_spend() {
     );
     assert_eq!(budget.grant(true), 1000, "a continuation sees both halves");
 
-    // Fresh traffic drains the open half; the reserve survives it.
     budget.spend(600, false);
     assert_eq!(budget.grant(false), 0);
     assert_eq!(budget.grant(true), 500);
 
-    // A continuation drains the reserve first.
     budget.refill(1);
     budget.spend(100, true);
     assert_eq!(budget.grant(false), 500);

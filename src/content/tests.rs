@@ -1,6 +1,3 @@
-//! The content library's disk and wire rules, on synthetic archives, rows and
-//! directories. Nothing here touches the network or the player's data.
-
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::PathBuf;
@@ -32,7 +29,6 @@ fn file<'a>(name: &'a str, data: &'a [u8]) -> Zent<'a> {
     }
 }
 
-/// A plain zip of `entries`, written the way any archiver would.
 fn zip(entries: &[Zent]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
@@ -182,8 +178,6 @@ fn hostile_archives_are_refused_with_a_reason() {
         let why = refusal(&bytes);
         assert!(why.contains(expected), "expected '{expected}', got '{why}'");
     }
-    // An end record that does not end the file is one another reader might
-    // not pick.
     let mut trailing = zip(&[file("pack.json", manifest)]);
     trailing.extend_from_slice(b"junk");
     assert!(refusal(&trailing).contains("damaged"));
@@ -310,7 +304,6 @@ fn only_exactly_the_promised_bytes_are_kept() {
     ));
 }
 
-/// The scratch root, and the content dirs inside it.
 fn dirs(name: &str) -> (petramond_util::test_dirs::TestScratchDir, Dirs) {
     let root = scratch(name);
     let dirs = Dirs {
@@ -414,8 +407,6 @@ fn an_apply_cut_short_never_costs_the_player_their_pack() {
     stage(&dirs, "sample_pack", "1");
     install::apply_in(&dirs, &BTreeSet::new());
     stage(&dirs, "sample_pack", "2");
-    // A crash right after the old version was moved aside: the journal is
-    // written, the old version sits in staging, and the stage is gone.
     let mut change = install::pending(&dirs).remove(0);
     let Op::Install { staged, .. } = &change.op else {
         panic!("an install");
@@ -434,7 +425,6 @@ fn an_apply_cut_short_never_costs_the_player_their_pack() {
     assert_eq!(report.failed.len(), 1, "{report:?}");
     assert_eq!(notes(&dirs, "sample_pack"), "1", "the old version is back");
 
-    // An orphaned aside with its place empty goes back too.
     std::fs::rename(
         dirs.mods.join("sample_pack"),
         dirs.staging().join("sample_pack.old-orphan"),
@@ -465,8 +455,6 @@ fn a_removed_folder_takes_only_its_own_record_and_never_comes_back() {
         "the real pack of that id keeps its record"
     );
 
-    // A removal whose deletion fails part way (a locked file) is finished
-    // by a later start, never put back.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -625,7 +613,6 @@ fn check_refuses_what_the_website_refuses() {
         assert!(why.contains(expected), "expected '{expected}', got '{why}'");
     }
 
-    // A corrupt entry is refused even though the container is sound.
     let mut corrupt = zip(&[
         file("pack.json", br#"{"id":"ok","name":"Ok"}"#),
         Zent {
@@ -640,21 +627,6 @@ fn check_refuses_what_the_website_refuses() {
         .contains("damaged"));
 }
 
-/// The cross-repository check: a real website's listing, icon and download,
-/// through the whole install pipeline, the startup apply, discovery and the
-/// tier classifier, then an uninstall.
-///
-/// OPT-IN, like `account::tests::live_`: it needs a running website holding
-/// the addon `PETRAMOND_TEST_ADDON` and the third-party mod
-/// `PETRAMOND_TEST_MOD`, and it INSTALLS them into the data dir, so it
-/// refuses to run without `PETRAMOND_DATA_DIR` pointing at a scratch dir.
-///
-/// ```text
-/// PETRAMOND_DATA_DIR=/tmp/scratch PETRAMOND_ACCOUNT_URL=http://localhost:8044 \
-///   PETRAMOND_TEST_ACCOUNT=someone PETRAMOND_TEST_PASSWORD=... \
-///   PETRAMOND_TEST_ADDON=studio PETRAMOND_TEST_MOD=some_mod \
-///   cargo test --profile fasttest -p petramond --lib content::tests::live_ -- --ignored
-/// ```
 #[test]
 #[ignore = "needs a running website with an uploaded addon and mod"]
 fn live_download_installs_by_tier_and_uninstall_removes_it() {
@@ -718,7 +690,6 @@ fn live_download_installs_by_tier_and_uninstall_removes_it() {
         );
     }
 
-    // "Restart": the startup apply, then discovery.
     let (report, lock) = install::apply_pending();
     assert_eq!(applied(&report), both);
     let pack = |id: &str| {

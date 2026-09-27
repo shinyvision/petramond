@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 #[test]
 fn bound_frame_is_authoritative_truncates_and_clamps() {
-    // 3x2 sheet = 6 frames.
     let g = Some([3, 2]);
     assert_eq!(frame_index(g, Some(2), None, 0.0), 2);
     assert_eq!(
@@ -17,8 +16,6 @@ fn bound_frame_is_authoritative_truncates_and_clamps() {
         0,
         "bound beats fps"
     );
-    // Truncation happens when the binding resolves (f32 -> i32), so the
-    // walk only ever sees integers; clamping happens here.
     assert_eq!(frame_index(g, Some(99), None, 0.0), 5, "clamps into sheet");
     assert_eq!(
         frame_index(g, Some(-3), None, 0.0),
@@ -42,7 +39,6 @@ fn fps_cycles_row_major_and_invalid_rates_rest_on_frame_zero() {
 
 #[test]
 fn frame_src_is_row_major_one_cell() {
-    // 64x64 sheet, 2x2 grid: frame 2 = row 1, col 0.
     assert_eq!(
         frame_src((64, 64), Some([2, 2]), Some(2), None, 0.0),
         [0, 32, 32, 32]
@@ -53,8 +49,6 @@ fn frame_src_is_row_major_one_cell() {
     );
     assert_eq!(frame_src((64, 64), None, None, None, 0.0), [0, 0, 64, 64]);
 }
-
-// ---- runtime-driven behavior -------------------------------------------------
 
 struct Sheets(&'static [(&'static str, u16, (u32, u32))]);
 
@@ -99,7 +93,6 @@ fn doc_image_batch(out: &FrameOutput, tex: u16) -> Option<&Batch> {
         .find(|b| b.tex == TexId::DocImage(tex))
 }
 
-/// The top-left UV of the first quad drawn from document image `tex`.
 fn doc_image_uv0(out: &FrameOutput, tex: u16) -> Option<[f32; 2]> {
     let b = doc_image_batch(out, tex)?;
     Some(out.draw.vertices[b.start as usize].uv)
@@ -126,12 +119,10 @@ fn painted_uvs_follow_the_bound_frame() {
         "frame 1 = col 1, row 0"
     );
 
-    // A fractional bound frame truncates (2.9 -> 2 = row 1, col 0).
     state.set("f", UiValue::F32(2.9));
     let out = paint(FRAMED_IMAGE_DOC, &state, &images, 0.0);
     assert_eq!(doc_image_uv0(&out, 0), Some([0.0, 0.5]));
 
-    // Past the end clamps to the last frame instead of wrapping.
     state.set("f", UiValue::I32(99));
     let out = paint(FRAMED_IMAGE_DOC, &state, &images, 0.0);
     assert_eq!(
@@ -140,7 +131,6 @@ fn painted_uvs_follow_the_bound_frame() {
         "clamped to frame 3"
     );
 
-    // Unbound: fps animates from the clock (now 0.6, 4 fps -> frame 2).
     let out = paint(FRAMED_IMAGE_DOC, &UiState::new(), &images, 0.6);
     assert_eq!(doc_image_uv0(&out, 0), Some([0.0, 0.5]));
 }
@@ -181,12 +171,9 @@ fn image_backed_button_sizes_to_one_frame_and_still_clicks() {
     };
     frame(&[], &mut fs, &mut out);
 
-    // Natural size is ONE frame of the 2x2 sheet, not the whole 64x64.
     let r = out.rect("go").expect("button rect");
     assert_eq!((r.w, r.h), (32, 32));
 
-    // It draws its document image and NOT the theme button face: with an
-    // unstyled root frame the draw list holds only the image batch.
     assert!(doc_image_batch(&out, 0).is_some());
     assert!(
         out.draw.batches.iter().all(|b| b.tex == TexId::DocImage(0)),
@@ -194,7 +181,6 @@ fn image_backed_button_sizes_to_one_frame_and_still_clicks() {
         out.draw.batches
     );
 
-    // Click behavior is the ordinary button one (press in, release in).
     let (cx, cy) = ((r.x + r.w / 2) as f32, (r.y + r.h / 2) as f32);
     let down = InputEvent::PointerDown {
         x: cx,
@@ -232,8 +218,6 @@ fn bound_image_overrides_an_image_backed_buttons_sheet() {
     state.set("face", UiValue::Str("alt_btn".into()));
     let out = paint(doc, &state, &images, 0.0);
 
-    // The override sheet is the one drawn (tex 1) and measured: one frame
-    // of a 32x32 2x2 sheet is 16x16.
     assert!(doc_image_batch(&out, 1).is_some());
     assert!(doc_image_batch(&out, 0).is_none());
     let r = out.rect("go").expect("button rect");

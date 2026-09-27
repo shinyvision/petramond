@@ -1,12 +1,3 @@
-//! The client's half of frames, time and sound out of the presented world:
-//! the stepped clock ([`clock`]), finding and asking the encoder
-//! ([`ffmpeg`]), and the encoder that writes a media file ([`encoder`]).
-//!
-//! The host calls a mod makes land on the engine's desk
-//! (`petramond::modding::client::media`); the app carries them out
-//! (`app::media`). Nothing here knows what a file is FOR: the mod names every
-//! container, codec, option and path.
-
 pub mod clock;
 pub mod encoder;
 pub mod ffmpeg;
@@ -16,9 +7,6 @@ mod tests;
 
 use mod_api::ClientMediaFailure;
 
-/// What a failed media file's message means. A full disk is the OPERATING
-/// SYSTEM's own words for it, however they reached the message (an I/O error
-/// here, or the encoder repeating what the OS told it).
 pub fn failure_of(message: &str) -> ClientMediaFailure {
     if disk_full_words()
         .iter()
@@ -30,8 +18,6 @@ pub fn failure_of(message: &str) -> ClientMediaFailure {
     }
 }
 
-/// The OS's messages for "no space" and "quota exceeded", without their
-/// `(os error N)` suffix.
 fn disk_full_words() -> &'static [String] {
     static WORDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     WORDS.get_or_init(|| {
@@ -56,9 +42,6 @@ fn disk_full_words() -> &'static [String] {
     })
 }
 
-/// Write an executable stand-in for the encoder at `path`. A child shell
-/// writes it, never this process: a test process that holds a script open for
-/// writing while another test forks makes that script unexecutable (ETXTBSY).
 #[cfg(all(test, unix))]
 pub(crate) fn write_stand_in_encoder(path: &std::path::Path, script: &str) {
     let status = std::process::Command::new("/bin/sh")

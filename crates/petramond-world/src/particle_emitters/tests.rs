@@ -6,7 +6,6 @@ fn base() -> String {
     text
 }
 
-/// The shipped catalog must load fully — the startup gate as a test.
 #[test]
 fn shipped_particle_emitters_json_loads_fully() {
     let defs = parse_layers(&[&base()])
@@ -25,7 +24,6 @@ fn shipped_particle_emitters_json_loads_fully() {
 
 #[test]
 fn burst_bundles_validate() {
-    // (count, up_speed, bias) — the fields the bad cases vary.
     let splash = |count: &str, up: &str, bias: &str| {
         format!(
             r#"{{"emitters": [{{"emitter": "mymod:pop", "burst": {{
@@ -131,7 +129,6 @@ fn ambient_biome_filters_resolve_and_validate() {
                     "color": [[0.3, 0.3, 0.3], [0.5, 0.5, 0.5]]{extra} }} }}]}}"#
         )
     };
-    // Allow-list resolves to a set admitting exactly its members.
     let ok = with_filter(r#", "biomes": ["snowy_plains", "snowy_taiga"]"#);
     let defs = parse_layers(&[&base(), ok.as_str()]).expect("filter loads");
     let allow = &defs
@@ -145,7 +142,6 @@ fn ambient_biome_filters_resolve_and_validate() {
     assert!(allow.is_some());
     assert!(biome_allowed(allow, mod_api::biome::SNOWY_PLAINS));
     assert!(!biome_allowed(allow, mod_api::biome::PLAINS));
-    // Exclusion admits the complement.
     let ok = with_filter(r#", "exclude_biomes": ["desert"]"#);
     let defs = parse_layers(&[&base(), ok.as_str()]).expect("exclusion loads");
     let allow = &defs
@@ -158,7 +154,6 @@ fn ambient_biome_filters_resolve_and_validate() {
         .biome_allow;
     assert!(!biome_allowed(allow, mod_api::biome::DESERT));
     assert!(biome_allowed(allow, mod_api::biome::PLAINS));
-    // No filter = all biomes.
     let defs = parse_layers(&[&base(), with_filter("").as_str()]).expect("no filter");
     assert!(defs
         .rows()
@@ -169,7 +164,6 @@ fn ambient_biome_filters_resolve_and_validate() {
         .unwrap()
         .biome_allow
         .is_none());
-    // Unknown names and double declarations fail the load.
     for (bad, why) in [
         (
             with_filter(r#", "biomes": ["nope_biome"]"#),
@@ -187,8 +181,6 @@ fn ambient_biome_filters_resolve_and_validate() {
     }
 }
 
-/// A flight row is validated as a flight: the falling-kind fields are
-/// refused, its names resolve at load, and a palette is per-entry checked.
 #[test]
 fn flight_rows_validate_and_resolve_their_names() {
     let row = |extra: &str, orbit: &str, occupancy: &str, names: &str| {
@@ -268,9 +260,6 @@ fn flight_rows_validate_and_resolve_their_names() {
     }
 }
 
-/// The biome-density table: a bundle some biome names is driven and reads
-/// 0 in every biome that omits it; a bundle no biome names reads 1
-/// everywhere; unknown or non-ambient keys are refused.
 #[test]
 fn biome_density_table_covers_driven_bundles_only() {
     let catalog = parse_layers(&[&base()]).unwrap();
@@ -331,7 +320,6 @@ fn ambient_bundles_validate_and_resolve_hit_bursts() {
         )
     };
 
-    // A valid ambient whose hit references the ENGINE water-splash burst.
     let ok = ambient(r#"{"burst": "petramond:water_splash"}"#, "24");
     let defs = parse_layers(&[&base(), ok.as_str()])
         .expect("ambient bundle loads")
@@ -341,7 +329,6 @@ fn ambient_bundles_validate_and_resolve_hit_bursts() {
     assert!(matches!(&spec.hit, AmbientHit::Burst(k) if k == "petramond:water_splash"));
     assert!(d.rows.is_empty() && d.burst.is_none());
 
-    // "die" is the default hit.
     let quiet = ambient(r#""die""#, "24");
     let defs = parse_layers(&[&base(), quiet.as_str()]).expect("die hit loads");
     assert_eq!(

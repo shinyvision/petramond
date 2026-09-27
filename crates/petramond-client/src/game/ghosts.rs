@@ -15,8 +15,6 @@ use petramond_world::construction::{self, Record, Status};
 
 use super::Game;
 
-/// How often every nearby piece is re-measured, catching changes no block
-/// delta announced (a section streaming in, a prediction settling).
 const SWEEP_SECONDS: f64 = 1.0;
 
 #[derive(Clone, Copy)]
@@ -36,7 +34,6 @@ struct Index {
     placement: GhostPlacement,
     size: [i32; 3],
     pieces: BTreeMap<[i32; 3], Vec<Cell>>,
-    /// Per design section, its palette as construction records ready to draw.
     palettes: Vec<Vec<Option<(Record, ResolvedCell)>>>,
     built: HashMap<[i32; 3], Built>,
     dirty: BTreeSet<[i32; 3]>,
@@ -102,8 +99,6 @@ impl Index {
     }
 }
 
-/// A palette record as the ghost draws it: its construction form, never an
-/// archived running state.
 fn drawable(data: &CellData) -> Option<(Record, ResolvedCell)> {
     let record = data.construction_record().ok()?;
     let built = record.built();
@@ -125,7 +120,6 @@ fn drawable(data: &CellData) -> Option<(Record, ResolvedCell)> {
 }
 
 impl Game {
-    /// Mark the pieces holding any of `cells` for re-measurement.
     pub(super) fn note_ghost_changes(&mut self, cells: impl Iterator<Item = IVec3> + Clone) {
         for index in self.tools.ghosts.index.values_mut() {
             let origin = IVec3::from_array(index.placement.origin);
@@ -139,9 +133,6 @@ impl Game {
         }
     }
 
-    /// The anchored ghost pieces to draw this frame: those within the view
-    /// distance, since a piece compares itself against terrain that must be
-    /// streamed in.
     pub fn ghost_pieces(
         &mut self,
         now: f64,
@@ -230,8 +221,6 @@ impl Game {
         }
     }
 
-    /// Measure one piece against the replica and rebuild its scene if the
-    /// cells it shows changed.
     fn remeasure_piece(&mut self, key: &str, piece: [i32; 3]) {
         let index = self.tools.ghosts.index.get_mut(key).unwrap();
         index.dirty.remove(&piece);
@@ -259,8 +248,6 @@ impl Game {
             index.built.remove(&piece);
             return;
         }
-        // Neighbouring pieces' shown cells along the shared faces, so faces
-        // between two pieces cull like faces inside one.
         let lo = IVec3::from_array(piece) * 16 - IVec3::ONE;
         let hi = IVec3::from_array(piece) * 16 + IVec3::splat(16);
         let mut cells: Vec<(IVec3, ResolvedCell)> = Vec::with_capacity(own.len());

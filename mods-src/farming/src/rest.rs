@@ -1,32 +1,10 @@
-//! The rest an attracting area takes after it has produced a visitor.
-//!
-//! Attraction alone makes a planted field a faucet on a timer the player
-//! controls: leave, come back, and the stand has pulled in a fresh animal
-//! to butcher. So once a field draws one in, the AREA around that field —
-//! every 16×16 column within the attraction's own neighbourhood — sits out
-//! attraction for [`REST_TICKS`], and a crop in a resting column does not
-//! roll at all.
-//!
-//! The rests are one versioned world-KV row ([`KEY`]): each resting area as
-//! the column rectangle it covers and its expiry tick. It rides the save
-//! like the tick it is measured against, so a reload neither forfeits a rest
-//! nor restarts it — and because an expired area is dropped whenever the row
-//! is rewritten, the row only ever holds the last hour's visitors, however
-//! much of the world has been farmed and abandoned.
-
 use mod_sdk::*;
 
-/// How long an area rests after producing a visitor: an hour of play.
 pub const REST_TICKS: u64 = 72_000;
 
-/// The world-KV row holding every resting area.
 const KEY: &str = "farming:attract_rests";
-/// Where earlier builds kept one row per resting column
-/// (`{LEGACY_PREFIX}/{cx}/{cz}`, the expiry as LE u64). Still honoured, and
-/// deleted by the first roll that finds one expired.
 const LEGACY_PREFIX: &str = "farming:attract_rest";
 
-/// One resting area: the columns `lo..=hi` (x, z) until tick `expiry`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Area {
     lo: [i32; 2],
@@ -40,7 +18,6 @@ impl Area {
     }
 }
 
-/// The stored row: every area still resting when it was written.
 #[derive(Debug, Default, PartialEq)]
 struct Areas(Vec<Area>);
 
@@ -75,7 +52,6 @@ impl KvRecord for Areas {
     }
 }
 
-/// The session's copy of the resting areas, read from the world once.
 #[derive(Default)]
 pub struct Rests {
     areas: Option<Areas>,
@@ -95,7 +71,6 @@ impl Rests {
             })
     }
 
-    /// Whether the column holding `pos` is still resting.
     pub fn resting(&mut self, pos: [i32; 3]) -> bool {
         let now = current_tick();
         let col = column(pos);
@@ -107,8 +82,6 @@ impl Rests {
         rested || legacy_resting(col, now)
     }
 
-    /// Put every column within `radius` blocks of `pos` to rest from now,
-    /// dropping the areas that have run out.
     pub fn begin(&mut self, pos: [i32; 3], radius: i32) {
         let now = current_tick();
         let areas = self.areas();
@@ -122,8 +95,6 @@ impl Rests {
     }
 }
 
-/// A rest filed by an earlier build under its per-column row; an expired
-/// row is deleted on the way out.
 fn legacy_resting([cx, cz]: [i32; 2], now: u64) -> bool {
     let key = format!("{LEGACY_PREFIX}/{cx}/{cz}");
     let Some(bytes) = world_kv_get(&key) else {
@@ -137,8 +108,6 @@ fn legacy_resting([cx, cz]: [i32; 2], now: u64) -> bool {
     false
 }
 
-/// The 16×16 column holding a block (floor division, so negative
-/// coordinates land in their own column, not their neighbour's).
 fn column(pos: [i32; 3]) -> [i32; 2] {
     [pos[0] >> 4, pos[2] >> 4]
 }
@@ -155,8 +124,6 @@ mod tests {
 
     #[test]
     fn an_area_covers_every_column_the_radius_touches() {
-        // A crop at the corner of column (0,0) with the headcount radius
-        // reaches into all four neighbours on the negative side.
         let area = Area {
             lo: column([1 - 16, 0, 1 - 16]),
             hi: column([1 + 16, 0, 1 + 16]),

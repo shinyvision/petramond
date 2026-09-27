@@ -1,6 +1,3 @@
-//! Mob, riding, and population access on the world: spawn/restore funnels,
-//! per-tick advancement, and the persisted worldgen-herd bookkeeping.
-
 use crate::world::ServerWorld;
 use std::collections::BTreeSet;
 
@@ -9,22 +6,16 @@ use petramond_math::math::Vec3;
 use petramond_world::chunk::ChunkPos;
 
 impl ServerWorld {
-    /// The active mobs (read-only), for `Game` to forward to the render-side scene
-    /// adapter and to ray-test for crosshair targeting.
     #[inline]
     pub fn mobs(&self) -> &Mobs {
         &self.side.entities.mobs
     }
 
-    /// Mutable access to the active mobs.
     #[inline]
     pub fn mobs_mut(&mut self) -> &mut Mobs {
         &mut self.side.entities.mobs
     }
 
-    /// Spawn a mob and initialize its cached render light immediately, so a mob
-    /// created after the mob tick does not render full-bright until the next tick.
-    /// Returns the newborn's stable session id.
     pub fn spawn_mob(
         &mut self,
         kind: crate::mob::Mob,
@@ -38,11 +29,6 @@ impl ServerWorld {
             .spawn_lit(kind, pos, yaw, sky, block)
     }
 
-    /// Atomically spawn a mob only when its complete collision body fits in
-    /// loaded, stream-final world state and does not overlap another live solid mob.
-    /// This is the programmatic-placement counterpart to `spawn_mob`: mods
-    /// can create vehicles and other player-placed solid entities without a
-    /// racy centre-cell approximation.
     pub fn spawn_mob_checked(
         &mut self,
         kind: crate::mob::Mob,
@@ -94,32 +80,20 @@ impl ServerWorld {
         (sky, block)
     }
 
-    /// Record one gameplay noise for the mob AI's hearing batch (see
-    /// `mob::noise` for the timing contract). Emitters are the game's own
-    /// funnels: player steps, block place/break.
     pub fn push_noise(&mut self, noise: crate::mob::Noise) {
         self.side.entities.mobs.push_noise(noise);
     }
 
-    /// The riding registry (see `mob::riding`).
     #[inline]
     pub fn riding(&self) -> &crate::mob::riding::Riding {
         &self.side.entities.riding
     }
 
-    /// Mutable riding registry — the server's riding pass and the engine
-    /// safety valves (death, leave) detach through this.
     #[inline]
     pub fn riding_mut(&mut self) -> &mut crate::mob::riding::Riding {
         &mut self.side.entities.riding
     }
 
-    /// Attach `player` to `seat` of the LIVE mob `mob_id`, validating what the
-    /// registry itself cannot: the mob exists and is alive, and the species
-    /// row declares that seat. The seat-occupancy and one-mount-per-player
-    /// rules live in [`crate::mob::riding::Riding::mount`]. This is the
-    /// `MobMount` HostCall's engine seam; the riding pass slaves the player to
-    /// the seat starting this same tick.
     pub fn try_mount_player(&mut self, player: u8, mob_id: u64, seat: u8) -> bool {
         let Some(mob) = self.side.entities.mobs.live(mob_id) else {
             return false;
@@ -133,11 +107,6 @@ impl ServerWorld {
             .mount(player, crate::mob::riding::MountTarget::Mob(mob_id), seat)
     }
 
-    /// Pin `player` at a static pose anchor — the `PlayerPoseSet` HostCall's
-    /// engine seam. The registry enforces one attachment per player and
-    /// refuses an exactly-occupied anchor (target equality); WHERE anchors
-    /// exist and who takes one is the calling mod's policy. Finite-value
-    /// validation happens at the host boundary.
     pub fn try_mount_anchor(&mut self, player: u8, anchor: crate::mob::riding::PoseAnchor) -> bool {
         self.side
             .entities
@@ -145,18 +114,11 @@ impl ServerWorld {
             .mount(player, crate::mob::riding::MountTarget::Anchor(anchor), 0)
     }
 
-    /// Advance the mobs one fixed game tick against an immutable view of the rest of
-    /// the world (the field is moved out so the `&mut Mobs` and `&World` borrows stay
-    /// disjoint). Returns the gameplay events mobs produced this tick, for `Game` to
-    /// apply through the relevant damage pipelines.
     pub fn tick_mobs(
         &mut self,
         dt: f32,
         anchors: &[crate::mob::PlayerAnchor],
     ) -> crate::mob::MobTickEvents {
-        // Feed this tick's announced block changes to the confinement cache
-        // BEFORE the mobs decide: a pen edit must never leave a mob acting on
-        // a stale region.
         self.route_probe_budget().refill();
         let (next, changed, lost) = self.nav_changes_since(self.side.entities.mobs.change_seq());
         self.side
@@ -164,13 +126,9 @@ impl ServerWorld {
             .mobs
             .invalidate_confined_regions(next, &changed, lost);
         if self.side.entities.mobs.is_empty() {
-            // Nobody is listening: drop the tick's noise batch, or a mob-free
-            // world would accumulate the player's footsteps forever.
             self.side.entities.mobs.discard_noises();
             return crate::mob::MobTickEvents::default();
         }
-        // One shared reachability-probe budget per tick, spent by whichever
-        // mobs (and mod ABI calls) ask — see `mob::nav::REACH_PROBE_TICK_BUDGET`.
         self.reach_budget().refill();
         let freeze_unloaded = self.side.save.is_some();
         let mut mobs = std::mem::take(&mut self.side.entities.mobs);
@@ -179,9 +137,6 @@ impl ServerWorld {
         attacks
     }
 
-    /// Run one natural mob-spawn attempt (the passive backfill trickle; the
-    /// caller owns the cadence). Returns the mobs actually spawned, for the
-    /// caller to report as `mob_spawned` events.
     pub fn spawn_mobs_tick(
         &mut self,
         player_pos: petramond_math::world_pos::WorldPos,
@@ -192,10 +147,6 @@ impl ServerWorld {
         spawned
     }
 
-    /// Run one worldgen-population step around `player_pos` (see `mob::populate`):
-    /// place the one-time herds of nearby chunks whose deterministic roll says so,
-    /// and record the chunks that spawned in the persisted populated set. Returns
-    /// the mobs spawned, for the caller's `mob_spawned` events.
     pub fn populate_mobs_tick(
         &mut self,
         player_pos: petramond_math::world_pos::WorldPos,
@@ -207,19 +158,14 @@ impl ServerWorld {
         spawned
     }
 
-    /// Whether `chunk`'s one-time worldgen herd already spawned (this session or
-    /// any earlier one — the set is restored from `level.dat` at world open).
     pub fn column_populated(&self, chunk: ChunkPos) -> bool {
         self.side.gen.populated_columns.contains(&chunk)
     }
 
-    /// The persisted populated-chunk set, for the `level.dat` encoder.
     pub fn populated_columns(&self) -> &BTreeSet<ChunkPos> {
         &self.side.gen.populated_columns
     }
 
-    /// Restore the populated-chunk set at world open (before the first tick, so
-    /// the first population pass already sees every historical herd).
     pub fn set_populated_columns(&mut self, set: BTreeSet<ChunkPos>) {
         self.side.gen.populated_columns = set;
     }

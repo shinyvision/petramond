@@ -200,9 +200,6 @@ fn connector_alignment_is_rotation_independent() {
 
 #[test]
 fn shipped_structures_compile() {
-    // Every template compiles in the registry's structures stage, so the
-    // shipped registry building at all is the check; each compiled template
-    // also has sane bounds in every rotation.
     let content = crate::content::test_support::default_content();
     for template in super::CATALOG.get(&content).rows() {
         for (min, max) in template.info().bounds {

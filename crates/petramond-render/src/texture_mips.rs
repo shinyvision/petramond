@@ -1,9 +1,6 @@
-//! RGBA mip generation helpers for alpha-cutout pixel art.
-
-/// Build a full mip chain for an RGBA texture. Downsampling preserves cutout coverage:
-/// if any source texel in the footprint is opaque enough to survive the shader alpha
-/// test, the mip texel stays fully opaque using the average opaque colour. This keeps
-/// thin decals and plant-like details from disappearing at distance.
+/// Full mip chain for an RGBA texture. A mip texel stays fully opaque (average of the opaque
+/// colours) if anything under it passes the alpha test. Without that, thin decals and plants
+/// disappear once you back away.
 pub fn build_cutout_mips(rgba: &[u8], w: u32, h: u32) -> Vec<Vec<u8>> {
     let w = w.max(1);
     let h = h.max(1);
@@ -105,10 +102,7 @@ mod tests {
 
     #[test]
     fn cutout_mips_preserve_opaque_coverage() {
-        let rgba = [
-            100, 50, 25, 255, 0, 0, 0, 0, //
-            0, 0, 0, 0, 0, 0, 0, 0,
-        ];
+        let rgba = [100, 50, 25, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
         let mips = build_cutout_mips(&rgba, 2, 2);
 

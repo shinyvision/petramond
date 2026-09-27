@@ -4,7 +4,6 @@ use petramond_world::bbmodel::{
     Animation, Channel, Interpolation, Keyframe, Marker, MarkerKind, Model,
 };
 
-/// root → leftArm → leftHand → leftFinger, root → rightArm → rightHand.
 pub fn rig() -> Model {
     Model::load(
         r#"{
@@ -29,7 +28,6 @@ pub fn rig() -> Model {
     .expect("test rig parses")
 }
 
-/// A clip of linear rotation keys `(bone, time, degrees)`.
 pub fn clip(rig: &Model, length: f32, looping: bool, keys: &[(&str, f32, Vec3)]) -> Animation {
     let mut anim = Animation::new(length, looping, false);
     let mut tracks: Vec<(usize, Vec<Keyframe>)> = Vec::new();

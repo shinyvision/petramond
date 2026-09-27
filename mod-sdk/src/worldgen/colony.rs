@@ -1,55 +1,24 @@
-//! Seam-safe COLONY density fields: the "things grow in patches" rule every
-//! worldgen feature that scatters by density needs, as one pure function of
-//! `(seed, column)` so every section that can see a column derives the same
-//! answer for it.
-
 use super::GenRng;
 
-/// A per-mille density field made of colonies: each lattice cell of the
-/// column grid may seed one colony at a jittered centre inside it, owning a
-/// disc whose density falls LINEARLY in distance from `core` at the centre to
-/// `rim` at the edge. Columns in no colony keep `stray`, and where colonies
-/// overlap the densest one owns the column — two patches meeting read as two
-/// patches, not a bloom.
-///
-/// The field is positional through [`GenRng::positional`] on the lattice
-/// cell, so it never depends on which section asks, in what order, or on
-/// anything but the seed and the column.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ColonyField {
-    /// The feature's own positional salt.
     pub salt: u64,
-    /// Lattice cell edge, in blocks.
     pub lattice: i32,
-    /// One lattice cell in `one_in` seeds a colony. `1` seeds every cell and
-    /// draws no rarity roll at all.
     pub one_in: i32,
-    /// Colony radius in blocks, rolled per colony (inclusive).
     pub radius: (i32, i32),
-    /// Per-mille density at a colony's centre.
     pub core: i32,
-    /// Per-mille density at a colony's rim.
     pub rim: i32,
-    /// Per-mille density outside every colony.
     pub stray: i32,
 }
 
-/// The colony that owns a column.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Colony<T> {
-    /// Whole-block distance from the colony's centre to the column.
     pub distance: i32,
-    /// The colony's rolled radius.
     pub radius: i32,
-    /// What the feature rolled for this colony (its kind, its colour...).
     pub traits: T,
 }
 
 impl ColonyField {
-    /// The density at column `(wx, wz)` and the colony that owns it (`None`
-    /// = a stray column). `traits` draws the owning colony's own properties
-    /// from its stream, right after the centre and radius rolls, so a
-    /// colony's traits are the same from every column it covers.
     pub fn densest<T>(
         &self,
         seed: u32,
@@ -60,8 +29,6 @@ impl ColonyField {
         let mut best = self.stray;
         let mut owner = None;
         let cell = |v: i32| v.div_euclid(self.lattice);
-        // A colony reaches at most `radius.1` blocks, so only the lattice
-        // cells within that of the column can own it.
         let reach = self.radius.1;
         for lz in cell(wz - reach)..=cell(wz + reach) {
             for lx in cell(wx - reach)..=cell(wx + reach) {
@@ -77,8 +44,6 @@ impl ColonyField {
                 if d2 > r * r {
                     continue;
                 }
-                // Linear in DISTANCE, not in distance squared: squared falls
-                // off far too slowly near the centre and gives a flat disc.
                 let d = isqrt(d2);
                 let dens = self.core + (self.rim - self.core) * d / r.max(1);
                 if dens > best {
@@ -95,9 +60,6 @@ impl ColonyField {
     }
 }
 
-/// Integer square root (floor). Shape decisions in worldgen stay in integer
-/// arithmetic: mixing in `f64::sqrt` invites a rounding difference between
-/// two derivations of one cell.
 pub fn isqrt(n: i32) -> i32 {
     if n <= 0 {
         return 0;
@@ -111,9 +73,6 @@ pub fn isqrt(n: i32) -> i32 {
     x
 }
 
-/// The cubic ease `3t² − 2t³` over `t` in `[0, 1]`: the blend weight for
-/// interpolating a value field between lattice corners without visible
-/// creases at the cell edges.
 pub fn smoothstep01(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
@@ -178,8 +137,6 @@ mod tests {
 
     #[test]
     fn traits_are_the_colonys_own_draws_after_its_rolls() {
-        // Replay lattice cell (0, 0)'s stream by hand and ask about its own
-        // centre column: its colony owns it at full density.
         for seed in 0..64 {
             let mut rng = GenRng::positional(seed, FIELD.salt, 0, 0, 0);
             let cx = rng.next_i32(0, FIELD.lattice - 1);
@@ -190,8 +147,6 @@ mod tests {
             let owner = owner.expect("a centre column is owned");
             assert_eq!(dens, FIELD.core);
             assert_eq!(owner.distance, 0);
-            // Another centre on the very same column would win only if met
-            // first; skip that (rare) seed rather than guess.
             if owner.radius == radius && owner.traits == expected {
                 return;
             }

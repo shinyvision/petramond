@@ -1,14 +1,3 @@
-//! Confinement detection: decide whether a mob is captive in a closed-off
-//! area (a pen). The probe is a flood-fill over navigation footholds: if the
-//! fill runs dry while its footprint still fits inside [`MAX_REGION_SPAN`]²
-//! (24×24), the mob is confined and the discovered region — every foothold it
-//! can reach — is returned for the shared [`RegionCache`], so pen-mates reuse
-//! one fill and wander can pick destinations straight from the region.
-//!
-//! Confinement means ENCLOSED, not cramped: a 12×9 fenced pasture is just as
-//! confined as a 2×2 box. Anything whose reachable footprint outgrows 24×24
-//! is free.
-
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
@@ -16,33 +5,12 @@ use rustc_hash::FxHashSet;
 use crate::mob::path::{body_clear, body_layer_clear, is_navigation_foothold_with, PathParams};
 use petramond_math::math::IVec3;
 
-/// Game ticks between confined-state re-evaluations for one mob.
 pub const CHECK_INTERVAL: u8 = 60;
 
-/// Ticks a FREE verdict may be carried without re-proving it, when nothing
-/// that could change it has been observed. Thirty seconds: the insurance
-/// cadence, not the working one — the two observable triggers below are what
-/// normally re-prove a verdict.
 pub const FREE_CHECK_INTERVAL: u16 = 1200;
 
-/// How far (cells, Chebyshev, x/z) a free mob may drift from the cell it was
-/// last proved free at before the verdict is re-proved.
-///
-/// A verdict can only flip from FREE to CONFINED two ways: the terrain
-/// changed (the nav revision moves, and the shared region cache drops), or the
-/// mob crossed a ONE-WAY boundary — walked off a ledge it cannot climb back,
-/// dropped into a pit. The first is observed exactly; the second is bounded by
-/// distance, because a one-way boundary is a place the mob physically walked
-/// to.
 const FREE_RECHECK_MOVE: i32 = 8;
 
-/// Whether a FREE verdict taken at `checked_at` under nav revision
-/// `checked_rev` must be re-proved for a mob now standing at `cell`.
-///
-/// This is the cadence gate that keeps an open-field mob from re-flooding the
-/// world every [`CHECK_INTERVAL`] ticks forever: on open ground the fill is
-/// the single most expensive thing one mob does, and NOTHING about an
-/// unchanged world and an unmoved mob can change its answer.
 pub fn free_verdict_stale(
     cell: IVec3,
     checked_at: IVec3,
@@ -54,59 +22,24 @@ pub fn free_verdict_stale(
         || free_age >= FREE_CHECK_INTERVAL
         || (cell.x - checked_at.x).abs() >= FREE_RECHECK_MOVE
         || (cell.z - checked_at.z).abs() >= FREE_RECHECK_MOVE
-        // Vertical movement is how a mob leaves its component without moving
-        // far horizontally (a pit, a ledge), so it is not given any slack.
         || cell.y != checked_at.y
 }
 
-/// Maximum x/z span (in cells) of a reachable region that still counts as
-/// confined. The fill gives up — mob is free — the moment its footprint
-/// outgrows this in either horizontal axis.
-///
-/// 48 covers essentially every pasture a player actually builds, so real
-/// pens get the GOOD wander behavior (region-picking) instead of the
-/// probe-and-cancel fallback; enclosures past it are rare enough that the
-/// fallback's weaker quality doesn't matter. The free-mob cost of a larger
-/// span barely moves: the fill is a DFS, so open ground exits after ~one
-/// straight run of `MAX_REGION_SPAN` cells either way.
 pub const MAX_REGION_SPAN: i32 = 48;
 
-/// Hard cap on visited cells: a multi-level structure can stack floors inside
-/// the 48×48 footprint, but past this the space is roomy enough to call free.
 const MAX_REGION_CELLS: usize = (MAX_REGION_SPAN * MAX_REGION_SPAN * 2) as usize;
 
-/// How far (cells) outside a region's foothold bounds a block change can sit
-/// and still alter its reachability: walls sit one cell outside the footholds,
-/// and an over-the-top fence escape engages a step block up to two cells above.
 const INVALIDATION_MARGIN: i32 = 2;
 
-/// Upper bound on cached regions; the oldest is dropped past it. Pens are
-/// player-built and rare — this is a memory backstop, not a working limit.
 const MAX_CACHED_REGIONS: usize = 32;
 
-/// A cached region expires after this many ticks even without a block change
-/// (one minute) — INSURANCE, not the main invalidation: any change funnel
-/// that bypasses the announce choke point (door toggles did, before they got
-/// an explicit push) or a future filtering mistake heals here instead of
-/// pinning stale confinement forever. Expiry reads as `is_live() == false`,
-/// so the holding mobs re-check off-cadence and the first one re-fills the
-/// cache for its whole pen — one bounded fill per pen per minute.
 const REGION_MAX_AGE_TICKS: u64 = 1200;
 
-/// Cardinal directions only; diagonals don't open new escape routes for a
-/// confinement test and omitting them halves the probe work.
 const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
 
-/// The complete reachable area of one confined mob: every navigation foothold
-/// the flood-fill reached, plus the bounds used for change invalidation.
 pub struct ConfinedRegion {
-    /// Every reachable foothold cell, SORTED — one canonical order no matter
-    /// which pen-mate's fill discovered the region, so wander's indexed picks
-    /// stay deterministic across sessions.
     pub cells: Vec<IVec3>,
-    /// Membership mirror of [`cells`](Self::cells).
     set: FxHashSet<IVec3>,
-    /// Inclusive foothold-cell bounds.
     min: IVec3,
     max: IVec3,
 }
@@ -116,8 +49,6 @@ impl ConfinedRegion {
         self.set.contains(&cell)
     }
 
-    /// Whether a block change at `pos` could alter this region's shape or its
-    /// enclosure (within [`INVALIDATION_MARGIN`] of the foothold bounds).
     pub fn touched_by(&self, pos: IVec3) -> bool {
         pos.x >= self.min.x - INVALIDATION_MARGIN
             && pos.x <= self.max.x + INVALIDATION_MARGIN
@@ -128,19 +59,6 @@ impl ConfinedRegion {
     }
 }
 
-/// Flood-fill the reachable footholds from `start`. Returns the region when it
-/// is genuinely closed off within [`MAX_REGION_SPAN`]², `None` when the mob is
-/// free — the footprint outgrew the span, the fill visited more than
-/// [`MAX_REGION_CELLS`], or it reached a cell the world hasn't finished
-/// streaming (`loaded`, the `physics_cell_final_at` predicate): an unknown
-/// border cell might be open, so an edge-of-stream pen must read free rather
-/// than lock stale confinement in.
-///
-/// `solid`, `support`, `fluid`, and `step_allowed` match the pathfinder's
-/// semantics (see `mob::nav`): the fill must agree with real routes — a lone
-/// fence refuses the jump from below, while a step block beside it opens the
-/// way over (a pen with a step inside is genuinely escapable). Mobs that are
-/// not on a foothold (swimming, mid-air) are never confined.
 #[allow(clippy::too_many_arguments)]
 pub fn confined_region(
     start: IVec3,
@@ -151,9 +69,6 @@ pub fn confined_region(
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
     loaded: &impl Fn(IVec3) -> bool,
 ) -> Option<ConfinedRegion> {
-    // Every visited cell is asked about from up to four sides, and each ask
-    // costs a whole support/solid/fluid probe stack — so the composite verdict
-    // is memoized for the life of one fill (the world cannot change under it).
     let memo = crate::mob::path::CellMemo::<512>::default();
     let foothold = |c: IVec3| {
         memo.get(c, |c| {
@@ -164,10 +79,6 @@ pub fn confined_region(
         return None;
     }
 
-    // Cheap sufficient proof of freedom BEFORE the fill (see `escapes_span`):
-    // a mob in the open is the overwhelmingly common case, and one straight
-    // run costs a quarter of what the four-way fill pays to reach the same
-    // conclusion.
     for (dx, dz) in DIRS {
         if escapes_span(
             start,
@@ -227,13 +138,8 @@ pub fn confined_region(
     })
 }
 
-/// Where one cardinal move from foothold `c` lands, under the fill's movement
-/// rules. Exactly one of jump-up-one / flat step / descend-to-first-foothold
-/// applies, in that order — the same precedence the pathfinder uses.
 enum Step {
-    /// The world has not finished streaming here, so nothing is provable.
     Unloaded,
-    /// No move exists in this direction.
     Blocked,
     To(IVec3),
 }
@@ -254,7 +160,6 @@ fn step_from(
         return Step::Unloaded;
     }
 
-    // Jump up one block.
     let up = side + IVec3::Y;
     if foothold(up)
         && step_allowed(c, up)
@@ -263,12 +168,10 @@ fn step_from(
         return Step::To(up);
     }
 
-    // Flat step.
     if foothold(side) && step_allowed(c, side) {
         return Step::To(side);
     }
 
-    // Descend to the first foothold within max_drop.
     if body_clear(side, params, solid) {
         for dy in 1..=params.max_drop {
             let down = side - IVec3::Y * dy;
@@ -286,15 +189,6 @@ fn step_from(
     Step::Blocked
 }
 
-/// Whether a straight run of [`MAX_REGION_SPAN`] moves in one cardinal
-/// direction exists from `start` — a SUFFICIENT proof that
-/// [`confined_region`] would answer "free", at a quarter of the fill's cost.
-///
-/// Every cell the run walks is genuinely reachable from `start`, so the fill
-/// would insert all of them; [`MAX_REGION_SPAN`] of them in one axis is
-/// exactly the span that makes the fill give up. Hitting unstreamed world is
-/// the fill's other give-up, so it counts too. A run that simply runs into a
-/// wall proves nothing — the caller falls through to the fill.
 #[allow(clippy::too_many_arguments)]
 fn escapes_span(
     start: IVec3,
@@ -316,28 +210,19 @@ fn escapes_span(
     true
 }
 
-/// The shared store of live confined regions, owned by the mob manager: one
-/// fill serves every mob in the same pen; a nav-relevant block change near a
-/// region drops it immediately, and [`REGION_MAX_AGE_TICKS`] bounds how long
-/// any region may live regardless.
 #[derive(Default)]
 pub struct RegionCache {
-    /// Each live region with the tick it was filled on.
     regions: Vec<(Arc<ConfinedRegion>, u64)>,
-    /// The current game tick, fed once per mob tick by the manager.
     now: u64,
 }
 
 impl RegionCache {
-    /// Advance the cache's clock and expire regions past their maximum age.
-    /// Called once at the top of each mob tick.
     pub fn set_now(&mut self, now: u64) {
         self.now = now;
         self.regions
             .retain(|(_, born)| now.saturating_sub(*born) <= REGION_MAX_AGE_TICKS);
     }
 
-    /// The live region whose reachable set contains `cell`, if any.
     pub fn region_at(&self, cell: IVec3) -> Option<Arc<ConfinedRegion>> {
         self.regions
             .iter()
@@ -345,7 +230,6 @@ impl RegionCache {
             .map(|(r, _)| r.clone())
     }
 
-    /// Store a freshly-filled region and hand back its shared handle.
     pub fn insert(&mut self, region: ConfinedRegion) -> Arc<ConfinedRegion> {
         if self.regions.len() >= MAX_CACHED_REGIONS {
             self.regions.remove(0);
@@ -355,14 +239,10 @@ impl RegionCache {
         arc
     }
 
-    /// Whether `region` is still in the cache (i.e. neither a block change
-    /// nor age dropped it). Instances holding a stale handle must re-evaluate.
     pub fn is_live(&self, region: &Arc<ConfinedRegion>) -> bool {
         self.regions.iter().any(|(r, _)| Arc::ptr_eq(r, region))
     }
 
-    /// Drop every region a changed block could have altered. `all` drops
-    /// everything (the change log slid past the reader, so positions are unknown).
     pub fn invalidate(&mut self, changed: &[IVec3], all: bool) {
         if all {
             self.regions.clear();
@@ -384,9 +264,6 @@ mod tests {
     use petramond_world::block::Block;
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};
 
-    /// An `n`×`n` chunk grid of flat grass. The fill treats unloaded borders
-    /// as inconclusive (free), so open-field tests pass regardless of grid
-    /// size; pens must fit inside the grid.
     fn flat_world_n(n: i32, mut edit: impl FnMut(&mut Chunk, i32, i32)) -> ServerWorld {
         let mut world = ServerWorld::new(0, 1);
         for cx in 0..n {
@@ -405,14 +282,10 @@ mod tests {
         world
     }
 
-    /// The default 3×3 grid (48×48 blocks) — room for ordinary test pens.
     fn flat_world(edit: impl FnMut(&mut Chunk, i32, i32)) -> ServerWorld {
         flat_world_n(3, edit)
     }
 
-    /// Build stone walls (up to `y1` exclusive) around the WORLD-coord rect
-    /// [x0, x1]×[z0, z1] into whichever chunk each wall cell lands in, on an
-    /// `n`×`n` chunk grid.
     fn walled_world_n(n: i32, x0: i32, z0: i32, x1: i32, z1: i32, height: i32) -> ServerWorld {
         flat_world_n(n, |chunk, cx, cz| {
             for wx in x0..=x1 {
@@ -470,24 +343,18 @@ mod tests {
 
     #[test]
     fn a_roomy_pasture_is_still_confined() {
-        // 18×18 interior: far more than the old 33-cell "cramped" rule, but
-        // enclosed — the 2026-07-20 semantics change this file exists for.
         let world = walled_world(14, 14, 33, 33, 4);
         assert!(check(&world, MID), "an enclosed pasture is confined");
     }
 
     #[test]
     fn a_pen_wider_than_the_span_cap_is_not_confined() {
-        // 51-cell interior span in x: outgrows MAX_REGION_SPAN (48). Needs a
-        // 5×5 chunk grid so the pen (and its surroundings) are loaded.
         let world = walled_world_n(5, 10, 20, 62, 27, 4);
         assert!(!check(&world, IVec3::new(36, 64, 24)));
     }
 
     #[test]
     fn a_large_pasture_up_to_the_span_cap_is_confined() {
-        // 38×38 interior: the whole point of the 48 cap — real player-built
-        // pastures read as confined and get region-picking wander.
         let world = walled_world(5, 5, 44, 44, 4);
         assert!(check(&world, MID));
     }
@@ -496,7 +363,6 @@ mod tests {
     fn the_region_covers_the_whole_pen_sorted() {
         let world = walled_world(21, 21, 27, 27, 4);
         let region = probe(&world, MID).expect("confined");
-        // 5×5 interior.
         assert_eq!(region.cells.len(), 25);
         assert!(region.contains(IVec3::new(22, 64, 22)));
         assert!(!region.contains(IVec3::new(20, 64, 24)), "outside the wall");
@@ -517,8 +383,6 @@ mod tests {
         assert!(!check(&world, MID), "a door should break confinement");
     }
 
-    /// A 5×5 pen of one-high fences. The fill must treat the fence as a wall
-    /// even though a mob's physical jump could clear it.
     fn fence_pen(extra: impl FnOnce(&mut ServerWorld)) -> ServerWorld {
         let mut world = flat_world(|_, _, _| {});
         for i in 21..=27 {
@@ -549,8 +413,6 @@ mod tests {
 
     #[test]
     fn fence_pen_with_a_step_up_inside_is_not_confined() {
-        // A block inside the pen beside the fence is an honest escape route:
-        // jump onto the block, walk over the fence top, drop outside.
         let world = fence_pen(|w| {
             assert!(w.set_block_world(26, 64, 24, Block::Dirt));
         });
@@ -565,7 +427,6 @@ mod tests {
                 chunk.set_fluid(8, 65, 8, Block::Water, 0);
             }
         });
-        // Feet submerged with no dry foothold: not "confined", just swimming.
         assert!(!check(&world, IVec3::new(24, 65, 24)));
     }
 
@@ -583,7 +444,6 @@ mod tests {
         );
         assert!(cache.region_at(IVec3::new(5, 64, 5)).is_none());
 
-        // A change far away keeps the region; one at the wall drops it.
         cache.invalidate(&[IVec3::new(0, 64, 0)], false);
         assert!(cache.is_live(&arc));
         cache.invalidate(&[IVec3::new(27, 64, 24)], false);
@@ -593,8 +453,6 @@ mod tests {
 
     #[test]
     fn a_cached_region_expires_after_its_maximum_age() {
-        // Insurance against invalidation funnels the choke point never sees:
-        // a stale region must die of old age, not live forever.
         let world = walled_world(21, 21, 27, 27, 4);
         let region = probe(&world, MID).expect("confined");
         let mut cache = RegionCache::default();

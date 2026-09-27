@@ -1,7 +1,6 @@
 use super::*;
-use crate::world::{ReplicaWorld, ServerWorld};
-// Source/flow tests place water at y>=65, above flat_world's stone floor.
 use crate::world::testutil::flat_server_world;
+use crate::world::{ReplicaWorld, ServerWorld};
 use petramond_math::world_pos::WorldPos;
 
 fn water_flow_delay() -> u64 {
@@ -16,7 +15,6 @@ mod quenching;
 mod source_renewal;
 
 fn run_ticks(w: &mut ServerWorld, n: u32) {
-    // Water flow needs no recipes; an empty set keeps the furnace step a no-op.
     let recipes = petramond_world::crafting::Recipes::default();
     for _ in 0..n {
         w.game_tick(&recipes);
@@ -31,7 +29,6 @@ fn carve(w: &mut ServerWorld, x: i32, y: i32, z: i32) {
     w.set_block_world(x, y, z, Block::Air);
 }
 
-/// One full ring advance: the flow delay, plus slack for the update dispatch.
 fn ring() -> u32 {
     water_flow_delay() as u32 + 2
 }
@@ -53,8 +50,6 @@ fn bucket_source_check_accepts_only_still_sources() {
 #[test]
 fn water_flow_dir_matches_surface_gradient_used_by_texture() {
     let mut w = flat_server_world();
-    // A one-wide channel: side walls remove sideways air, so the gradient at
-    // the flowing cell points east, the same direction its top texture faces.
     for x in 0..=5 {
         w.set_block_world(x, 65, 7, Block::Stone);
         w.set_block_world(x, 65, 9, Block::Stone);
@@ -67,10 +62,6 @@ fn water_flow_dir_matches_surface_gradient_used_by_texture() {
     assert!(dir.z.abs() < 1e-5, "expected no sideways flow, got {dir:?}");
 }
 
-/// The body-probe sampler only pushes below the fluid's real surface: a
-/// probe in a flowing cell's top sliver (feet standing on a 15/16 block
-/// beside an irrigation channel) catches no current, while a submerged
-/// probe in the same cell does.
 #[test]
 fn flow_at_a_point_stops_above_the_fluid_surface() {
     let mut w = flat_server_world();
@@ -86,7 +77,6 @@ fn flow_at_a_point_stops_above_the_fluid_surface() {
         submerged.velocity.x > 0.0,
         "a submerged probe drifts: {submerged:?}"
     );
-    // 15/16 = 0.9375, above even a full source's 8/9 surface.
     let skimming = w.data.fluid_current_at(WorldPos::new(3.5, 65.9375, 8.5));
     assert_eq!(
         skimming,
@@ -99,7 +89,6 @@ fn flow_at_a_point_stops_above_the_fluid_surface() {
         petramond_world::fluid::FluidCurrent::NONE,
         "a source tops out at 8/9 too"
     );
-    // A capped cell fills to the brim and pushes through its whole height.
     assert!(w.set_fluid_world(IVec3::new(3, 66, 8), Block::Water, flowing(1)));
     let capped = w.data.fluid_current_at(WorldPos::new(3.5, 65.9375, 8.5));
     assert!(
@@ -113,12 +102,9 @@ fn game_tick_advances_and_block_update_schedules_a_water_check() {
     let mut w = flat_server_world();
     assert_eq!(w.current_tick(), 0);
     w.set_block_world(8, 65, 8, Block::Water);
-    // First tick dispatches the placement update and schedules the flow check;
-    // the source has not spread yet.
     w.game_tick(&petramond_world::crafting::Recipes::default());
     assert_eq!(w.current_tick(), 1);
     assert_eq!(block(&w, 9, 65, 8), Block::Air);
-    // After the flow delay the source has spread to its cardinal neighbours.
     run_ticks(&mut w, water_flow_delay() as u32 + 1);
     assert_eq!(block(&w, 9, 65, 8), Block::Water);
 }
@@ -134,9 +120,7 @@ fn source_spreads_one_ring_per_delay_on_a_flat_floor() {
         assert_eq!(level(w.data.fluid_meta_world(x, 65, z)), 1);
         assert!(!is_source(w.data.fluid_meta_world(x, 65, z)));
     }
-    // Diagonals are only reached on a later ring.
     assert_eq!(block(&w, 9, 65, 9), Block::Air);
-    // The source itself stays a full source.
     assert!(is_source(w.data.fluid_meta_world(8, 65, 8)));
 }
 
@@ -144,36 +128,28 @@ fn source_spreads_one_ring_per_delay_on_a_flat_floor() {
 fn flowing_water_dies_out_after_seven_blocks() {
     let mut w = flat_server_world();
     w.set_block_world(8, 65, 8, Block::Water);
-    // Plenty of rings: 7 spreads at 5 ticks each, plus slack.
     run_ticks(&mut w, 200);
-    // The level grows by one per block away from the source...
     assert_eq!(level(w.data.fluid_meta_world(12, 65, 8)), 4);
     assert_eq!(level(w.data.fluid_meta_world(15, 65, 8)), 7);
-    // ...and the flow dies past the last level: the 8th block is dry.
     assert_eq!(block(&w, 16, 65, 8), Block::Air);
 }
 
 #[test]
 fn source_prefers_flowing_toward_a_downhill_drop() {
     let mut w = flat_server_world();
-    // A hole in the floor two blocks east makes (10,65,8) a drop.
     carve(&mut w, 10, 64, 8);
     w.set_block_world(8, 65, 8, Block::Water);
     run_ticks(&mut w, 12);
-    // Water heads east toward the drop only — the other cardinals stay dry.
     assert_eq!(block(&w, 9, 65, 8), Block::Water);
     assert_eq!(block(&w, 7, 65, 8), Block::Air);
     assert_eq!(block(&w, 8, 65, 7), Block::Air);
     assert_eq!(block(&w, 8, 65, 9), Block::Air);
 }
 
-/// The slope search steers toward a drop up to five cells out — one ring plus
-/// [`SLOPE_FIND_DIST`] steps — and no farther: a drop six cells out is invisible
-/// and the flow spreads every open way instead.
 #[test]
 fn slope_search_sees_a_drop_five_cells_out_but_not_six() {
     let mut w = flat_server_world();
-    carve(&mut w, 13, 64, 8); // five cells east of the source at x=8
+    carve(&mut w, 13, 64, 8);
     w.set_block_world(8, 65, 8, Block::Water);
     run_ticks(&mut w, ring());
     assert_eq!(block(&w, 9, 65, 8), Block::Water, "toward the drop");
@@ -181,7 +157,7 @@ fn slope_search_sees_a_drop_five_cells_out_but_not_six() {
     assert_eq!(block(&w, 8, 65, 7), Block::Air);
 
     let mut w = flat_server_world();
-    carve(&mut w, 14, 64, 8); // six cells east: out of slope-search range
+    carve(&mut w, 14, 64, 8);
     w.set_block_world(8, 65, 8, Block::Water);
     run_ticks(&mut w, ring());
     for (dx, dz) in [(0, -1), (1, 0), (0, 1), (-1, 0)] {
@@ -196,11 +172,8 @@ fn slope_search_sees_a_drop_five_cells_out_but_not_six() {
 #[test]
 fn water_pours_one_block_per_tick_not_the_whole_column_at_once() {
     let mut w = flat_server_world();
-    // Source floats five blocks above the floor (cells y=65..69 are air).
     w.set_block_world(8, 70, 8, Block::Water);
 
-    // Shortly after it begins to pour, only the TOP of the column has filled —
-    // the water has not teleported all the way to the floor.
     run_ticks(&mut w, ring());
     assert!(
         is_falling(w.data.fluid_meta_world(8, 69, 8)),
@@ -212,7 +185,6 @@ fn water_pours_one_block_per_tick_not_the_whole_column_at_once() {
         "water must not have fallen all the way down in one tick"
     );
 
-    // Given enough ticks it reaches the floor, one block per tick.
     run_ticks(&mut w, 6 * water_flow_delay() as u32);
     for y in 65..=69 {
         assert_eq!(block(&w, 8, y, 8), Block::Water, "column y={y}");
@@ -221,23 +193,14 @@ fn water_pours_one_block_per_tick_not_the_whole_column_at_once() {
             "falling y={y}"
         );
     }
-    // It rests on the floor, not inside it.
     assert_eq!(block(&w, 8, 64, 8), Block::Stone);
 }
 
-/// A source over open air pours straight down and stays ONE column wide: the
-/// cell under it is its own falling stream, not a surface, so no later check
-/// takes the sideways branch either — the fan-out belongs where the column
-/// lands. (The opposite used to be pinned here: a source fanning one ring out
-/// once its stream existed. That rule turned every hanging source — a
-/// generated lava fall included — into a cross of falls, so the pin was wrong,
-/// not the sim.)
 #[test]
 fn a_source_over_air_pours_straight_down_and_never_fans_out() {
     let mut w = flat_server_world();
     w.set_block_world(8, 70, 8, Block::Water);
 
-    // First check: the pour, and nothing else.
     run_ticks(&mut w, ring());
     assert!(
         is_falling(w.data.fluid_meta_world(8, 69, 8)),
@@ -245,8 +208,6 @@ fn a_source_over_air_pours_straight_down_and_never_fans_out() {
     );
     assert_eq!(block(&w, 9, 70, 8), Block::Air, "no sideways spread");
 
-    // Many checks later the column has landed and spread its pool, and the
-    // source's row still holds nothing but the source.
     run_ticks(&mut w, ring() * 8);
     for (x, z) in [(9, 8), (7, 8), (8, 9), (8, 7)] {
         assert_eq!(block(&w, x, 70, z), Block::Air, "no fan-out from the head");
@@ -265,14 +226,11 @@ fn a_source_over_air_pours_straight_down_and_never_fans_out() {
     );
 }
 
-/// A source resting on other water spreads across its surface (that is how a
-/// poured bucket sheets over a pond) — but the FLOWING ring it creates, also
-/// suspended over water, must not creep any farther on its own.
 #[test]
 fn a_source_on_a_pool_surface_spreads_across_it_but_its_flow_does_not_creep() {
     let mut w = flat_server_world();
-    w.set_block_world(8, 65, 8, Block::Water); // pool cell on the floor
-    w.set_block_world(8, 66, 8, Block::Water); // source resting on it
+    w.set_block_world(8, 65, 8, Block::Water);
+    w.set_block_world(8, 66, 8, Block::Water);
     run_ticks(&mut w, 3 * ring());
 
     assert_eq!(block(&w, 9, 66, 8), Block::Water, "sheets over the pool");
@@ -283,29 +241,20 @@ fn a_source_on_a_pool_surface_spreads_across_it_but_its_flow_does_not_creep() {
     );
 }
 
-/// Flowing water with a way down only goes down — it must NOT also creep
-/// sideways, even after its waterfall is established (the cell's later ticks
-/// see falling water below, not air).
 #[test]
 fn flowing_water_over_a_drop_only_goes_down_not_sideways() {
     let mut w = flat_server_world();
-    // A 1-wide channel at z=8 (walls at z=7/z=9) so the only path east is
-    // THROUGH the cell over the drop — water can't go around a flat sheet.
     for x in 0..14 {
         for y in 65..=66 {
             w.set_block_world(x, y, 7, Block::Stone);
             w.set_block_world(x, y, 9, Block::Stone);
         }
     }
-    // A one-deep hole at (10,64): floor carved out, a floor one block lower.
     carve(&mut w, 10, 64, 8);
     w.set_block_world(10, 63, 8, Block::Stone);
-    // Source three blocks west; water runs east to the hole.
     w.set_block_world(7, 65, 8, Block::Water);
-    // Long enough that the cell over the hole ticks many times after pouring.
     run_ticks(&mut w, 300);
 
-    // It reached the drop and poured a falling column...
     assert_eq!(
         block(&w, 10, 65, 8),
         Block::Water,
@@ -315,8 +264,6 @@ fn flowing_water_over_a_drop_only_goes_down_not_sideways() {
         is_falling(w.data.fluid_meta_world(10, 64, 8)),
         "the cell over the hole should pour straight down"
     );
-    // ...but never crept east past it (the bug: a cell with falling water below
-    // it must keep going down, not start spreading once the column exists).
     assert_eq!(
         block(&w, 11, 65, 8),
         Block::Air,
@@ -329,16 +276,9 @@ fn flowing_water_over_a_drop_only_goes_down_not_sideways() {
     );
 }
 
-/// Flowing water must NOT treat other flowing water as a surface to flow on —
-/// otherwise a layer of flowing water creeps across the top of the water below
-/// it and the body climbs higher over time. Two stacked sources feed an upper
-/// flow sitting directly over a lower sheet; the upper flow must not propagate.
 #[test]
 fn flowing_water_does_not_flow_on_top_of_flowing_water() {
-    let mut w = flat_server_world(); // stone floor at y=64
-                                     // Carve the floor and lay a lower one at y=62, in a 1-wide channel: the
-                                     // lower sheet sits on y=62 (water at y=63), and the upper flow would sit
-                                     // directly on that lower water (at y=64).
+    let mut w = flat_server_world();
     for x in 5..14 {
         carve(&mut w, x, 64, 8);
         w.set_block_world(x, 62, 8, Block::Stone);
@@ -347,19 +287,15 @@ fn flowing_water_does_not_flow_on_top_of_flowing_water() {
             w.set_block_world(x, y, 9, Block::Stone);
         }
     }
-    // A two-high source wall at x=6: y=63 feeds the lower sheet, y=64 the upper.
     w.set_block_world(6, 63, 8, Block::Water);
     w.set_block_world(6, 64, 8, Block::Water);
     run_ticks(&mut w, 400);
 
-    // The lower sheet spreads out along its floor...
     assert_eq!(
         block(&w, 11, 63, 8),
         Block::Water,
         "lower sheet should spread"
     );
-    // ...but the upper level must NOT ride along on top of it. (A single cell
-    // beside the source is fine; it must not propagate down the channel.)
     assert_eq!(
         block(&w, 10, 64, 8),
         Block::Air,
@@ -372,22 +308,14 @@ fn flowing_water_does_not_flow_on_top_of_flowing_water() {
     );
 }
 
-/// The critical invariant: flowing water can never become its own source.
-/// A source on a pillar makes water fall off every side and pool on the floor;
-/// once the source is cut, EVERY flowing and falling cell must drain away —
-/// nothing may sustain itself (no orphaned waterfalls or self-supporting
-/// columns).
 #[test]
 fn cut_off_waterfall_and_pool_fully_drain() {
     let mut w = flat_server_world();
-    // A 2-high stone pillar at (8,8) with a source on top; water spills off all
-    // four sides, falls to the floor (y=64) and pools.
     w.set_block_world(8, 65, 8, Block::Stone);
     w.set_block_world(8, 66, 8, Block::Stone);
     w.set_block_world(8, 67, 8, Block::Water);
     run_ticks(&mut w, 250);
 
-    // Sanity: water really did fall and pool (else the test proves nothing).
     let any_falling = (60..68).any(|y| {
         [(7, 8), (9, 8), (8, 7), (8, 9)]
             .iter()
@@ -399,11 +327,9 @@ fn cut_off_waterfall_and_pool_fully_drain() {
         "setup should produce a waterfall + pool"
     );
 
-    // Cut the source.
     w.set_block_world(8, 67, 8, Block::Air);
     run_ticks(&mut w, 600);
 
-    // Nothing may remain anywhere in the region.
     for y in 65..=68 {
         for z in 0..16 {
             for x in 0..16 {
@@ -421,10 +347,9 @@ fn cut_off_waterfall_and_pool_fully_drain() {
 fn flowing_water_recedes_when_its_source_is_removed() {
     let mut w = flat_server_world();
     w.set_block_world(8, 65, 8, Block::Water);
-    run_ticks(&mut w, 40); // let the sheet form
+    run_ticks(&mut w, 40);
     assert_eq!(block(&w, 10, 65, 8), Block::Water);
 
-    // Remove the source; the sheet must drain back to nothing.
     w.set_block_world(8, 65, 8, Block::Air);
     run_ticks(&mut w, 200);
     for r in 1..=4 {
@@ -437,21 +362,15 @@ fn flowing_water_recedes_when_its_source_is_removed() {
     assert_eq!(block(&w, 8, 65, 8), Block::Air);
 }
 
-/// Draining is the re-level rule, not a special path: a cut-off cell steps
-/// DOWN through the levels as its (equally doomed) neighbours weaken, rather
-/// than vanishing outright — its first re-check leans on the still-stale ring
-/// beyond it and lands two levels weaker, not dry.
 #[test]
 fn a_cut_off_sheet_steps_down_through_levels_rather_than_vanishing() {
     let mut w = flat_server_world();
     w.set_block_world(8, 65, 8, Block::Water);
-    run_ticks(&mut w, 60); // full sheet: level == distance from source
+    run_ticks(&mut w, 60);
     assert_eq!(level(w.data.fluid_meta_world(9, 65, 8)), 1);
 
     w.set_block_world(8, 65, 8, Block::Air);
     run_ticks(&mut w, ring());
-    // One re-check later: fed only by the level-2 ring (amount 6), the old
-    // level-1 cell now carries amount 5 — level 3. Still water, weaker.
     assert_eq!(block(&w, 9, 65, 8), Block::Water);
     assert_eq!(level(w.data.fluid_meta_world(9, 65, 8)), 3);
 }
@@ -459,20 +378,16 @@ fn a_cut_off_sheet_steps_down_through_levels_rather_than_vanishing() {
 #[test]
 fn flowing_water_washes_away_a_fragile_plant() {
     let mut w = flat_server_world();
-    // A flower standing on the floor, in the path of a source two cells west.
     let flower = IVec3::new(10, 65, 8);
     w.set_block_world(flower.x, flower.y, flower.z, Block::Poppy);
     w.set_block_world(8, 65, 8, Block::Water);
-    run_ticks(&mut w, 80); // let the sheet reach the flower's cell
+    run_ticks(&mut w, 80);
 
-    // Water flowed INTO the fragile cell, displacing the plant (a fragile block
-    // counts as fillable; the flower didn't stay standing in the water).
     assert_eq!(
         block(&w, flower.x, flower.y, flower.z),
         Block::Water,
         "water should flood the flower's cell, washing it away"
     );
-    // ...and it was recorded as a hand-style break (drop + particle burst).
     let breaks = w.take_natural_breaks();
     assert!(
         breaks
@@ -482,20 +397,13 @@ fn flowing_water_washes_away_a_fragile_plant() {
     );
 }
 
-/// A water write must schedule the matching relight, like every other block
-/// update. The water path used to skip it ("water is transparent"), but water
-/// can move INTO a cell that held a torch (a light emitter) and wash it away —
-/// and then the torch's glow lingered in the now-stale light. We settle the
-/// owning section's light first so a still-dirty band can't mask the regression.
 #[test]
 fn a_water_write_reschedules_the_light() {
     use petramond_world::chunk::SECTION_VOLUME;
     let mut w = flat_server_world();
-    let cell = IVec3::new(10, 65, 8); // section (0,4,0)
+    let cell = IVec3::new(10, 65, 8);
     w.set_block_world(cell.x, cell.y, cell.z, Block::Torch);
 
-    // Install a settled skylight cube so the section's `light_dirty` flag is clear —
-    // the baseline a fresh block update has to dirty again.
     w.section_at_world_mut_for_test(cell.x, cell.y, cell.z)
         .unwrap()
         .set_skylight(vec![0u8; SECTION_VOLUME].into());
@@ -506,8 +414,6 @@ fn a_water_write_reschedules_the_light() {
         "baseline: the section's light is settled"
     );
 
-    // Water moves into the torch's cell; the announce must re-dirty the light
-    // so the lingering emitter glow gets rebaked.
     assert!(w.set_fluid_world(cell, Block::Water, FALLING));
     assert_eq!(block(&w, cell.x, cell.y, cell.z), Block::Water);
     assert!(
@@ -518,9 +424,6 @@ fn a_water_write_reschedules_the_light() {
     );
 }
 
-/// The infinite-water-source rule: two sources two cells apart on a solid
-/// floor fill the gap with a flow fed from both sides, and that flow settles
-/// into a source of its own.
 #[test]
 fn one_deep_flow_between_two_sources_becomes_a_source() {
     let mut w = flat_server_world();
@@ -537,8 +440,6 @@ fn one_deep_flow_between_two_sources_becomes_a_source() {
         is_source(w.data.fluid_meta_world(8, 65, 8)),
         "a flow on solid ground flanked by two sources must become a source"
     );
-    // The flanking sources are of course still sources, and the conversion
-    // did not run away across the open floor.
     assert!(is_source(w.data.fluid_meta_world(7, 65, 8)));
     assert!(is_source(w.data.fluid_meta_world(9, 65, 8)));
     assert!(
@@ -547,16 +448,12 @@ fn one_deep_flow_between_two_sources_becomes_a_source() {
     );
 }
 
-/// A flow resting on a SOURCE counts as grounded too, so the top layer of a
-/// stacked pool can fill in as well. Stage a lower source, two flanking
-/// sources above it, and a flow between them: the flow rests on the lower
-/// source and converts.
 #[test]
 fn a_one_deep_flow_resting_on_a_source_becomes_a_source() {
     let mut w = flat_server_world();
-    assert!(w.set_fluid_world(IVec3::new(8, 65, 8), Block::Water, 0)); // lower source
-    assert!(w.set_fluid_world(IVec3::new(7, 66, 8), Block::Water, 0)); // flank
-    assert!(w.set_fluid_world(IVec3::new(9, 66, 8), Block::Water, 0)); // flank
+    assert!(w.set_fluid_world(IVec3::new(8, 65, 8), Block::Water, 0));
+    assert!(w.set_fluid_world(IVec3::new(7, 66, 8), Block::Water, 0));
+    assert!(w.set_fluid_world(IVec3::new(9, 66, 8), Block::Water, 0));
     assert!(w.set_fluid_world(IVec3::new(8, 66, 8), Block::Water, flowing(1)));
     run_ticks(&mut w, 30);
 
@@ -566,9 +463,6 @@ fn a_one_deep_flow_resting_on_a_source_becomes_a_source() {
     );
 }
 
-/// Conversion is judged before the falling state: even a FALLING cell flanked
-/// by two sources over solid ground settles into a source (the base of a
-/// waterfall pouring into an infinite pool heals into the pool).
 #[test]
 fn a_falling_cell_between_two_sources_converts_to_a_source() {
     let mut w = flat_server_world();
@@ -583,14 +477,10 @@ fn a_falling_cell_between_two_sources_converts_to_a_source() {
     );
 }
 
-/// The anti-flood guard: a flow perched over a drop (air below) is the lip of
-/// a waterfall, NOT grounded, so it must NOT convert even when flanked by
-/// two sources. This is what keeps a flooding cave from turning to sources at
-/// an exponential pace.
 #[test]
 fn a_flow_over_a_drop_never_converts_even_between_two_sources() {
     let mut w = flat_server_world();
-    carve(&mut w, 8, 64, 8); // air below the middle cell — a one-block drop
+    carve(&mut w, 8, 64, 8);
     w.set_block_world(7, 65, 8, Block::Water);
     w.set_block_world(9, 65, 8, Block::Water);
     run_ticks(&mut w, 80);
@@ -606,15 +496,7 @@ fn a_flow_over_a_drop_never_converts_even_between_two_sources() {
     );
 }
 
-/// Cut a two-step CASCADE out of the rock at `(0, ·, 0)`, exactly as the
-/// exploration pack's worldgen does: pools two deep at descending levels, a
-/// weir of rock between them whose top course is one row below the upper
-/// pool's surface, the gorge over both of them cut open so the water can fall,
-/// and untouched rock everywhere else.
-///
-/// Returns `(the water cells as generated, the gorge's bounding box)`.
 fn cut_cascade(w: &mut ServerWorld) -> (Vec<IVec3>, (IVec3, IVec3)) {
-    // flat_world only lays one course; a gorge needs rock to be cut out of.
     for y in 52..64 {
         for z in -10..=10 {
             for x in -10..=10 {
@@ -622,8 +504,6 @@ fn cut_cascade(w: &mut ServerWorld) -> (Vec<IVec3>, (IVec3, IVec3)) {
             }
         }
     }
-    // Pool A: x -4..=-1, surface y 64. Weir at x 0, its top at y 63.
-    // Pool B: x 1..=4, surface y 60 (a three-block fall past the weir).
     let mut cells: Vec<IVec3> = Vec::new();
     let mut fill = |w: &mut ServerWorld, xs: std::ops::RangeInclusive<i32>, top: i32| {
         for x in xs {
@@ -633,7 +513,6 @@ fn cut_cascade(w: &mut ServerWorld) -> (Vec<IVec3>, (IVec3, IVec3)) {
                     assert!(w.set_fluid_world(p, Block::Water, 0));
                     cells.push(p);
                 }
-                // cut the gorge open over the pool, up to the cavern floor
                 for y in (top + 1)..=64 {
                     w.set_block_world(x, y, z, Block::Air);
                 }
@@ -642,7 +521,6 @@ fn cut_cascade(w: &mut ServerWorld) -> (Vec<IVec3>, (IVec3, IVec3)) {
     };
     fill(w, -4..=-1, 64);
     fill(w, 1..=4, 60);
-    // The weir: rock up to y 63, open at 64 so pool A pours over it.
     for z in -2..=2 {
         w.set_block_world(0, 64, z, Block::Air);
     }
@@ -650,8 +528,6 @@ fn cut_cascade(w: &mut ServerWorld) -> (Vec<IVec3>, (IVec3, IVec3)) {
     (cells, (IVec3::new(-4, 59, -2), IVec3::new(4, 64, 2)))
 }
 
-/// Every water cell in the box, so a leak is caught wherever it goes rather
-/// than only where it was expected.
 fn water_cells(w: &ServerWorld) -> Vec<IVec3> {
     let mut out = Vec::new();
     for y in 50..70 {
@@ -666,21 +542,6 @@ fn water_cells(w: &ServerWorld) -> Vec<IVec3> {
     out
 }
 
-/// A worldgen CASCADE must come alive on the first disturbance and still stay
-/// inside its own gorge.
-///
-/// Both halves matter and they pull against each other, which is why they are
-/// one test. Generation schedules no flow check, so a cascade is a stack of
-/// still sources until something wakes it — "it did not flood when it
-/// generated" is evidence of nothing. Once woken it is SUPPOSED to move: the
-/// upper pool pours over its weir and falls into the lower one, and a version
-/// of this that asserted "nothing moved" would be asserting the feature away.
-/// What must never happen is water reaching a cell outside the gorge the
-/// feature cut for itself.
-///
-/// The control at the end knocks one cell out of the gorge wall and asserts
-/// the same cascade DOES get out, so a change that stopped scheduling flow
-/// checks entirely could not make the first half pass vacuously.
 #[test]
 fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
     let mut w = flat_server_world();
@@ -695,13 +556,8 @@ fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
         (p.x >= lo.x && p.x <= hi.x) && (p.y >= lo.y && p.y <= hi.y) && (p.z >= lo.z && p.z <= hi.z)
     };
 
-    // The realistic disturbance: a player puts a block down at the waterline
-    // and takes it away again. Either write notifies the water under it, which
-    // is what schedules the flow check generation never scheduled.
     w.set_block_world(-2, 65, 0, Block::Stone);
     w.set_block_world(-2, 65, 0, Block::Air);
-    // And the exhaustive version, so the result does not depend on which cell
-    // the disturbance happened to reach.
     for &p in &generated {
         w.schedule_fluid_tick(p, water_flow_delay());
     }
@@ -725,9 +581,6 @@ fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
         &out[..out.len().min(8)]
     );
 
-    // Control: one cell out of the gorge wall at the LOWER pool's waterline,
-    // with ordinary cavern floor beyond it — the invariant broken, and the
-    // cascade runs straight out over the floor.
     for y in 60..=64 {
         w.set_block_world(5, y, 0, Block::Air);
     }
@@ -744,7 +597,6 @@ fn a_cut_cascade_flows_inside_its_gorge_and_a_breached_one_does_not() {
     );
 }
 
-/// Lava ring cadence for the tests: its flow delay, plus slack.
 fn lava_ring() -> u32 {
     lava_flow_delay() as u32 + 2
 }
@@ -753,7 +605,6 @@ fn lava_ring() -> u32 {
 fn lava_spreads_slower_and_shorter_than_water() {
     let mut w = flat_server_world();
     assert!(w.set_fluid_world(IVec3::new(2, 65, 2), Block::Lava, 0));
-    // One lava ring: the source has spread to its cardinal neighbours.
     run_ticks(&mut w, lava_ring());
     assert_eq!(
         block(&w, 3, 65, 2),
@@ -761,7 +612,6 @@ fn lava_spreads_slower_and_shorter_than_water() {
         "one ring reaches one cell"
     );
     assert_eq!(w.data.fluid_meta_world(3, 65, 2), flowing(8 - 6));
-    // Three rings: the sheet dies past amount 1 — three cells out, never four.
     run_ticks(&mut w, lava_ring() * 2);
     assert_eq!(block(&w, 5, 65, 2), Block::Lava);
     assert_eq!(block(&w, 6, 65, 2), Block::Air, "lava reaches three cells");
@@ -771,7 +621,6 @@ fn lava_spreads_slower_and_shorter_than_water() {
 fn lava_is_insulated_from_water_flow_probes() {
     let mut w = flat_server_world();
     assert!(w.set_fluid_world(IVec3::new(2, 65, 2), Block::Lava, 0));
-    // Lava pushes no current: bodies are not conveyed by it.
     assert_eq!(
         w.data.fluid_current_at(WorldPos::new(2.5, 65.2, 2.5)),
         petramond_world::fluid::FluidCurrent::NONE,
@@ -789,7 +638,6 @@ fn lava_pours_down_as_falling_cells_and_lands_in_a_ring() {
     carve(&mut w, 2, 64, 2);
     assert!(w.set_fluid_world(IVec3::new(2, 65, 2), Block::Lava, 0));
     run_ticks(&mut w, lava_ring());
-    // The pour is a full falling cell; the source stays put over the drop.
     assert_eq!(block(&w, 2, 64, 2), Block::Lava);
     assert_eq!(w.data.fluid_meta_world(2, 64, 2), FALLING);
     assert_eq!(
@@ -804,7 +652,6 @@ fn horizontal_water_flow_cools_lava_without_displacing_it() {
     let mut w = flat_server_world();
     assert!(w.set_fluid_world(IVec3::new(2, 65, 2), Block::Lava, 0));
     assert!(w.set_fluid_world(IVec3::new(4, 65, 2), Block::Water, 0));
-    // The water sheet reaches the lava from the side and cools it in place.
     run_ticks(&mut w, lava_ring() * 6);
     assert_eq!(block(&w, 2, 65, 2), Block::Stone, "the lava quenched");
     for x in 3..=4 {
@@ -812,13 +659,11 @@ fn horizontal_water_flow_cools_lava_without_displacing_it() {
     }
 }
 
-/// A generated lava fall — a still source replacing a rock cell of the
-/// ceiling, its falling column stamped in the open cells under it — must
-/// survive the streamed-in kick as ONE fall: the falling cells re-arm and
-/// recompute to themselves, the column's base spreads its landing pool, and
-/// the source never creeps along the ceiling into a curtain of falls. The
-/// source's own check is forced too, so this pins the spread rule and not
-/// merely the kick's choice of what to arm.
+/// A generated lava fall (a still source in the ceiling, its falling column below) has to survive
+/// the streamed-in kick as one fall. The falling cells re-arm and recompute to themselves, the base
+/// spreads its landing pool, and the source doesn't creep along the ceiling into a curtain of
+/// falls. The source's own check is forced too, so this pins the spread rule, not just what the
+/// kick arms.
 #[test]
 fn a_generated_lava_fall_rearms_and_builds_its_landing_pool() {
     use petramond_world::chunk::{Chunk, ChunkPos, SectionPos, CHUNK_SX, CHUNK_SZ};
@@ -829,9 +674,6 @@ fn a_generated_lava_fall_rearms_and_builds_its_landing_pool() {
             c.set_block(x, 64, z, Block::Stone);
         }
     }
-    // A landing room (x,z 2..=8, y 65..=68) under a rock ceiling; the source
-    // replaces the ceiling cell over the room's centre, enclosed on every
-    // other side, and the column falls 68..65 onto the floor at 64.
     for z in 2..=8 {
         for x in 2..=8 {
             for y in 65..=68 {
@@ -883,7 +725,6 @@ fn a_generated_lava_fall_rearms_and_builds_its_landing_pool() {
             "the stamped column at y={y} re-arms to itself"
         );
     }
-    // The landing spread: the base cell above the floor spilled sideways.
     assert_eq!(
         block(&w, 4, 65, 5),
         Block::Lava,
@@ -892,10 +733,6 @@ fn a_generated_lava_fall_rearms_and_builds_its_landing_pool() {
     assert!(lava_cells_at(&w, 65).len() > 1);
 }
 
-/// Generation schedules no checks, so a worldgen lava cell beside aquifer
-/// water sits as an unjudged contact until something disturbs it — unless the
-/// on-load kick arms it. Enclosed in rock with no air anywhere, the contact
-/// must quench after ingest, on whichever side of a section seam lands last.
 #[test]
 fn the_kick_arms_a_generated_lava_water_contact_without_air() {
     use petramond_world::chunk::{SectionPos, SECTION_SIZE};
@@ -912,7 +749,6 @@ fn the_kick_arms_a_generated_lava_water_contact_without_air() {
                 }
             }
         }
-        // An interior contact deep in `a`, and one straddling the a|b seam.
         a.set_fluid(5, 1, 5, Block::Lava, 0);
         a.set_fluid(6, 1, 5, Block::Water, 0);
         a.set_fluid(15, 3, 8, Block::Lava, 0);
@@ -947,11 +783,6 @@ fn the_kick_arms_a_generated_lava_water_contact_without_air() {
     );
 }
 
-/// The replica renders whatever meta the wire hands it, so a fluid delta must
-/// carry its meta for EVERY simulated fluid: a sheet arriving without it lands
-/// as still sources — flat, full height, no flow. The sheet's own shape is
-/// derived from the descriptor rather than pinned: heights step down strictly
-/// outward and the reach is exactly what the drop-off implies.
 #[test]
 fn a_replica_renders_each_fluids_sheet_at_the_servers_heights() {
     use petramond_world::chunk::{Chunk, ChunkPos, CHUNK_SX, CHUNK_SZ};

@@ -6,9 +6,6 @@ use super::{
     arc_component_bounds, body_boxes, segment_centres, segment_offset, segment_offsets, wrap_angle,
 };
 
-/// One deterministic soft separation for two complete mob bodies. Segment
-/// overlaps are candidates, not independent pushes: the deepest contact wins
-/// so a long body cannot multiply its shove by its segment count.
 pub fn body_separation(
     a_pos: WorldPos,
     a_yaw: f32,
@@ -32,8 +29,6 @@ pub fn body_separation(
     )
 }
 
-/// One deterministic soft separation for a complete mob body away from an
-/// ordinary entity body (currently a player).
 pub fn body_separation_from_body(
     pos: WorldPos,
     yaw: f32,
@@ -59,9 +54,6 @@ pub fn body_separation_from_body(
 const PEER_SUPPORT_VERTICAL_EPS: f32 = 1e-3;
 const PEER_SUPPORT_HORIZONTAL_EPS: f32 = 1e-4;
 
-/// Append the candidate solid boxes whose top faces currently support this
-/// complete body. The vertical band is deliberately tight and horizontal
-/// face-touching is excluded, so a wall contact cannot masquerade as ground.
 pub fn append_body_supports(
     pos: WorldPos,
     yaw: f32,
@@ -79,7 +71,6 @@ pub fn append_body_supports(
     );
 }
 
-/// Whether a final compound pose rests on a peer solid's top face.
 pub fn body_has_peer_support(
     pos: WorldPos,
     yaw: f32,
@@ -158,10 +149,6 @@ where
     best
 }
 
-/// Whether any segment of a mob body overlaps the supplied cell-local block
-/// collision boxes. This is the shared placement-occupancy query: ordinary
-/// bodies take the single-segment fast path naturally, while a long body's
-/// bow and stern participate exactly like its centre.
 pub fn body_overlaps_block_boxes(
     pos: WorldPos,
     yaw: f32,
@@ -178,10 +165,6 @@ pub fn body_overlaps_block_boxes(
     })
 }
 
-/// Whether a whole mob body can be created at this pose without intersecting
-/// terrain or a live solid entity. Every covered cell must have final physics
-/// state: unresolved or in-flight terrain is not permission to spawn through
-/// whatever its generated or saved content may later restore.
 pub fn body_pose_fits<F, K>(
     pos: WorldPos,
     yaw: f32,
@@ -229,11 +212,10 @@ where
     true
 }
 
-/// Clamp an absolute yaw request to the collision-free prefix of its shortest
-/// rotation. Ordinary square bodies are rotation-invariant and accept the
-/// request directly. Long bodies sweep every shared segment through a bounded,
-/// conservative arc AABB, so a bow cannot rotate through terrain or another
-/// solid body between two otherwise-clear endpoint poses.
+/// Clamps yaw to the collision-free part of the rotation.
+/// Square bodies are rotation-invariant so the request just passes through.
+/// Long bodies sweep each segment through a bounded arc AABB. Both ends being clear doesn't mean
+/// the bow can get from one to the other.
 #[allow(clippy::too_many_arguments)]
 pub fn clamp_body_yaw<F>(
     pos: WorldPos,
@@ -258,9 +240,6 @@ where
         return target;
     }
 
-    // Keep the outermost segment centre's arc travel to at most half a
-    // segment radius per probe. Row validation bounds reach/half_width and
-    // therefore bounds this loop independently of absolute body size.
     let probes = (reach * delta.abs() / (size.half_width * 0.5))
         .ceil()
         .max(1.0) as usize;
@@ -311,11 +290,6 @@ where
     })
 }
 
-/// The nearest body intersected by a ray before `max_dist`.
-///
-/// Callers choose which bodies participate and attach any key they need. The
-/// body-box emitter and nearest-hit rule stay shared between client picking
-/// and authoritative server validation.
 pub fn closest_body_ray_hit<K: Ord>(
     eye: WorldPos,
     dir: Vec3,
@@ -324,7 +298,6 @@ pub fn closest_body_ray_hit<K: Ord>(
 ) -> Option<(K, f32)> {
     let mut best = None;
     for (key, pos, yaw, size) in bodies {
-        // Test in the eye's frame, so reach stays exact far from the origin.
         let hit = body_boxes(pos, yaw, size)
             .filter_map(|(min, max)| {
                 let rel = |p: [f64; 3]| {

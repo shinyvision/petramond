@@ -1,8 +1,3 @@
-//! The off-hand slot: the two-pass use-click ladder (main hand first, the
-//! off hand only when nothing claimed), the F swap through the ordered
-//! menu-action stream, the client's mirrored two-pass prediction, and the
-//! off-hand GUI cell's click routing.
-
 use super::common::{game, game_on_empty_chunk, hit};
 use crate::game::tick::PlacePrediction;
 use petramond::events::tick::TickEvents;
@@ -13,15 +8,10 @@ use petramond_world::gui_state::{MenuSlot, PointerButton};
 use petramond_world::inventory::Inventory;
 use petramond_world::item::{ItemStack, ItemType};
 
-// The stick is an item-only row: no block link, no `use`, no food — inert on
-// every rung of the use-click ladder, so a main hand holding one predictably
-// claims nothing and the second pass runs.
 fn stick() -> ItemType {
     ItemType::Stick
 }
 
-/// Session inventory with `main` selected in hotbar slot 0 and `off` in the
-/// off-hand slot.
 fn hands(main: Option<ItemStack>, off: Option<ItemStack>) -> Inventory {
     let mut inv = Inventory::new();
     if let Some(stack) = main {
@@ -138,9 +128,6 @@ fn an_empty_off_hand_never_runs_a_second_pass() {
     );
 }
 
-/// A changed OFF hand between receipt and the Placement stage denies the
-/// whole click, exactly like a changed hotbar selection: which hand acts is
-/// decided during dispatch, so the guard covers both captures.
 #[test]
 fn an_off_hand_change_after_receipt_denies_the_click() {
     let mut game = game_on_empty_chunk();
@@ -154,7 +141,6 @@ fn an_off_hand_change_after_receipt_denies_the_click() {
     game.session_mut().input_mut().look = Some(hit(floor, IVec3::Y));
     game.sim_mut().queue_place_click_for_test(0);
 
-    // The off-hand item changes before the tick consumes the click.
     *game.server_player_mut().inventory.off_hand_mut() = Some(ItemStack::new(ItemType::Stone, 2));
     let mut events = TickEvents::default();
     game.sim_mut().tick_place(0, &mut events);
@@ -181,19 +167,16 @@ fn swap_off_hand_swaps_the_selected_stack_and_predicts_it() {
     game.sync_self_view_for_test();
 
     game.game.swap_off_hand();
-    // The prediction lands immediately on the replicated view…
     assert_eq!(
         game.replica.self_view.inventory.off_hand().map(|s| s.item),
         Some(ItemType::Dirt)
     );
     assert!(game.replica.self_view.inventory.selected().is_none());
-    // …and the authoritative swap applies through the ordered menu stream.
     game.apply_latched_actions_for_test();
     let inv = &game.server_player().inventory;
     assert_eq!(inv.off_hand().map(|s| s.count), Some(5));
     assert!(inv.selected().is_none());
 
-    // F again swaps back (an empty hand takes the off-hand stack out).
     game.game.swap_off_hand();
     game.apply_latched_actions_for_test();
     let inv = &game.server_player().inventory;
@@ -214,7 +197,6 @@ fn the_click_verdict_falls_through_to_the_off_hand() {
         .replica
         .world
         .set_block_world(floor.x, floor.y, floor.z, Block::Stone));
-    // Park the body clear of the place cell so the body gate cannot refuse.
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
     game.server_player_mut().inventory = hands(
         Some(ItemStack::new(stick(), 1)),
@@ -260,19 +242,16 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     game.sync_self_view_for_test();
 
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, false, false);
-    // Predicted pickup onto the cursor…
     assert_eq!(
         game.replica.self_view.inventory.cursor().map(|s| s.count),
         Some(7)
     );
     assert!(game.replica.self_view.inventory.off_hand().is_none());
-    // …and the authoritative decode agrees.
     game.apply_latched_actions_for_test();
     let inv = &game.server_player().inventory;
     assert_eq!(inv.cursor().map(|s| s.count), Some(7));
     assert!(inv.off_hand().is_none());
 
-    // A second plain click deposits the cursor stack back into the cell.
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, false, false);
     game.apply_latched_actions_for_test();
     let inv = &game.server_player().inventory;
@@ -283,7 +262,6 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     );
     assert!(inv.cursor().is_none());
 
-    // A shift-click ships the stack into the grid on both mirrors.
     game.menu_click(MenuSlot::OffHand, PointerButton::Primary, true, false);
     game.apply_latched_actions_for_test();
     let inv = &game.server_player().inventory;
@@ -296,9 +274,6 @@ fn the_off_hand_menu_cell_clicks_like_a_plain_slot_on_both_mirrors() {
     );
 }
 
-/// World pickup tops up a SAME-item off-hand first; a different item never
-/// touches it — driven through the real planner + collector
-/// (`item_pickup_tick`), not just the `Inventory` routing.
 #[test]
 fn pickup_refills_a_matching_off_hand_before_the_grid() {
     use petramond::entity::DroppedItem;
@@ -320,7 +295,6 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
     );
     assert_eq!(super::common::count_item(inv, ItemType::Dirt), 6);
 
-    // A different item routes past the off-hand entirely.
     let mut game = super::common::game();
     game.server_player_mut().inventory = hands(None, Some(ItemStack::new(ItemType::Stone, 1)));
     let centre = game.server_player().body_center();
@@ -338,8 +312,6 @@ fn pickup_refills_a_matching_off_hand_before_the_grid() {
     assert_eq!(super::common::count_item(inv, ItemType::Dirt), 3);
 }
 
-/// The menu F: hovering a slot swaps it with the off-hand, predicted on the
-/// mirrors with the same primitives the server's decode runs.
 #[test]
 fn menu_f_swaps_the_hovered_inventory_slot_on_both_mirrors() {
     let mut game = game();
@@ -361,16 +333,11 @@ fn menu_f_swaps_the_hovered_inventory_slot_on_both_mirrors() {
     assert!(inv.slot(12).is_none());
 }
 
-/// The hovered-slot swap against an open CONTAINER cell: a chest cell swaps
-/// plainly; the furnace's take-only output and its fuel filter refuse the
-/// whole gesture (all-or-nothing — a half-executed swap reads as item loss),
-/// identically on the prediction and the authority.
 #[test]
 fn menu_f_swap_respects_container_slot_specs() {
     use petramond::events::tick::TickEvents;
     use petramond_math::math::IVec3;
 
-    // Chest: a plain cell swaps whole, on both mirrors.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     game.server_world_mut()
@@ -401,8 +368,6 @@ fn menu_f_swap_respects_container_slot_specs() {
     );
     assert!(game.server_player().inventory.off_hand().is_none());
 
-    // Furnace: the fuel filter and the take-only output refuse the deposit
-    // half, so the WHOLE swap refuses.
     let mut game = game_on_empty_chunk();
     let pos = IVec3::new(3, 64, 3);
     game.server_world_mut()
@@ -463,10 +428,6 @@ fn death_spills_the_off_hand_with_the_rest() {
     assert_eq!(spilled, 7, "both hands' stacks land in the corpse pile");
 }
 
-/// A use click with food in hand belongs to whatever claims it FIRST, as on
-/// the server: a built-in block takes it and the hand jabs; anywhere else the
-/// eat does — consumed, so the off hand never acts, but presented by the eat's
-/// raise instead of a jab.
 #[test]
 fn a_food_click_jabs_for_the_block_that_claims_it_and_otherwise_eats_without_one() {
     let food = ItemType::all()

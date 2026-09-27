@@ -1,29 +1,17 @@
-//! Where a mod file lives, and the case rule for creating one.
-//!
-//! A bucket must mean the same files on every machine a player copies it to,
-//! so creating a name that differs from an existing sibling only by case is
-//! refused on every filesystem. Each directory's names are listed once and
-//! then kept current by this store's own creates, renames and deletes; a
-//! suspected collision re-lists the directory first, so a name deleted
-//! behind the store's back never refuses a create.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
-/// The identity two names share when some filesystem would store them as one.
 pub(super) fn fold(name: &str) -> String {
     name.to_lowercase()
 }
 
-/// `rel` (`/`-separated, already checked) under `root`.
 pub(super) fn join(root: &Path, rel: &str) -> PathBuf {
     let mut path = root.to_path_buf();
     path.extend(rel.split('/').filter(|segment| !segment.is_empty()));
     path
 }
 
-/// A number for each bucket `files` directory, the same for the process.
 pub(super) fn root_id(root: &Path) -> u64 {
     static IDS: LazyLock<Mutex<HashMap<PathBuf, u64>>> = LazyLock::new(Default::default);
     let mut ids = IDS.lock().unwrap_or_else(PoisonError::into_inner);
@@ -39,9 +27,6 @@ pub(super) fn root_id(root: &Path) -> u64 {
     id
 }
 
-/// Remove what an earlier run left hidden in a bucket: trash its unlink
-/// never reached, and media partials of an encoder that died with it. Nobody
-/// can list or delete those names, so nobody else ever will.
 pub(super) fn sweep(dir: &Path, me: u32) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -70,8 +55,6 @@ pub(super) fn sweep(dir: &Path, me: u32) {
     }
 }
 
-/// The process that left a hidden name: `.trash-<pid>-<n>`, or a media
-/// partial `.<leaf>.<pid>-<n>.[<kind>.]partial`.
 fn left_by(name: &str) -> Option<u32> {
     if let Some(rest) = name.strip_prefix(".trash-") {
         return rest.split_once('-')?.0.parse().ok();
@@ -84,7 +67,6 @@ fn left_by(name: &str) -> Option<u32> {
     })
 }
 
-/// Directory → its names by folded name.
 type Index = BTreeMap<PathBuf, HashMap<String, String>>;
 
 static INDEX: LazyLock<Mutex<Index>> = LazyLock::new(Default::default);
@@ -120,10 +102,6 @@ fn case_clash(index: &mut Index, dir: &Path, name: &str) -> Option<String> {
         .cloned()
 }
 
-/// Make `rel`'s parent directories under `root` and run `create` on its
-/// path, refusing any segment that differs only by case from an existing
-/// sibling. Runs under the index lock, so two creates racing on names that
-/// fold alike cannot both pass.
 pub(super) fn create<T>(
     root: &Path,
     rel: &str,
@@ -153,7 +131,6 @@ pub(super) fn create<T>(
     Ok(made)
 }
 
-/// `path` (and everything under it) is gone from disk.
 pub(super) fn forget(path: &Path) {
     let mut index = index();
     if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {

@@ -8,13 +8,9 @@ use std::f32::consts::LN_2;
 
 use super::pose::LocalPose;
 
-/// Speeds an estimated velocity is clamped to (degrees, model units per
-/// second), so a snap the frame before a transition cannot fling the pose.
 const MAX_TURN: f32 = 2000.0;
 const MAX_TRAVEL: f32 = 200.0;
 
-/// The halflife whose decay leaves 5% of an offset after `settle` seconds:
-/// `(1 + x)·e^-x = 0.05` at `x ≈ 4.744`, with `x = 2 ln2 · t / halflife`.
 pub(crate) fn settle_halflife(settle: f32) -> f32 {
     settle.max(0.0) * 2.0 * LN_2 / 4.744
 }
@@ -32,15 +28,12 @@ pub(crate) struct Inertia {
 }
 
 impl Inertia {
-    /// Absorb the jump the owner's next output makes.
     pub fn trigger(&mut self, halflife: f32) {
         if halflife > 0.0 {
             self.pending = Some(halflife);
         }
     }
 
-    /// Run on the owner's output once per update it evaluates; `frame` counts
-    /// updates, so a skipped update forgets the motion instead of inventing it.
     pub fn apply(&mut self, pose: &mut LocalPose, dt: f32, frame: u64) {
         let primed = self.frame + 1 == frame && self.last.len() == pose.len();
         if !primed {

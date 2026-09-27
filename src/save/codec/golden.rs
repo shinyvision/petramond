@@ -1,12 +1,3 @@
-//! Golden section records and the migration chain.
-//!
-//! The fixtures under `save/fixtures/` are laid out independently of the
-//! encoder: `section_v19*.bin` as v19 shipped (bare payloads),
-//! `section_v20*.bin` with every payload framed, and `section_v21*.bin`
-//! with item entities and mobs as tagged records. Every fixture decodes
-//! through the identity palette; `section_v*.bin` holds blocks and empty
-//! slots, `section_v*_entities.bin` item entities and a mob.
-
 use super::*;
 use crate::save::format::RecordError;
 use petramond_world::light::LightRgb;
@@ -18,8 +9,6 @@ const V19_ENTITIES: &[u8] = include_bytes!("../fixtures/section_v19_entities.bin
 const V20_ENTITIES: &[u8] = include_bytes!("../fixtures/section_v20_entities.bin");
 const V21_ENTITIES: &[u8] = include_bytes!("../fixtures/section_v21_entities.bin");
 
-/// The first framed payload of the v21 fixture (fluid) starts after the
-/// version, three flags bytes and a three-id block cube.
 const V21_FIRST_FRAME: usize = 1 + 3 + (2 + 3 * 2 + SECTION_VOLUME);
 
 fn pos() -> SectionPos {
@@ -34,7 +23,6 @@ fn inflated(blob: &[u8]) -> Vec<u8> {
     inflate(blob).expect("fixture inflates")
 }
 
-/// What the palette-independent fixture holds, whichever version wrote it.
 fn assert_fixture_content(section: &Section) {
     let ids: Vec<u16> = section.block_cube().iter().collect();
     assert_eq!((ids[0], ids[100], ids[200]), (0, 1, 2));
@@ -78,8 +66,6 @@ fn every_golden_version_decodes_to_the_same_content() {
     }
 }
 
-/// Each upgrade step is a pure byte rewrite: the older golden in, the next
-/// golden out.
 #[test]
 fn each_step_produces_the_next_golden_bytes() {
     type GoldenStep<'a> = (
@@ -100,8 +86,6 @@ fn each_step_produces_the_next_golden_bytes() {
     }
 }
 
-/// Re-encoding what any fixture decodes to writes the golden v21 record
-/// byte for byte: a layout change that forgets its version bump fails here.
 #[test]
 fn the_encoder_writes_the_golden_v21_layout() {
     let pal = palette::Palette::identity();
@@ -162,8 +146,6 @@ fn versions_outside_the_chain_are_typed_errors() {
     ));
 }
 
-/// A flag bit this build has no payload for means a newer build wrote the
-/// record: refused as such, never decoded with that payload dropped.
 #[test]
 fn an_unknown_flag_bit_is_refused_as_a_newer_payload() {
     let mut payload = inflated(V21);
@@ -179,8 +161,6 @@ fn an_unknown_flag_bit_is_refused_as_a_newer_payload() {
     assert!(err.is_from_newer_build());
 }
 
-/// Every payload must fill its frame exactly, and the error says which
-/// payload broke and where.
 #[test]
 fn a_frame_that_disagrees_with_its_payload_is_corrupt_with_its_offset() {
     let mut payload = inflated(V21);

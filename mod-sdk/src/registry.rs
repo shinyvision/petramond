@@ -1,150 +1,81 @@
-//! Registry queries: name↔id resolution, tag membership, and item row
-//! reads. Everything here is registry-only — legal on ANY instance (server,
-//! worldgen, client), any time — and session-stable: resolve once in
-//! [`Mod::init`] and keep the result in mod state, but NEVER persist numeric
-//! ids (names are the stable identity).
-//!
-//! Items have ONE mod-facing identity, the registry NAME (`"petramond:coal"`,
-//! `"farming:wheat"`); [`ItemId`]s in event payloads bridge to it through
-//! [`resolve_item`] / [`item_names`].
-
 use mod_api::{BlockId, ItemId, ItemInfoData, ItemStackData, MobId};
 
 host_fn! {
-    /// Immutable consumer metadata on a species, available on every runtime side.
     pub fn mob_data(mob: MobId, key: &str) -> Option<Vec<u8>>
         => MobDataGet { mob, key: key.into() } => Bytes
 }
 
 host_fn! {
-    /// Species carrying a consumer key, with raw JSON values in registry order.
     pub fn mobs_with_data(key: &str) -> Vec<(MobId, String)>
         => MobsWithData { key: key.into() } => MobDataRows
 }
 
-// Imported for intra-doc links only.
 #[allow(unused_imports)]
 use crate::Mod;
 
 use crate::__rt::host_fn;
 
 host_fn! {
-    /// Resolve a block registry name (`"petramond:stone"`, `"mymod:gadget"`) to its
-    /// session-scoped runtime id. Works everywhere, worldgen instances included —
-    /// resolve once in [`Mod::init`] and keep the id in mod state (but NEVER
-    /// persist it: ids can change between sessions; names are the stable identity).
     pub fn resolve_block(name: &str) -> Option<BlockId> => ResolveBlock { name: name.into() } => Block
 }
 
 host_fn! {
-    /// Resolve an item registry name to this session's numeric [`ItemId`], or
-    /// `None` for an unknown name — the item twin of [`resolve_block`], same
-    /// contract. Resolve once in `init` and compare against the ids in event
-    /// payloads (`item_use_pre`); the reverse direction is [`item_names`].
     pub fn resolve_item(name: &str) -> Option<ItemId> => ResolveItem { name: name.into() } => Item
 }
 
 host_fn! {
-    /// Resolve session block ids back to their registry names — the reverse of
-    /// [`resolve_block`], batched (resolve a whole [`blocks_by_tag`] result in
-    /// one crossing; at most 4096 ids per call — the sim batch cap, far past
-    /// the 256-id space). Parallel to `blocks`; `None` = unregistered id.
     pub fn block_names(blocks: Vec<BlockId>) -> Vec<Option<String>>
         => BlockNames { blocks } => Names
 }
 
 host_fn! {
-    /// Resolve session item ids back to their registry names — the reverse of
-    /// [`resolve_item`], batched like [`block_names`]. How an id from an event
-    /// payload or [`items_by_tag`] reaches the name-addressed calls
-    /// ([`crate::give_item`], [`item_info`]).
     pub fn item_names(items: Vec<ItemId>) -> Vec<Option<String>>
         => ItemNames { items } => Names
 }
 
 host_fn! {
-    /// Resolve a block SHAPE-KIND registry key (`"petramond:fence"`,
-    /// `"mymod:gate"`) to the session-local `shape_kind` id the WASM shape bake
-    /// calls carry (`bake_shape_sim`/`bake_shape_render`/`shape_placement_plan`)
-    /// — the shape twin of [`resolve_block`], so a mod with two custom shapes can
-    /// branch on which one a bake batch is for. `None` = no such shape kind.
-    /// Registry-only (legal on any instance); resolve once in [`Mod::init`] and
-    /// compare against the `shape_kind` argument (but NEVER persist the id).
     pub fn resolve_shape(key: &str) -> Option<u16> => ResolveShape { key: key.into() } => MaybeU16
 }
 
 host_fn! {
-    /// Resolve a mob species key (`"petramond:sheep"` — the same string
-    /// [`spawn_mob`](crate::spawn_mob) and `MobSnapshot::key` speak) to its
-    /// session-scoped [`MobId`] — the mob twin of [`resolve_item`], same
-    /// contract. Compare against the `kind` in `mob_died`/`mob_spawned`/
-    /// `mob_damage_pre` payloads; the reverse direction is [`mob_names`].
     pub fn resolve_mob(key: &str) -> Option<MobId> => ResolveMob { key: key.into() } => MobKind
 }
 
 host_fn! {
-    /// Resolve session mob species ids back to their keys — the reverse of
-    /// [`resolve_mob`], batched like [`item_names`]. Parallel to `mobs`;
-    /// `None` = unregistered id.
     pub fn mob_names(mobs: Vec<MobId>) -> Vec<Option<String>>
         => MobNames { mobs } => Names
 }
 
 host_fn! {
-    /// Resolve a `conditions.json` key (`"petramond:burning"`) to its row: the
-    /// session [`ConditionId`](mod_api::ConditionId) plus its stage names —
-    /// resolve once at init and address stages by index.
     pub fn resolve_condition(key: &str) -> Option<mod_api::ConditionInfoData>
         => ResolveCondition { key: key.into() } => Condition
 }
 
 host_fn! {
-    /// Condition ids back to their keys, parallel to `conditions`.
     pub fn condition_names(conditions: Vec<mod_api::ConditionId>) -> Vec<Option<String>>
         => ConditionNames { conditions } => Names
 }
 
 host_fn! {
-    /// Every registered block carrying `tag`, in id order — engine tags as
-    /// `"petramond:<name>"` (e.g. `"petramond:leaves"`), pack tags as their
-    /// `"mod_id:name"`. A name nothing lists is an empty set; a query never
-    /// registers a tag. Tag-driven policy picks up pack-added blocks with no
-    /// code change.
     pub fn blocks_by_tag(tag: &str) -> Vec<BlockId>
         => BlocksByTag { tag: tag.into() } => BlockList
 }
 
 host_fn! {
-    /// Every registered item carrying `tag`, in id order — the item twin of
-    /// [`blocks_by_tag`], same contract.
     pub fn items_by_tag(tag: &str) -> Vec<ItemId>
         => ItemsByTag { tag: tag.into() } => ItemList
 }
 
 host_fn! {
-    /// One item's BARE registry row by registry NAME (stack cap, fuel burn
-    /// ticks, tags, display name, block link, tool, food, engine use key) —
-    /// the same rows engine mechanics read. `None` = unknown name. Row data
-    /// is session-stable — cache it mod-side instead of re-asking per tick.
-    /// A tool read off a HELD stack goes through [`stack_info`] instead: the
-    /// bare row silently ignores an augment's override.
     pub fn item_info(item: &str) -> Option<Box<ItemInfoData>>
         => ItemInfo { item: item.into(), data: Vec::new() } => ItemInfo
 }
 
 host_fn! {
-    /// [`item_info`] for ONE STACK: the row as that stack carries it, every
-    /// instance override the engine honours applied (an augmented tool's
-    /// `petramond:tool` override lands in `tool`). What a mod reading a held
-    /// tool's damage or speed asks for — the engine's own melee and mining
-    /// resolve through exactly this. `None` = unknown item name.
     pub fn stack_info(stack: &ItemStackData) -> Option<Box<ItemInfoData>>
         => ItemInfo { item: stack.item.clone(), data: stack.data.clone() } => ItemInfo
 }
 
-/// [`resolve_block`] that also logs a "not registered" line on `None` — the
-/// standard init-time shape: resolution failure is worth one log line, then
-/// the mod degrades on the `None`.
 pub fn resolve_block_logged(name: &str) -> Option<BlockId> {
     let id = resolve_block(name);
     if id.is_none() {
@@ -153,10 +84,6 @@ pub fn resolve_block_logged(name: &str) -> Option<BlockId> {
     id
 }
 
-/// [`resolve_mob`] that also logs a "not registered" line on `None` — the
-/// species twin of [`resolve_block_logged`]. A mob SNAPSHOT names its species
-/// by id, never by string, so a pack that reasons about a species resolves its
-/// key once here and compares ids.
 pub fn resolve_mob_logged(name: &str) -> Option<MobId> {
     let id = resolve_mob(name);
     if id.is_none() {
@@ -165,7 +92,6 @@ pub fn resolve_mob_logged(name: &str) -> Option<MobId> {
     id
 }
 
-/// [`resolve_condition`], logging an unregistered key.
 pub fn resolve_condition_logged(key: &str) -> Option<mod_api::ConditionInfoData> {
     let info = resolve_condition(key);
     if info.is_none() {
@@ -174,8 +100,6 @@ pub fn resolve_condition_logged(key: &str) -> Option<mod_api::ConditionInfoData>
     info
 }
 
-/// [`resolve_item`] that also logs a "not registered" line on `None` — the
-/// item twin of [`resolve_block_logged`].
 pub fn resolve_item_logged(name: &str) -> Option<ItemId> {
     let id = resolve_item(name);
     if id.is_none() {
@@ -185,73 +109,39 @@ pub fn resolve_item_logged(name: &str) -> Option<ItemId> {
 }
 
 host_fn! {
-    /// The item row's consumer-data entry `key` as raw JSON text — the item
-    /// INTEROP surface: any pack attaches a CONSUMING system's namespaced
-    /// key to its own rows (or to existing rows via catalog patch rows), and
-    /// the consumer parses the opaque value ([`crate::json`]) and ignores
-    /// what it doesn't understand. Registry-only, legal on any instance.
-    /// `None` = no such entry.
     pub fn item_data(item: ItemId, key: &str) -> Option<Vec<u8>>
         => ItemDataGet { item, key: key.into() } => Bytes
 }
 
 host_fn! {
-    /// Every registered item carrying data entry `key`, with each row's raw
-    /// JSON value, in id order — the one-crossing enumeration a consumer
-    /// runs at init to build its table (the data twin of
-    /// [`items_by_tag`](crate::items_by_tag)). Registry-only, legal on any
-    /// instance.
     pub fn items_with_data(key: &str) -> Vec<(ItemId, String)>
         => ItemsWithData { key: key.into() } => ItemDataRows
 }
 
 host_fn! {
-    /// The block twin of [`item_data`]. Registry-only, legal on any instance.
     pub fn block_data(block: BlockId, key: &str) -> Option<Vec<u8>>
         => BlockDataGet { block, key: key.into() } => Bytes
 }
 
 host_fn! {
-    /// The block twin of [`items_with_data`]. Registry-only, legal on any
-    /// instance.
     pub fn blocks_with_data(key: &str) -> Vec<(BlockId, String)>
         => BlocksWithData { key: key.into() } => BlockDataRows
 }
 
 host_fn! {
-    /// The block twin of [`item_info`]: the row's stable harvest facts
-    /// (material, hardness, harvest tier, the tool family the break gate
-    /// credits, the item that places the block) — the engine's own
-    /// material→tool ladder answered rather than re-derived. `None` =
-    /// unregistered id. Registry-only, legal on any instance; cache it,
-    /// never re-ask per tick.
-    ///
-    /// [`item_info`]: crate::item_info
     pub fn block_info(block: BlockId) -> Option<Box<mod_api::BlockInfoData>>
         => BlockInfo { block } => BlockInfo
 }
 
 host_fn! {
-    /// [`block_info`] for many ids in one crossing, parallel to `blocks`
-    /// (`None` = unregistered id; at most [`mod_api::SIM_BATCH_MAX`] ids per
-    /// call). How a consumer classifies the whole block registry once at
-    /// init. Registry-only, legal on any instance.
     pub fn block_infos(blocks: Vec<BlockId>) -> Vec<Option<mod_api::BlockInfoData>>
         => BlockInfos { blocks } => BlockInfos
 }
 
-/// Every registered block and its row, in id order — the whole block
-/// registry read through [`block_infos`] a page at a time. Block ids are
-/// dense, so the read stops at the first unregistered id. How a mod
-/// classifies the registry once at init (which ids are fluids, which are
-/// tagged); cache the answer, never re-read it per tick.
 pub fn registered_blocks() -> Vec<(BlockId, mod_api::BlockInfoData)> {
     dense_prefix(block_infos)
 }
 
-/// The registered prefix of the id space, asked a page at a time. A reply
-/// that answers fewer ids than asked ends the read like an unregistered id:
-/// nothing past a gap is trusted.
 fn dense_prefix<T>(mut query: impl FnMut(Vec<BlockId>) -> Vec<Option<T>>) -> Vec<(BlockId, T)> {
     const PAGE: u16 = 256;
     let mut out = Vec::new();
@@ -275,10 +165,6 @@ fn dense_prefix<T>(mut query: impl FnMut(Vec<BlockId>) -> Vec<Option<T>>) -> Vec
 }
 
 host_fn! {
-    /// What each [`BlockRecord`](mod_api::BlockRecord) asks of construction on
-    /// its own — clearance, a member of an object anchored elsewhere, or a
-    /// unit with its item cost and footprint — parallel to `records` (at most
-    /// [`mod_api::SIM_BATCH_MAX`]). Registry-only, legal on any instance.
     pub fn block_record_plans(records: Vec<mod_api::BlockRecord>) -> Vec<mod_api::RecordPlan>
         => BlockRecordPlans { records } => RecordPlans
 }

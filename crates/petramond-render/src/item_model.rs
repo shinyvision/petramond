@@ -55,18 +55,11 @@ pub fn build_block_model_item(
         inst.footprint[1] as f32,
         inst.footprint[2] as f32,
     );
-    // Footprint space → a unit cube centred on the origin: subtract the footprint centre,
-    // then uniformly scale the largest axis to fill `±0.5` (keeping proportions). The
-    // caller's `transform` then sizes/places/spins it for its context.
     let span = fp.max_element().max(1.0);
     let map =
         transform * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
-    // RGB light (sky channel dims/tints with the env; block channel is night-
-    // invariant and carries its own colour) folds into the tint; `shade` keeps
-    // the directional term only.
     let tint = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
 
-    // Draw order (far→near for the depthless icon; natural otherwise).
     let mut order: Vec<usize> = (0..inst.cubes.len()).collect();
     if let Some(dir) = view_sort {
         order.sort_by(|&a, &b| {
@@ -89,8 +82,6 @@ pub fn build_block_model_item(
                 let light = if appearance.unlit { 1.0 } else { tint[a] };
                 light * f32::from(appearance.tint[a]) / 255.0
             });
-            // Faces the chunk bake dropped (fully transparent atlas rect) drop
-            // here too — same faces in every presentation.
             if !inst.face_draw[ci][slot] {
                 continue;
             }
@@ -108,11 +99,7 @@ pub fn build_block_model_item(
                 continue;
             }
             let shade = SHADES[face.shade_idx() as usize];
-            // The same startup-baked self-AO the chunk mesh shades with, so the
-            // held/dropped model matches the placed one.
             let ao = inst.face_ao[ci][slot];
-            // Half-texel-inset against edge-texel spill, like the chunk bake;
-            // corner order + per-face rotation come from `FaceUv`.
             let corner_uv = uv
                 .with_uv(block_model::atlas().inset_face_uv(uv.uv))
                 .corner_uv();
@@ -130,12 +117,6 @@ pub fn build_block_model_item(
     }
 }
 
-/// Bake a bbmodel block's model into [`ItemVertex`] geometry for the inventory-icon pass:
-/// like [`build_block_model_item`] but `transform` is the full icon clip-space MVP (so
-/// positions come out in clip space, ready for the pass-through `model_icon` shader). The
-/// model-icon pass is DEPTH-BUFFERED (depth — not winding — orders its panels/drawers),
-/// but the faces are also emitted FAR→NEAR by clip-z as a cheap, stable tiebreak for
-/// coincident decals. Full-bright (no block light); APPENDS (caller clears).
 pub fn build_block_model_icon(
     kind: BlockModelKind,
     mvp: Mat4,
@@ -148,15 +129,11 @@ pub fn build_block_model_icon(
         inst.footprint[1] as f32,
         inst.footprint[2] as f32,
     );
-    // Footprint space → centred unit cube (same as `build_block_model_item`), then the
-    // caller's icon MVP — so positions land in clip space.
     let span = fp.max_element().max(1.0);
     let map = mvp * Mat4::from_scale(Vec3::splat(1.0 / span)) * Mat4::from_translation(-fp * 0.5);
-    // Full-bright, and always at the identity environment: icons are UI, not world.
     let light = lighting::light_rgb(DynLight::FULL, LightEnv::IDENTITY)[0];
     let tint = [1.0, 1.0, 1.0];
 
-    // Collect every face with its mean clip-z, then sort far→near (painter's algorithm).
     let mut faces: Vec<(f32, [ItemVertex; 4], [u32; 6])> = Vec::new();
     for (ci, cube) in inst.cubes.iter().enumerate() {
         let m = map
@@ -184,10 +161,7 @@ pub fn build_block_model_icon(
                 continue;
             }
             let shade = SHADES[face.shade_idx() as usize] * light;
-            // Icons carry the same baked self-AO as the placed/held model.
             let ao = inst.face_ao[ci][slot];
-            // Half-texel-inset against edge-texel spill, like the chunk bake;
-            // corner order + per-face rotation come from `FaceUv`.
             let corner_uv = uv
                 .with_uv(block_model::atlas().inset_face_uv(uv.uv))
                 .corner_uv();
@@ -202,8 +176,6 @@ pub fn build_block_model_icon(
             faces.push((depth, quad, block_model::model_face_tris(ao)));
         }
     }
-    // Larger clip-z is farther (wgpu z in [0,1], 0 = near): draw it FIRST so nearer faces
-    // overpaint it.
     faces.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     for (_, quad, tris) in faces {
         let start = verts.len() as u32;
@@ -212,13 +184,6 @@ pub fn build_block_model_icon(
     }
 }
 
-/// One vertex of the extruded item mesh consumed by the `item3d` pipeline:
-/// explicit position, atlas UV, a directional shade multiplier, and an RGB tint
-/// (foliage-green for a held fern / short grass, white otherwise — the grayscale
-/// fern tile would read gray without it, same as the icon / dropped-item paths).
-/// `#[repr(C)]` + `bytemuck` so the renderer can upload it straight to the GPU;
-/// the vertex layout (pos f32x3 @0, uv f32x2 @12, shade f32 @20, tint f32x3 @24) is
-/// declared in `pipeline.rs` and mirrored by `item3d.wgsl`'s `VsIn`.
 #[repr(C)]
 #[derive(Copy, Clone, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ItemVertex {
@@ -228,44 +193,26 @@ pub struct ItemVertex {
     pub tint: [f32; 3],
 }
 
-/// Texels per side of an item tile (the alpha mask is sampled on this grid).
 const GRID: usize = 16;
-/// Extrusion depth as a fraction of the 1.0 sprite size: exactly one texel
-/// (1/16 of a full block width), so the extruded shape is pixel-perfect — its
-/// side walls are precisely one texel wide and one texel deep.
 const DEPTH: f32 = 1.0 / 16.0;
 
-/// How far inside its tile a full-face uv corner sits, in texels (see
-/// `build_extruded_item_geometry`).
 const EDGE_UV_INSET_TEXELS: f32 = 1.0 / 64.0;
 
-/// Directional shades so the extrusion reads as 3D (front brightest, back dim,
-/// side walls in between). Mirrors the "top bright / bottom dark" voxel feel.
 const SHADE_FRONT: f32 = 1.0;
 const SHADE_BACK: f32 = 0.6;
 const SHADE_SIDE: f32 = 0.8;
 
-/// Is texel `(tx, ty)` (ty top-down, matching the atlas alpha rows) opaque under
-/// the cutout test? Texels outside the grid count as transparent (the border),
-/// so edge-of-tile opaque texels still get a side wall.
 #[inline]
 fn opaque(tile: Tile, tx: i32, ty: i32) -> bool {
     if tx < 0 || ty < 0 || tx >= GRID as i32 || ty >= GRID as i32 {
         return false;
     }
-    // tile_alpha_opaque takes (u, v_bottom_up). Texel centre: u = (tx+0.5)/16,
-    // and the alpha rows are top-down so v_bottom_up = 1 - (ty+0.5)/16.
     let u = (tx as f32 + 0.5) / GRID as f32;
     let v_bottom_up = 1.0 - (ty as f32 + 0.5) / GRID as f32;
     tile_alpha_opaque(tile, u, v_bottom_up)
 }
 
-/// Where a hand holds a sprite, in its unit model space: up from the end of its
-/// art (the lowest opaque rows) toward the art's middle — a tool a third of the
-/// way, by its shaft; anything else near its end, so wide art stays out of the
-/// fist.
 pub(crate) fn grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
-    // Tile art is fixed for the process, so each grip is found once.
     static GRIPS: std::sync::LazyLock<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
         std::sync::LazyLock::new(|| Tile::all().map(|_| Default::default()).collect());
     match GRIPS.get(tile.index()) {
@@ -296,9 +243,6 @@ fn find_grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
     (end + (middle - end) * along).extend(0.0)
 }
 
-/// Atlas UV of texel `(tx, ty)` (ty top-down) within `tile`'s rect: returns
-/// `(u0, v0, u1, v1)` for that single texel, where v0 is the TOP edge in atlas
-/// space (atlas v increases downward) so it composes with `corner` ordering.
 #[inline]
 fn texel_uv_rect(tile: Tile, tx: i32, ty: i32) -> [f32; 4] {
     let [u0, v0, u1, v1] = tile_uv(tile);
@@ -309,15 +253,11 @@ fn texel_uv_rect(tile: Tile, tx: i32, ty: i32) -> [f32; 4] {
     [tu0, tv0, tu0 + du, tv0 + dv]
 }
 
-/// Model-space X for texel column `tx` left edge (`tx` in `0..=16`), centred:
-/// column 0 → -0.5, column 16 → +0.5.
 #[inline]
 fn px(tx: i32) -> f32 {
     tx as f32 / GRID as f32 - 0.5
 }
 
-/// Model-space Y for texel row `ty` (ty top-down, `0..=16`): row 0 (top) → +0.5,
-/// row 16 (bottom) → -0.5, so the sprite is upright.
 #[inline]
 fn py(ty: i32) -> f32 {
     0.5 - ty as f32 / GRID as f32
@@ -331,8 +271,6 @@ fn push_quad(
     shade: f32,
     tint: [f32; 3],
 ) {
-    // Two triangles (0,1,2)(0,2,3). The item3d pipeline disables back-face cull,
-    // so winding need not be consistent across the mixed front/back/wall faces.
     for &i in &[0usize, 1, 2, 0, 2, 3] {
         out.push(ItemVertex {
             pos: corners[i],
@@ -343,10 +281,6 @@ fn push_quad(
     }
 }
 
-/// Apply a stack's `petramond:tint` to already-built extruded-sprite verts:
-/// multiply the tint in and shift the UVs into the atlas's dye-base half
-/// (desaturated, peak-white twins), so the tint can both dye and whiten.
-/// No-op for a plain stack.
 pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond_world::item::VariantId) {
     let Some(t) = petramond_world::item::variant::tint(variant) else {
         return;
@@ -357,14 +291,6 @@ pub(super) fn dye_item_verts(verts: &mut [ItemVertex], variant: petramond_world:
     }
 }
 
-/// The packed-[`Vertex`] twin of [`dye_item_verts`]: apply a stack's
-/// `petramond:tint` to already-built block verts (held mini-cube, dropped
-/// cube, third-person hand) — multiply the tint in and set
-/// [`petramond_mesh::DYED_FLAG2`] so the shader samples the dye-base twin.
-/// No-op for a plain stack. Every `Vertex` dye path routes through here so
-/// no caller can multiply without the flag (or vice versa).
-///
-/// [`Vertex`]: petramond_mesh::Vertex
 pub(super) fn dye_block_verts(
     verts: &mut [petramond_mesh::Vertex],
     variant: petramond_world::item::VariantId,
@@ -386,23 +312,12 @@ pub fn build_extruded_item(tile: Tile, out: &mut Vec<ItemVertex>) -> u32 {
     build_extruded_item_lit(tile, DynLight::FULL, LightEnv::IDENTITY, out)
 }
 
-/// Build the extruded held-item mesh for `tile` into `out` (cleared first,
-/// capacity reused — no growth once warmed). Returns the vertex count. The mesh
-/// is a non-indexed triangle list (the item3d pipeline draws it with `draw`).
-///
-/// FRONT/BACK are the full tile (alpha-cutout in the shader); side walls are
-/// emitted per alpha-boundary texel edge with that texel's own sub-UV.
 pub(super) fn build_extruded_item_lit(
     tile: Tile,
     light: DynLight,
     env: LightEnv,
     out: &mut Vec<ItemVertex>,
 ) -> u32 {
-    // The GEOMETRY depends on nothing but the tile — light and foliage tint
-    // only scale the per-vertex colour — so it is built once per tile and
-    // re-tinted after. The scan below issues five alpha probes per texel over a
-    // 16x16 grid; a mod draw set may ask for several sprite prims EVERY FRAME,
-    // and rebuilding them was three quarters of the whole draw-set frame cost.
     let tint = lighting::fold_tint(foliage_tint::face_material(tile).tint, light, env);
     SPRITE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -442,7 +357,7 @@ thread_local! {
 ///
 /// WHY a baked composite and not a second slab: any second slab has to float
 /// off the first to avoid z-fighting, and floating means its texels leave the
-/// base's pixel grid — visibly misaligned at 16 px (Rachel, 2026-08-05). The
+/// base's pixel grid, visibly misaligning at 16 px. The
 /// composite is one slab on one grid, pixel-perfect by construction. And
 /// because per-texel compositing never BLENDS — every composited texel is
 /// owned outright by the topmost opaque layer — the bake needs no new
@@ -471,8 +386,6 @@ pub(super) fn build_extruded_stack_lit(
         return out.len() as u32;
     }
 
-    // Per-tile foliage tint is baked into the cached geometry (it is a
-    // property of each OWNER tile); only the light fold is per-call.
     let fold = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
     out.clear();
     COMPOSITE_CACHE.with(|cache| {
@@ -489,36 +402,24 @@ pub(super) fn build_extruded_stack_lit(
             ..*v
         };
         out.extend(geom.base.iter().map(lit));
-        // The dye reaches exactly the BASE-owned geometry: the split is why
-        // the cache keeps two vecs instead of one.
         dye_item_verts(out, variant);
         out.extend(geom.over.iter().map(lit));
     });
     out.len() as u32
 }
 
-/// Cached composited-slab geometry, split by texel OWNER so the stack's dye
-/// can reach the base sprite's geometry and nothing else.
 struct CompositeGeometry {
     base: Vec<ItemVertex>,
     over: Vec<ItemVertex>,
 }
 
 thread_local! {
-    /// Per-(base, overlays) composited slab geometry, foliage-tinted, unlit.
-    /// Thread-local like [`SPRITE_CACHE`], and bounded by the augment combos
-    /// that actually appear in a session.
     static COMPOSITE_CACHE: std::cell::RefCell<
         rustc_hash::FxHashMap<(Tile, Vec<Tile>), CompositeGeometry>,
     > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
 }
 
-/// The composited slab for `tile` under `overlays` (in declared order,
-/// later on top): one extrusion over the COMPOSITE alpha, every face
-/// sampling the atlas rect of the texel's owning tile.
 fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry {
-    // The texel's owner: the topmost opaque overlay, else the opaque base,
-    // else nothing. Off-grid coordinates own nothing (wall probes).
     let owner = |tx: i32, ty: i32| -> Option<Tile> {
         if !(0..GRID as i32).contains(&tx) || !(0..GRID as i32).contains(&ty) {
             return None;
@@ -537,9 +438,6 @@ fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
 
-    // FRONT + BACK faces: per row, greedy runs of texels sharing one owner —
-    // each run is one quad over the owner's own atlas sub-rect, so the
-    // composite is sampled where its pixels actually live.
     for ty in 0..GRID as i32 {
         let mut tx = 0;
         while tx < GRID as i32 {
@@ -578,9 +476,6 @@ fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry
         }
     }
 
-    // SIDE WALLS: on the COMPOSITE's alpha boundary, each wall textured with
-    // the owning texel's own single-texel patch (its centre UV), exactly like
-    // the plain extrusion's rim.
     for ty in 0..GRID as i32 {
         for tx in 0..GRID as i32 {
             let Some(own) = owner(tx, ty) else {
@@ -640,15 +535,10 @@ fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry
     geom
 }
 
-/// [`build_extruded_item_lit`]'s geometry, untinted.
 fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
     let mut verts = Vec::new();
     let out = &mut verts;
 
-    // WHITE, deliberately: the foliage tint (grass-green for a fern, white for
-    // everything else) and the RGB light fold are both a per-vertex multiply,
-    // so the caller applies them to this cached geometry instead. `shade`,
-    // which is per-FACE, is baked in below.
     let tint = [1.0, 1.0, 1.0];
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
@@ -667,8 +557,6 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
         [u0 + du, v0 + dv, u1 - du, v1 - dv]
     };
 
-    // FRONT face (+Z), CCW seen from +Z. Corner order bl, br, tr, tl with UVs
-    // matching: bottom-left = (u0, v1) since atlas v increases downward.
     push_quad(
         out,
         [
@@ -681,7 +569,6 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
         SHADE_FRONT,
         tint,
     );
-    // BACK face (-Z), wound the other way so it faces -Z.
     push_quad(
         out,
         [
@@ -695,26 +582,18 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
         tint,
     );
 
-    // SIDE WALLS: for every opaque texel, emit a depth-spanning wall quad on each
-    // of its 4 edges where the neighbour is transparent / off-tile. Each wall is
-    // textured with the OWNING texel's sub-UV (a single texel patch) so the
-    // stepped rim shows the sprite's colour at that pixel.
     for ty in 0..GRID as i32 {
         for tx in 0..GRID as i32 {
             if !opaque(tile, tx, ty) {
                 continue;
             }
             let [tu0, tv0, tu1, tv1] = texel_uv_rect(tile, tx, ty);
-            // Texel quad bounds in model space (left/right X, top/bottom Y).
             let xl = px(tx);
             let xr = px(tx + 1);
-            let yt = py(ty); // top edge (larger Y)
-            let yb = py(ty + 1); // bottom edge (smaller Y)
-                                 // Single-texel UV; pick a representative corner UV (texel centre) per
-                                 // wall vertex so the rim samples this texel's colour.
+            let yt = py(ty);
+            let yb = py(ty + 1);
             let uc = [(tu0 + tu1) * 0.5, (tv0 + tv1) * 0.5];
 
-            // LEFT edge wall (neighbour tx-1 transparent): plane x = xl spanning z.
             if !opaque(tile, tx - 1, ty) {
                 push_quad(
                     out,
@@ -724,7 +603,6 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
                     tint,
                 );
             }
-            // RIGHT edge wall (neighbour tx+1 transparent): plane x = xr.
             if !opaque(tile, tx + 1, ty) {
                 push_quad(
                     out,
@@ -734,7 +612,6 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
                     tint,
                 );
             }
-            // TOP edge wall (neighbour ty-1 transparent): plane y = yt.
             if !opaque(tile, tx, ty - 1) {
                 push_quad(
                     out,
@@ -744,7 +621,6 @@ fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
                     tint,
                 );
             }
-            // BOTTOM edge wall (neighbour ty+1 transparent): plane y = yb.
             if !opaque(tile, tx, ty + 1) {
                 push_quad(
                     out,
@@ -769,19 +645,15 @@ mod tests {
         let mut out = Vec::new();
         let n = build_extruded_item(Tile::named("poppy"), &mut out);
         assert_eq!(n as usize, out.len());
-        // Front (6) + back (6) at minimum; a real flower sprite has a non-trivial
-        // silhouette so there must be many side-wall verts on top.
         assert!(
             out.len() > 12,
             "expected front+back+walls, got {}",
             out.len()
         );
-        // Every wall/face vertex stays within the unit, origin-centred box.
         for v in &out {
             assert!(v.pos[0] >= -0.5 - 1e-4 && v.pos[0] <= 0.5 + 1e-4);
             assert!(v.pos[1] >= -0.5 - 1e-4 && v.pos[1] <= 0.5 + 1e-4);
             assert!(v.pos[2].abs() <= DEPTH * 0.5 + 1e-4);
-            // Front/back/side shades only.
             assert!(
                 v.shade == SHADE_FRONT || v.shade == SHADE_BACK || v.shade == SHADE_SIDE,
                 "unexpected shade {}",
@@ -791,8 +663,7 @@ mod tests {
     }
 
     /// The composited slab is ONE extrusion on ONE pixel grid — the invariant
-    /// the floating-second-slab approach broke (misaligned overlay texels,
-    /// 2026-08-05). Every coordinate sits exactly on the 1/16 texel grid at
+    /// required for aligned overlay texels. Every coordinate sits exactly on the 1/16 texel grid at
     /// the plain slab's own depth, and both owners' geometry samples its OWN
     /// tile's atlas rect.
     #[test]
@@ -841,7 +712,6 @@ mod tests {
         build_extruded_item(Tile::named("poppy"), &mut out);
         let [u0, v0, u1, v1] = tile_uv(Tile::named("poppy"));
         let texel = (u1 - u0) / GRID as f32;
-        // First 12 verts = front + back faces.
         for v in &out[..12] {
             let [u, w] = v.uv;
             assert!(u > u0 && u < u1 && w > v0 && w < v1, "uv on the tile edge");
@@ -855,7 +725,6 @@ mod tests {
         let mut out = Vec::new();
         build_extruded_item(Tile::named("poppy"), &mut out);
         let cap = out.capacity();
-        // Same tile -> identical vert count -> capacity unchanged.
         build_extruded_item(Tile::named("poppy"), &mut out);
         assert_eq!(
             out.capacity(),
@@ -866,8 +735,6 @@ mod tests {
 
     #[test]
     fn lit_extruded_item_folds_light_into_the_tint() {
-        // The two-channel RGB light rides the vertex TINT (shade keeps only the
-        // directional term), so a dark sample dims the tint, not the shade.
         let mut out = Vec::new();
         build_extruded_item_lit(
             Tile::named("poppy"),
@@ -893,11 +760,8 @@ mod tests {
 
     #[test]
     fn solid_alpha_tile_has_only_border_walls() {
-        // A fully-opaque tile (Stone) extrudes to front + back + a wall on each of
-        // the 4 outer borders only (16 texels per border edge): no interior walls.
         let mut out = Vec::new();
         build_extruded_item(Tile::named("stone"), &mut out);
-        // 2 faces * 6 + 4 borders * 16 texels * 6 verts = 12 + 384 = 396.
         assert_eq!(out.len(), 12 + 4 * GRID * 6);
     }
 }

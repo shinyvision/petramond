@@ -1,7 +1,3 @@
-//! Host contract tests: failure-policy contracts (disable-on-trap,
-//! registration window) against hand-built hostile WAT guests, plus fixture
-//! helpers for real bundled mods.
-
 use mod_api::calls;
 use std::path::PathBuf;
 use std::process::Command;
@@ -21,8 +17,6 @@ mod abi;
 mod conditions;
 mod guest_features;
 
-/// A player-less simulation: the contract tests below exercise the host's
-/// failure policy, not any player's state.
 struct Sim {
     world: ServerWorld,
     feed: TickEvents,
@@ -54,7 +48,6 @@ impl Sim {
         self.run_slot_with(at, &mut RosterRefs::empty());
     }
 
-    /// [`run_slot`](Self::run_slot) with `players` connected.
     fn run_slot_with(&mut self, at: Attach, players: &mut RosterRefs<'_>) {
         self.systems.run(
             at,
@@ -66,11 +59,6 @@ impl Sim {
     }
 }
 
-/// Per-world mod enablement: a disabled pack contributes NO wasm instance to
-/// the session — and therefore no tick systems, event handlers, worldgen
-/// hooks, or GUI click ownership (all of those exist only through an
-/// instance's `mod_init` registrations). Content-only packs never had wasm to
-/// gate.
 #[test]
 fn disabled_packs_contribute_no_wasm_instance() {
     let pack = |name: &str, id: Option<&str>, wasm: Option<&str>| petramond_world::assets::Pack {
@@ -112,16 +100,11 @@ fn disabled_packs_contribute_no_wasm_instance() {
     assert_eq!(ids, ["alpha"], "the disabled pack's wasm is never selected");
 }
 
-/// Build a `mods-src/` crate for test with the `fasttest` profile and return
-/// the wasm path, or `None` (with a visible message) when the wasm target
-/// isn't installed so plain `cargo test` never hard-fails on machines without
-/// it. Shipped `make mods` builds remain release-profile work, never tests.
 pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
     let mods_src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("mods-src");
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(cargo)
         .current_dir(&mods_src)
-        // The engine's target dir must not capture the guest build.
         .env_remove("CARGO_TARGET_DIR")
         .args([
             "build",
@@ -146,8 +129,6 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
         }
         panic!("building the '{krate}' mod failed:\n{stderr}");
     }
-    // Cargo reports where the artifact landed: the target dir is config,
-    // never a path this helper may assume.
     let wasm_name = format!("{}.wasm", krate.replace('-', "_"));
     let wasm = String::from_utf8_lossy(&out.stdout)
         .lines()
@@ -166,11 +147,6 @@ pub fn built_mod_wasm(krate: &str) -> Option<PathBuf> {
     Some(wasm)
 }
 
-/// Stage a fixture `mods/` root holding the REAL packs of `ids` with freshly
-/// built wasm, for child-process tests that need pack content registry-visible
-/// (`PETRAMOND_MODS` + the 2a re-spawn pattern). Returns the fixture root,
-/// or `None` when the wasm32 target is missing (the test skips, like
-/// [`built_mod_wasm`]).
 pub fn stage_mods_fixture(
     tag: &str,
     ids: &[&str],
@@ -204,13 +180,6 @@ pub fn stage_mods_fixture(
     Some(root)
 }
 
-/// Run `body` in-process against a content registry built from the fixture
-/// packs under `root/mods`, pinned on this thread (and on every pool job it
-/// queues), then remove the fixture — panicking or not. The registry is the
-/// test's own: the process registry and every other test never see its rows.
-/// For content-only fixtures; one whose packs ship wasm still needs
-/// [`run_child_test`], because the mod host's engine and module cache are
-/// process-wide.
 pub fn with_fixture_content(root: &std::path::Path, body: impl FnOnce()) {
     struct Staged<'a>(&'a std::path::Path);
     impl Drop for Staged<'_> {
@@ -224,12 +193,6 @@ pub fn with_fixture_content(root: &std::path::Path, body: impl FnOnce()) {
     body();
 }
 
-/// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) with
-/// `PETRAMOND_MODS` pointing at `root/mods`.
-/// `PETRAMOND_DATA_DIR` is pinned to this process's shared test root (the one
-/// the app tests use): saves stay out of the developer's real data dir, and
-/// the disk module cache there lets every child after the first deserialize
-/// precompiled mod modules (~1 ms) instead of recompiling them (~1 s).
 pub fn run_child_test(root: &std::path::Path, test_path: &str) {
     let run = petramond_world::test_child::run_ignored(
         test_path,
@@ -244,29 +207,16 @@ pub fn run_child_test(root: &std::path::Path, test_path: &str) {
     run.assert_passed();
 }
 
-/// A guest module implementing the raw ABI by hand: `mod_init` issues one
-/// registration host-call (bytes baked into a data segment), and
-/// `mod_dispatch` runs `body`. The trivial allocator returns a fixed scratch
-/// address — each test drives at most one buffer at a time.
 fn hostile_guest(body: &str) -> ModInstance {
     hostile_guest_with_id("hostile", body)
 }
 
-/// [`hostile_guest`] under a caller-chosen mod id, so a test can target the
-/// id-keyed [`super::host::HOST_CALL_TEST_HOOK`] without touching other
-/// tests' guests.
 fn hostile_guest_with_id(id: &str, body: &str) -> ModInstance {
     guest_with_data(id, "", body)
 }
 
-/// Where [`calling_guest`] stages its call payloads: clear of the registration
-/// blob at 0 and of the fixed `mod_alloc` scratch at 4096 (host replies land
-/// there, and they must not overwrite a later call's bytes).
 const CALL_STAGE_ADDR: u32 = 1024;
 
-/// The shared guest template: `mod_init` issues one tick-system
-/// registration host-call, `mod_dispatch` runs `body`, and `extra_data` adds
-/// whatever data segments the body reads from.
 fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
     guest_registering(
         id,
@@ -281,7 +231,6 @@ fn guest_with_data(id: &str, extra_data: &str, body: &str) -> ModInstance {
     )
 }
 
-/// [`guest_with_data`] under a caller-chosen `mod_init` registration.
 fn guest_registering(
     id: &str,
     registration: &HostCall,
@@ -314,9 +263,6 @@ fn wat_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("\\{b:02x}")).collect()
 }
 
-/// A guest registering one event handler whose every dispatch answers the
-/// baked `reply` — the fixture for the ECHO half of the event ABI, where the
-/// engine reads a payload's mutable fields back out of the guest's answer.
 fn echoing_guest(id: &str, event: mod_api::EventKind, reply: &mod_api::GuestRet) -> ModInstance {
     let bytes = mod_api::encode(reply).expect("encode the baked reply");
     let data = format!(
@@ -337,12 +283,6 @@ fn echoing_guest(id: &str, event: mod_api::EventKind, reply: &mod_api::GuestRet)
     )
 }
 
-/// A guest whose every dispatch ISSUES `calls`, in order, and then answers
-/// `GuestRet::Unit`. The payloads are the real postcard encodings baked into
-/// data segments, so the engine decodes exactly what a compiled mod's SDK
-/// would have written and nothing in a test can route around the ABI — which
-/// is what makes this a composition fixture rather than a second call site for
-/// `handle_host_call`.
 fn calling_guest(id: &str, calls: &[HostCall]) -> ModInstance {
     let mut data = String::new();
     let mut body = String::new();
@@ -363,9 +303,6 @@ fn calling_guest(id: &str, calls: &[HostCall]) -> ModInstance {
     guest_with_data(id, &data, &format!("{body}(i64.const 2199023255553)"))
 }
 
-/// Contract: a trapping mod is disabled for the session with the tick
-/// continuing — later systems in the same slot still run, and the disabled
-/// mod receives no further dispatches.
 #[test]
 fn trapping_mod_is_disabled_and_the_tick_continues() {
     let mut sim = Sim::new();
@@ -374,8 +311,6 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
     let (disabled, dispatches_after_init, _) = host.probe(0);
     assert!(!disabled, "init succeeded; only dispatch traps");
 
-    // An engine system registered AFTER the mod in the same slot must still
-    // run when the mod traps ahead of it.
     let ran_after = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     {
         let ran_after = ran_after.clone();
@@ -397,14 +332,12 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
         "the tick continued past the trapping mod"
     );
 
-    // Still ticking, and the disabled mod is not dispatched again.
     ran_after.store(false, std::sync::atomic::Ordering::Relaxed);
     sim.run_slot(Attach::Before(Stage::Mining));
     let (_, dispatches_again, _) = host.probe(0);
     assert_eq!(dispatches_again, dispatches);
     assert!(ran_after.load(std::sync::atomic::Ordering::Relaxed));
 
-    // The bus keeps draining post events normally with a disabled mod around.
     sim.bus.emit(PostEvent::PlayerDied {
         player: crate::player::PlayerId(0),
     });
@@ -414,16 +347,9 @@ fn trapping_mod_is_disabled_and_the_tick_continues() {
     bus.drain_post(world, &mut RosterRefs::empty(), feed);
 }
 
-/// Contract: the registration window is `mod_init` only — a registration
-/// attempted during a tick dispatch is rejected (HostRet::Err), does not
-/// attach anything, and does NOT disable the mod by itself.
 #[test]
 fn registration_outside_init_is_rejected() {
-    // mod_dispatch re-issues the same registration call, ignores the reply,
-    // and answers GuestRet::Unit from the staged data segment.
     let body = "(drop (call $hd (i32.const 0) (i32.const 6)))\n    (i64.const 2199023255553)";
-    // Verify the literals the WAT hardcodes: the registration payload length
-    // and the packed (512, 1) reply address.
     assert_eq!(
         mod_api::encode(&HostCall::from(calls::RegisterTickSystem {
             stage: ApiStage::Mining,
@@ -449,17 +375,11 @@ fn registration_outside_init_is_rejected() {
     assert_eq!(stats.rejected_registrations, 1);
     assert_eq!(stats.registered, 1, "nothing new was accepted");
 
-    // Nothing got attached: the slot still holds exactly the one system from
-    // init — dispatching it again yields exactly one more rejection.
     sim.run_slot(Attach::Before(Stage::Mining));
     let (_, _, stats) = host.probe(0);
     assert_eq!(stats.rejected_registrations, 2);
 }
 
-/// Contract: a guest spinning on host calls forever is stopped by the
-/// per-dispatch host-call cap (host-call time is deliberately not charged
-/// against the epoch deadline, so the call count is what bounds this shape
-/// of runaway) and disabled for the session.
 #[test]
 fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     let mut instance = hostile_guest_with_id(
@@ -472,15 +392,12 @@ fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     let ret = instance.call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 });
     assert!(ret.is_none());
     assert!(instance.disabled(), "the call cap disabled the mod");
-    // The cap (not the epoch deadline) is what fired: exactly MAX calls were
-    // handled during the dispatch, plus init's one registration.
     assert_eq!(
         instance.stats().host_calls,
         1 + super::host::DISPATCH_HOST_CALL_MAX as u64
     );
 }
 
-/// A costly but finite dispatch continues past the fuel warning threshold.
 #[test]
 fn dispatch_continues_past_its_fuel_warning_threshold() {
     let mut instance = hostile_guest_with_id(
@@ -501,10 +418,8 @@ fn dispatch_continues_past_its_fuel_warning_threshold() {
     assert!(!instance.disabled());
 }
 
-/// Tick fuel remains measurable after a warning and never rejects a dispatch.
 #[test]
 fn many_cheap_dispatches_in_one_tick_continue_past_the_threshold() {
-    // A bounded loop: every dispatch burns the same (deterministic) fuel.
     let body = "(local $i i32)\n    \
                 (loop $l (local.set $i (i32.add (local.get $i) (i32.const 1)))\n    \
                 (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))\n    \
@@ -559,9 +474,8 @@ fn watchdog_charges_guest_compute_only() {
 }
 
 #[test]
-#[ignore] // run by watchdog_charges_guest_compute_only in a child process
+#[ignore]
 fn watchdog_charges_guest_compute_only_inner() {
-    // Every host call from "stally" stalls for triple the whole deadline.
     fn stall() {
         super::host::test_advance_epochs(super::host::DISPATCH_DEADLINE_EPOCHS * 3);
     }
@@ -581,8 +495,6 @@ fn watchdog_charges_guest_compute_only_inner() {
         "three multi-deadline host-call stalls did not disable the mod"
     );
 
-    // A guest that never yields still traps: advance the epoch from a helper
-    // thread (standing in for the real-time ticker) while it spins.
     std::thread::spawn(|| {
         for _ in 0..1000 {
             std::thread::sleep(std::time::Duration::from_millis(2));
@@ -599,8 +511,6 @@ fn watchdog_charges_guest_compute_only_inner() {
     );
 }
 
-/// A [`Sim`] holding one placed multi-cell model block, with its group anchor
-/// and a NON-anchor footprint cell — the cell a mod would address it by.
 fn sim_with_a_placed_machine() -> (
     Sim,
     petramond_math::math::IVec3,
@@ -627,7 +537,6 @@ fn sim_with_a_placed_machine() -> (
     (sim, anchor, addressed)
 }
 
-/// The parts mask stored at `c`.
 fn parts_mask_at<S: crate::world::WorldSide>(
     world: &crate::world::World<S>,
     c: petramond_math::math::IVec3,
@@ -640,7 +549,6 @@ fn parts_mask_at<S: crate::world::WorldSide>(
         .map(u32::from_le_bytes)
 }
 
-/// The two presentation calls a machine makes every tick, addressed at `pos`.
 fn dressing_calls(pos: petramond_math::math::IVec3, parts: u32, tint: [u8; 3]) -> Vec<HostCall> {
     let item = petramond_world::registry::names()
         .items
@@ -677,26 +585,20 @@ fn dressing_calls(pos: petramond_math::math::IVec3, parts: u32, tint: [u8; 3]) -
     ]
 }
 
-/// The presentation seams IN COMPOSITION, driven by a real guest across the
-/// real ABI: a mod dresses a placed multi-cell machine from inside a tick
-/// dispatch, and a client joining afterwards ends up holding the same picture.
+/// A real guest mod dresses a placed multi-cell machine during a tick, and a client that joins
+/// later has to see the same thing. Each seam already has a unit test; this one checks them
+/// together, since that's where they've disagreed.
 ///
-/// Every seam here has a unit test of its own; composition is where they
-/// disagree. The parts mask lands on EVERY FOOTPRINT CELL and the draw set at
-/// the group ANCHOR alone, both are addressed by whichever cell the mod
-/// happens to have, and the two reach a joiner by different routes — cell KV
-/// rides the section's own states, while a draw set is a world-level record
-/// the section payload has to go and fetch. A test per seam proves each rule;
-/// only running them together proves they are the same rule.
+/// The parts mask goes on every footprint cell, the draw set only on the group anchor, and the mod
+/// can address either through any cell it has. A joiner gets them by different routes too: cell KV
+/// comes with the section's states, but the draw set is a world-level record the section payload
+/// has to fetch.
 #[test]
 fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
     const PARTS: u32 = 0b101;
     const TINT: [u8; 3] = [12, 200, 34];
 
     let (mut sim, anchor, addressed) = sim_with_a_placed_machine();
-    // The engine's own namespace: these calls dress the CALLER'S OWN block, and
-    // the only multi-cell model row a bare test registry has is an engine one —
-    // so the guest stands in for the pack that would ship the machine.
     let mut host = ModHost::from_instances(vec![calling_guest(
         petramond_world::registry::ENGINE_NAMESPACE,
         &dressing_calls(addressed, PARTS, TINT),
@@ -728,8 +630,6 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
         "a set under a non-anchor cell would never be hit-tested nor forgotten on break"
     );
 
-    // A client joining now streams the section, which is the ONLY way a
-    // machine that last redrew itself before the join can reach it.
     let mut replica = ReplicaWorld::new(0, 1);
     let cp = petramond_world::chunk::ChunkPos::new(0, 0);
     replica.install_remote_column(sim.world.column_payload(cp).expect("a column payload"));
@@ -752,11 +652,6 @@ fn a_guest_dresses_a_placed_machine_and_a_joiner_sees_it() {
     );
 }
 
-/// The ownership gate holds through the whole dispatch, not just at the
-/// handler: a pack dresses ITS OWN machine and nothing else. Same guest, same
-/// calls, a foreign namespace — and the machine stays undressed rather than
-/// half dressed (the two calls are separate host calls, so a gate applied to
-/// one of them only is a machine wearing another pack's parts).
 #[test]
 fn a_foreign_mod_cannot_dress_someone_elses_machine() {
     let (mut sim, anchor, addressed) = sim_with_a_placed_machine();
@@ -775,8 +670,6 @@ fn a_foreign_mod_cannot_dress_someone_elses_machine() {
     assert!(sim.world.block_draw_at(anchor).is_none());
 }
 
-/// Contract: the disable-message diagnostics stay bounded — a call carrying a
-/// multi-hundred-KiB payload must not render byte-by-byte into the log line.
 #[test]
 fn short_debug_bounds_large_payloads() {
     let call = HostCall::from(calls::ClientImageSet {
@@ -790,16 +683,11 @@ fn short_debug_bounds_large_payloads() {
     assert!(rendered.ends_with('…') && rendered.len() <= 164);
 }
 
-/// Re-spawn the test binary on `test_path` (an `#[ignore]`d inner test) so it
-/// runs alone in a fresh process.
 fn run_isolated(test_path: &str) {
     petramond_world::test_child::run_ignored(test_path, std::iter::empty::<(&str, &str)>())
         .assert_passed();
 }
 
-/// The one MUTABLE field of `projectile_hit` crosses the ABI and comes back:
-/// a handler's echoed `fate` replaces the engine's default on the engine
-/// event, whichever verdict rides with it.
 #[test]
 fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
     use crate::entity::Fate;

@@ -1,58 +1,15 @@
-//! Runtime name↔id registries for pack-extensible content.
-//!
-//! Blocks and items are opaque `u16` ids behind newtypes (`Block(u16)`,
-//! `ItemType(u16)`); the smaller catalogs (mobs, sounds, effects, emitters,
-//! models, features, biomes) stay one byte. Engine content owns the low ids in
-//! a compiled, frozen
-//! order (worldgen parity and existing saves depend on those ids never
-//! moving); engine content is named under the reserved `petramond:*` namespace.
-//! Mod packs ADD content by introducing rows with their own NAMESPACED keys
-//! (`mod_id:name`) in the existing layered catalogs (`blocks.json`,
-//! `items.json`), which register fresh ids after the engine range in pack
-//! load order. Bare names are not registry keys.
-//!
-//! This module owns the NAME side of that contract: the id-ordered name
-//! tables both serde (`Block`/`ItemType` (de)serialize as their name string)
-//! and the save palette identify content by. The full definition tables are
-//! still owned by their loaders (`block::load`, `item::load`); they resolve
-//! rows against these same tables so ids can never disagree.
-//!
-//! Blocks and items get one SHARED name stage ([`load_names`], read back
-//! through [`names`]) because their catalogs cross-reference (block drops name
-//! items; a dynamic item's `block` field names a block) — the content loader
-//! builds it before either definition table, so both resolve through one
-//! table pair.
-
 use std::collections::HashMap;
 
 use serde::Deserialize;
 
-/// Reserved namespace for engine-owned public keys.
 pub const ENGINE_NAMESPACE: &str = "petramond";
 
-/// Id ceiling for the catalogs whose ids ride the save record and the wire as
-/// TWO bytes — blocks and items. Sixteen times the old one-byte ceiling, which
-/// is the whole point: the enabled pack set no longer shares 256 names per
-/// catalog. Dense per-id tables are sized to the registry's actual length, not
-/// to this number, so raising it costs nothing until the ids are used.
 pub const WIDE_ID_CAP: usize = 4096;
 
-/// Free ids below which [`names`] warns at boot: an ordinary content pack
-/// registers a few dozen rows, so this is "one more pack might not fit".
 pub const ID_HEADROOM_WARN: usize = 128;
 
-/// Id ceiling for the catalogs whose ids are still ONE byte (mobs, sounds,
-/// effects, emitters, models, features, biomes). None of them is near it — the
-/// shipped set uses at most 50 of 256 — and each has a `u8` wire field or
-/// dense table behind it, so this is the honest cap for them.
 pub const BYTE_ID_CAP: usize = 256;
 
-/// An id-ordered list of registered names: the compiled engine names first
-/// (index == frozen engine id), then pack-registered namespaced names in load
-/// order. Ids are `u16`; each catalog declares its own ceiling
-/// ([`WIDE_ID_CAP`] / [`BYTE_ID_CAP`]) when it builds the table. Carries a
-/// name→id hash index built once here, so every name lookup (serde, palette,
-/// net remap, host calls) is O(1).
 #[derive(Debug)]
 pub struct NameTable {
     names: Vec<&'static str>,
@@ -60,12 +17,10 @@ pub struct NameTable {
 }
 
 impl NameTable {
-    /// The runtime id of `name`, or `None` if it is not registered.
     pub fn id(&self, name: &str) -> Option<u16> {
         self.ids.get(name).copied()
     }
 
-    /// The registered name for `id`, or `None` if out of range.
     pub fn name(&self, id: u16) -> Option<&'static str> {
         self.names.get(id as usize).copied()
     }
@@ -83,12 +38,10 @@ impl NameTable {
         self.names.push(name);
     }
 
-    /// Build a table from the compiled engine names plus every layer's row
-    /// keys in order. A key that is an engine name (or an already-registered
-    /// dynamic name) is an override — no new id. A non-`petramond` NAMESPACED key
-    /// (`mod_id:name`) registers the next id. Bare keys and unknown `petramond:*`
-    /// keys are errors. `cap` is the catalog's id ceiling — the same number
-    /// `modding::manifest` costs packs against at admission.
+    /// Builds the table from the engine names, then each layer's keys in order. An engine name
+    /// or an already-registered name is an override and gets no new id. A namespaced key
+    /// outside `petramond` (`mod_id:name`) gets the next id. Bare keys and unknown
+    /// `petramond:*` keys are errors. `cap` is the same id ceiling `modding::manifest` uses.
     pub fn build(
         engine: &[&'static str],
         layer_keys: &[Vec<String>],
@@ -105,7 +58,7 @@ impl NameTable {
         for keys in layer_keys {
             for key in keys {
                 if table.ids.contains_key(key.as_str()) {
-                    continue; // engine override or dynamic re-statement
+                    continue;
                 }
                 if !is_namespaced(key) {
                     return Err(format!(
@@ -134,42 +87,26 @@ impl NameTable {
     }
 }
 
-/// A loaded content registry: the id-ordered definition rows plus the
-/// [`NameTable`] that assigned their ids. The table is DENSE (every registered
-/// name covered exactly once), so `id(name)` always indexes a valid row — the
-/// one uniform name→id lookup for every catalog consumer; an unknown name is
-/// `None`, and what that degrades to (air, MISSING, skip) stays the caller's
-/// policy.
 pub struct Catalog<D: 'static> {
     rows: &'static [D],
     names: NameTable,
 }
 
 impl<D> Catalog<D> {
-    /// The id-ordered definition rows (`rows()[id]` is `id`'s row).
     pub fn rows(&self) -> &'static [D] {
         self.rows
     }
 
-    /// The runtime id registered under `name` (engine `petramond:*` and pack
-    /// `mod_id:name` keys alike), or `None` when no such row is loaded.
     pub fn id(&self, name: &str) -> Option<u16> {
         self.names.id(name)
     }
 }
 
-/// The shared layered-catalog load frame the content registries
-/// (`effects.json`, `sounds.json`, `models.json`, `blocks.json`, ...) speak:
-/// parse each layer's row list, merge rows by registry key (a later layer's
-/// row REPLACES the earlier one, so a pack states only the rows it changes or
-/// adds), build the name table from the compiled engine names plus the
-/// layers' own keys (engine names hold their frozen ids, namespaced keys
-/// register after them in load order — see [`NameTable::build`]), then
-/// `convert` every merged row and demand a dense table: every registered
-/// name covered exactly once, ids contiguous with no holes.
-///
-/// `convert` gets the row, its resolved id, and the name table (for the
-/// interned `&'static` name and cross-row references).
+/// Shared load path behind `effects.json`, `sounds.json`, `models.json`, `blocks.json` and so on.
+/// Rows merge by key and a later layer's row replaces the earlier one, so a pack only writes the
+/// rows it changes or adds. Engine names keep their frozen ids and namespaced keys follow in load
+/// order (see [`NameTable::build`]). Every merged row goes through `convert`, and the result must
+/// be dense: each name exactly once, no id gaps.
 pub fn load_catalog<R, D>(
     texts: &[&str],
     parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
@@ -189,7 +126,6 @@ pub fn load_catalog<R, D>(
     )
 }
 
-/// The catalog frame with an explicit identity capacity for wider registries.
 pub fn load_catalog_with_capacity<R, D>(
     texts: &[&str],
     parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
@@ -208,9 +144,6 @@ pub fn load_catalog_with_capacity<R, D>(
     })
 }
 
-/// [`load_catalog`] against a PREBUILT name table — for the catalogs whose
-/// names bootstrap elsewhere (blocks and items share [`names`], so their id
-/// assignment already happened there).
 pub fn resolve_catalog<R, D>(
     texts: &[&str],
     parse_layer: impl FnMut(&str) -> Result<Vec<R>, serde_json::Error>,
@@ -223,30 +156,18 @@ pub fn resolve_catalog<R, D>(
     resolve_merged(merged, row_key, names, what, convert)
 }
 
-/// One `{"patch": "<row>", "data": {...}}` row from a catalog layer: attaches
-/// namespaced DATA entries to an EXISTING row — engine rows included, and
-/// deliberately across namespaces (a pack describing its target in a
-/// CONSUMER mod's vocabulary is the whole point; see [`compile_data_map`]).
-/// A patch can, by construction, touch ONLY the row's `data` map — never
-/// behavior, shape, or any other field.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawDataPatch {
-    /// Registry name of the row being patched (must exist after all layers).
     pub patch: String,
     pub data: serde_json::Map<String, serde_json::Value>,
 }
 
-/// Expand the `"extends"` rows of one layer's row array in place. A row
-/// naming an EARLIER row of the same layer (by `key_field`) starts as a copy
-/// of that row, and every field it states replaces the base's whole field —
-/// no deep merge, so a list or map the extending row writes is exactly what
-/// it gets. The row keeps its own key; `extends` itself is dropped before
-/// serde sees the row. Chains resolve in order (a base may itself have
-/// extended another). A base that is not an earlier row of the layer is an
-/// error: a template is a within-layer authoring convenience (sixteen rail
-/// forms as one full row and fifteen deltas), never a dependency on another
-/// layer's rows.
+/// Expands one layer's `"extends"` rows in place. A row that extends an earlier row (matched by
+/// `key_field`) starts as a copy of it, and any field it writes replaces the base's whole field.
+/// Lists and maps don't deep merge. It keeps its own key and `extends` is stripped before serde.
+/// Chains are fine. Only earlier rows in the same layer can be a base, so sixteen rail forms can
+/// be one full row plus fifteen deltas without depending on another layer.
 fn expand_extends(
     rows: &mut [serde_json::Value],
     key_field: &str,
@@ -284,7 +205,6 @@ fn expand_extends(
     Ok(())
 }
 
-/// One layer's `array_key` rows as raw values, templates expanded.
 fn layer_rows(
     file: &serde_json::Value,
     array_key: &str,
@@ -300,10 +220,6 @@ fn layer_rows(
     Ok(rows)
 }
 
-/// The typed rows of one catalog layer's `array_key` array, keyed by
-/// `key_field`, with row templates expanded (see `expand_extends`) — the
-/// parse every content catalog's layer goes through, so `extends` means the
-/// same thing in each.
 pub fn parse_rows<R: serde::de::DeserializeOwned>(
     text: &str,
     array_key: &str,
@@ -312,8 +228,6 @@ pub fn parse_rows<R: serde::de::DeserializeOwned>(
     parse_rows_of(&serde_json::from_str(text)?, array_key, key_field)
 }
 
-/// [`parse_rows`] over an already-parsed layer, for a catalog that reads a
-/// side channel out of the same file (mobs.json `brain_extensions`).
 pub fn parse_rows_of<R: serde::de::DeserializeOwned>(
     file: &serde_json::Value,
     array_key: &str,
@@ -325,13 +239,6 @@ pub fn parse_rows_of<R: serde::de::DeserializeOwned>(
         .collect()
 }
 
-/// Split one catalog layer's row array (`{"<array_key>": [...]}`) into full
-/// rows and data patches (templates expanded first, see [`parse_rows`]): an
-/// element carrying a `"patch"` field parses as
-/// [`RawDataPatch`] (pushed onto `patches`, layer order preserved), anything
-/// else as a full `R` row. Branching on the field FIRST keeps error messages
-/// precise (an untagged enum would collapse both failure modes into "no
-/// variant matched").
 pub fn parse_rows_with_patches<R: serde::de::DeserializeOwned>(
     text: &str,
     array_key: &str,
@@ -359,18 +266,9 @@ pub fn parse_rows_with_patches_of<R: serde::de::DeserializeOwned>(
     Ok(out)
 }
 
-/// Bounds on a row's `data` map — interop metadata, not bulk storage.
 const DATA_KEYS_MAX: usize = 32;
 const DATA_VALUE_MAX: usize = 4096;
 
-/// Compile a row's `data` map — its own entries plus every [`RawDataPatch`]
-/// targeting it, applied in layer order with later keys winning — into the
-/// leaked sorted `(key, canonical JSON text)` slice the definition tables
-/// hold. Keys must be namespaced (`ns:name`); values are OPAQUE raw JSON the
-/// declaring pack writes in the CONSUMING mod's vocabulary (the item/block
-/// interop surface — e.g. `"furniture:pigment"` on a berries item). The
-/// engine validates only shape and bounds; a consumer parses what it
-/// understands and ignores the rest.
 pub fn compile_data_map(
     row_name: &str,
     base: &serde_json::Map<String, serde_json::Value>,
@@ -452,8 +350,6 @@ fn resolve_merged<R, D>(
     what: &str,
     mut convert: impl FnMut(R, u16, &NameTable) -> Result<D, String>,
 ) -> Result<Vec<D>, String> {
-    // Every bad row is reported, one per line — a pack author fixes a whole
-    // catalog from one load report instead of one row per restart.
     let mut rows: Vec<Option<D>> = (0..names.len()).map(|_| None).collect();
     let mut errors: Vec<String> = Vec::new();
     for r in merged {
@@ -482,12 +378,6 @@ fn resolve_merged<R, D>(
         .collect()
 }
 
-/// Parse an ENGINE consumer's entry out of a row's compiled data slice —
-/// `petramond:fuel` / `petramond:tool` / `petramond:carry` are ordinary
-/// data-surface consumers whose consuming system happens to be the engine
-/// (the dogfooding rule). Absent = `None`; present-but-malformed = a load
-/// error (the engine parses its own vocabulary strictly, unlike a mod key it
-/// would ignore).
 pub fn engine_data<T: serde::de::DeserializeOwned>(
     data: &'static [(&'static str, &'static str)],
     key: &str,
@@ -500,16 +390,8 @@ pub fn engine_data<T: serde::de::DeserializeOwned>(
         .map_err(|e| format!("malformed '{key}' data: {e}"))
 }
 
-/// The data key a pack attaches to RETIRE a row it does not own:
-/// `{"patch": "<row>", "data": {"petramond:enabled": false}}`. Only catalogs
-/// with no id space (recipes, texture transitions) honour it — nothing
-/// addresses their rows by index and nothing persists one, so dropping a row
-/// is safe in a way dropping a block or item row could never be.
 pub const ENABLED_KEY: &str = "petramond:enabled";
 
-/// Read the `petramond:enabled` vocabulary off a row's compiled data: absent
-/// means enabled, `false` retires the row, anything non-boolean fails the row
-/// (the engine parses its own vocabulary strictly).
 pub fn row_enabled<K: AsRef<str>, V: AsRef<str>>(data: &[(K, V)]) -> Result<bool, String> {
     match data.iter().find(|(k, _)| k.as_ref() == ENABLED_KEY) {
         None => Ok(true),
@@ -518,10 +400,6 @@ pub fn row_enabled<K: AsRef<str>, V: AsRef<str>>(data: &[(K, V)]) -> Result<bool
     }
 }
 
-/// Validate an engine vocabulary entry that lists KV/instance-data keys
-/// (`petramond:carry`, `petramond:inherit`): every listed key must be
-/// namespaced. The one place the "no bare keys" rule for key-list entries
-/// lives.
 pub fn validate_namespaced_keys(what: &str, keys: &[String]) -> Result<(), String> {
     for k in keys {
         if namespace(k).is_none() {
@@ -531,11 +409,6 @@ pub fn validate_namespaced_keys(what: &str, keys: &[String]) -> Result<(), Strin
     Ok(())
 }
 
-/// The catalog FILE frame around [`load_catalog`]/[`resolve_catalog`]: read
-/// every layer of `file` from `packs` (base assets + the enabled packs), then
-/// run `parse` over the layer texts. These tables are load-bearing, so a
-/// missing file is an error like any parse error; the content loader
-/// attributes both to the stage (the file) that returned them.
 pub fn read_catalog<T>(
     packs: &crate::assets::PackSet,
     file: &str,
@@ -548,9 +421,6 @@ pub fn read_catalog<T>(
     })
 }
 
-/// [`read_catalog`] over EVERY installed pack's copy — for the presentation
-/// catalogs the client bakes once (see
-/// [`PackSet::read_asset_layers`](crate::assets::PackSet::read_asset_layers)).
 pub fn read_asset_catalog<T>(
     packs: &crate::assets::PackSet,
     file: &str,
@@ -563,8 +433,6 @@ pub fn read_asset_catalog<T>(
     })
 }
 
-/// [`read_catalog`] with each layer's source path alongside its text, for the
-/// catalogs whose diagnostics should name the pack a layer came from.
 pub fn read_catalog_labeled<T>(
     packs: &crate::assets::PackSet,
     file: &str,
@@ -597,15 +465,10 @@ fn parse_catalog_layers<T>(
     parse(&layers)
 }
 
-/// Whether `key` carries a `namespace:` prefix.
 pub fn is_namespaced(key: &str) -> bool {
     namespace(key).is_some()
 }
 
-/// The namespace of `key` (`"wheel:wheel" → Some("wheel")`,
-/// `"petramond:stone" → Some("petramond")`), or `None` for bare and degenerate forms.
-/// The per-world mod enablement gates (palette / recipes / natural spawner)
-/// key off this.
 pub fn namespace(key: &str) -> Option<&str> {
     match key.split_once(':') {
         Some((ns, name)) if !ns.is_empty() && !name.is_empty() => Some(ns),
@@ -613,13 +476,6 @@ pub fn namespace(key: &str) -> Option<&str> {
     }
 }
 
-/// Extensible tag vocabulary: compiled engine tags own the low ids (bare
-/// snake_case names, also reachable as `petramond:<name>`); packs add NAMESPACED
-/// tags (`mod_id:name`), interned on first sight during load — a tag is
-/// *defined by being listed* (on a data row or in a recipe), it has no
-/// standalone declaration. Ids are process-local and never persisted, so
-/// intern order only needs to be self-consistent within a run; runtime tag
-/// checks compare ids, no lock taken.
 pub struct TagTable {
     engine: &'static [&'static str],
     dynamic: std::sync::RwLock<Vec<&'static str>>,
@@ -633,19 +489,11 @@ impl TagTable {
         }
     }
 
-    /// Resolve a tag name from data: a bare name must be an engine tag (typo
-    /// guard — a misspelled engine tag must not silently become a new tag);
-    /// `petramond:<engine>` resolves to the same id; a namespaced `mod_id:name`
-    /// interns on first sight.
     pub fn resolve(&self, name: &str) -> Result<u8, String> {
         let bare = name.strip_prefix("petramond:").unwrap_or(name);
         if let Some(i) = self.engine.iter().position(|n| *n == bare) {
             return Ok(i as u8);
         }
-        // The engine namespace is RESERVED, exactly as it is for content names
-        // (see `NameTable::build`): without this, `petramond:leeves` interns a
-        // brand-new tag nothing carries, so a typo in a row — or a pack
-        // squatting an engine term — fails silently instead of loudly.
         if name.starts_with("petramond:") {
             return Err(format!(
                 "unknown tag '{name}' — the 'petramond:' namespace is reserved for engine tags \
@@ -671,11 +519,6 @@ impl TagTable {
         Ok(id as u8)
     }
 
-    /// Look up an already-registered tag WITHOUT interning: engine names
-    /// (bare or `petramond:`-prefixed) and previously-listed pack tags
-    /// resolve; anything else is `None`. Queries must use this, never
-    /// [`Self::resolve`] — a query for an arbitrary name must not be able to
-    /// fill the 256-entry table.
     pub fn lookup(&self, name: &str) -> Option<u8> {
         let bare = name.strip_prefix("petramond:").unwrap_or(name);
         if let Some(i) = self.engine.iter().position(|n| *n == bare) {
@@ -689,7 +532,6 @@ impl TagTable {
             .map(|i| (self.engine.len() + i) as u8)
     }
 
-    /// The registered name for `id` (diagnostics only).
     #[allow(dead_code)]
     pub fn name(&self, id: u8) -> &'static str {
         let id = id as usize;
@@ -705,19 +547,12 @@ impl TagTable {
     }
 }
 
-/// The block + item name tables (see module docs).
 pub struct ContentNames {
     pub blocks: NameTable,
     pub items: NameTable,
 }
 
-/// Build both tables from raw catalog layer texts — the pure core `names()`
-/// wraps, split out so loader tests can drive it with synthetic layers. Only
-/// the row KEYS are read here; full row validation stays with the loaders.
 pub fn build_names(block_texts: &[&str], item_texts: &[&str]) -> Result<ContentNames, String> {
-    // Key pre-parse only: rows with a `"patch"` field register nothing (they
-    // attach data to an EXISTING row — see [`RawDataPatch`]), so they carry
-    // no key here.
     fn layer_keys(
         texts: &[&str],
         file: &str,
@@ -767,27 +602,18 @@ pub fn build_names(block_texts: &[&str], item_texts: &[&str]) -> Result<ContentN
     if items.len() + creative_items.len() > WIDE_ID_CAP {
         return Err("Item registry is full, including creative block items".into());
     }
-    // Derived engine items follow pack ids. Pack input still passes the
-    // reserved-namespace check above; only this owner synthesizes these keys.
     for name in creative_items {
         items.push(String::leak(name));
     }
     Ok(ContentNames { blocks, items })
 }
 
-/// Build the shared name tables from `packs`' `blocks.json` / `items.json`
-/// layers — the content loader's names stage. A bad pack key fails here,
-/// before any definition table builds on top of it.
 pub fn load_names(packs: &crate::assets::PackSet) -> Result<ContentNames, String> {
     let blocks = packs.read_layers("blocks.json");
     let items = packs.read_layers("items.json");
     let block_texts: Vec<&str> = blocks.iter().map(|(s, _)| s.as_str()).collect();
     let item_texts: Vec<&str> = items.iter().map(|(s, _)| s.as_str()).collect();
     let names = build_names(&block_texts, &item_texts)?;
-    // The ceiling is invisible until it is hit, and by then the only signal
-    // is a refused pack. Say where the registry is against it at every build,
-    // and say it LOUDLY once the remaining headroom is smaller than an
-    // ordinary pack.
     for (what, used) in [("block", names.blocks.len()), ("item", names.items.len())] {
         let left = WIDE_ID_CAP - used;
         if left < ID_HEADROOM_WARN {
@@ -801,7 +627,6 @@ pub fn load_names(packs: &crate::assets::PackSet) -> Result<ContentNames, String
     Ok(names)
 }
 
-/// The current content registry's name tables (see `crate::content`).
 #[inline]
 pub fn names() -> &'static ContentNames {
     crate::content::current().names()

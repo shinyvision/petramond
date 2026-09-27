@@ -1,6 +1,3 @@
-//! At a chest: lifting the lid, taking what the work wants and putting back
-//! what it does not.
-
 use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
@@ -14,7 +11,6 @@ use crate::worker::tuning::hands::{LID_UP, LINGER};
 use crate::worker::Job;
 use crate::worker::{scaffold, Body, Ctx, Step, Then};
 
-/// At the chests: take what the work ahead needs from every container in reach.
 pub fn fetch(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -74,8 +70,6 @@ pub fn fetch(
             moved_any = true;
         }
     }
-    // A wanted tool in a chest out of reach from here is worth the few steps
-    // over, whatever this chest gave.
     let tool_elsewhere = stock
         .containers
         .iter()
@@ -133,10 +127,6 @@ pub fn fetch(
         if body.slots.iter().all(Option::is_some) {
             projects.update(job.id, |p| p.hold_for(Hold::Storage, Note::HandsFull));
         } else {
-            // A trip that took nothing holds the job only when the hands
-            // hold nothing to build with either: with two kinds of block
-            // short and twenty-two stacks of the rest in hand, the golem
-            // stopped a house at half its blocks.
             let can_build = body.slots.iter().flatten().any(|stack| {
                 tool_kind(ctx, &stack.item).is_none()
                     && !scaffold::keeps(ctx, job, &body.slots, stack)
@@ -148,7 +138,6 @@ pub fn fetch(
     Step::Plan
 }
 
-/// Open the chest the golem walked to, and stay at it.
 pub fn open(ctx: &Ctx, job: &mut Job, body: &Body, container: [i32; 3], deposit: bool) -> Step {
     job.crew.presence.set_hold(body.id, true);
     job.crew.presence.face(body.id, Some((body.pos, container)));
@@ -161,8 +150,6 @@ pub fn open(ctx: &Ctx, job: &mut Job, body: &Body, container: [i32; 3], deposit:
     }
 }
 
-/// Working at a chest the way a player does: open it, move items once the lid
-/// is up, close it. A trip on elsewhere (another chest) goes once it closes.
 #[allow(clippy::too_many_arguments)]
 pub fn rummage(
     ctx: &mut Ctx,
@@ -178,8 +165,6 @@ pub fn rummage(
         let next = if deposit {
             self::deposit(ctx, projects, job, body)
         } else {
-            // What nothing ahead needs goes back on the same trip, and the
-            // batch fills the room it leaves.
             self::deposit(ctx, projects, job, body);
             let emptied = Body {
                 slots: container_get(ContainerAddress::Mob(body.id)).unwrap_or_default(),
@@ -212,8 +197,6 @@ pub fn rummage(
     }
 }
 
-/// At the chests: put back everything carried (returning) or everything the
-/// work ahead does not need.
 pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body) -> Step {
     let Some(project) = projects.get(job.id).cloned() else {
         return Step::Plan;
@@ -225,9 +208,6 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
         .into_iter()
         .filter(|c| at_container(body, *c))
         .collect();
-    // Back go everything on the way home, otherwise what nothing ahead needs
-    // and, while that leaves no room for what digging collects, the blocks
-    // the work needs last.
     let mut back = Vec::new();
     let mut kept = Vec::new();
     for (slot, stack) in body.slots.iter().enumerate() {
@@ -269,11 +249,8 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
                 left -= moved.count;
             }
         }
-        // Room kept for digging is a nicety: no space for it is no hold.
         stuck |= left > 0 && n < junk;
     }
-    // On the way home there is nothing to wait for: what the chests have no
-    // room for goes home in its hands (and is set down there).
     if stuck && project.phase() == Phase::Returning {
         job.crew.cargo.chests_full = true;
         projects.update(job.id, |p| {

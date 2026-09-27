@@ -5,9 +5,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use crate::world::store::LoadTarget;
 
 impl ServerWorld {
-    /// [`unload_far`] keeping the UNION of the anchors' keep shapes: a column
-    /// (or kept column's section) survives if any anchor still wants it, with
-    /// the same hysteresis slack as the single-anchor path.
     pub(super) fn unload_far_multi(&mut self, targets: &[LoadTarget]) {
         let drop_columns: Vec<ChunkPos> = self
             .data
@@ -45,9 +42,6 @@ impl ServerWorld {
         self.evict_columns_and_sections(drop_columns, drop_sections);
     }
 
-    /// Evict everything no longer wanted: columns that left the horizontal radius (whole
-    /// column), and sections of kept columns that left the vertical window. Modified /
-    /// entity-bearing sections are harvested + persisted first (same gate as autosave).
     pub(super) fn unload_far(&mut self, target: LoadTarget, vertical_moved: bool) {
         let vwindow = Self::vertical_window(target.center_cy, 2);
 
@@ -59,8 +53,6 @@ impl ServerWorld {
             .copied()
             .collect();
         let drop_sections: Vec<SectionPos> = if vertical_moved {
-            // Walk loaded stacks of kept columns only — sections in columns
-            // already selected for full drop are removed with the column.
             let mut out = Vec::new();
             for (&cp, &bits) in &self.data.section_column_cys {
                 if !Self::column_kept(target, cp) {
@@ -89,19 +81,12 @@ impl ServerWorld {
         self.evict_columns_and_sections(drop_columns, drop_sections);
     }
 
-    /// The persist-then-drop tail of unloading: harvest entities + persist
-    /// modified sections (same gate as autosave), then evict. Shared by the
-    /// single- and multi-anchor unload selections.
     fn evict_columns_and_sections(
         &mut self,
         drop_columns: Vec<ChunkPos>,
         drop_sections: Vec<SectionPos>,
     ) {
-        // Queued incremental relights land while their whole region is still
-        // loaded: the harvest persists clean cubes as final, and after the
-        // eviction the region could only fall back to full rebakes.
         self.apply_light_edits();
-        // Persist (harvesting entities into the record) before anything leaves memory.
         if self.side.save.is_some() {
             let mut snaps = Vec::new();
             for &cpos in &drop_columns {
@@ -149,8 +134,6 @@ impl ServerWorld {
         }
     }
 
-    /// Drop any buffered disk overlays for a column that is no longer wanted, so a
-    /// section whose column was evicted before its overlay could land doesn't linger.
     fn drop_overlays_for_column(&mut self, pos: ChunkPos) {
         self.side
             .gen

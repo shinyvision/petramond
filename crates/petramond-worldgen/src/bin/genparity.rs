@@ -1,9 +1,3 @@
-//! Worldgen byte-parity gate: hashes the production section pipeline over a
-//! fixed sample (see `petramond_worldgen::parity`) and fails unless the hash
-//! equals the checked-in `EXPECTED_COMBINED`.
-//!
-//! Run: `make genparity` (release-speed codegen, no packs installed).
-
 use std::process::ExitCode;
 
 use petramond_worldgen::parity;

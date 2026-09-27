@@ -1,14 +1,9 @@
-//! Which block ids are fluids, answered once at init by the engine's rows —
-//! never by naming the fluids a pack happens to know about.
-
 use mod_sdk::*;
 
-/// The session's fluid block ids, as a bitset.
 #[derive(Clone, Default)]
 pub struct Fluids(Vec<u64>);
 
 impl Fluids {
-    /// Every registered block whose row declares a fluid.
     pub fn resolve() -> Self {
         let mut fluids = Self::default();
         for (id, info) in registered_blocks() {

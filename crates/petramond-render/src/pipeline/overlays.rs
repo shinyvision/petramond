@@ -6,10 +6,6 @@ use crate::crosshair::MAX_CROSSHAIR_VERTICES;
 use crate::uniforms::Uniforms;
 use petramond_mesh::ContactShadowVertex;
 
-/// Selection-outline pipeline.
-/// Its own minimal bind-group layout (Uniforms at binding 0 only) so it
-/// doesn't couple to the block pipelines' uv_rects layout. Reuses the same
-/// uniform buffer for view_proj.
 pub(super) fn create_selection_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -36,7 +32,7 @@ pub(super) fn create_selection_pipeline(
     let outline_bind = buffer_bind_group(device, "outline bg", &outline_bgl, &[uniform_buf]);
     let outline_layout = pipeline_layout(device, "outline layout", &[&outline_bgl]);
     let outline_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: 12, // vec3<f32>
+        array_stride: 12,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &[wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x3,
@@ -68,8 +64,6 @@ pub(super) fn create_selection_pipeline(
         Some(DepthPreset::ReadLessEqual),
         max_samples,
     );
-    // Selection outline vertices x vec3<f32>; grown by the renderer to fit
-    // whatever outline a target resolves to.
     let outline_vbuf = crate::renderer::dynamic_draw::new_buffer(
         device,
         wgpu::BufferUsages::VERTEX,
@@ -78,10 +72,8 @@ pub(super) fn create_selection_pipeline(
     (outline_pipe, outline_bind, outline_vbuf)
 }
 
-/// Center crosshair pipeline.
-/// The fragment shader outputs white and the color blend computes
-/// `white * (1 - dst) + dst * 0`, which inverts the pixels under the
-/// crosshair instead of drawing a fixed light/dark color.
+/// Crosshair pipeline. Shader outputs white, blend `white * (1 - dst) + dst * 0` inverts
+/// what's under it.
 pub(super) fn create_crosshair_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -89,7 +81,7 @@ pub(super) fn create_crosshair_pipeline(
 ) -> (wgpu::RenderPipeline, wgpu::Buffer) {
     let crosshair_layout = pipeline_layout(device, "crosshair layout", &[]);
     let crosshair_vbuf_layout = wgpu::VertexBufferLayout {
-        array_stride: 8, // vec2<f32>
+        array_stride: 8,
         step_mode: wgpu::VertexStepMode::Vertex,
         attributes: &[wgpu::VertexAttribute {
             format: wgpu::VertexFormat::Float32x2,
@@ -109,8 +101,6 @@ pub(super) fn create_crosshair_pipeline(
             operation: wgpu::BlendOperation::Add,
         },
     };
-    // write_mask = COLOR (not ALL): the invert blend must leave the alpha channel
-    // untouched.
     let crosshair_targets = color_target(format, Some(invert_blend), wgpu::ColorWrites::COLOR);
     let crosshair_pipe = single_pipeline(
         device,
@@ -133,12 +123,6 @@ pub(super) fn create_crosshair_pipeline(
     (crosshair_pipe, crosshair_vbuf)
 }
 
-/// MULTIPLY blend (result = src.rgb * dst.rgb): a crack fragment outputs WHITE
-/// where the destroy tile is transparent (×1 = no change) and dark where the
-/// crack texels are, so the cracks darken the surface instead of
-/// alpha-compositing a flat overlay. `color = Dst * src + Zero * dst = src*dst`.
-/// Alpha is preserved (Zero/One) — the colour target keeps its existing alpha.
-/// Shared with the model-break decal, which darkens a model the same way.
 pub(super) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::Dst,
@@ -153,12 +137,11 @@ pub(super) const MULTIPLY_BLEND: wgpu::BlendState = wgpu::BlendState {
 };
 
 /// Break-overlay pipeline (the destroy crack).
-/// Reuses the block `uniform_bgl` (group0: view_proj + uv_rects) + `atlas_bgl`
-/// (group1) so it binds the renderer's existing `uniform_bind` / `atlas_bind`
-/// unchanged. Same 32-byte vertex as the block pipe. MULTIPLY-blended; depth
-/// LessEqual / no-write; the cube is built coincident with the block faces and a
-/// small polygon offset (BREAK_DEPTH_BIAS) wins the depth tie on the surface, so
-/// the crack reads cleanly with no inflation and no z-fighting.
+/// Reuses the block's `uniform_bgl`/`atlas_bgl` groups so it binds the existing
+/// `uniform_bind`/`atlas_bind` as-is. Same 32-byte vertex as the block pipe.
+/// Multiply blend, depth LessEqual/no-write. The cube sits coincident with the block
+/// faces and `BREAK_DEPTH_BIAS` wins the depth tie, so the crack shows without
+/// inflating the geometry or z-fighting.
 pub(super) fn create_break_overlay_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -202,17 +185,16 @@ pub(super) fn create_break_overlay_pipeline(
     break_pipe
 }
 
-/// Model→terrain contact-shadow pipeline: the chunk `ContactShadowVertex`
-/// stream (16-byte `{pos, darken}`, non-indexed), MULTIPLY-blended like the
-/// break overlay, depth `LessEqual` read-only with its OWN coplanar bias
-/// (`DepthPreset::ReadLessEqualContactBiased`). Drawn between the opaque and
-/// sky passes — see `passes.rs` for why that order is a safety contract. Culling
-/// is off: the stamp only shows where terrain was drawn under it, and a facing
-/// rotation must never be able to wind it away.
-///
-/// Reuses the block group-0 layout (`layout` = the shared `[uniform_bgl,
-/// atlas_bgl]` pipeline layout's group 0) via its own single-group pipeline
-/// layout, so the pass binds the renderer's existing `uniform_bind` unchanged.
+/// Model to terrain contact-shadow pipeline. Uses the chunk `ContactShadowVertex`
+/// stream (16-byte `{pos, darken}`, non-indexed), multiply blend like the break
+/// overlay, depth LessEqual read-only with its own coplanar bias
+/// (`DepthPreset::ReadLessEqualContactBiased`).
+/// Drawn between opaque and sky passes - see passes.rs, the ordering there is a
+/// safety contract. Culling off on purpose: the stamp only shows where terrain
+/// was drawn under it, so a facing rotation can't wind it away.
+/// Reuses the block's group-0 layout (from the shared `[uniform_bgl, atlas_bgl]`
+/// pipeline layout) via its own single-group layout, so it binds the existing
+/// `uniform_bind` unchanged.
 pub(super) fn create_contact_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,
@@ -274,14 +256,6 @@ pub(super) fn create_contact_pipeline(
     )
 }
 
-/// Entity blob-shadow pipeline: one horizontal quad per entity under the
-/// contact-shadow pass's rules — MULTIPLY blend, depth `LessEqual` read-only
-/// with the same coplanar bias, culling off. The static ibuf holds the quad
-/// pattern repeated for every cap slot (indices are absolute into the shared
-/// vbuf), so a frame draws its whole shadow batch in one call.
-///
-/// Reuses the block group-0 uniform layout like the contact pass; binds only
-/// the renderer's existing `uniform_bind`.
 pub(super) fn create_entity_shadow_pipeline(
     device: &wgpu::Device,
     format: wgpu::TextureFormat,

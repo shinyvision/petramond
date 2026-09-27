@@ -1,11 +1,5 @@
-//! The directional stair; its corner form resolves from neighbours and is STORED.
-//!
-//! Sim, render, and placement for this family live together here; the shared
-//! seam helpers and the singleton table stay in the parent.
-
 use super::*;
 
-/// A directional stair; boxes resolve corner shape from neighbours.
 pub struct StairFamily;
 
 impl ShapeSim for StairFamily {
@@ -57,10 +51,10 @@ impl ShapeSim for StairFamily {
         _b: Block,
         state: ShapeState,
     ) -> ShapeState {
-        // Byte 0 (the PLACED facing + half) is identity and never refined;
-        // byte 1 is the corner shape joined against the neighbour stairs'
-        // placed bits. Corner resolution reads neighbours' PLACED state only,
-        // so stair refinement can never cascade through other stairs.
+        // Byte 0 is facing+half, fixed, never refined. Byte 1 is corner shape, joined against
+        // neighbour stairs' placed bits.
+        // We only look at neighbours' placed bits, not their refined shape. Otherwise refinement
+        // cascades through stairs.
         let placed = StairState::from_cell(state);
         let shape = crate::stair::resolved_shape(pos, placed, |q| stair_state_at(nb, q));
         ShapeState::new(&[placed.encode(), shape.mask])
@@ -94,10 +88,6 @@ impl ShapeSim for StairFamily {
         lo: [f32; 3],
         hi: [f32; 3],
     ) -> bool {
-        // The REFINED shape — the same stored corner byte `boxes` draws.
-        // Occupancy must track the geometry, not the placement: two
-        // placements refining to one corner shape must shade (and light)
-        // neighbours identically.
         let shape = stair_shape_at(nb, pos);
         any_octant(lo, hi, &|ix, iy, iz| {
             crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
@@ -152,7 +142,6 @@ impl ShapeRender for StairFamily {
         _pos: IVec3,
         _b: Block,
     ) -> Option<([f32; 3], [f32; 3])> {
-        // A stair targets the whole cell (targeting is the whole cube).
         Some(([0.0, 0.0, 0.0], [1.0, 1.0, 1.0]))
     }
     fn item_render(&self, _p: &ShapeParams, block: Block) -> ItemRender {
@@ -161,7 +150,6 @@ impl ShapeRender for StairFamily {
 }
 
 impl ShapePlacement for StairFamily {
-    /// The R key flips a held stair upside down.
     fn held_rotations(&self) -> u8 {
         2
     }
@@ -205,20 +193,14 @@ impl ShapePlacement for StairFamily {
         let p = inputs.place_pos;
         let half = inputs.held_rotation.stair_half(inputs.held);
         let state = StairState::new(inputs.player_facing, half);
-        // The boxes the stair WOULD have: its hypothetical own state (the cell
-        // is still empty) corner-resolved against the placed neighbours,
-        // through the same seam the placed shape will read.
         let boxes = crate::stair::resolved_boxes_state(p, state, |q| stair_state_at(w, q));
         if !w.placement_cell_open(p) || occupied(p, boxes) {
             return PlacementOutcome::Refused;
         }
-        // The placed bits only; the refine cascade appends the corner byte.
         PlacementOutcome::Plan(PlacementPlan::single(p, block, state.to_cell()))
     }
 }
 
-/// Whether `block` is a stair-shaped row — the ownership test of the stair
-/// cell state.
 pub fn is_stair(block: Block) -> bool {
     block.shape_family() == ShapeFamily::Stair
 }

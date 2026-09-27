@@ -1,15 +1,3 @@
-//! Frames rendered at a size the window does not have (a frame-size claim, or
-//! a document viewport the world presents in): one owned target, one
-//! letterbox route.
-//!
-//! While sized frames are on, the renderer's FRAME geometry (`config` size,
-//! the scene targets, the scene's UI viewport, the camera aspect a caller
-//! derives from them) is theirs, and the window keeps its own swapchain size
-//! and its own UI viewport. Each frame draws through the one `encode_frame`
-//! into an owned [`FrameTarget`] of that size, shown on the window
-//! letterboxed with the window's UI over it. A capture copies that target at
-//! the frame's capture point (see `capture`).
-
 use super::frame::{FrameOut, WindowOut};
 use super::*;
 
@@ -34,8 +22,6 @@ fn fs_blit(in: Out) -> @location(0) vec4<f32> {
 }
 "#;
 
-/// An owned image a frame's scene lands in, which can be copied out and
-/// shown on the window (scaled to fit).
 pub(super) struct FrameTarget {
     pub(super) size: (u32, u32),
     pub(super) texture: wgpu::Texture,
@@ -80,8 +66,6 @@ impl FrameTarget {
         }
     }
 
-    /// Draw this image into `dst`, scaled to the `(x, y, w, h)` rect of it
-    /// and the rest cleared black.
     pub(super) fn blit_into(
         &self,
         enc: &mut wgpu::CommandEncoder,
@@ -112,16 +96,11 @@ impl FrameTarget {
 
 pub(super) struct SizedFrames {
     pub(super) frame: FrameTarget,
-    /// The window's swapchain size, kept apart from the frame size.
     surface_size: (u32, u32),
-    /// Where on the window the frame is shown (window px `[x, y, w, h]`),
-    /// scaled to fit inside; `None` = the whole window.
     destination: Option<[u32; 4]>,
 }
 
 impl SizedFrames {
-    /// Where the frame lands on a `window`-sized image: letterboxed into
-    /// the destination rect, or into the whole window.
     pub(super) fn placement(&self, window: (u32, u32)) -> (f32, f32, f32, f32) {
         match self.destination {
             Some([x, y, w, h]) => {
@@ -133,8 +112,6 @@ impl SizedFrames {
     }
 }
 
-/// Where a `src`-sized image sits inside `dst`, scaled to fit with its aspect
-/// kept: `(x, y, width, height)` in `dst` pixels.
 pub(super) fn letterbox(src: (u32, u32), dst: (u32, u32)) -> (f32, f32, f32, f32) {
     let (sw, sh) = (src.0.max(1) as f32, src.1.max(1) as f32);
     let (dw, dh) = (dst.0.max(1) as f32, dst.1.max(1) as f32);
@@ -144,15 +121,11 @@ pub(super) fn letterbox(src: (u32, u32), dst: (u32, u32)) -> (f32, f32, f32, f32
 }
 
 impl Renderer {
-    /// The device's own limits on one frame: its largest 2D texture side,
-    /// and its largest buffer (a frame's readback).
     pub fn frame_limits(&self) -> (u32, u64) {
         let limits = self.device.limits();
         (limits.max_texture_dimension_2d, limits.max_buffer_size)
     }
 
-    /// Render every frame at `width` × `height` until
-    /// [`end_sized_frames`](Self::end_sized_frames).
     pub fn begin_sized_frames(&mut self, width: u32, height: u32) -> Result<(), String> {
         if width == 0 || height == 0 {
             return Err(format!("cannot render frames of {width}x{height}"));
@@ -172,7 +145,6 @@ impl Renderer {
         Ok(())
     }
 
-    /// Back to frames the window's size.
     pub fn end_sized_frames(&mut self) {
         if let Some(sized) = self.sized_frames.take() {
             let (width, height) = sized.surface_size;
@@ -187,14 +159,10 @@ impl Renderer {
         self.sized_frames.is_some()
     }
 
-    /// The size frames render at while set-size frames are on.
     pub fn sized_frame_size(&self) -> Option<(u32, u32)> {
         self.sized_frames.as_ref().map(|sized| sized.frame.size)
     }
 
-    /// Show set-size frames inside `rect` of the window (window px) instead
-    /// of the whole window — a document's viewport. Kept across a restart
-    /// of the frames.
     pub fn set_frame_destination(&mut self, rect: Option<[u32; 4]>) {
         self.frame_destination = rect;
         if let Some(sized) = self.sized_frames.as_mut() {
@@ -202,8 +170,6 @@ impl Renderer {
         }
     }
 
-    /// Draw this frame into the sized target; `present` shows it letterboxed
-    /// in the window with the window's UI over it.
     pub(super) fn draw_sized_frame(
         &mut self,
         sized: &SizedFrames,
@@ -238,7 +204,6 @@ impl Renderer {
         submitted
     }
 
-    /// The swapchain's configuration: the frame's, at the window's size.
     pub(super) fn surface_config(&self) -> wgpu::SurfaceConfiguration {
         let mut config = self.config.clone();
         if let Some(sized) = &self.sized_frames {
@@ -247,8 +212,6 @@ impl Renderer {
         config
     }
 
-    /// A window resize while sized frames are on: the swapchain follows the
-    /// window, the frames keep their own size. `false` = not handled here.
     pub(super) fn resize_under_sized_frames(&mut self, width: u32, height: u32) -> bool {
         let Some(sized) = self.sized_frames.as_mut() else {
             return false;
@@ -339,17 +302,14 @@ mod tests {
 
     #[test]
     fn a_frame_is_shown_whole_and_centred_whatever_the_window() {
-        // Wider window: pillarboxed.
         assert_eq!(
             letterbox((1920, 1080), (2560, 1080)),
             (320.0, 0.0, 1920.0, 1080.0)
         );
-        // Taller window: letterboxed.
         assert_eq!(
             letterbox((1920, 1080), (1280, 1024)),
             (0.0, 152.0, 1280.0, 720.0)
         );
-        // Same aspect: fills.
         assert_eq!(
             letterbox((640, 360), (1280, 720)),
             (0.0, 0.0, 1280.0, 720.0)

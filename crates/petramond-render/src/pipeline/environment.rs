@@ -7,25 +7,14 @@ use super::builders::{
 use super::sky::create_shader_texture_bind;
 use crate::uniforms::{ShaderParams, Uniforms};
 
-/// One pack-supplied environment (volumetric) pass, minus its depth-coupled
-/// group-0 bind: the frame depth view is recreated on resize, so the bind is
-/// built by [`create_environment_bind`] at construction AND on every scene-
-/// target rebuild.
 pub(crate) struct EnvPassResources {
-    /// Half-res, so always one sample.
     pub pipe: wgpu::RenderPipeline,
     pub bgl: wgpu::BindGroupLayout,
-    /// This pass's own 16-slot params buffer, filled per frame from its
-    /// declared param keys (each pass has an independent key list).
     pub params_buf: wgpu::Buffer,
     pub texture_bind: wgpu::BindGroup,
     pub param_keys: Vec<String>,
 }
 
-/// The group-0 bind of an environment pass: frame uniforms, the pass's own
-/// shader params, and the frame DEPTH as a sampled texture (the pass attaches
-/// no depth, so sampling it is legal — volumetrics occlude themselves against
-/// scene depth per fragment).
 pub(crate) fn create_environment_bind(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
@@ -53,13 +42,10 @@ pub(crate) fn create_environment_bind(
     })
 }
 
-/// Half-res environment scaler: pack environment passes render into a
-/// half-res offscreen target against a downsampled depth, and a depth-aware
-/// composite lifts the result back to full res (see `env_downsample.wgsl` /
-/// `env_composite.wgsl` and the passes.rs environment block). Volumetrics
-/// are soft, so half-res costs ~a quarter of the fragment work for a
-/// near-identical image; the depth-aware upsample keeps silhouette edges
-/// crisp.
+/// Half-res environment scaler. Pack environment passes render at half res against a downsampled
+/// depth, and a depth-aware composite lifts them back to full res (see `env_downsample.wgsl` and
+/// `env_composite.wgsl`). Volumetrics are soft, so this costs about a quarter of the fragment work
+/// for a near-identical image, and the depth-aware upsample keeps silhouettes crisp.
 pub(crate) struct EnvScaler {
     pub down_pipe: wgpu::RenderPipeline,
     pub down_bgl: wgpu::BindGroupLayout,
@@ -81,10 +67,6 @@ fn depth_texture_entry(binding: u32, multisampled: bool) -> wgpu::BindGroupLayou
     }
 }
 
-/// The scaler in both depth flavours: the single-sample one every session
-/// needs, and the multisampled one (its depth binds are
-/// `texture_depth_multisampled_2d`) built the first time an MSAA scene
-/// draws, like the scene pipelines' own variants.
 pub(crate) struct EnvScalers {
     device: wgpu::Device,
     format: wgpu::TextureFormat,
@@ -222,7 +204,6 @@ fn create_env_scaler_variant(
     }
 }
 
-/// The downsample bind: just the full-res depth to read.
 pub(crate) fn create_env_down_bind(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
@@ -238,8 +219,6 @@ pub(crate) fn create_env_down_bind(
     })
 }
 
-/// The composite bind: half-res env colour + its depth, and the full-res
-/// depth to resolve edges against.
 pub(crate) fn create_env_comp_bind(
     device: &wgpu::Device,
     bgl: &wgpu::BindGroupLayout,
@@ -272,13 +251,13 @@ pub(crate) fn create_env_comp_bind(
     })
 }
 
-/// Pack `environment` rows → composed full-screen volumetric pipelines, in
-/// pack load order. Shader ABI: `vs_env` emits a fullscreen triangle,
-/// `fs_env` returns PREMULTIPLIED rgba blended over the scene; group 0 =
-/// Uniforms (b0) + ShaderParams (b1) + frame depth (b2, `texture_depth_2d`,
-/// read with `textureLoad`); group 1 = the four fixed texture slots. A row
-/// whose WGSL fails validation is SKIPPED with one warning — there is no
-/// builtin fallback (a missing volumetric is safe; a missing sky is not).
+/// Builds pack `environment` rows into composed full-screen volumetric pipelines, in pack load
+/// order. `vs_env` emits a fullscreen triangle and `fs_env` returns premultiplied rgba blended
+/// over the scene. Group 0 holds Uniforms (b0), ShaderParams (b1) and frame depth (b2, a
+/// `texture_depth_2d` read with `textureLoad`). Group 1 holds the four fixed texture slots.
+///
+/// A row whose WGSL fails validation is skipped with a warning and gets no builtin fallback. A
+/// missing volumetric is safe, unlike a missing sky.
 pub(super) fn create_environment_pipelines(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -325,8 +304,6 @@ pub(super) fn create_environment_pipelines(
         entries: &texture_bgl_entries,
     });
     let layout = pipeline_layout(device, "environment layout", &[&bgl, &texture_bgl]);
-    // Premultiplied output: a volumetric emits (radiance * alpha, alpha) and
-    // composes over the scene without double-multiplying its own coverage.
     let targets = color_target(
         format,
         Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
@@ -375,9 +352,6 @@ pub(super) fn create_environment_pipelines(
     passes
 }
 
-/// WGSL declaring the scene depth as group 0's `full_depth` at `binding`, for
-/// the scene's sample count, and `scene_depth_max(p)`: the farthest of its
-/// samples at texel `p`.
 pub(crate) fn scene_depth_source(multisampled: bool, binding: u32) -> String {
     let ty = if multisampled {
         "texture_depth_multisampled_2d"
@@ -406,7 +380,6 @@ fn scene_depth_max(p: vec2<i32>) -> f32 {
 }
 
 pub(crate) fn scaler_sources(multisampled: bool) -> (String, String) {
-    // Match cloud occlusion to each coverage sample at terrain silhouettes.
     let entry = if multisampled {
         r#"
 @fragment

@@ -48,8 +48,6 @@ pub(crate) fn corner_cast_probes(
     let d = face.dir().to_array();
     let u = face.ao_u().to_array();
 
-    // The corner's position in the front cell: on the face plane, at the
-    // corner the (su, sv) signs pick.
     let mut corner = [0.0f32; 3];
     for a in 0..3 {
         if d[a] != 0 {
@@ -60,9 +58,6 @@ pub(crate) fn corner_cast_probes(
             corner[a] += (sv > 0) as u32 as f32;
         }
     }
-    // Per pocket: the normal axis spans (lift, lift + reach) into the front
-    // region; a tangent spans REACH beyond the corner when the pocket lies
-    // on that side (`beyond`), else REACH back toward the face interior.
     let pocket = |u_beyond: bool, v_beyond: bool| -> ([f32; 3], [f32; 3]) {
         let mut lo = [0.0f32; 3];
         let mut hi = [0.0f32; 3];
@@ -109,7 +104,6 @@ pub(crate) fn boundary_plane(face: Face) -> f32 {
     (face.dir().element_sum() < 0) as u32 as f32
 }
 
-/// The flat-array step of one pad cell along `d`.
 #[inline]
 fn pad_stride(d: IVec3) -> isize {
     let pad = SECTION_PAD as isize;
@@ -171,9 +165,6 @@ pub(super) fn face_lighting(
         (plane > 0.75) as usize
     };
 
-    // Whether the FRONT cell itself holds sub-cell matter: its interior
-    // quadrant then joins the corner occlusion (the exposed ring of a face
-    // something box-shaped stands on).
     let front_probe = pad.table.flags(pad.blocks[fi]).has_box_shape();
 
     let mut occ = [[false; 3]; 3];
@@ -188,23 +179,14 @@ pub(super) fn face_lighting(
                 continue;
             }
             let i = (fi as isize + a as isize * ustride + b as isize * vstride) as usize;
-            // ONE dense flag word per ring cell: the shape questions below are
-            // bit tests off it, not separate table lookups.
             let cf = pad.table.flags(pad.blocks[i]);
             let (ia, ib) = ((a + 1) as usize, (b + 1) as usize);
-            // A full slab stack occludes AO and carries no light, exactly like
-            // an opaque cube — without this it darkens corners twice (it blocks
-            // the light flood, then still enters the smooth-light mean as a
-            // dark open cell). Partial slab states are kept for the per-corner
-            // octant gate below. The dense `is_slab` flag gates the state read.
             let slab_state = cf.is_slab().then(|| {
                 let stored = SlabState::from_cell(pad.cell_states[i]);
                 petramond_world::slab::normalize_state(pad.table.block(pad.blocks[i]), stored)
             });
             let full_stack = slab_state.is_some_and(|s| s.is_full());
             occ[ia][ib] = cf.occludes_ao() || full_stack;
-            // A non-occluding cell that still holds sub-cell matter (a box
-            // shape, a partial slab) gets corner-probe casting below.
             probe_cell[ia][ib] = !occ[ia][ib] && cf.has_box_shape();
             if smooth_light {
                 opq[ia][ib] = cf.is_opaque() || full_stack;
@@ -239,7 +221,6 @@ pub(super) fn face_lighting(
         {
             let pk = corner_cast_probes(face, su, sv, plane);
             let cell_of = |s_u: i32, s_v: i32| front + u * s_u + v * s_v;
-            // A front-cell-local pocket re-expressed local to ring cell `cl`.
             let local = |p: [f32; 3], cl: IVec3| {
                 let o = (cl - front).as_vec3();
                 [p[0] - o.x, p[1] - o.y, p[2] - o.z]
@@ -266,7 +247,6 @@ pub(super) fn face_lighting(
             continue;
         }
         let mut sum = f_l;
-        // Per-channel mean: hues average in the linear light space only.
         let mut sum_block = f_bl.channels().map(u32::from);
         let mut cnt = 1u32;
         for (ia, ib, a, b) in [(iu, 1, su, 0), (1, iv, 0, sv), (iu, iv, su, sv)] {
@@ -285,8 +265,6 @@ pub(super) fn face_lighting(
     (ao, light6, block6)
 }
 
-/// A cell's own flat light — what flat-lit emitters (plants, models) carry:
-/// its skylight and block light folded into the packed channels.
 pub(super) fn cell_light(nb: &Neighbourhood<'_>, p: IVec3) -> (u32, BlockLight6) {
     let l = u32::from(nb.skylight(p));
     let bl = nb.blocklight(p).channels().map(u32::from);
@@ -328,9 +306,6 @@ pub(crate) fn self_lit_face(
 mod self_lit_tests {
     use super::*;
 
-    /// The fraction scales the lift: none leaves the sampled face untouched, all
-    /// raises every corner to the emission with open AO, and a part lands in
-    /// between — never below the sample, never past the target.
     #[test]
     fn self_lit_fraction_scales_the_lift_toward_the_emission() {
         let emission = BlockLight6::new(60, 30, 12);

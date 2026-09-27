@@ -1,22 +1,3 @@
-//! A rig's animator document — the graph over the rig's own clips plus any
-//! Bedrock clip libraries — LAYERED like every catalog: the base document,
-//! then each pack's copy in load order, merged by key so a pack adds a rule,
-//! a gate, a layer, a param or a library without restating the engine's.
-//! Shared by every animated player rig, and the ABI's name→id resolution for
-//! the animator claims.
-//!
-//! One document is flat JSON: `libraries` (Bedrock `.animation.json` paths,
-//! each clip under the shipping pack's namespace), and the graph's own
-//! `params`, `events`, `slots`, `masks`, `markers`, `gates`, `layers` and
-//! `rules`. Layers merge by `name`, gates and rules by `id`: a row naming an
-//! existing one replaces it in place, `"enabled": false` removes it, a new
-//! row appends or goes `"before"` a named one — the locomotion table's
-//! overlay rule, applied to the graph.
-//!
-//! A layer that does not compile is LEFT OUT, named in the log, and the rig
-//! loads the rest: one pack's typo never takes a rig's animation away from
-//! every other pack.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -29,8 +10,6 @@ use serde_json::{Map, Value};
 use super::rigs::{self, Rig, RigId};
 use super::{AnimatorParam, AnimatorPlay};
 
-/// The namespace the engine's own clips, and any library from an id-less
-/// pack, are filed under.
 const ENGINE_NAMESPACE: &str = "petramond";
 
 const DOC_KEYS: &[&str] = &[
@@ -45,9 +24,6 @@ const DOC_KEYS: &[&str] = &[
     "rules",
 ];
 
-/// A rig graph's declared vocabulary in id order — what a session hands a
-/// peer so the ids on its rows remap by name. `rig` is the rig's registry
-/// name, so a peer matches tables by name rather than by position.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AnimatorNames {
     pub rig: String,
@@ -74,13 +50,11 @@ impl AnimatorNames {
         }
     }
 
-    /// Every registered rig's table, in rig-id order.
     pub fn all() -> Vec<Self> {
         rigs::all().iter().map(Self::of).collect()
     }
 }
 
-/// A rig by its ABI name, with its graph; `Err` names what is missing.
 fn rig_graph(name: &str) -> Result<(RigId, &'static Arc<Graph>), String> {
     let id = rigs::id(name).ok_or_else(|| format!("no rig named `{name}`"))?;
     let graph = rigs::graph(id).ok_or_else(|| format!("the `{name}` rig has no animator"))?;
@@ -91,8 +65,6 @@ fn small(index: usize, what: &str) -> Result<u16, String> {
     u16::try_from(index).map_err(|_| format!("too many {what}"))
 }
 
-/// Resolve a caller's params to rig and graph ids, once at the ABI; `Err`
-/// names the rig or param the engine lacks.
 pub fn resolve_params(params: Vec<mod_api::AnimatorParam>) -> Result<Vec<AnimatorParam>, String> {
     params
         .into_iter()
@@ -110,8 +82,6 @@ pub fn resolve_params(params: Vec<mod_api::AnimatorParam>) -> Result<Vec<Animato
         .collect()
 }
 
-/// Resolve a caller's plays to rig, graph and library ids, once at the ABI;
-/// `Err` names the rig, slot or clip the engine lacks.
 pub fn resolve_plays(plays: Vec<mod_api::AnimatorPlay>) -> Result<Vec<AnimatorPlay>, String> {
     plays
         .into_iter()
@@ -136,7 +106,6 @@ pub fn resolve_plays(plays: Vec<mod_api::AnimatorPlay>) -> Result<Vec<AnimatorPl
         .collect()
 }
 
-/// Resolve an event name on one rig's graph, once at the ABI.
 pub fn resolve_event(rig: &str, event: &str) -> Result<(RigId, u16), String> {
     let (id, graph) = rig_graph(rig)?;
     let event_id = graph
@@ -145,8 +114,6 @@ pub fn resolve_event(rig: &str, event: &str) -> Result<(RigId, u16), String> {
     Ok((id, small(event_id.index(), "events")?))
 }
 
-/// One clip's length, loop and markers in time order; `None` when the rig
-/// has no such clip.
 pub fn clip_info(rig: &str, name: &str) -> Option<AnimationClipInfo> {
     let clips = rig_graph(rig).ok()?.1.clips();
     let clip = clips.get(clips.id(name)?);
@@ -163,25 +130,14 @@ pub fn clip_info(rig: &str, name: &str) -> Option<AnimationClipInfo> {
     })
 }
 
-/// One document as it merges: the text, the namespace its libraries' clips
-/// take, and where it came from — its directory resolves its library paths,
-/// so two packs shipping the same relative path never shadow each other.
 pub struct AnimatorSource {
     pub text: String,
     pub namespace: String,
-    /// Where it came from, for errors.
     pub origin: String,
-    /// The directory its `libraries` paths are relative to.
     pub dir: PathBuf,
-    /// The rig's own document: its libraries may restate the rig's clips.
-    /// Any other layer's clip must be new, since a silent replacement is
-    /// how one pack quietly rewrites another's motion.
     pub engine: bool,
 }
 
-/// Merge `layers` (lowest priority first) and compile the result against
-/// `rig`, refusing the whole on any error. `read` fetches a library by the
-/// path its layer's directory resolves.
 pub fn compile_animator<'a>(
     layers: impl IntoIterator<Item = &'a AnimatorSource>,
     rig: &Model,
@@ -263,11 +219,6 @@ pub fn compile_animator<'a>(
     })
 }
 
-/// Merge and compile every layer that can join: the rig's own document
-/// first, then each pack's layer in order, kept only while the document
-/// still compiles with it. Answers the graph and, beside it, one error per
-/// layer left out. `None` when the first document does not compile on its
-/// own.
 pub fn compile_layers(
     layers: &[AnimatorSource],
     rig: &Model,
@@ -290,8 +241,6 @@ pub fn compile_layers(
     (graph, refused)
 }
 
-/// Every layer of the animator document at `path`, lowest priority first,
-/// each carrying its pack's namespace for the libraries it adds.
 pub fn animator_layers(path: &str) -> Vec<AnimatorSource> {
     let packs = assets::layers();
     assets::read_catalog_layers(path)
@@ -301,9 +250,6 @@ pub fn animator_layers(path: &str) -> Vec<AnimatorSource> {
                  text, path, owner, ..
              }| AnimatorSource {
                 text,
-                // An id-less pack files its clips under the engine's namespace
-                // but is still a pack: only the copy outside every pack directory
-                // is the rig's own document.
                 engine: owner.is_none() && !packs.iter().any(|l| path.starts_with(&l.dir)),
                 namespace: owner.unwrap_or_else(|| ENGINE_NAMESPACE.to_string()),
                 origin: path.display().to_string(),
@@ -313,9 +259,6 @@ pub fn animator_layers(path: &str) -> Vec<AnimatorSource> {
         .collect()
 }
 
-/// Load, merge and compile the animator document at `path` against `rig`,
-/// logging every layer left out; `None` (logged) when the document is
-/// missing or its first layer does not compile.
 pub(super) fn load_animator(path: &str, rig: &Model) -> Option<Arc<Graph>> {
     let layers = animator_layers(path);
     if layers.is_empty() {

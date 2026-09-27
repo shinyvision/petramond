@@ -39,37 +39,29 @@ use std::fmt;
 use std::io;
 use std::path::Path;
 
-/// Lift one record body (the bytes after its version header) from version
-/// `v` to `v + 1`.
 pub type Upgrade = fn(&[u8]) -> Result<Vec<u8>, RecordError>;
 
-/// Why a persisted record could not be read. Never means "absent".
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RecordError {
-    /// Written by a newer build: this build must not overwrite it.
     Newer {
         format: &'static str,
         found: u32,
         newest: u32,
     },
-    /// Older than the oldest version this build's migrations reach.
     Retired {
         format: &'static str,
         found: u32,
         oldest: u32,
     },
-    /// The record carries a payload this build has no decoder for (a newer
-    /// build added it without a version bump). Like [`Self::Newer`], it
-    /// must not be overwritten.
-    UnknownPayload { format: &'static str, flags: u32 },
-    /// Truncated, bit-flipped or otherwise malformed bytes. `offset` is the
-    /// byte position in the (decompressed) record where decoding failed.
+    UnknownPayload {
+        format: &'static str,
+        flags: u32,
+    },
     Corrupt {
         format: &'static str,
         what: &'static str,
         offset: usize,
     },
-    /// The record's bytes could not be read at all.
     Io {
         format: &'static str,
         kind: io::ErrorKind,
@@ -85,8 +77,6 @@ impl RecordError {
         }
     }
 
-    /// A record from a newer build: its data is intact, this build just
-    /// cannot represent it, so writing over it would destroy it.
     pub fn is_from_newer_build(&self) -> bool {
         matches!(self, Self::Newer { .. } | Self::UnknownPayload { .. })
     }
@@ -133,12 +123,9 @@ impl From<RecordError> for io::Error {
     }
 }
 
-/// One persisted format: the version this build writes and the upgrade
-/// chain from the oldest version it still reads.
 pub struct Format {
     pub name: &'static str,
     pub current: u32,
-    /// `steps[i]` lifts version `oldest() + i` to the next one.
     steps: &'static [Upgrade],
 }
 
@@ -152,12 +139,10 @@ impl Format {
         }
     }
 
-    /// The oldest version this build can still read.
     pub const fn oldest(&self) -> u32 {
         self.current - self.steps.len() as u32
     }
 
-    /// Check that `version` is readable, without migrating anything.
     pub fn check(&self, version: u32) -> Result<(), RecordError> {
         if version > self.current {
             return Err(RecordError::Newer {
@@ -176,8 +161,6 @@ impl Format {
         Ok(())
     }
 
-    /// Lift `body` (written at `version`) to the current layout. Borrowed
-    /// when it already is current.
     pub fn upgrade<'a>(&self, version: u32, body: &'a [u8]) -> Result<Cow<'a, [u8]>, RecordError> {
         self.check(version)?;
         let first = (version - self.oldest()) as usize;
@@ -188,8 +171,6 @@ impl Format {
         Ok(out)
     }
 
-    /// Split a record with a little-endian `u32` version header and lift its
-    /// body to the current layout.
     pub fn upgrade_u32_record<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, [u8]>, RecordError> {
         let (header, body) = bytes
             .split_first_chunk::<4>()
@@ -200,7 +181,6 @@ impl Format {
 
 const STAMP: &str = "format.json";
 
-/// `format.json`: the newest version of each format the world may hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WorldFormat {
     pub section: u32,
@@ -209,7 +189,6 @@ pub struct WorldFormat {
 }
 
 impl WorldFormat {
-    /// What this build writes.
     pub fn current() -> Self {
         Self {
             section: super::codec::SECTION.current,
@@ -226,7 +205,6 @@ impl WorldFormat {
         ]
     }
 
-    /// Every format the stamp names is readable by this build.
     pub fn check(&self) -> Result<(), RecordError> {
         self.formats()
             .into_iter()
@@ -234,8 +212,6 @@ impl WorldFormat {
     }
 }
 
-/// Read the world's stamp: `None` for a world written before stamps
-/// existed (or a fresh directory); an error for one that does not parse.
 pub fn read_stamp(dir: &Path) -> io::Result<Option<WorldFormat>> {
     let path = dir.join(STAMP);
     let text = match std::fs::read_to_string(&path) {
@@ -251,9 +227,6 @@ pub fn read_stamp(dir: &Path) -> io::Result<Option<WorldFormat>> {
     })
 }
 
-/// Check the world's stamp before anything reads or writes the save: refuse
-/// a world this build cannot read, back up and raise the stamp of an older
-/// one, and stamp a world that has none. Returns the stamp found.
 pub fn prepare_world(dir: &Path) -> io::Result<Option<WorldFormat>> {
     let found = read_stamp(dir)?;
     let current = WorldFormat::current();
@@ -279,13 +252,6 @@ pub fn prepare_world(dir: &Path) -> io::Result<Option<WorldFormat>> {
     Ok(found)
 }
 
-/// Copy the eagerly rewritten small files (`level.dat` and its backup,
-/// `palette.json`, `format.json`, `mods.json`, `settings.json`, `players/`)
-/// into `backup/<name>/` before this build starts rewriting them: when a
-/// newer build migrates the world, or when the world opens with mods
-/// missing. Region records are rewritten one by one as they are saved (and
-/// keep whatever this build cannot read), so they are not copied. A backup
-/// that already exists under `name` is kept as it is.
 pub fn back_up_small_files(dir: &Path, name: &str) -> io::Result<()> {
     let backup = dir.join("backup").join(name);
     if backup.exists() {
@@ -332,10 +298,6 @@ fn copy_if_present(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-/// Keep an unreadable record's bytes under `quarantine/<relative>` before
-/// anything may replace them. An identical copy already there counts (the
-/// same bad record re-read in a later session); a different one gets a
-/// numbered sibling. Returns where the bytes are.
 pub fn quarantine(dir: &Path, relative: &Path, bytes: &[u8]) -> io::Result<std::path::PathBuf> {
     let base = dir.join("quarantine").join(relative);
     if let Some(parent) = base.parent() {

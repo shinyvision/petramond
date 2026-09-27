@@ -1,7 +1,6 @@
 use crate::formula::{Expression, Formula, Inputs};
 use serde::{Deserialize, Serialize};
 
-/// Inclusive world bounds derived once from a placed field's parameters.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawBounds {

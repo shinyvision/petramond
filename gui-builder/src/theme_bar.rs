@@ -1,6 +1,3 @@
-//! The preview toolbar: theme source, gui scale, screen-size presets, forced
-//! widget states for the selection, zoom, and the sample-state editor toggle.
-
 use crate::app::App;
 use eframe::egui;
 
@@ -55,8 +52,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             }
             ui.separator();
 
-            // Forced states preview the selection's hover/pressed/focus faces
-            // without real input (needs an id-bearing node).
             let has_id = app.selected_node().is_some_and(|n| n.id.is_some());
             ui.add_enabled_ui(has_id, |ui| {
                 ui.label("force:");

@@ -1,28 +1,9 @@
-//! Worldgen-correctness oracles — the debris / relief / island / jaggedness
-//! audits that measure whether the generator's output obeys its invariants.
-//!
-//! These deliberately live in the library (not the `genmap` previewer binary) so
-//! they are testable under `cargo test`, reusable, and cannot drift from the
-//! generator they measure. Each entry point GENERATES read-only chunks (or the
-//! generator's post-lift regions) and returns a plain data struct of the metrics
-//! it computed; the `genmap` binary prints those structs so its CLI output is
-//! unchanged. The thresholds these struct fields are checked against are the
-//! `mc-worldgen-jaggedness` family of invariants (≈0 floating debris, bounded
-//! relief stdev, 0 mid-channel islands, …).
-//!
-//! Terrain-solidity is defined once via [`Block::is_terrain_solid`] (the
-//! `Stone|Dirt|Grass|Sand|Snow` bare-ground set) so logs/leaves never swamp the
-//! real terrain-overhang signal, and the flood scan shares the generic
-//! [`flood_reachable`] helper.
-
 use crate::driver::ChunkGenerator;
 use crate::generate_chunk;
 use petramond_world::biome::{self, Biome};
 use petramond_world::block::Block;
 use petramond_world::chunk::{Chunk, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL};
 
-/// Highest non-air block in a column + its Y (mirrors the previewer's column
-/// scan). Returns `(0, 0)` for an all-air column.
 fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
@@ -33,10 +14,6 @@ fn top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     (0, 0)
 }
 
-/// Highest terrain-solid block in a column + its Y. Tree logs/leaves, plants,
-/// and built blocks are skipped so the roughness audit reads the natural ground
-/// surface rather than being skewed by huge tree canopies (e.g. redwoods).
-/// Returns `(0, 0)` for an all-terrain-air column.
 fn terrain_top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     for y in (0..CHUNK_SY).rev() {
         let b = c.block_raw(x, y, z);
@@ -47,9 +24,6 @@ fn terrain_top_block(c: &Chunk, x: usize, z: usize) -> (u16, i32) {
     (0, 0)
 }
 
-/// Is this raw block id terrain-solid (the bare-ground set, excluding tree
-/// logs/leaves and built blocks)? The single terrain-solid predicate used by
-/// every audit.
 #[inline]
 fn is_terrain(b: u16) -> bool {
     Block::from_id(b).is_terrain_solid()
@@ -60,14 +34,6 @@ fn intended_wet_biome(biome: Biome) -> bool {
     crate::biome::spec(biome).flags.wet
 }
 
-// ---------------------------------------------------------------------------
-// Shared graph helpers
-// ---------------------------------------------------------------------------
-
-/// 6-connected flood through a `w × h × depth` occupancy grid (index
-/// `(y*w + z)*w + x`), seeded from every occupied cell in the bottom (`y == 0`)
-/// layer. Returns a `reach` mask the same length as `occ`: `true` where an
-/// occupied cell is reachable from the floor. Iterative (explicit stack).
 pub fn flood_reachable(occ: &[bool], w: usize, depth: usize) -> Vec<bool> {
     debug_assert_eq!(occ.len(), w * w * depth);
     let idx = |x: usize, y: usize, z: usize| (y * w + z) * w + x;
@@ -111,46 +77,26 @@ pub fn flood_reachable(occ: &[bool], w: usize, depth: usize) -> Vec<bool> {
     reach
 }
 
-// ---------------------------------------------------------------------------
-// Audit: overhangs + per-column floating debris + biome census
-// ---------------------------------------------------------------------------
-
-/// One biome's share of a sampled window: percent of columns + its name.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BiomeShare {
     pub name: &'static str,
     pub percent: f64,
 }
 
-/// Result of [`audit`]: overhang ceilings, per-column floating debris, ocean
-/// depth, the tallest column + its skin stack, the overhangiest column, and a
-/// biome census — all over a 24×24-chunk window centred on the origin.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DebrisAudit {
     pub seed: u32,
-    /// Solid voxels with air directly below them (terrain overhang ceilings).
     pub overhang_ceilings: u64,
-    /// Overhang voxels with NO solid anywhere below in their column (per-column
-    /// detached-debris proxy — should be 0).
     pub floating_debris: u64,
-    /// Highest solid floor under a water column, or -1 if no ocean column found.
     pub deepest_ocean_floor: i32,
-    /// Tallest column's top-solid Y and its world (x, z).
     pub tallest_y: i32,
     pub tallest_xz: (i32, i32),
-    /// `"y125:Stone y124:Stone …"` skin of the tallest column (top 7 blocks).
     pub tallest_skin: String,
-    /// Most overhang ceilings in a single column + its world (x, z).
     pub overhangiest: u32,
     pub overhangiest_xz: (i32, i32),
-    /// Biome census over the window, descending by share (only >0%).
     pub biomes: Vec<BiomeShare>,
 }
 
-/// Audit overhangs + floating debris across a region. An "overhang ceiling" is a
-/// solid voxel with air directly below it. A "floating" voxel is solid with NO
-/// solid anywhere below it in its column (true detached debris — should be ~0).
-/// Also reports the deepest ocean column and the tallest column's skin stack.
 pub fn audit(seed: u32) -> DebrisAudit {
     use petramond_world::chunk::{SectionPos, SECTION_MIN_CY, SECTION_SIZE, WORLD_MIN_Y};
 
@@ -167,11 +113,6 @@ pub fn audit(seed: u32) -> DebrisAudit {
     for cz in 0..n {
         for cx in 0..n {
             let chunk = generate_chunk(seed, cx as i32 - r, cz as i32 - r);
-            // The deep sections below the chunk window: the cubic world's floor.
-            // Scanning them keeps the per-column floating metric honest — a deep
-            // cavern crossing y = 0 is a roofed cave over solid rock, not
-            // "floating" terrain (every column must ground out on the guaranteed
-            // solid bottom band; a floater here means the floor guarantee broke).
             let col = generator.generate_column_gen(cx as i32 - r, cz as i32 - r);
             let deep: Vec<_> = (SECTION_MIN_CY..0)
                 .map(|cy| {
@@ -193,7 +134,6 @@ pub fn audit(seed: u32) -> DebrisAudit {
                         *count += 1;
                     }
                     total_cols += 1;
-                    // ocean floor depth (highest solid where water sits above)
                     let (tb, ty) = top_block(&chunk, x, z);
                     if Block::from_id(tb) == Block::Water {
                         let mut fy = 0;
@@ -209,7 +149,6 @@ pub fn audit(seed: u32) -> DebrisAudit {
                         tall_chunk = (cx as i32 - r, cz as i32 - r);
                         tall_xz = (x, z);
                     }
-                    // overhang + floating scan, over the FULL cubic depth
                     let mut solid_below = false;
                     let mut prev_solid = false;
                     let mut col_oh = 0u32;
@@ -238,7 +177,6 @@ pub fn audit(seed: u32) -> DebrisAudit {
             }
         }
     }
-    // tallest column skin stack
     let tc = generate_chunk(seed, tall_chunk.0, tall_chunk.1);
     let (tx, tz) = tall_xz;
     let mut stack = String::new();
@@ -270,8 +208,6 @@ pub fn audit(seed: u32) -> DebrisAudit {
     }
 }
 
-/// Build a descending biome census (only entries with >0% share) from a count
-/// table indexed by biome id over `total` columns.
 fn biome_census(counts: &[u32], total: f64) -> Vec<BiomeShare> {
     let mut census: Vec<BiomeShare> = Biome::all()
         .map(|biome| BiomeShare {
@@ -284,25 +220,15 @@ fn biome_census(counts: &[u32], total: f64) -> Vec<BiomeShare> {
     census
 }
 
-// ---------------------------------------------------------------------------
-// Flood audit: true 3-D detached-debris census
-// ---------------------------------------------------------------------------
-
-/// Result of [`flood_audit`]: a true 3-D detached-debris census.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FloodAudit {
     pub seed: u32,
-    /// Total terrain-solid voxels in the region occupancy grid.
     pub solids: u64,
-    /// Terrain-solid voxels NOT reachable by a 6-connected flood from the
-    /// bedrock layer — genuine detached debris (should be ~0 / tiny ppm).
     pub detached_debris: u64,
-    /// Region dimensions `(w, w, depth)` the census ran over.
     pub region: (usize, usize, usize),
 }
 
 impl FloodAudit {
-    /// Detached debris as parts-per-million of solid terrain.
     pub fn ppm(&self) -> f64 {
         if self.solids == 0 {
             0.0
@@ -312,10 +238,8 @@ impl FloodAudit {
     }
 }
 
-/// True 3-D floating-debris census: build a region occupancy grid, flood-fill
-/// upward from the bedrock layer (6-connected, across chunk boundaries), and
-/// count solid terrain voxels NOT reachable from the bottom — genuine detached
-/// debris.
+/// Flood from bedrock up, 6-connected, across chunk borders. Whatever solid it can't reach is
+/// floating debris.
 pub fn flood_audit(seed: u32) -> FloodAudit {
     let r: i32 = 8;
     let n = (r * 2) as usize;
@@ -356,11 +280,6 @@ pub fn flood_audit(seed: u32) -> FloodAudit {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Relief audit: lowland-relief diagnostic
-// ---------------------------------------------------------------------------
-
-/// Distribution summary of a set of surface heights.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightStats {
     pub count: usize,
@@ -410,36 +329,25 @@ impl HeightStats {
     }
 }
 
-/// Result of [`relief_audit`]: land-biome surface relief over a window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReliefStats {
     pub seed: u32,
-    /// Window width/height in blocks (square).
     pub window_blocks: i32,
-    /// Land-column surface-height distribution.
     pub land: HeightStats,
-    /// Land columns whose top solid sits exactly at the waterline (`SEA_LEVEL`):
-    /// dry land at sea level (coastal flats), the natural depth-zero clustering.
     pub at_waterline: u64,
     pub at_waterline_pct: f64,
-    /// Land columns below the waterline (water laid on top — the pond-maze metric).
     pub flooded: u64,
     pub flooded_pct: f64,
-    /// Coarse 2-block-bucket histogram from 62..=80 (shares, 10 buckets).
     pub hist_pct: [f64; 10],
 }
 
-/// Bucket labels for [`ReliefStats::hist_pct`].
 pub const RELIEF_HIST_LABELS: [&str; 10] = [
     "62-63", "64-65", "66-67", "68-69", "70-71", "72-73", "74-75", "76-77", "78-79", "80+",
 ];
 
-/// Land-biome surface-relief diagnostic over a 24×24-chunk window. Reports the
-/// surface-height distribution, the at-waterline and flooded shares (both
-/// measured against `SEA_LEVEL`), and a coarse height histogram.
 pub fn relief_audit(seed: u32) -> ReliefStats {
     let gen = ChunkGenerator::new(seed);
-    let r: i32 = 12; // 24x24 chunks = 384x384 blocks
+    let r: i32 = 12;
 
     let mut land: Vec<i32> = Vec::new();
     let mut at_waterline = 0u64;
@@ -458,8 +366,6 @@ pub fn relief_audit(seed: u32) -> ReliefStats {
                     }
                     let surf = region.surf[i];
                     land.push(surf);
-                    // Top solid exactly at SEA_LEVEL is dry land at the waterline;
-                    // below it, water is laid on top (genuinely flooded).
                     if surf == SEA_LEVEL {
                         at_waterline += 1;
                     } else if surf < SEA_LEVEL {
@@ -470,9 +376,8 @@ pub fn relief_audit(seed: u32) -> ReliefStats {
         }
     }
 
-    // Coarse histogram, 2-block buckets from 62..=80.
     let n = land.len().max(1) as f64;
-    let mut hist = [0u64; 10]; // buckets [62,64),[64,66),...,[80,82)
+    let mut hist = [0u64; 10];
     for &y in &land {
         let b = ((y - 62).clamp(0, 19) / 2) as usize;
         hist[b.min(9)] += 1;
@@ -497,38 +402,18 @@ pub fn relief_audit(seed: u32) -> ReliefStats {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Roughness: walkability / spikiness metric
-// ---------------------------------------------------------------------------
-
-/// Result of [`roughness`]: surface walkability/spikiness over mountain-like
-/// biome columns of a 24×24-chunk window.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoughnessStats {
     pub seed: u32,
-    /// Number of mountain-like biome columns.
     pub mountain_cols: u64,
-    /// Mean of each column's steepest neighbour step.
     pub mean_max_step: f64,
-    /// Columns that stick ≥4 above ALL four neighbours (isolated spikes).
     pub pillar_pct: f64,
-    /// Columns whose steepest neighbour step is ≤2 (you can stand/walk).
     pub walkable_pct: f64,
-    /// Max-step histogram shares for buckets `0,1,2,3,4,5+`.
     pub max_step_hist_pct: [f64; 6],
 }
 
-/// Walkability / spikiness metric. For mountain-like biome columns, reports how
-/// steep the surface is between neighbours — the thing
-/// cross-sections and hillshades hide but that turns a mountain into a field of
-/// 1-wide pillars. `pillar%` = columns ≥4 above all four neighbours;
-/// `walkable%` = columns whose steepest neighbour step is ≤2. Returns `None`
-/// when the window holds no mountain columns.
 pub fn roughness(seed: u32) -> Option<RoughnessStats> {
     let r: i32 = 12;
-    // Peak biomes are rare at climate scale and seldom fall in the origin window,
-    // so centre the analysis window on a mountainous region located by a cheap
-    // biome scan. `None` only if the world has no mountains within the search.
     let (ccx, ccz) = find_mountain_chunk(seed)?;
     let n = (r * 2) as usize;
     let w = n * CHUNK_SX;
@@ -552,7 +437,7 @@ pub fn roughness(seed: u32) -> Option<RoughnessStats> {
     };
     let (mut mtn, mut pillars, mut walkable) = (0u64, 0u64, 0u64);
     let mut step_sum = 0i64;
-    let mut steps_hist = [0u64; 6]; // 0,1,2,3,4,5+ block max-step buckets
+    let mut steps_hist = [0u64; 6];
     for z in 1..w as i32 - 1 {
         for x in 1..w as i32 - 1 {
             let h = at(x, z);
@@ -591,9 +476,6 @@ pub fn roughness(seed: u32) -> Option<RoughnessStats> {
     })
 }
 
-/// Find a chunk near a mountainous region by scanning biomes coarsely outward.
-/// Returns the chunk coordinates of the first mountain-like column, or `None` if
-/// no mountains exist within the search radius.
 fn find_mountain_chunk(seed: u32) -> Option<(i32, i32)> {
     let gen = ChunkGenerator::new(seed);
     for wz in (-6000..6000).step_by(64) {
@@ -611,11 +493,6 @@ fn is_mountain_like(biome: Biome) -> bool {
     crate::biome::spec(biome).flags.mountain
 }
 
-// ---------------------------------------------------------------------------
-// Tests — the audits now run under `cargo test`. Values captured from the
-// current generator for the default seed 0x1234_5678 (see commit baseline).
-// These pin the `mc-worldgen-jaggedness` family of invariants.
-// ---------------------------------------------------------------------------
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,16 +501,14 @@ mod tests {
 
     #[test]
     fn flood_reachable_marks_only_floor_connected_solids() {
-        // 2x2 footprint, depth 3. A grounded column at (0,0) full height, and a
-        // single detached voxel at (1,1,2) with nothing under it.
         let w = 2usize;
         let depth = 3usize;
         let idx = |x: usize, y: usize, z: usize| (y * w + z) * w + x;
         let mut occ = vec![false; w * w * depth];
         for y in 0..depth {
-            occ[idx(0, y, 0)] = true; // grounded pillar
+            occ[idx(0, y, 0)] = true;
         }
-        occ[idx(1, 2, 1)] = true; // floating voxel (no floor under it)
+        occ[idx(1, 2, 1)] = true;
         let reach = flood_reachable(&occ, w, depth);
         assert!(
             reach[idx(0, 0, 0)] && reach[idx(0, 2, 0)],
@@ -644,9 +519,6 @@ mod tests {
         assert_eq!(floaters, 1);
     }
 
-    /// Floating-debris invariant: the per-column overhang scan finds ZERO truly
-    /// floating voxels (a solid with no solid anywhere below it in the column).
-    /// The genmap `audit` mode pins this at 0.
     #[test]
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn audit_has_zero_per_column_floating_debris() {
@@ -661,8 +533,6 @@ mod tests {
         assert!(a.overhangiest > 0);
     }
 
-    /// True 3-D detached-debris census stays within the documented tiny bound.
-    /// The invariant is "near-zero debris"; assert it stays well under 100 ppm.
     #[test]
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn flood_audit_detached_debris_within_bound() {
@@ -676,12 +546,6 @@ mod tests {
         );
     }
 
-    /// Relief sanity invariant: the land-biome surface keeps real rolling relief
-    /// (stdev well above 0 — NOT a collapsed flat plane), rises well above the
-    /// waterline, and the bulk of land biomes are dry. Near-coast lowland that
-    /// dips below sea level is expected (the depth field naturally crosses the
-    /// waterline), so this guards only against a catastrophic regression where
-    /// terrain sinks or flattens wholesale — not a tight flooded-share pin.
     #[test]
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn relief_audit_has_real_relief_and_mostly_dry_land() {
@@ -705,8 +569,6 @@ mod tests {
         );
     }
 
-    /// Jaggedness invariant: mountains are walkable ranges, not a field of
-    /// 1-wide pillars.
     #[test]
     #[ignore = "slow sweep; `make test-worldgen` runs it"]
     fn roughness_mountains_are_walkable_not_pillars() {

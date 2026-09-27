@@ -2,10 +2,8 @@ use super::*;
 
 #[test]
 fn falls_and_lands_on_floor() {
-    // Solid everywhere y < 64 (a thick floor), air above.
     let solid = |_x: i32, y: i32, _z: i32| y < 64;
     let mut pl = p(WorldPos::new(0.0, 70.0, 0.0));
-    // Large downward sweep: must clamp feet to the top of cell 63 (y=64).
     let blocked = pl.sweep(Axis::Y, -20.0, &solid);
     assert!(blocked);
     assert_eq!(pl.pos.y, 64.0);
@@ -13,7 +11,6 @@ fn falls_and_lands_on_floor() {
 
 #[test]
 fn does_not_tunnel_through_one_block_floor() {
-    // Only y == 0 is solid (a 1-block-thick platform).
     let solid = |_x: i32, y: i32, _z: i32| y == 0;
     let mut pl = p(WorldPos::new(0.0, 5.0, 0.0));
     let blocked = pl.sweep(Axis::Y, -20.0, &solid);
@@ -23,23 +20,19 @@ fn does_not_tunnel_through_one_block_floor() {
 
 #[test]
 fn stops_at_wall_moving_positive_x() {
-    // Wall at x >= 5.
     let solid = |x: i32, _y: i32, _z: i32| x >= 5;
-    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0)); // max.x = 4.3
+    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0));
     let blocked = pl.sweep(Axis::X, 2.0, &solid);
     assert!(blocked);
-    // max.x clamped to 5.0 => centre at 4.7.
     assert!((pl.pos.x - 4.7).abs() < 1e-5, "pos.x = {}", pl.pos.x);
 }
 
 #[test]
 fn stops_at_wall_moving_negative_x() {
-    // Wall at x <= 1 (cells 1 and below solid).
     let solid = |x: i32, _y: i32, _z: i32| x <= 1;
-    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0)); // min.x = 3.7
+    let mut pl = p(WorldPos::new(4.0, 64.0, 0.0));
     let blocked = pl.sweep(Axis::X, -3.0, &solid);
     assert!(blocked);
-    // min.x clamped to 2.0 (top of cell 1) => centre at 2.3.
     assert!((pl.pos.x - 2.3).abs() < 1e-5, "pos.x = {}", pl.pos.x);
 }
 
@@ -61,7 +54,6 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
         sneak: false,
     };
 
-    // Floor at y=0 (full cubes) + a 0.5-tall ledge filling cells x>=1 at y=1 (world y∈[1,1.5]).
     let half_step = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
         if y == 0 {
             Block::Stone.collision_boxes()
@@ -74,7 +66,7 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
             &[]
         }
     };
-    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5)); // feet on the floor top, walking +X into the ledge
+    let mut pl = p(WorldPos::new(0.5, 1.0, 0.5));
     for _ in 0..180 {
         pl.simulate(1.0 / 60.0, &Surroundings::dry(&half_step), walk_x);
     }
@@ -90,7 +82,6 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     );
     assert!(pl.on_ground, "player is grounded on the ledge");
 
-    // A FULL block (cells x>=1 at y=1 AND y=2) is NOT climbed — it's a wall.
     let full_block = |x: i32, y: i32, _z: i32| -> &'static [Aabb] {
         if y == 0 || ((y == 1 || y == 2) && x >= 1) {
             Block::Stone.collision_boxes()
@@ -114,10 +105,6 @@ fn grounded_player_auto_steps_up_a_half_block_but_not_a_full_one() {
     );
 }
 
-/// Trusted, slow reference: does the player AABB centred at `pos` overlap any
-/// solid cell? Shrinks the box by a symmetric tol on every side (so it is
-/// direction-agnostic by construction — any asymmetry in `sweep` shows up as
-/// a disagreement with this).
 fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: WorldPos, solid: &F) -> bool {
     let t = 1e-4;
     let x0 = (pos.x - f64::from(HALF_W) + t).floor() as i32;
@@ -138,10 +125,6 @@ fn ref_overlaps<F: Fn(i32, i32, i32) -> bool>(pos: WorldPos, solid: &F) -> bool 
     false
 }
 
-/// Reference separated-axis move (X then Z, like `sweep`) advancing in
-/// ~0.5 mm micro-steps and stopping before the first overlap. Moves *exactly*
-/// `disp` in open space (the final sub-step takes up the remainder, so there
-/// is no rounding drift). Obviously correct; the slow oracle for `sweep`.
 fn ref_move<F: Fn(i32, i32, i32) -> bool>(mut pos: WorldPos, disp: Vec3, solid: &F) -> WorldPos {
     let step = 5e-4f32;
     for axis in [0, 1] {
@@ -210,8 +193,6 @@ fn sweep_matches_reference_from_all_directions() {
         (-1.0, 1.0, "-X+Z"),
         (-1.0, -1.0, "-X-Z"),
     ];
-    // Translate the whole scene to probe positive, origin-crossing, and
-    // negative coordinates (floor()/cast/>>4 behave differently around 0).
     let bases: [(i32, i32, &str); 3] = [(0, 0, "pos"), (-10, -10, "origin"), (-21, -21, "neg")];
     let mut failures = Vec::new();
     for (bx, bz, bname) in bases {
@@ -233,17 +214,10 @@ fn sweep_matches_reference_from_all_directions() {
                 let len = (dx * dx + dz * dz).sqrt();
                 let wishdir = Vec3::new(dx / len, 0.0, dz / len);
                 let lateral = Vec3::new(-wishdir.z, 0.0, wishdir.x);
-                // Sample every other lateral offset and fewer steps: still
-                // dense enough to catch float-boundary phantom collisions,
-                // without a multi-second combinatorial blow-up.
                 for k in (-19..=19).step_by(2) {
                     let off = k as f32 * 0.05;
                     let start = centre - wishdir * 3.5 + lateral * off;
                     let (dt, speed) = (0.02f32, WALK);
-                    // sweep path. Start at full walk speed so the friction
-                    // ramp-up doesn't lag the reference mover (which moves at
-                    // exactly speed·dt from step one); this test probes the
-                    // collision sweep, not the acceleration curve.
                     let mut pl = p(start);
                     pl.on_ground = true;
                     pl.vel = wishdir * WALK;
@@ -253,17 +227,12 @@ fn sweep_matches_reference_from_all_directions() {
                         sprint: false,
                         sneak: false,
                     };
-                    // reference path (kept at floor height, like the grounded body)
                     let mut rpos = start;
                     for _ in 0..80 {
                         pl.update_core(dt, &solid, input);
                         rpos = ref_move(rpos, wishdir * (speed * dt), &solid);
                     }
                     let d = ((pl.pos.x - rpos.x).powi(2) + (pl.pos.z - rpos.z).powi(2)).sqrt();
-                    // Cardinals must track the reference tightly (the property the
-                    // float-boundary bug broke: phantom/pass-through collisions).
-                    // Diagonals slide along walls, where the two integrators round
-                    // a corner up to one sub-step apart — allow that discretisation.
                     let tol = if dx == 0.0 || dz == 0.0 { 0.02 } else { 0.12 };
                     if d > tol {
                         failures.push(format!(
@@ -361,8 +330,6 @@ fn sweep_does_not_skip_flush_wall_at_far_coordinates() {
 
 #[test]
 fn chest_collides_as_its_inset_box() {
-    // A single chest at cell (0, 64, 0); every other cell is empty. Exercises the
-    // general collision-box sweep with a non-full-cube shape.
     let boxes = |x: i32, y: i32, z: i32| {
         if (x, y, z) == (0, 64, 0) {
             Block::Chest
@@ -371,9 +338,8 @@ fn chest_collides_as_its_inset_box() {
         }
         .collision_boxes()
     };
-    let top = 64.0 + 14.0 / 16.0; // the chest's 14/16 collision top
+    let top = 64.0 + 14.0 / 16.0;
 
-    // Falling onto the chest lands the feet on its 14/16 top, not the full cell top.
     let mut faller = p(WorldPos::new(0.5, 66.0, 0.5));
     assert!(
         faller.sweep_boxes(Axis::Y, -5.0, &boxes),
@@ -385,8 +351,6 @@ fn chest_collides_as_its_inset_box() {
         faller.pos.y
     );
 
-    // Standing on the chest top, you can walk off it (no full-cell wall blocking the
-    // body just because its feet share the chest's cell).
     let mut on_top = p(WorldPos::new(0.5, top, 0.5));
     assert!(
         !on_top.sweep_boxes(Axis::X, 1.0, &boxes),
@@ -398,8 +362,6 @@ fn chest_collides_as_its_inset_box() {
         on_top.pos.x
     );
 
-    // At ground level beside the chest, walking into it stops at the 1/16 inset face,
-    // not the cell boundary.
     let mut walker = p(WorldPos::new(-1.0, 64.0, 0.5));
     assert!(
         walker.sweep_boxes(Axis::X, 2.0, &boxes),
@@ -415,10 +377,9 @@ fn chest_collides_as_its_inset_box() {
 #[test]
 fn a_walled_in_player_squeezes_out_the_open_side() {
     use petramond_world::block::Aabb;
-    // A block was placed on the player (or terrain streamed in around it):
-    // the body is INSIDE solid geometry, which no sweep resolves — sweeps
-    // ignore boxes the body already overlaps. Lifting cannot free it either
-    // (the wall is two cubes tall), so it must leave by the one open side.
+    // Body ends up stuck inside solid blocks (wall placed on player, or streamed in). Sweeps skip
+    // boxes already overlapping, so they can't push it out. The wall is two cubes tall, so lifting
+    // won't help either. The only way out is the one open side.
     let still = Input {
         wishdir: Vec3::ZERO,
         jump: false,
@@ -443,10 +404,6 @@ fn a_walled_in_player_squeezes_out_the_open_side() {
     );
     assert!(pl.on_ground && !pl.entombed(), "and is standing free again");
 
-    // Buried underground: stone in every direction, no free pose within
-    // reach and no clean way out — which is the ORDINARY case below the
-    // surface, not an exotic one. Holding the body still there loses it, so
-    // it climbs out through the rock and stops standing on the surface.
     let underground = |_x: i32, y: i32, _z: i32| -> &'static [Aabb] {
         if y < 8 {
             Block::Stone.collision_boxes()

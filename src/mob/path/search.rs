@@ -23,9 +23,6 @@ use super::{
     COST_DIAG, COST_FLAT,
 };
 
-/// The world probes one search slice reads (see [`super::find_path_nav`] for
-/// what each one means). Rebuilt by the caller for every slice: a search
-/// resumed on a later tick reads the world as it is then.
 pub struct SearchProbes<'p, S: ?Sized, U: ?Sized, F: ?Sized, G: ?Sized, C: ?Sized> {
     pub solid: &'p S,
     pub support: &'p U,
@@ -34,29 +31,18 @@ pub struct SearchProbes<'p, S: ?Sized, U: ?Sized, F: ?Sized, G: ?Sized, C: ?Size
     pub cell_cost: &'p C,
 }
 
-/// What a search slice came to.
 #[derive(Debug, PartialEq)]
 pub enum SearchPoll {
-    /// The search finished: the route toward the goal (possibly partial, or
-    /// empty when the start is no foothold), exactly as [`super::find_path_nav`]
-    /// returns it.
     Done(Vec<IVec3>),
-    /// The slice's expansion grant ran out first; call
-    /// [`run`](NavSearch::run) again to continue.
     Pending,
 }
 
-/// Where a search is in its lifecycle.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Phase {
-    /// `begin` was called; the start has not been checked yet.
     Fresh,
-    /// The frontier is live.
     Searching,
 }
 
-/// A resumable A* over footholds from `start` toward `goal` (see the module
-/// docs).
 pub struct NavSearch {
     start: IVec3,
     goal: IVec3,
@@ -64,11 +50,8 @@ pub struct NavSearch {
     g_score: FxHashMap<IVec3, u32>,
     came_from: FxHashMap<IVec3, IVec3>,
     open: BinaryHeap<Reverse<(u32, u32, [i32; 3])>>,
-    /// Closest cell to the goal seen so far, by heuristic — the partial-route
-    /// fallback.
     best: IVec3,
     best_h: u32,
-    /// Expansions across every slice, against `PathParams::max_nodes`.
     expanded: usize,
     steps: Vec<(IVec3, u32)>,
 }
@@ -91,7 +74,6 @@ impl Default for NavSearch {
 }
 
 impl NavSearch {
-    /// Reset for a new search from `start` to `goal`, keeping the buffers.
     pub fn begin(&mut self, start: IVec3, goal: IVec3) {
         self.start = start;
         self.goal = goal;
@@ -104,14 +86,10 @@ impl NavSearch {
         self.expanded = 0;
     }
 
-    /// The cell this search routes from.
     pub fn start(&self) -> IVec3 {
         self.start
     }
 
-    /// Octile distance to the goal: the cheapest diagonal-then-straight route
-    /// over flat ground, ignoring height (vertical moves cost ≥ `COST_FLAT`,
-    /// so this stays admissible).
     fn h(&self, c: IVec3) -> u32 {
         let dx = (c.x - self.goal.x).unsigned_abs();
         let dz = (c.z - self.goal.z).unsigned_abs();
@@ -119,8 +97,6 @@ impl NavSearch {
         COST_DIAG * lo + COST_FLAT * (hi - lo)
     }
 
-    /// Run until the search finishes or `grant` expansions have been spent in
-    /// this slice. Returns the outcome and the expansions this slice spent.
     pub fn run<S, U, F, G, C>(
         &mut self,
         params: PathParams,
@@ -134,16 +110,11 @@ impl NavSearch {
         G: Fn(IVec3, IVec3) -> bool + ?Sized,
         C: Fn(IVec3) -> u32 + ?Sized,
     {
-        // Sized views of the (possibly unsized) probes, for the generic
-        // cell predicates.
         let solid = |c: IVec3| (probes.solid)(c);
         let support = |c: IVec3| (probes.support)(c);
         let fluid = |c: IVec3| (probes.fluid)(c);
         let step_allowed = |a: IVec3, b: IVec3| (probes.step_allowed)(a, b);
         let passable_col = |c: IVec3| body_clear(c, params, &solid);
-        // A cell is a foothold if its floor *supports* it (solid ground, a
-        // partial shape's top, or the fluid surface) and the body fits above.
-        // Submerged fluid cells are passable, not footholds.
         let memo = CellMemo::<2048>::default();
         let foothold = |c: IVec3| {
             memo.get(c, |c| {
@@ -175,8 +146,6 @@ impl NavSearch {
                 break;
             };
             let current = IVec3::from_array(pos_arr);
-            // Skip stale heap entries (a cheaper path to `current` was found
-            // after this entry was queued).
             if g_at_pop > *self.g_score.get(&current).unwrap_or(&u32::MAX) {
                 continue;
             }
@@ -225,16 +194,12 @@ impl NavSearch {
             }
         }
 
-        // Goal unreachable within the node cap: walk toward the closest cell
-        // found.
         (
             SearchPoll::Done(reconstruct(&self.came_from, self.best)),
             spent,
         )
     }
 
-    /// Run a fresh search from `start` to `goal` to completion in one slice.
-    /// Returns the route and the expansions it cost.
     pub fn solve<S, U, F, G, C>(
         &mut self,
         start: IVec3,

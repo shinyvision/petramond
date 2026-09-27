@@ -12,9 +12,6 @@ const RIG: RigId = RigId(3);
 const OTHER_RIG: RigId = RigId(4);
 const DT: f32 = 1.0 / 60.0;
 
-/// A param `x` (default 0), one slot `s`, an event `e` that plays `b` in it,
-/// an event `cut` that plays `b` there at a priority no claim outranks, and
-/// two one-second clips: `a` turns the left arm 0 → 100°, `b` holds 10°.
 fn animator() -> Animator {
     let m = rig();
     let mut lib = ClipLibrary::new();
@@ -68,7 +65,6 @@ fn play(rig: RigId, clip: u16, clock: AnimatorClock) -> AnimatorPlay {
     }
 }
 
-/// One frame in driver order: release, the engine's own write, the claims.
 fn frame(driver: &mut ClaimDriver, a: &mut Animator, engine: f32, inputs: AnimatorInputs<'_>) {
     driver.release(a);
     a.set(a.graph().param("x").unwrap(), engine);
@@ -293,10 +289,6 @@ fn a_fired_event_runs_its_rule_only_on_its_own_rig() {
     assert_eq!(a.graph().clips().name(playing.clip), "b");
 }
 
-/// A rule that takes a claimed slot never drives the claim's scrub — the
-/// rule's clip runs at its own rate whatever progress the claim states —
-/// and once the rule has played out the claim comes back on its own
-/// montage, at its claimed progress.
 #[test]
 fn a_rule_in_a_claimed_slot_never_takes_the_scrub_and_the_claim_comes_back_after() {
     let mut a = animator();
@@ -350,8 +342,6 @@ fn a_rule_in_a_claimed_slot_never_takes_the_scrub_and_the_claim_comes_back_after
     assert!((a.playing(slot).unwrap().progress - 0.3).abs() < 1e-3);
 }
 
-/// A run claimed to play once plays to its end and stays ended while the
-/// claim stands: a standing claim is not a loop.
 #[test]
 fn a_run_that_plays_out_stays_ended_while_its_claim_stands() {
     let mut a = animator();

@@ -1,11 +1,3 @@
-//! Leaving a fluid onto a ledge: the one rule players and mobs share.
-//!
-//! A swimmer whose body breaks the surface may climb a ledge whose top sits at
-//! most [`CLIMB_CELLS`] above its fluid-surface foothold: the rise the
-//! pathfinder gives a climb edge. The fluid's `climb` row only decides how
-//! that rise is delivered; the rise itself is solved from the ledge and the
-//! feet, so no constant encodes a body size.
-
 use petramond_math::math::Vec3;
 use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Aabb;
@@ -15,41 +7,29 @@ use petramond_world::fluid::{FluidClimb, Immersion};
 use crate::entity::VELOCITY_SLACK;
 use crate::mob::CLIMB_CELLS;
 
-/// How far beyond the body's leading face the ledge probe looks (m).
 const PROBE_AHEAD: f32 = 0.2;
-/// Height aimed above the ledge top so the feet land on it instead of grazing the lip.
 const CLEARANCE: f32 = 0.1;
 const EPS: f32 = 1e-4;
 
-/// A swimming body that wants to reach the shore this tick.
 #[derive(Clone, Copy, Debug)]
 pub struct Swimmer {
     pub pos: WorldPos,
     pub vel_y: f32,
     pub half_width: f32,
     pub height: f32,
-    /// Downward acceleration (m/s², positive) the body falls with outside the fluid.
     pub gravity: f32,
-    /// The body's own jump take-off speed (m/s); a launch never exceeds it by
-    /// more than [`VELOCITY_SLACK`].
     pub jump_speed: f32,
 }
 
-/// How a swimmer leaves the fluid.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ShoreClimb {
-    /// Rise at least this fast (m/s): the ballistic speed that clears the ledge.
     Launch(f32),
-    /// Resolve this tick's horizontal move with a collision step this tall (m).
     Step(f32),
 }
 
-/// A collision box's vertical extent, in world space.
 type Span = (f64, f64);
 
 impl Swimmer {
-    /// The climb onto a reachable ledge ahead of `wish`, if any. A sinking
-    /// body gets none, so a failed attempt must settle before the next one.
     pub fn shore_climb(
         self,
         wish: Vec3,
@@ -76,10 +56,6 @@ impl Swimmer {
         })
     }
 
-    /// The highest collision top above the feet and within `reach` under the
-    /// body's footprint nudged ahead, when a body standing on it has
-    /// headroom: anything else rising past the ledge within body height is a
-    /// wall or a ceiling, not a shore.
     fn ledge_top(
         self,
         dir: Vec3,

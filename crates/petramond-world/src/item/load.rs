@@ -1,14 +1,3 @@
-//! Load item definitions from `assets/items.json` (serde).
-//!
-//! Mirror of `block::load`: every item's data row (stable recipe `key`, display
-//! `name`, stack size, held pose, tags, use handler) lives on disk, editable —
-//! and moddable — without a rebuild. Rows are keyed by registry name: an ENGINE
-//! item name overrides that item's row, a NAMESPACED key (`mod_id:name`)
-//! REGISTERS a new dynamic item (see [`crate::registry`]); a new bare name is
-//! an error. The item table is load-bearing (recipes resolve by key,
-//! inventories index by id), so the loader validates the file covers EVERY
-//! registered item exactly once — with unique keys — and fails loudly otherwise.
-
 use serde::{Deserialize, Serialize};
 
 use crate::block::Block;
@@ -18,89 +7,41 @@ use crate::tile::Tile;
 use super::definition::ItemDef;
 use super::{HeldPose, ItemTag, ItemType, ItemUse, Tool, ToolKind};
 
-/// One item row as written in `items.json`: a mirror of [`ItemDef`] with owned
-/// strings/Vecs. Pose floats ride as `f64` (JSON's native width) and narrow
-/// back to the exact `f32` their shortest decimal representation denotes.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawItemDef {
-    /// Registry name: an engine item name (override) or a namespaced
-    /// `mod_id:name` key (dynamic registration).
     pub item: String,
     pub key: String,
     pub name: String,
-    /// Optional info line shown under the name in the item's slot tooltip
-    /// (usage hints a name alone cannot carry); absent for ordinary items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub info: Option<String>,
     pub max_stack_size: u8,
-    /// First-person hold orientation of the sprite; absent = the upright
-    /// default every ordinary item carries ([`HeldPose::DEFAULT`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_pose: Option<RawPose>,
-    /// Which way the item's SPRITE art points, in degrees anticlockwise
-    /// from the tile's +X — the direction a flying or lodged item lays along
-    /// its heading (see [`ItemType::sprite_axis_roll`](super::ItemType::sprite_axis_roll)).
-    /// Absent = the tool diagonal every tool and weapon sprite is drawn to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite_axis: Option<f32>,
-    /// The sprite's flat FACE does its work (a shovel's scoop) rather than
-    /// its edge (a blade, a pick) — see [`ItemDef::sprite_face_leads`](super::ItemDef).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sprite_face_leads: bool,
-    /// Atlas tile name of the flat billboard sprite, for the items drawn as one
-    /// (tools, raw drops, door/torch icons). Absent for items whose icon comes
-    /// from their block or bbmodel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sprite: Option<String>,
-    /// `models.json` key of the bbmodel an ITEM-ONLY item renders as (held /
-    /// dropped / icon — e.g. the bucket). Absent for sprite items and for
-    /// block-items (their look follows their block).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<crate::block_model::BlockModelKind>,
-    /// Tag names: bare engine tags or namespaced `mod_id:name` pack tags
-    /// (interned at load — see [`ItemTag::resolve`]). Optional: a row that
-    /// describes its membership through the `data` surface instead (which is
-    /// the form a `patch` row can reach) has no tags to state.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
-    /// Registry name of the block this item places — the ONE source of the
-    /// block↔item mapping (`ItemType::from_block`/`as_block`), engine and
-    /// pack rows alike. Absent for item-only items.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block: Option<String>,
-    /// Engine use handler (see [`ItemUse`]): a bare name for parameterless
-    /// handlers (`"use": "shear"`) or a tagged object whose params ride inside
-    /// (`"use": {"bucket_pour": {"becomes": "petramond:wooden_bucket", "fluid":
-    /// "petramond:water"}}`).
     #[serde(default, rename = "use", skip_serializing_if = "Option::is_none")]
     pub use_: Option<RawItemUse>,
-    /// Which raycast this item's use click targets with (see
-    /// [`UseRay`](super::UseRay)); absent = the normal fluid-transparent ray.
     #[serde(default, skip_serializing_if = "RawUseRay::is_solid")]
     pub use_ray: RawUseRay,
-    /// Namespaced consumer-data entries (`"ns:key": <any JSON>`): the item
-    /// interop surface. A key names a CONSUMING system's vocabulary — engine
-    /// consumers (`petramond:fuel`, `petramond:tool`) and mod consumers
-    /// (`furniture:pigment`) alike — and the value is opaque JSON that
-    /// consumer parses. Any pack may attach any consumer's key to its own
-    /// rows, or to EXISTING rows via `{"patch": ..., "data": ...}` rows.
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub data: serde_json::Map<String, serde_json::Value>,
-    /// Edible-item data (hold right mouse to eat); absent = not food.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub food: Option<RawFood>,
-    /// Dropped-entity environmental reaction (see
-    /// [`DroppedReaction`](super::DroppedReaction)); absent = inert.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dropped_reaction: Option<RawDroppedReaction>,
 }
 
-/// A row's `use` field: a bare engine handler name (`"shear"`) or a tagged
-/// object carrying the handler's row params (`{"bucket_fill": {"becomes":
-/// ...}}` — the `effects.json` behavior shape). Resolved to [`ItemUse`] in
-/// [`convert`]; a parameterized handler written bare is a load error, so a
-/// bucket can never fall back to some hardcoded engine counterpart.
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub(super) enum RawItemUse {
@@ -108,7 +49,6 @@ pub(super) enum RawItemUse {
     Tagged(RawTaggedUse),
 }
 
-/// The parameterized engine use handlers, externally tagged by handler key.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RawTaggedUse {
@@ -116,32 +56,19 @@ pub(super) enum RawTaggedUse {
     BucketPour(RawBucketPour),
 }
 
-/// A fill handler's row params: per fluid the bucket scoops, the item the
-/// held one becomes — keyed by the fluid BLOCK's registry name
-/// (`{"petramond:water": "petramond:water_bucket", "petramond:lava": ...}`).
-/// The keys are the whole restriction: list every fluid for the universal
-/// bucket, one for a bucket that only takes that fluid. A key that is not a
-/// fluid block is a load error, so a typo can never ship a bucket that
-/// quietly scoops nothing.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawBucketFill {
     pub becomes: std::collections::BTreeMap<String, String>,
 }
 
-/// A pour handler's row params: the fluid block this bucket pours and the
-/// (empty) item the held one becomes.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawBucketPour {
-    /// Registry name of the resulting item.
     pub becomes: String,
-    /// Registry name of the fluid block poured.
     pub fluid: String,
 }
 
-/// A bucket row's fluid block name to its block: any registered block whose
-/// row makes it a fluid, never a fixed list of fluid names.
 fn resolve_bucket_fluid(names: &ContentNames, name: &str) -> Result<crate::block::Block, String> {
     names
         .blocks
@@ -151,37 +78,26 @@ fn resolve_bucket_fluid(names: &ContentNames, name: &str) -> Result<crate::block
         .ok_or_else(|| format!("bucket fluid '{name}' is not a fluid block"))
 }
 
-/// A dropped-reaction declaration in `items.json`: the fluid it reacts in,
-/// what the stack becomes, and the optional per-entity presentation.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawDroppedReaction {
-    /// Registry name of the fluid block the entity must be inside.
     pub fluid: String,
-    /// Registry name of the item the whole stack becomes.
     pub result: String,
-    /// A one-shot burst bundle key (`particle_emitters.json`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub burst: Option<String>,
-    /// A `sounds.json` key played once per transformed entity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sound: Option<String>,
 }
 
-/// A food declaration in `items.json`: how long the eat takes and which
-/// status effects it grants on being eaten.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawFood {
-    /// Game ticks of held-button eating before the item is consumed.
     #[serde(default = "default_eat_ticks")]
     pub eat_ticks: u32,
-    /// Status effects granted when the eat completes.
     #[serde(default)]
     pub effects: Vec<RawFoodEffect>,
 }
 
-/// One granted effect: an `effects.json` registry key + duration in ticks.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawFoodEffect {
@@ -189,12 +105,10 @@ pub(super) struct RawFoodEffect {
     pub ticks: u32,
 }
 
-/// 3 seconds at 20 TPS — the standard bite.
 fn default_eat_ticks() -> u32 {
     60
 }
 
-/// A row's `use_ray`: `"solid"` or `{"fluids": [block names]}`.
 #[derive(Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum RawUseRay {
@@ -221,35 +135,19 @@ impl RawUseRay {
     }
 }
 
-/// The `petramond:tool` data entry: family, harvest gate, and — optionally —
-/// the two properties a gate cannot express on its own.
-///
-/// The shipped mining ladder is stone `2`, iron `3`, diamond `4`; rung `1`
-/// carries only the shears since the wooden tools were retired. A row that
-/// states only `kind` and `tier` gets exactly that ladder's speed and damage,
-/// so this surface costs the engine's own rows nothing.
-///
-/// `speed` and `damage` exist because a MOD adding a material owns what that
-/// material is like, and materials are not points on one line: a soft metal
-/// can reach everything and dig like a fist.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawTool {
     pub kind: ToolKind,
     pub tier: u8,
-    /// Mining speed over the bare hand. Defaults to the tier's rung.
     #[serde(default)]
     pub speed: Option<f32>,
-    /// Melee damage `[min, max]`. Defaults to the `(kind, tier)` rung.
     #[serde(default)]
     pub damage: Option<[f32; 2]>,
-    /// Knockback multiplier over the victim's own. Defaults to `1.0`.
     #[serde(default)]
     pub knockback: Option<f32>,
 }
 
-/// The `petramond:projectile` data entry — see [`super::Projectile`]; every
-/// field optional over that type's defaults.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawProjectile {
@@ -261,8 +159,6 @@ pub(super) struct RawProjectile {
     pub sticks: Option<bool>,
 }
 
-/// The `petramond:fuel` data entry: game ticks one of this item burns as
-/// furnace fuel.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct RawFuel {
@@ -277,9 +173,6 @@ pub(super) struct RawPose {
     pub roll: f64,
 }
 
-/// Load the item table from every `items.json` layer of `packs` (base + the
-/// enabled packs, later packs replacing rows by item), resolving against the
-/// `names` built from those same layers.
 pub(super) fn table(
     packs: &crate::assets::PackSet,
     names: &ContentNames,
@@ -294,9 +187,6 @@ pub(super) fn parse(text: &str) -> Result<&'static [ItemDef], String> {
     parse_test_layers(&[text])
 }
 
-/// Test harness: parse synthetic layers against a name table built from those
-/// same layers (+ the shipped blocks for `block` link resolution), mirroring
-/// the real bootstrap without touching the global registries.
 #[cfg(test)]
 pub(super) fn parse_test_layers(texts: &[&str]) -> Result<&'static [ItemDef], String> {
     let (blocks, _) =
@@ -313,9 +203,6 @@ pub(super) fn parse_layers(
     let mut texts = texts.to_vec();
     texts.push(&creative);
     let mut keys = std::collections::HashSet::new();
-    // Data patches split out of every layer during the parse (layer order
-    // preserved); the convert applies each row's matching patches. RefCell:
-    // the parse and convert closures both borrow the collection.
     let patches = std::cell::RefCell::new(Vec::new());
     let defs = crate::registry::resolve_catalog(
         &texts,
@@ -386,8 +273,6 @@ fn convert(
         None => None,
         Some(RawItemUse::Bare(name)) => Some(match name.as_str() {
             "shear" => ItemUse::Shear,
-            // Parameterized handlers written bare would need a hardcoded
-            // engine counterpart — the row must declare its own.
             "bucket_fill" | "bucket_pour" => {
                 return Err(format!(
                     "use '{name}' needs its result item: {{\"{name}\": {{\"becomes\": \
@@ -434,8 +319,6 @@ fn convert(
         crate::registry::engine_data::<bool>(data, "petramond:creative_only")?.unwrap_or(false);
     let world_tool = crate::registry::engine_data::<String>(data, "petramond:creative_tool")?
         .map(|name| &*Box::leak(name.into_boxed_str()));
-    // Fuel and tool are ordinary data-surface consumers whose system is the
-    // engine (furnace / mining) — same vocabulary a mod consumer uses.
     let fuel_burn_ticks = crate::registry::engine_data::<RawFuel>(data, "petramond:fuel")?
         .map_or(0, |f| f.burn_ticks);
     let tool = match crate::registry::engine_data::<RawTool>(data, "petramond:tool")? {
@@ -618,8 +501,6 @@ fn convert(
 mod tests {
     use super::*;
 
-    /// The shipped `assets/items.json` must load fully — the same gate the game
-    /// applies at startup, surfaced as a test so a bad edit fails CI, not a launch.
     #[test]
     fn shipped_items_json_loads_fully() {
         let (text, path) =
@@ -665,10 +546,6 @@ mod tests {
     fn namespaced_pack_row_registers_a_new_item_with_links() {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
-        // A dynamic item linking to an engine block (any registered block name
-        // resolves the same way) and carrying an engine use handler whose
-        // result item is the ROW'S OWN declaration — a pack bucket fills into
-        // the pack's counterpart, never a hardcoded engine item.
         let layer = r#"{"items": [
             {"item": "mymod:filled_gadget", "key": "mymod:filled_gadget", "name": "Filled Gadget", "max_stack_size": 1, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []},
             {"item": "mymod:gadget", "key": "mymod:gadget", "name": "Gadget", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "petramond:stone", "use": {"bucket_fill": {"becomes": {"petramond:water": "mymod:filled_gadget"}}}}
@@ -690,7 +567,6 @@ mod tests {
             panic!("the gadget carries its fill use: {:?}", gadget.item_use);
         };
         assert_eq!(fills, [(crate::block::Block::Water, filled)]);
-        // Engine rows are untouched.
         assert_eq!(defs[ItemType::Stone.id() as usize].item, ItemType::Stone);
     }
 
@@ -698,30 +574,21 @@ mod tests {
     fn bare_additions_and_bad_links_are_rejected() {
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
-        // A NEW bare item name is refused at name-table build.
         let bare = r#"{"items": [{"item": "gadget", "key": "gadget", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
         let err = parse_test_layers(&[&base, bare]).expect_err("bare additions refused");
         assert!(err.contains("gadget") && err.contains("namespace"), "{err}");
-        // An unknown use handler is a load error (there are only engine handlers;
-        // mods react to item use via the `item_use_pre` event).
         let bad_use = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "zap"}]}"#;
         let err = parse_test_layers(&[&base, bad_use]).expect_err("unknown use refused");
         assert!(err.contains("unknown use handler"), "{err}");
-        // A bucket handler written BARE has no declared result item — refused,
-        // never defaulted to an engine bucket.
         let bare_bucket = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": "bucket_fill"}]}"#;
         let err = parse_test_layers(&[&base, bare_bucket]).expect_err("bare bucket use refused");
         assert!(err.contains("becomes"), "{err}");
-        // A declared `becomes` naming an unknown item is a load error.
         let bad_becomes = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_pour": {"becomes": "mymod:nope", "fluid": "petramond:water"}}}]}"#;
         let err = parse_test_layers(&[&base, bad_becomes]).expect_err("unknown becomes refused");
         assert!(err.contains("becomes"), "{err}");
-        // A fill keyed by a block that is not a fluid is a load error — a
-        // typo would otherwise ship a bucket that scoops nothing.
         let bad_fluid = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "use": {"bucket_fill": {"becomes": {"petramond:stone": "mymod:g"}}}}]}"#;
         let err = parse_test_layers(&[&base, bad_fluid]).expect_err("non-fluid key refused");
         assert!(err.contains("fluid"), "{err}");
-        // An unknown block link is a load error.
         let bad_block = r#"{"items": [{"item": "mymod:g", "key": "mymod:g", "name": "G", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": [], "block": "bogus_block"}]}"#;
         let err = parse_test_layers(&[&base, bad_block]).expect_err("unknown block refused");
         assert!(err.contains("bogus_block"), "{err}");
@@ -733,10 +600,8 @@ mod tests {
     #[test]
     fn loader_rejects_incomplete_tables_and_duplicate_keys() {
         let row = r#"{"item": "petramond:air", "key": "petramond:air", "name": "Air", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}"#;
-        // One valid row is not a full table.
         let partial = format!("{{\"items\": [{row}]}}");
         assert!(parse(&partial).err().unwrap().contains("missing row"));
-        // Two DIFFERENT items sharing one key: rejected (recipes resolve by key).
         let (base, _) =
             crate::assets::read_base_text("items.json").expect("assets/items.json must ship");
         let clash = r#"{"items": [{"item": "petramond:grass", "key": "petramond:stone", "name": "Grass", "max_stack_size": 64, "held_pose": {"pitch": 0, "yaw": 1.8, "roll": 0}, "tags": []}]}"#;
@@ -751,11 +616,6 @@ mod tests {
 mod data_tests {
     use super::*;
 
-    /// The item-data interop surface end to end: a row's own `data` entries
-    /// compile; a later layer's `{"patch", "data"}` row attaches entries to an
-    /// EXISTING (engine) row and overrides earlier keys (later layer wins);
-    /// the engine's own fuel/tool consumers read the same surface; a patch
-    /// naming an unknown row is a load error.
     #[test]
     fn data_entries_load_and_patch_rows_merge_by_layer_order() {
         let (base, _) =
@@ -788,7 +648,6 @@ mod data_tests {
                 .any(|(k, v)| *k == "furniture:pigment" && v.contains("222")),
             "a patch attaches data to an engine row"
         );
-        // The shipped tool rows still compile through `petramond:tool`.
         let pick = &defs[ItemType::StonePickaxe.id() as usize];
         assert_eq!(pick.tool.map(|t| t.tier), Some(2));
 

@@ -28,7 +28,6 @@ pub enum CaptureSource {
     World,
 }
 
-/// One capture to take on the frame being drawn. `size: None` = the frame's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CaptureRequest {
     pub id: u64,
@@ -36,13 +35,11 @@ pub struct CaptureRequest {
     pub size: Option<(u32, u32)>,
 }
 
-/// A capture's pixels, or why it could not be read.
 pub struct Captured {
     pub id: u64,
     pub frame: Result<RenderedFrame, String>,
 }
 
-/// A capture-sized image the grade pass or the scaled blit draws into.
 struct Target {
     size: (u32, u32),
     texture: wgpu::Texture,
@@ -64,24 +61,15 @@ struct InFlight {
 
 #[derive(Default)]
 pub(super) struct Captures {
-    /// This frame's captures, copied at its capture point.
     taking: Vec<Taking>,
-    /// Oldest first.
     in_flight: VecDeque<InFlight>,
-    /// Results not handed out yet.
     done: Vec<Captured>,
-    /// Readbacks and targets kept for the next capture of the same size.
     spare_readbacks: Vec<Readback>,
     spare_targets: Vec<Target>,
-    /// The owned scene target of a capturing frame the window's size.
     window_target: Option<FrameTarget>,
-    /// This frame takes a `World` capture, so its world passes through the
-    /// scene texture and the grade pass.
     pub(super) world_due: bool,
 }
 
-/// Reuse keeps an export at a steady size from allocating per frame; what an
-/// earlier size left behind goes once newer spares outnumber the ring.
 fn keep_spare<T>(spares: &mut Vec<T>, spare: T, depth: usize) {
     spares.push(spare);
     if spares.len() > depth {
@@ -90,18 +78,10 @@ fn keep_spare<T>(spares: &mut Vec<T>, spare: T, depth: usize) {
 }
 
 impl Renderer {
-    /// Readbacks the ring holds: the frames the device can have in flight,
-    /// plus the one being recorded.
     fn capture_ring_depth(&self) -> usize {
         self.config.desired_maximum_frame_latency as usize + 1
     }
 
-    /// Draw this frame, taking `captures` at its capture point; `present`
-    /// shows it on the window. Returns the ids taken this frame (a failed
-    /// take included, whose failure comes back from
-    /// [`take_captured`](Self::take_captured)); the rest wait for a free ring
-    /// slot. A frame with nothing to present and nothing to capture draws
-    /// nothing.
     pub fn draw_frame(&mut self, captures: &[CaptureRequest], present: bool) -> Vec<u64> {
         let taken = self.prepare_captures(captures);
         if let Some(sized) = self.sized_frames.take() {
@@ -151,27 +131,22 @@ impl Renderer {
         taken
     }
 
-    /// Every capture result since the last call: failures, and the reads that
-    /// have come back, oldest first. Never blocks.
     pub fn take_captured(&mut self) -> Vec<Captured> {
         self.collect_captures(false);
         std::mem::take(&mut self.captures.done)
     }
 
-    /// Every capture still on its way back, waited for.
     pub fn finish_captures(&mut self) -> Vec<Captured> {
         self.collect_captures(true);
         std::mem::take(&mut self.captures.done)
     }
 
-    /// Why no capture can be read from this renderer, if none can.
     pub fn capture_refusal(&self) -> Option<String> {
         let format = self.config.format;
         (!CAPTURE_FORMATS.contains(&format))
             .then(|| format!("the colour format {format:?} cannot be read back as 8-bit RGBA"))
     }
 
-    /// Captures on their way back from the GPU.
     pub fn captures_in_flight(&self) -> usize {
         self.captures.in_flight.len()
     }
@@ -218,9 +193,6 @@ impl Renderer {
         taken
     }
 
-    /// The target (none for a `Scene` capture at the frame's own size) and the
-    /// readback of one capture, allocated inside an out-of-memory scope so a
-    /// frame too large for the GPU fails that capture, never the device.
     fn capture_resources(
         &mut self,
         request: &CaptureRequest,
@@ -287,8 +259,6 @@ impl Renderer {
         }
     }
 
-    /// At the capture point: every capture of this frame copied out of
-    /// `scene`, the texture the frame's scene just landed in.
     pub(super) fn encode_captures(&mut self, enc: &mut wgpu::CommandEncoder, scene: &FrameTarget) {
         let taking = std::mem::take(&mut self.captures.taking);
         for capture in &taking {
@@ -351,8 +321,6 @@ impl Renderer {
         while self.collect_oldest_capture(wait) {}
     }
 
-    /// Collect the oldest capture on its way back if it has landed (`wait`:
-    /// once it has). `false` = none was collected.
     fn collect_oldest_capture(&mut self, wait: bool) -> bool {
         let Some(oldest) = self.captures.in_flight.front() else {
             return false;
@@ -385,7 +353,6 @@ mod tests {
     use petramond::gui::UiSnapshot;
     use petramond_world::gui_state::GuiKind;
 
-    /// A full-frame solid of `rgb` for one UI layer's document.
     fn solid(size: (u32, u32), rgb: [f32; 3]) -> petramond_ui::DrawList {
         let mut list = petramond_ui::DrawList::default();
         let font = petramond_ui::text::Font::builtin();
@@ -433,7 +400,6 @@ mod tests {
             eprintln!("[skip] no wgpu adapter; capture readback not run");
             return;
         }
-        // With a frame size of its own, and at the window's.
         for sized in [true, false] {
             let mut renderer = pollster::block_on(crate::new_offscreen_renderer(
                 64,
@@ -461,12 +427,10 @@ mod tests {
                     scene: layer(renderer.scene_ui_viewport(), &scene, &content, &overlays),
                     window: layer(renderer.window_ui_viewport(), &window, &content, &overlays),
                 }));
-                // Every third frame is only drawn: a held frame reads nothing.
                 let captures: Vec<CaptureRequest> = (i % 3 != 2)
                     .then(|| CaptureRequest {
                         id: i,
                         source: CaptureSource::Scene,
-                        // Every other capture at half size: the scaled route.
                         size: (i % 2 == 1).then_some((frame.0 / 2, frame.1 / 2)),
                     })
                     .into_iter()

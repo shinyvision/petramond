@@ -147,7 +147,6 @@ fn history_restores_original_snapshots_despite_changed_blocks_and_inventories() 
             assert_eq!(&server.world.snapshot_cell(pos).unwrap(), expected);
         }
     }
-    // A player moving into the footprint must not invalidate history either.
     server.sessions[0].player.pos = WorldPos::block_center(pos);
     server
         .apply_creative(0, CreativeAction::Undo, &mut events)
@@ -309,7 +308,6 @@ fn a_build_beyond_the_old_save_limits_places_and_restores_as_one_history_entry()
     server
         .place_schematic(0, &schematic, origin.to_array(), 1, &mut events)
         .unwrap_err();
-    // The rotated footprint leaves loaded terrain; no section may be partially pasted.
     assert_eq!(
         server.world.snapshot_cell(origin).unwrap().block,
         Block::Air

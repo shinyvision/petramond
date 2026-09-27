@@ -1,13 +1,3 @@
-//! Petramond GUI Builder — a document editor for petramond-ui `*.gui.json` GUIs.
-//! The preview embeds the real petramond-ui runtime through its software
-//! rasterizer, so what you see is pixel-exactly what the game renders.
-//!
-//! CLI (the asset options go before the command):
-//!   gui-builder [--assets <dir>] [--pack <dir>]... [project.llgui]
-//!   gui-builder [...] --export <in.llgui> [out.gui.json]
-//!   gui-builder [...] --screenshot <project.llgui> <out.png>
-//!   gui-builder [...] --make-samples
-
 mod app;
 mod assets;
 mod bindings;
@@ -68,7 +58,6 @@ fn main() {
     }
 }
 
-/// Split the leading asset options off the command line.
 fn parse(args: Vec<String>) -> Result<(AssetRoots, Vec<String>), String> {
     let mut base = None;
     let mut packs = Vec::new();
@@ -115,7 +104,6 @@ fn run_gui(open: Option<PathBuf>, roots: AssetRoots) -> Result<(), eframe::Error
     )
 }
 
-/// Headless export: write the project's bare document as `.gui.json`.
 fn cli_export(roots: &AssetRoots, args: &[String]) -> Result<(), String> {
     let input = args.first().ok_or("--export needs an input .llgui path")?;
     let input = Path::new(input);
@@ -124,8 +112,6 @@ fn cli_export(roots: &AssetRoots, args: &[String]) -> Result<(), String> {
         Some(p) => PathBuf::from(p),
         None => input.with_file_name(io::export_file_name(&project.document)),
     };
-    // The game's own load-time rules: anything reported here is a document
-    // the game would skip.
     let dir = input.parent();
     let roots = roots.for_project(dir, &project.editor.asset_roots);
     let theme = theme_src::load(&roots, 0);
@@ -141,8 +127,6 @@ fn cli_export(roots: &AssetRoots, args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-/// Render a project's preview (no editor chrome) to a PNG — the end-to-end
-/// verification path for the preview pipeline.
 fn cli_screenshot(roots: &AssetRoots, args: &[String]) -> Result<(), String> {
     let (input, output) = match args {
         [i, o, ..] => (Path::new(i), Path::new(o)),

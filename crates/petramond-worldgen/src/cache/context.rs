@@ -1,42 +1,17 @@
-//! [`GenContext`]: what a memoized generation fact derives from besides its
-//! position, compared by value.
-//!
-//! Every shared memo key starts with one. A fact is a pure function of the
-//! world seed, the engine's code and the data catalogs the pipeline loaded;
-//! the context names the seed and the CONTENT of those catalogs (their
-//! fingerprints), never where they live in memory. Two generators over equal
-//! catalogs therefore share entries, and a reloaded or different pack set can
-//! never be answered from another's — even if its tables land at an address
-//! a freed table once had.
-//!
-//! Sub-catalog identities inside a key follow the same rule: an excavation
-//! row is named by its salt (the hash of its unique name), a projection rule
-//! by its index within that row, each covered by the catalog fingerprint.
-
 use crate::data::excavations::{self, Excavations};
 use crate::data::underground::{self, UndergroundBiomes};
 use crate::data::{climate_table, terrain};
 
-/// The seed and catalog fingerprints a generation fact derives from. See the
-/// module docs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct GenContext {
     seed: u32,
     habitats: u64,
-    /// `None` for a fact that is defined not to read excavations at all (the
-    /// natural cave source sampled without their influence), so it can never
-    /// be confused with the same fact under any excavation catalog.
     excavations: Option<u64>,
-    /// The climate placement table (which biome a climate sample lands in).
     climate: u64,
-    /// The terrain density recipe (the height / shape graph).
     terrain: u64,
 }
 
 impl GenContext {
-    /// The context of a field over the habitat and excavation catalogs. The
-    /// climate table and terrain recipe are process-wide (every generator
-    /// reads the installed ones), so they are taken from the loaded tables.
     pub(crate) fn new(
         seed: u32,
         underground: &UndergroundBiomes,
@@ -51,7 +26,6 @@ impl GenContext {
         }
     }
 
-    /// The context of the process's loaded catalogs.
     pub fn installed(seed: u32) -> Self {
         Self::new(seed, underground::table(), excavations::table())
     }
@@ -60,8 +34,6 @@ impl GenContext {
         self.seed
     }
 
-    /// One fingerprint over every catalog the context names — what a
-    /// persisted cache stamps beside the seed.
     pub fn tables(self) -> u64 {
         self.habitats.rotate_left(17)
             ^ self.excavations.unwrap_or(0)
@@ -69,7 +41,6 @@ impl GenContext {
             ^ self.terrain.rotate_left(47)
     }
 
-    /// This context for a fact that reads no excavation.
     pub(crate) fn without_excavations(self) -> Self {
         Self {
             excavations: None,
@@ -82,8 +53,6 @@ impl GenContext {
 mod tests {
     use super::*;
 
-    /// Equal catalogs loaded twice — at different addresses — are one
-    /// context; a different seed or catalog content is another.
     #[test]
     fn contexts_compare_catalog_content_not_addresses() {
         let a = underground::test_table(&[]);

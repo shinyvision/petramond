@@ -3,8 +3,6 @@ use crate::world::placement::authored::Turn;
 
 use super::{Bounds, Cell, Template};
 
-/// A borrowed compiled piece positioned in world space. Copying a placement
-/// never copies the template's blocks or metadata.
 #[derive(Clone, Copy)]
 pub struct Placement<'a> {
     template: &'a Template,
@@ -48,8 +46,6 @@ impl<'a> Placement<'a> {
         self.turn
     }
 
-    /// Visit only the intersection. World positions accompany immutable local
-    /// cells, allowing generation, editor previews and live commits to share it.
     pub fn visit(self, clip: Bounds, mut emit: impl FnMut(IVec3, &Cell)) {
         if !self.bounds.intersects(clip) {
             return;
@@ -62,8 +58,6 @@ impl<'a> Placement<'a> {
         }
     }
 
-    /// Align the child's connector in the cell immediately outside this
-    /// piece's connector. Collision/terrain acceptance belongs to the caller.
     pub fn attach<'b>(
         self,
         socket: &str,

@@ -21,7 +21,6 @@ fn world() -> ServerWorld {
     w
 }
 
-/// Build `block` at `at` with authored properties, the way a structure does.
 fn author(w: &mut ServerWorld, block: Block, at: IVec3, props: &[(&str, &str)]) {
     let props: BTreeMap<String, String> = props
         .iter()
@@ -42,8 +41,6 @@ fn a_neighbour_derived_shape_still_counts_as_built() {
     let at = IVec3::new(4, 64, 4);
     author(&mut w, Block::OakStairs, at, &[("facing", "north")]);
     let design = Record::at(w.data(), at);
-    // A second stair beside it turns the first into a corner: its stored
-    // shape changes, its authored intent does not.
     let neighbour = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z]
         .into_iter()
         .flat_map(|d| ["north", "south", "east", "west"].map(|f| (d, f)))

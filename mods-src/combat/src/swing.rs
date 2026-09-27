@@ -1,87 +1,52 @@
 //! The tool swing law.
 //!
-//! While a body's MAIN hand swings one of this pack's tools, this module
-//! animates the hand: it holds the engine's player-rig CLIPS for the play
-//! in flight in each rig's claim slot (`set_player_animator_plays`) — the
-//! viewmodel's arms in first person, the body in third — scrubbed at the
-//! pack's own clock, so the frame every mirror draws is the frame the clock
-//! is at and a hit landing at the clip's impact lands where it is seen. The
-//! engine's own swing for that hand is silenced by the Swing-motion claim
-//! the pack publishes beside it — two swings on one hand fight each other,
-//! so the claim is what makes the pack's clock the whole motion.
+//! While a body's MAIN hand swings one of this pack's tools, this module animates the
+//! hand: it holds the engine's player-rig CLIPS for the play in flight, in each rig's
+//! claim slot (`set_player_animator_plays`), viewmodel arms in first person, body in
+//! third, scrubbed at the pack's own clock. Whatever frame the clock is at is the
+//! frame every mirror draws, so a hit landing at the clip's impact lands where it's
+//! seen. The engine's own swing for that hand gets silenced by the Swing-motion claim
+//! published beside it: two swings on one hand fight each other, so the claim is what
+//! makes the pack's clock the whole motion.
 //!
-//! One pure law, both mirrors: the server tick system animates every body at
-//! 20 Hz (observers replicate the answer) and the client frame hook runs the
-//! same function for the local player at frame rate — a round trip earlier,
-//! exactly the shield's prediction shape. The engine's eased pose lane
-//! smooths both clocks toward one curve, so the tick and frame rates never
-//! visibly disagree.
+//! One pure law, both mirrors: server tick system animates every body at 20 Hz
+//! (observers replicate the answer), client frame hook runs the same function for
+//! the local player at frame rate, a round trip earlier, same shape as the shield's
+//! prediction. The engine's eased pose lane smooths both clocks toward one curve so
+//! tick and frame rates never visibly disagree.
 //!
-//! Use jabs (place / throw / interact) are deliberately NOT animated here:
-//! the pack claims only the Swing motion, leaving the engine's default jab
-//! playing on a claimed hand, so a tool interacts exactly like any item.
+//! Use jabs (place / throw / interact) aren't animated here on purpose: the pack
+//! claims only the Swing motion, leaving the engine's default jab playing on a
+//! claimed hand, so a tool interacts just like any item.
 //!
-//! Every number the law runs on — which clips, the windows, where the arc
-//! opens to the next attack — is the family's row ([`crate::families`]);
-//! the state machine here is the law.
+//! Every number the law runs on, which clips, the windows, where the arc opens to
+//! the next attack, lives in the family's row ([`crate::families`]). The state
+//! machine here is the law.
 
 use crate::families::Family;
 pub use crate::families::Style;
 use mod_sdk::*;
 
-/// How long after an attack a follow-up attack still CHAINS — plays the
-/// next step of the tool's combo instead of restarting at the first.
-/// Playtested at 0.6 (2026-08-30), widened to 0.8 (2026-08-31) so a beat
-/// of repositioning between hits keeps the chain alive.
 pub const CHAIN_SECONDS: f32 = 0.8;
 
-/// The slot both engine rigs declare for a mod's main-hand play.
 pub const CLAIM_SLOT: &str = "main_claim";
 
-// ---- the clock ------------------------------------------------------------
-
-/// One posing answer from the clock: the play's phase and which step of the
-/// tool's attack combo it uses.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Play {
     pub phase: f32,
-    /// The combo step this play draws its clips from: the attack chain's
-    /// position for a play an Attack edge started, `0` for everything else
-    /// — the mining loop and breaks always play the work loop (mining is
-    /// the first animation on repeat, by design). The pose side wraps it
-    /// over however many steps the family ships.
     pub combo: usize,
 }
 
-/// One hand's swing clock. Both mirrors run the identical rules, so a
-/// prediction cannot disagree with the authority by construction.
 #[derive(Debug, Default, PartialEq)]
 pub struct Clock {
-    /// The tool this hand would swing — any change (including to `None`)
-    /// resets the clock: a swing (and its chain) belongs to the claim that
-    /// started it.
     pub style: Option<Style>,
-    /// Whether a play is in flight, and its phase `0..1` into the clip.
     pub playing: bool,
     pub phase: f32,
-    /// The in-flight play's window in seconds — how the play STARTED picks
-    /// it: an attack runs its step's window, work runs the family's.
     seconds: f32,
-    /// The in-flight play was started by an Attack edge — the only plays
-    /// whose arc the spent rule protects from attack mashing.
     attacking: bool,
-    /// The in-flight play's combo step (see [`Play::combo`]).
     combo: usize,
-    /// An attack pressed while the arc still barred it, held for the step
-    /// the arc finishes: ONE deep, so a hack-and-slash mash never has to
-    /// land on the beat. Dies with the claim like everything else here.
     queued: bool,
-    /// How many quick consecutive attacks deep the chain is. Only Attack
-    /// edges advance or reset it; the mining loop in between neither
-    /// extends nor breaks a chain — the WINDOW does.
     chain: usize,
-    /// Seconds since the last Attack edge (`None` = none under this claim):
-    /// the chain window's clock.
     since_attack: Option<f32>,
     /// Whether the LAST step carried an attack's phase across its impact —
     /// set by [`Clock::step`], read by [`Clock::impact`]. A latch rather
@@ -91,12 +56,6 @@ pub struct Clock {
 }
 
 impl Clock {
-    /// One clock step. `claim` is the claimed tool in the main hand and its
-    /// family (`None` when nothing is claimed), `edge` the one-shot this
-    /// tick's swing facts fired, `mining` the held-button level, `dt` the
-    /// caller's clock step. Answers the [`Play`] while posing, `None` when
-    /// the hand is idle — the caller releases the poses exactly then, and
-    /// the eased pose lane carries the hand home.
     pub fn step(
         &mut self,
         claim: Option<(Style, &Family)>,
@@ -115,24 +74,11 @@ impl Clock {
         let (_, family) = claim?;
         self.since_attack = self.since_attack.map(|since| since + dt);
 
-        // A mining press's own click echoes as an Attack edge on the client
-        // (the server never swings at a block): with the level up it IS the
-        // mining, so it starts the LOOP on the dig cadence below rather
-        // than a heavier attack arc — the first swing of a mining hold is
-        // the mining animation, which was this seam's first shipped bug.
         let edge = match edge {
             Some(SwingKind::Attack) if mining => None,
-            // Use jabs (place / throw / interact) are the ENGINE's: this
-            // pack claims only the Swing motion, so the default jab plays on
-            // the claimed hand and this clock must not pose against it.
             Some(SwingKind::Place | SwingKind::Throw | SwingKind::Interact) => None,
             edge => edge,
         };
-        // An attack's arc is protected WHOLE — through its impact, its hold
-        // and its recovery home: a mid-arc attack click never restarts or
-        // chains NOW, so a mash never clips a swing out of its own
-        // animation — it is QUEUED (one deep) for the arc's end instead.
-        // [`Clock::bars_attack`] is this same predicate.
         let edge = match edge {
             Some(SwingKind::Attack) if self.bars_attack() => {
                 self.queued = true;
@@ -140,9 +86,6 @@ impl Clock {
             }
             edge => edge,
         };
-        // …and a QUEUED press fires the step the arc rests, exactly as a
-        // perfectly timed click would have: the
-        // chain window is measured from the last edge, so it chains.
         let edge = match edge {
             None if self.queued && !self.bars_attack() => {
                 self.queued = false;
@@ -153,9 +96,8 @@ impl Clock {
 
         if let Some(kind) = edge {
             if kind == SwingKind::Attack {
-                // Attacks CHAIN: a follow-up inside the window advances the
-                // combo, so mashing alternates through the tool's steps; a
-                // slower click restarts the chain at its opening swing.
+                // Attacks chain. Clicking again inside the window moves to the next step, and
+                // waiting longer resets to the opening swing.
                 self.chain = match self.since_attack {
                     Some(since) if since <= CHAIN_SECONDS => self.chain + 1,
                     _ => 0,
@@ -179,9 +121,6 @@ impl Clock {
                 family.pace.mine
             };
         } else if !self.playing && mining {
-            // The held mining level starts the loop on a fresh arc — the
-            // level RISE only gets here; while mining continues the arc
-            // below simply keeps advancing.
             self.playing = true;
             self.phase = 0.0;
             self.seconds = family.pace.mine;
@@ -194,20 +133,12 @@ impl Clock {
         }
         let from = self.phase;
         self.phase += dt / self.seconds.max(0.01);
-        // An ATTACK's motion lands the instant its phase crosses the step's
-        // impact — once, on the step that crosses it. Work (the loop,
-        // breaks) lands nothing of its own: mining's hit is the engine's
-        // break timer.
         if self.attacking {
             if let Some(at) = family.impact_phase(self.combo) {
                 self.impact_crossed = from < at && at <= self.phase;
             }
         }
         if self.phase >= 1.0 {
-            // The tool's own swing WRAPS while the button holds — the mining
-            // loop, on the work window, back on the work loop whatever
-            // play it grew out of. A released button rests instead,
-            // finishing the arc home rather than rewinding it.
             if mining {
                 self.phase = self.phase.fract();
                 self.seconds = family.pace.mine;
@@ -226,40 +157,19 @@ impl Clock {
         })
     }
 
-    /// Whether the in-flight play bars the NEXT attack: an attack FOLLOWS
-    /// THROUGH before the hand may attack again, so the whole arc — impact,
-    /// hold and the recovery home — is protected. ONE predicate, two
-    /// enforcers — the clock queues mid-arc attack edges behind it (both
-    /// mirrors), and the server half publishes it as an Attack denial for a
-    /// paced tool the engine still hits for (a tool landing its own hits
-    /// keeps the press flowing so the queue can hear it). With the engine's
-    /// attack cooldown negated while the pack paces a tool, this predicate
-    /// IS the attack pace: damage lands exactly as often as the animation
-    /// finishes.
     pub fn bars_attack(&self) -> bool {
         self.attacking
     }
 
-    /// Whether the play in flight was started by an Attack edge — else it
-    /// is work (the mining loop, a break).
     pub fn attacking(&self) -> bool {
         self.attacking
     }
 
-    /// Whether the step just taken carried an attack across its impact
-    /// phase ([`Family::impact_phase`]) — the instant the swing LANDS, and
-    /// the moment whatever the tool is meant to strike gets struck. True
-    /// for exactly one step per attack arc, never for work.
     pub fn impact(&self) -> bool {
         self.impact_crossed
     }
 }
 
-// ---- the animation law ----------------------------------------------------
-
-/// A phase on one clip's timeline moved onto another's, piecewise-linear
-/// through the two clips' impact phases: `from` maps to `to`, both ends
-/// stay put. Identity when either impact is not strictly inside the clip.
 pub fn remap(phase: f32, from: f32, to: f32) -> f32 {
     let inside = |p: f32| p > 0.0 && p < 1.0;
     if !(inside(from) && inside(to)) {
@@ -272,13 +182,12 @@ pub fn remap(phase: f32, from: f32, to: f32) -> f32 {
     }
 }
 
-/// The whole swing law as ONE pure function: a play → the clips its hand
-/// runs on both rigs in each rig's claim slot. The clock runs on the BODY
-/// clip's timeline (its impact is where the hit lands); the first-person
-/// clip is scrubbed through [`remap`] so the frame the wielder sees land is
-/// the one that lands. Both sides call it verbatim, so every mirror draws
-/// the frame the clock is at. The caller gates on [`Clock::step`] and
-/// animates nothing on a `None`.
+/// The whole swing law in one pure function: takes a play, gives back the clips its
+/// hand runs on both rigs, in each rig's claim slot. The clock runs on the BODY clip's
+/// timeline (that's where the hit lands); the first-person clip gets scrubbed through
+/// [`remap`] so the frame the wielder sees land is the frame that actually lands. Both
+/// sides call this verbatim, so every mirror draws the same frame the clock is at.
+/// Caller gates on [`Clock::step`] and animates nothing on a `None`.
 pub fn plays(family: &Family, play: Play, attacking: bool) -> Vec<AnimatorPlay> {
     let progress = play.phase.clamp(0.0, 1.0);
     let (motion, first_person_progress) = if attacking {
@@ -305,10 +214,6 @@ pub fn plays(family: &Family, play: Play, attacking: bool) -> Vec<AnimatorPlay> 
     ]
 }
 
-/// The swing claim this body's main hand carries: the pack owns the hand
-/// while a tool is in it and nothing else has taken the hands. While the
-/// shield's guard is up the claim releases — the guard poses those hands,
-/// and its denial keeps them still anyway.
 pub fn claim(style: Option<Style>, raised: bool) -> bool {
     style.is_some() && !raised
 }
@@ -326,7 +231,6 @@ mod tests {
         1.0 / 60.0
     }
 
-    /// A synthetic family: two attack steps, one work loop.
     fn family(attack: &[f32], mine: f32, impact: &[f32]) -> Family {
         let motion = |name: &str| Motion {
             first_person: format!("t:fp_{name}"),
@@ -354,15 +258,10 @@ mod tests {
         }
     }
 
-    /// The plain family: 0.4 s attacks, 0.3 s work, no impacts.
     fn plain() -> Family {
         family(&[0.4], 0.3, &[])
     }
 
-    /// A play's clips follow the clock: an attack runs its combo step
-    /// (wrapping over however many the family ships), work always runs the
-    /// family's loop, each rig gets its own clip in the claim slot, and the
-    /// scrubbed progress is the phase, kept inside the clip.
     #[test]
     fn plays_run_their_combo_steps_clips_and_work_runs_the_loop() {
         let family = plain();
@@ -405,11 +304,6 @@ mod tests {
         );
     }
 
-    /// The first-person clip is scrubbed so its OWN impact frame shows the
-    /// instant the body's impact lands: the clock's phase (the body's
-    /// timeline) maps through the two impacts, straight on either side, the
-    /// ends pinned. A step whose viewmodel clip marks no impact, or a
-    /// family that lands nothing, scrubs both rigs at one phase.
     #[test]
     fn the_viewmodel_is_scrubbed_through_the_impact_remap() {
         let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
@@ -425,7 +319,6 @@ mod tests {
                 "an impact on an end is no map"
             );
         }
-        // Monotone: a scrub never runs backwards through the map.
         let mut last = -1.0;
         for i in 0..=100 {
             let p = remap(i as f32 / 100.0, 0.42, 0.47);
@@ -464,12 +357,6 @@ mod tests {
         );
     }
 
-    /// Work shares the dig cadence — a break edge and the mining loop
-    /// advance identically on the work window — while an attack plays its
-    /// step's own heavier window. The guards that make the split safe are
-    /// pinned below: the mining press's echoed edge and the arc's recovery
-    /// cancel. Without them this exact split was the seam's first shipped
-    /// bug.
     #[test]
     fn work_shares_the_dig_cadence_and_attacks_play_their_own_window() {
         let step = 0.05;
@@ -494,10 +381,6 @@ mod tests {
         );
     }
 
-    /// A step's `window_attack` IS its attack pace (positional, wrapping)
-    /// and `window_mine` paces ALL the work — the mining loop, its wrap,
-    /// and break impacts — while attacks never borrow the work window nor
-    /// work an attack's.
     #[test]
     fn authored_windows_pace_attacks_per_step_and_mining_by_the_work_window() {
         let family = family(&[0.5, 0.25], 0.42, &[]);
@@ -518,7 +401,6 @@ mod tests {
             "step 0 plays its own attack window: {}",
             opening.phase
         );
-        // Chain into step 1: the follow-up plays THAT step's faster window.
         idle(&mut hand, 30);
         let chained = attack(&mut hand);
         assert_eq!(chained.combo, 1);
@@ -528,8 +410,6 @@ mod tests {
             chained.phase
         );
 
-        // Work runs the work window: the loop and a break edge advance on
-        // it, never on a step's attack window.
         let mut work = Clock::default();
         let looped = work.step(Some((AXE, &family)), None, true, dt()).unwrap();
         assert!(
@@ -543,10 +423,6 @@ mod tests {
         assert_eq!(broke, looped, "a break lands on the work window");
     }
 
-    /// Quick consecutive ATTACKS chain: each follow-up inside
-    /// [`CHAIN_SECONDS`] plays the next combo step, a pause restarts the
-    /// chain at its opening swing, and the mining loop (with its break
-    /// edges) never leaves the first — combat alternates, mining repeats.
     #[test]
     fn quick_attacks_chain_the_combo_and_mining_never_does() {
         let family = plain();
@@ -561,22 +437,15 @@ mod tests {
             }
         };
 
-        // The first attack ever is the chain's opening swing.
         assert_eq!(attack(&mut hand).combo, 0);
-        // Re-clicked once the arc has followed through (0.4 s): it chains,
-        // and keeps counting — the pose side wraps it over the steps
-        // shipped.
         idle(&mut hand, 25);
         assert_eq!(attack(&mut hand).combo, 1);
         idle(&mut hand, 25);
         assert_eq!(attack(&mut hand).combo, 2);
 
-        // A pause past the window restarts the chain.
         idle(&mut hand, 80);
         assert_eq!(attack(&mut hand).combo, 0);
 
-        // Mining stays the FIRST animation on repeat: the loop and the break
-        // edges it lands play combo 0, however fresh the last attack.
         assert_eq!(
             hand.step(Some((AXE, &family)), None, true, dt())
                 .unwrap()
@@ -591,10 +460,10 @@ mod tests {
         );
     }
 
-    /// An attack's arc is protected WHOLE: a mid-arc attack click neither
-    /// restarts nor chains right away — it is QUEUED, one deep, and fires
-    /// the step the arc has followed through, so a mash chains without
-    /// having to land on the beat. A claim change drops the queue.
+    /// Attack arc plays out whole, no restart or chain mid-arc.
+    /// A click during the swing queues, one deep, and fires once the arc has followed
+    /// through. Mashing still chains without hitting the beat. A claim change drops
+    /// the queue.
     #[test]
     fn a_mid_arc_attack_queues_until_the_arc_follows_through() {
         let family = plain();
@@ -607,8 +476,6 @@ mod tests {
         assert_eq!(first.combo, 0);
         assert!(hand.bars_attack(), "the fresh arc bars the next attack");
 
-        // Mashed mid-arc: the play advances instead of restarting, no
-        // chained step begins yet…
         let mashed = attack(&mut hand).expect("the arc keeps playing");
         assert_eq!(mashed.combo, 0, "no chained step mid-swing");
         assert!(mashed.phase > first.phase, "the arc was not restarted");
@@ -619,8 +486,6 @@ mod tests {
             "a second mid-arc press is not a second queue entry"
         );
 
-        // …and the instant the arc has fully played, the queued press
-        // fires as the chained step — no further click needed.
         let mut steps = 0;
         while hand.bars_attack() {
             idle(&mut hand);
@@ -633,7 +498,6 @@ mod tests {
         assert!(!hand.queued, "the queue is spent");
         assert!(hand.bars_attack(), "the chained arc bars in turn");
 
-        // Nothing queued: the arc plays out to rest on its own.
         let mut at_rest = None;
         for _ in 0..200 {
             at_rest = idle(&mut hand);
@@ -644,8 +508,6 @@ mod tests {
         assert!(at_rest.is_none(), "the arc rests without a queued press");
         assert!(!hand.bars_attack(), "a rested hand bars nothing");
 
-        // A queued press dies with the claim: switching off the weapon
-        // mid-arc leaves nothing to fire.
         let mut swapped = Clock::default();
         attack(&mut swapped).unwrap();
         attack(&mut swapped);
@@ -658,9 +520,6 @@ mod tests {
             "the tool comes back to an idle hand, not a stale swing"
         );
 
-        // A mining press's echoed attack edge is the LOOP, not a heavy first
-        // swing: with the level up it plays at the dig cadence from the
-        // first frame — the seam's first shipped bug, pinned.
         let mut mining = Clock::default();
         assert_eq!(
             mining.step(Some((AXE, &family)), Some(SwingKind::Attack), true, dt()),
@@ -671,10 +530,6 @@ mod tests {
         );
     }
 
-    /// An arc bars the next attack until it has FOLLOWED THROUGH: the bar
-    /// outlives the step's impact and lifts only where the play rests, so a
-    /// mash can never cut a swing — hit or recovery — out of its own
-    /// animation.
     #[test]
     fn the_arc_bars_the_next_attack_until_it_has_followed_through() {
         let family = family(&[0.4], 0.3, &[0.5, 0.1]);
@@ -692,11 +547,6 @@ mod tests {
         assert!(!hand.playing, "…and to the end of the play");
     }
 
-    /// The clock reports an attack's impact on exactly ONE step — the one
-    /// whose phase crosses it — and never for work, however long the loop
-    /// runs: a swing that landed twice would double every hit, one that
-    /// never landed would be a tool that cannot hurt, and a mining loop
-    /// that landed would strike whatever stood near a wall being dug.
     #[test]
     fn an_attack_lands_its_impact_once_and_work_never_lands() {
         let family = family(&[0.4], 0.3, &[0.5, 0.25]);
@@ -715,7 +565,6 @@ mod tests {
         let at = phase_at_impact.expect("the crossing step");
         assert!((0.5..0.5 + dt() / 0.4 + 1e-4).contains(&at), "at {at}");
 
-        // The chained step lands at ITS OWN phase.
         hand.step(Some((AXE, &family)), Some(SwingKind::Attack), false, dt());
         let mut at = None;
         while hand.playing {
@@ -730,7 +579,6 @@ mod tests {
             "step 1 lands at its own phase: {at}"
         );
 
-        // Work never lands, across several wraps of the loop.
         let mut work = Clock::default();
         for _ in 0..80 {
             work.step(Some((AXE, &family)), None, true, dt());
@@ -742,7 +590,6 @@ mod tests {
             assert!(!work.impact(), "a break lands nothing of its own");
         }
 
-        // A family whose clips mark no impact never reports one.
         let quiet_family = plain();
         let mut quiet = Clock::default();
         quiet.step(
@@ -757,16 +604,11 @@ mod tests {
         }
     }
 
-    /// The mining level starts the loop at phase 0 on the work window; a
-    /// held button wraps on that ONE clock (never restarting from 0 while
-    /// the level holds), and a released level finishes the arc home instead
-    /// of rewinding it.
     #[test]
     fn mining_runs_the_loop_on_the_dig_cadence_and_releases_forward() {
         let family = plain();
         let frame = 0.02;
         let mut hand = Clock::default();
-        // The rising level starts the loop.
         assert_eq!(
             hand.step(Some((PICK, &family)), None, true, frame),
             Some(Play {
@@ -783,8 +625,6 @@ mod tests {
             "the loop advances at the swing cadence"
         );
 
-        // A held button WRAPS (the phase cycles), never restarting from 0:
-        // several turns of the clock inside this run.
         let mut wraps = 0;
         let mut last = 1.0;
         for _ in 0..60 {
@@ -802,9 +642,6 @@ mod tests {
             "a held level wraps on the swing cadence: {last}"
         );
 
-        // The released level finishes the arc home: the swing plays out and
-        // then the hand rests — still claimed, so the vanilla punch stays
-        // silent while the tool is up.
         let mut done = Clock::default();
         done.step(Some((AXE, &family)), None, true, 0.02);
         let mut released = None;
@@ -817,9 +654,6 @@ mod tests {
         assert!(released.is_none(), "the released loop finishes and rests");
     }
 
-    /// An attack edge plays on the attack window, a break on the dig cadence;
-    /// a use click is not this clock's. And a tool swap resets the clock
-    /// rather than carrying the last item's play into new art.
     #[test]
     fn edges_pace_their_plays_and_a_use_click_is_not_the_clocks() {
         let family = plain();
@@ -844,10 +678,6 @@ mod tests {
             "the pickaxe breaks on the dig cadence"
         );
 
-        // A use click of any kind is the ENGINE's jab, not this clock's:
-        // the edge is ignored, the hand stays idle, and the vanilla jab
-        // (a motion this pack leaves unclaimed) plays over the authored
-        // hold.
         for kind in [SwingKind::Place, SwingKind::Throw, SwingKind::Interact] {
             let mut any = Clock::default();
             assert_eq!(
@@ -857,15 +687,11 @@ mod tests {
             );
         }
 
-        // Swapping tools mid-swing restarts clean under the new claim.
         axe.step(Some((PICK, &family)), None, false, dt());
         assert_eq!(axe.style, Some(PICK));
         assert!(!axe.playing, "the pickaxe's clock starts fresh");
     }
 
-    /// The claim follows the tool and yields to the guard: held tool, hands
-    /// unclaimed elsewhere — a raised guard poses and stills those hands, and
-    /// the claim must not argue with it.
     #[test]
     fn the_claim_follows_the_tool_and_yields_to_the_guard() {
         assert!(claim(Some(AXE), false));

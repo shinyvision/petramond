@@ -1,18 +1,9 @@
-//! What a project's note says.
-//!
-//! The note is kept as DATA — which thing is waiting, and the numbers that
-//! go with it — and put in words only when it is shown. Logic matches on the
-//! variant, never on the words, so rewording a message changes nothing a
-//! save or a hold depends on.
-
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::supplies::{Shortfall, MISSING};
 
-/// The most recent specific reason a project's work is waiting, or what the
-/// golem reported on the way home.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Note {
     #[default]
@@ -21,32 +12,21 @@ pub enum Note {
     GolemDied,
     TableGone,
     ChestsFull,
-    /// The golem cannot take anything more in hand.
     HandsFull,
-    /// The golem does not carry the blueprint bound to its job.
     MissingBlueprint,
-    /// Supplies fall short.
     Missing(Shortfall),
-    /// What the golem could not finish, told on the way home.
     Report(Report),
-    /// Words an older build stored that name none of the above. Shown as
-    /// they are and never read for logic.
     Legacy(String),
 }
 
-/// The golem's report once nothing is left to build.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Report {
-    /// Blocks placed that the world no longer holds.
     pub lost: u32,
-    /// Scaffolds out of reach, left standing.
     pub standing: u32,
-    /// What the chests had no room for went home in the golem's hands.
     pub chests_full: bool,
 }
 
 impl Note {
-    /// The report for a job winding down: nothing to say when all went well.
     pub fn report(lost: u32, standing: u32) -> Note {
         let report = Report {
             lost,
@@ -60,9 +40,6 @@ impl Note {
         }
     }
 
-    /// This note with "the chests are full" added: a report takes it as one
-    /// more line, an empty note becomes it, and a note already saying
-    /// something more specific keeps saying that.
     pub fn with_chests_full(self) -> Note {
         match self {
             Note::None => Note::Report(Report {
@@ -85,8 +62,6 @@ impl Note {
         matches!(self, Note::Missing(_))
     }
 
-    /// The note an older build stored as words: the words it knows become
-    /// data again, anything else is kept as [`Note::Legacy`].
     pub fn from_legacy(text: &str) -> Note {
         const WORDED: [Note; 6] = [
             Note::Paused,
@@ -105,7 +80,6 @@ impl Note {
         legacy_shortfall(text).map_or_else(|| Note::Legacy(text.to_owned()), Note::Missing)
     }
 
-    /// The words of a note that carries no data of its own.
     fn fixed_words(&self) -> Option<&'static str> {
         Some(match self {
             Note::None => "",
@@ -122,7 +96,6 @@ impl Note {
 
 const CHESTS_FULL: &str = "The chests are full";
 
-/// `"Missing {count}x {name}[ and more]"`, as a shortfall used to be stored.
 fn legacy_shortfall(text: &str) -> Option<Shortfall> {
     let rest = text.strip_prefix(MISSING)?;
     let (count, rest) = rest.split_once("x ")?;

@@ -30,7 +30,6 @@ fn syrup() -> Block {
     block(SYRUP)
 }
 
-/// The fixture's humanoid body: every route below is planned for it.
 fn body() -> MobSize {
     crate::mob::def(crate::mob::by_key("bodyfluid:swim").unwrap()).size
 }
@@ -164,9 +163,6 @@ fn a_mob_already_in_a_hazard_can_route_to_the_shore() {
     );
 }
 
-/// A body in a pool beside its near bank, with the goal across the pool: the
-/// route leaves by the near bank and walks around, instead of swimming the
-/// straight line through the hazard.
 fn an_escape_takes_the_shortest_way_out() {
     let mut world = world();
     let in_pool = |c: &IVec3| (3..=12).contains(&c.x) && (2..=13).contains(&c.z);
@@ -304,8 +300,6 @@ fn a_persistent_live_refusal_repaths_once_then_waits_for_the_interval() {
     );
 }
 
-/// Routes that keep leading into two different refused waypoints in turn
-/// must back off exactly like one refused waypoint.
 fn alternating_refusals_wait_for_the_interval_too() {
     let mut world = world();
     let start = IVec3::new(5, 64, 8);
@@ -337,8 +331,6 @@ fn alternating_refusals_wait_for_the_interval_too() {
     );
 }
 
-/// A long body lying along X steps sideways: only its end segment sweeps
-/// over the hazard, which a check of the centre box alone would miss.
 fn every_segment_of_a_long_body_is_guarded() {
     let mut world = world();
     world.set_block_world(9, 63, 9, syrup());

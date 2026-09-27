@@ -169,8 +169,6 @@ fn schematic_preview_and_placement_share_the_rotated_footprint_center_and_height
                 Arc::ptr_eq(&scene, game.tools.preview.scene().unwrap()),
                 "height changes must reuse the mesh scene"
             );
-            // The paste names its design; the archive follows only once the
-            // server says the world lacks it.
             use petramond::schematic::share::{BlobReceiver, SchematicNotice, SchematicRequest};
             let deadline = std::time::Instant::now();
             let mut placed_at = None;

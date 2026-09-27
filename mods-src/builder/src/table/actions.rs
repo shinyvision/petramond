@@ -1,6 +1,3 @@
-//! The panel's buttons, and what the schematic picker and the positioning
-//! tool report back.
-
 use crate::host::prelude::*;
 
 use crate::jobs::{Builder, Refusal};
@@ -9,7 +6,6 @@ use crate::project::{id_of_tag, tag_of, Phase, Project};
 use crate::table::blueprint::bind_blueprint;
 use crate::table::{blueprint_at, may_edit, project_at, publish_to, REFUSAL_TICKS};
 
-/// A button of the table's or the materials page's document, by widget id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Materials,
@@ -181,8 +177,6 @@ pub fn positioned(
     });
 }
 
-/// Using a bound blueprint repositions its draft's ghost from anywhere, for
-/// building by hand without a table.
 pub fn use_blueprint(builder: &mut Builder) -> Outcome {
     let Some(player) = acting_player() else {
         return Outcome::Continue;

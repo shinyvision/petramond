@@ -68,7 +68,6 @@ fn frame(
     fs.cache_stats()
 }
 
-/// What a frame hands the host, for comparing a cached frame to a fresh one.
 fn visible(out: &FrameOutput) -> (Vec<[f32; 2]>, Vec<(String, crate::RectI)>) {
     (
         out.draw.vertices.iter().map(|v| v.pos).collect(),
@@ -107,8 +106,6 @@ fn a_changed_key_re_expands_only_its_readers_and_matches_a_fresh_frame() {
     state.set("status", UiValue::Str("short".into()));
     let second = frame(&rt, &state, &mut fs, &mut out);
     assert!(!second.layout_reused, "a changed label re-solves");
-    // The root re-homes its children and the status label re-resolves; the
-    // scroll, the list with its eight rows, and the button move over.
     assert_eq!(second.expanded, 2, "{second:?}");
     assert_eq!(second.reused, first.expanded - 2);
 
@@ -125,13 +122,11 @@ fn a_new_theme_or_state_origin_starts_over() {
     let rt = UiRuntime::new(doc.clone(), Arc::new(Theme::placeholder()));
     frame(&rt, &state, &mut fs, &mut out);
 
-    // Same document, new theme: the arena survives, the layout does not.
     let rethemed = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
     let stats = frame(&rethemed, &state, &mut fs, &mut out);
     assert_eq!(stats.expanded, 0);
     assert!(!stats.layout_reused);
 
-    // A clone is a different origin: nothing carries over.
     let stats = frame(&rethemed, &state.clone(), &mut fs, &mut out);
     assert_eq!(stats.reused, 0);
 }

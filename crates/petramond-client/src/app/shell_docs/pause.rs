@@ -1,14 +1,8 @@
-//! Pause screen controller: resume, options, host-only Open to LAN + Save
-//! and Quit, remote-only Disconnect (Leave for a presentation).
-//! Enter resumes (ESC stays on the global close-screen control path).
-
 use super::{ScreenCtx, ShellCommand};
 use crate::app::AppScreen;
 use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
-    // A presentation has no session of its own: nothing to save and no LAN
-    // to open, so it leaves the way a remote session does.
     let presenting = ctx.session.presenting;
     let is_remote = presenting || ctx.session.is_remote;
     state.set(

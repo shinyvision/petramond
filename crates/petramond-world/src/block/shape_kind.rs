@@ -53,41 +53,30 @@ pub use corner_form::{face_uv_turns, FACE_BEFORE_TURN, FRONT_AFTER_TURN};
 pub use load::{RawBox, RawCustomShape, RawRun, RawShape};
 pub use neighborhood::{CellCodec, CellView, ShapeNeighborhood, ShapeState, SHAPE_STATE_MAX};
 
-/// A block shape kind — a session-local id into the [`ShapeKindDef`] table
-/// (`shape_kind_def`). One id per distinct `(family, params)`; the id replaces
-/// `RenderShape` as `BlockDef`'s shape field. Not persisted, so unlike
-/// [`Block`](super::Block) its numeric value is free to change between sessions.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct BlockShapeKind(pub u16);
 
 impl BlockShapeKind {
-    /// The registry row for this kind.
     #[inline]
     pub fn def(self) -> &'static ShapeKindDef {
         super::data::shape_kind_def(self)
     }
 
-    /// The shape family this kind belongs to — its identity tag, for
-    /// diagnostics and tests; behaviour is asked of the facets instead.
     #[inline]
     pub fn family(self) -> ShapeFamily {
         self.def().family
     }
 
-    /// Whether `other` is a kind of the SAME family, whatever its params — a
-    /// connection shape's same-family join (a wall joins any wall).
     #[inline]
     pub fn same_family(self, other: BlockShapeKind) -> bool {
         self.family() == other.family()
     }
 
-    /// This kind's parameters.
     #[inline]
     pub fn params(self) -> &'static ShapeParams {
         &self.def().params
     }
 
-    /// The canonical registry key (diagnostics + parameterized/custom lookup).
     #[inline]
     pub fn key(self) -> &'static str {
         self.def().key
@@ -96,27 +85,13 @@ impl BlockShapeKind {
 
 impl std::fmt::Debug for BlockShapeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Numeric only — the id is session-local and Debug must not depend on
-        // the lazily-built registry being ready (it prints mid-bootstrap).
         write!(f, "BlockShapeKind(#{})", self.0)
     }
 }
 
-/// The shape families the engine meshes/collides/places — each row's identity
-/// tag. Nothing outside this module matches on it: behaviour lives on the
-/// facet singletons [`families::singletons`] binds per family, and consumers
-/// ask those. The inline payloads `RenderShape` once carried moved to
-/// [`ShapeParams`]; [`Custom`](Self::Custom) covers mod-defined procedural
-/// shapes. A mod never adds a variant here:
-/// a parameterized shape reuses an existing family with different [`ShapeParams`], and
-/// a custom shape is `Custom`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ShapeFamily {
     Cube,
-    /// A static list of axis-aligned boxes authored as data — farmland, the
-    /// snow layer, the cactus, a mod's dirt path. The ONE family for a fixed
-    /// sub-cell shape; anything neighbour-dependent is a resolver family, and
-    /// anything procedural is [`Custom`](Self::Custom).
     BoxSet,
     Cross,
     Crop,
@@ -125,51 +100,24 @@ pub enum ShapeFamily {
     Slab,
     Pane,
     Fence,
-    /// A thin climbable/decorative wall panel (the engine ladder). Named for the
-    /// generalised parameterized family; the engine's only member is the ladder.
     Ladder,
     Model,
     Door,
-    /// A thin panel lying flat across a cell that swings up onto one of its
-    /// vertical edges — the door's horizontal sibling (see `crate::trapdoor`).
     Trapdoor,
-    /// A mod-defined procedural shape, meshed/collided from the WASM bake
-    /// cache. The [`ShapeParams::Custom`] payload carries its declaration.
     Custom,
 }
 
-/// The per-row parameters of a shape kind — what the old `RenderShape`
-/// variants carried inline, plus the parameterized family dimensions and the
-/// custom-shape declaration. Most engine rows are [`None`](Self::None) (the
-/// family alone fully describes them).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ShapeParams {
-    /// No parameters — the family is self-describing (cube, cross, torch,
-    /// stair, slab, door, ladder).
     None,
-    /// A static box set's authored boxes (`{"boxes": [...]}`), behind a
-    /// `&'static` so [`ShapeParams`] stays a cheap `Copy`.
     BoxSet(&'static BoxSetParams),
-    /// A bbmodel block's model kind.
     Model { kind: BlockModelKind },
-    /// A parameterized connection shape (fence or pane): the post dimensions,
-    /// connection rule, item form, and the precomputed box table. Behind a
-    /// `&'static` so [`ShapeParams`] stays a cheap `Copy` — the engine defaults
-    /// are statics, a mod's `{"custom": …}` shape leaks its table once at load.
     Connection(&'static ConnectionParams),
-    /// A mod-declared procedural shape: a reference to its
-    /// `shapes.json` declaration. The geometry comes from the pack's WASM bake
-    /// (cached per section); this carries the static metadata the engine reads
-    /// without dispatching, and the fallback a trapped bake freezes to.
     Custom(&'static CustomShapeDef),
-    /// A parameterized cross / crop / wall-panel: the numeric
-    /// dimensions a mod retuned (a tighter crop lattice, a thicker panel) with no
-    /// WASM. Behind a `&'static` so [`ShapeParams`] stays cheap `Copy`.
     Dimensions(&'static DimensionParams),
 }
 
 impl ShapeParams {
-    /// The authored boxes, if this is a static box-set kind.
     #[inline]
     pub fn box_set(&self) -> Option<&'static BoxSetParams> {
         match self {
@@ -178,7 +126,6 @@ impl ShapeParams {
         }
     }
 
-    /// The bbmodel kind, if this is a model kind.
     #[inline]
     pub fn model_kind(&self) -> Option<BlockModelKind> {
         match self {
@@ -187,7 +134,6 @@ impl ShapeParams {
         }
     }
 
-    /// The connection parameters, if this is a fence/pane kind.
     #[inline]
     pub fn connection(&self) -> Option<&'static ConnectionParams> {
         match self {
@@ -196,15 +142,11 @@ impl ShapeParams {
         }
     }
 
-    /// The per-cell state key a custom shape declares (`shapes.json`
-    /// `"state_key"`), or `None` — the cell-KV key the bake input carries for
-    /// the cell and its neighbours (see [`mod_api::CellInput`]).
     #[inline]
     pub fn state_key(&self) -> Option<&'static str> {
         self.custom().and_then(|c| c.state_key)
     }
 
-    /// The custom-shape declaration, if this is a custom shape.
     #[inline]
     pub fn custom(&self) -> Option<&'static CustomShapeDef> {
         match self {
@@ -213,8 +155,6 @@ impl ShapeParams {
         }
     }
 
-    /// The parameterized render/collision dimensions, if this is a parameterized
-    /// cross / crop / wall-panel kind.
     #[inline]
     pub fn dimensions(&self) -> Option<&'static DimensionParams> {
         match self {
@@ -224,71 +164,38 @@ impl ShapeParams {
     }
 }
 
-/// The parameterized render/collision dimensions of a cross / crop / wall-panel kind —
-/// the numeric slice a mod may retune with no WASM. Every field is a CELL
-/// FRACTION (`0.0..1.0`); a family reads only the fields it uses and the engine
-/// defaults reproduce the hardcoded shapes exactly.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct DimensionParams {
-    /// Cross/crop billboard-plane inset from the cell edge.
     pub inset: f32,
-    /// Crop lattice vertical drop (how far it sinks toward the floor).
     pub drop: f32,
-    /// Wall-panel slab thickness (flush against its wall).
     pub thickness: f32,
-    /// Wall-panel visible height from the floor.
     pub height: f32,
 }
 
-/// How a connection shape (fence / pane / wall) decides whether to grow an arm
-/// toward a neighbour. The rule is a `params` field so a mod's wall or bar picks
-/// its own without new code.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ConnectionRule {
-    /// Opaque full cubes, same-family shapes (any params), full-face stairs,
-    /// full slab stacks — the engine fence rule.
     OpaqueOrSame,
-    /// Solid full cubes (glass included, minus `no_pane_connect`), same-family
-    /// shapes, full-face stairs, full slab stacks — the engine pane rule.
     SolidOrSame,
-    /// Only same-family shapes join; cubes/stairs/slabs never do.
     SameOnly,
-    /// Never connects — a bare post.
     Never,
 }
 
-/// What a connection shape looks like as an item (icon / dropped / in-hand) —
-/// a connection shape never shows its connected form, so it must declare which
-/// canonical form its item takes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ItemForm {
-    /// A fixed no-neighbour segment built from the family + params (fence, wall).
     Segment,
-    /// The item's own flat/extruded sprite (pane, bars).
     Sprite,
-    /// A full-cube icon.
     Cube,
 }
 
-/// The resolved parameters of a connection shape (fence / pane / wall): the post
-/// extent, the connection rule, the item form, and the precomputed 16-mask
-/// collision/selection box table (post + full-height arms, from
-/// [`connect::make_shapes`]). One per distinct shape kind.
 #[derive(Debug, PartialEq)]
 pub struct ConnectionParams {
-    /// Post low/high extent on both horizontal axes (cell fraction `0..1`).
     pub post_lo: f32,
     pub post_hi: f32,
     pub rule: ConnectionRule,
     pub item_form: ItemForm,
-    /// The 16 collision/selection box sets, one per connection mask.
     pub boxes: &'static [connect::Shape; 16],
 }
 
-// Engine connection defaults, held as statics so the many engine fence/pane
-// rows resolve without leaking a fresh table each (only a mod's custom shape
-// leaks). The dimensions match the historical `crate::fence` / `crate::pane`
-// consts exactly (6/16..10/16 fence post, 7/16..9/16 pane post).
 static ENGINE_FENCE_BOXES: [connect::Shape; 16] = connect::make_shapes(6.0 / 16.0, 10.0 / 16.0);
 static ENGINE_FENCE_PARAMS: ConnectionParams = ConnectionParams {
     post_lo: 6.0 / 16.0,
@@ -306,15 +213,9 @@ static ENGINE_PANE_PARAMS: ConnectionParams = ConnectionParams {
     boxes: &ENGINE_PANE_BOXES,
 };
 
-/// One authored box of a `{"boxes": [...]}` shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BoxDef {
-    /// Cell-local extent (`0.0..1.0` per axis).
     pub aabb: Aabb,
-    /// Which of the six faces this box DRAWS, in canonical face order
-    /// (`+X, -X, +Y, -Y, +Z, -Z`). A `false` face is one the shape NEVER
-    /// emits whatever the geometry says — the cactus's cap plates draw only
-    /// their outward cap, so the trunk shows no rim.
     pub faces: [bool; 6],
     /// Per-face tile, `None` = the row's `[top, bottom, side]` (the plain
     /// carved-from-my-own-block case every engine box shape wants).
@@ -331,14 +232,8 @@ pub struct BoxDef {
     /// show is the inset trunk, and treating the planes as matter would shadow
     /// the ground like a full cube and seal the cell's own light out.
     pub occludes: bool,
-    /// Whether this box obstructs movement. Independent of `occludes`: a snow
-    /// cover is matter you walk through, a face plane is neither.
     pub collides: bool,
-    /// Draw the box's faces from both sides — see
-    /// [`ShapeBox::double_sided`](crate::block::ShapeBox).
     pub double_sided: bool,
-    /// Whether the box's matter casts AO — see
-    /// [`ShapeBox::casts_ao`](crate::block::ShapeBox).
     pub casts_ao: bool,
     /// Per face: how many quarter turns the FRAME this face's art was authored
     /// in sits ahead of the box's own frame. `0` everywhere for an authored
@@ -358,27 +253,12 @@ pub struct BoxDef {
     /// Permuted by [`turned`](BoxDef::turned) like every other per-face
     /// attribute; the VALUE is a relative offset, so turning never changes it.
     pub art_turns: [u8; 6],
-    /// Per face: the authored tile rectangle stretched over the face, or
-    /// `None` for the cell-local carve (see `ShapeFace::uv_rect`).
     pub uv: [Option<[u8; 4]>; 6],
-    /// Per face: authored extra UV quarter turns (`0..4`), applied on top of
-    /// whatever the shape's own turn prescribes — how one curve tile serves
-    /// four corner rows, or a rail tile lies along either axis.
     pub uv_turns: [u8; 6],
-    /// The box's rotation off the axis grid, if any. `aabb` and every
-    /// per-face array are then the box in its OWN frame; turning the shape
-    /// composes onto the pose instead of permuting the faces (see
-    /// [`turned`](BoxDef::turned)).
     pub pose: Option<crate::block::BoxPose>,
 }
 
 impl BoxDef {
-    /// The frame this face's art lives in, as quarter turns ahead of the
-    /// CELL frame, for a shape turned `shape_turns`: what decides which face
-    /// carries the row's `front` tile and how far a `±Y` tile is
-    /// counter-rotated. A posed box's faces live in the box's own frame and
-    /// the pose carries the turn, so they answer `0` — nothing about them is
-    /// pinned to world north.
     #[inline]
     pub fn face_frame_turns(&self, shape_turns: u8, face: usize) -> u8 {
         if self.pose.is_some() {
@@ -388,12 +268,10 @@ impl BoxDef {
         }
     }
 
-    /// The axis-aligned extent the box occupies once posed.
     pub fn posed_bounds(&self) -> Aabb {
         crate::block::posed_bounds(self.aabb, self.pose)
     }
 
-    /// The box as aimable geometry.
     pub fn target(&self) -> crate::block::PosedBox {
         crate::block::PosedBox {
             aabb: self.aabb,
@@ -401,14 +279,6 @@ impl BoxDef {
         }
     }
 
-    /// The box's collision volume: an axis-aligned box collides as authored;
-    /// a posed one as its posed BOUNDS — the physics sweeps axis-aligned
-    /// boxes, so a tilted plank obstructs as the slab it spans, exactly like
-    /// a model block's posed cube. Either way clipped to the cell (the
-    /// overhang reserves nothing), and `None` for a box that does not
-    /// collide, lies wholly outside the cell, or is an authored flat plane
-    /// (decoration, whatever its pose: a tilted zero-thickness plane has a
-    /// solid-looking bounding box).
     pub fn collision_volume(&self) -> Option<Aabb> {
         if !self.collides || self.is_flat_plane() {
             return None;
@@ -416,7 +286,6 @@ impl BoxDef {
         self.posed_bounds().clipped_to_cell()
     }
 
-    /// Whether the box has zero thickness on some axis.
     pub fn is_flat_plane(&self) -> bool {
         (0..3).any(|a| self.aabb.max[a] - self.aabb.min[a] <= 1e-6)
     }
@@ -439,46 +308,28 @@ pub struct BoxSetParams {
     collision: [[&'static [Aabb]; 5]; 4],
     targets: [[&'static [crate::block::PosedBox]; 5]; 4],
     bounds: [[Aabb; 5]; 4],
-    /// How this kind refines its form from its neighbours, if at all.
-    /// [`BoxSetRefine::None`] = one form per turn, never refined.
     pub refine: BoxSetRefine,
 }
 
-/// Which neighbour rule, if any, a box-set kind resolves its FORM by. The
-/// form is stored in cell-state byte 1 by the refine cascade and decoded by
-/// every reader; a kind with no rule keeps the cascade's cheap path.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BoxSetRefine {
     None,
-    /// Stair-style corner forms from perpendicular same-kind neighbours (the
-    /// row's `"corners": true`) — the stair rule lifted from quadrant masks
-    /// to box lists.
     Corners,
-    /// A linear RUN along the vertical axis (`{"run": {...}}`): the form
-    /// follows the cell's place in a same-kind run — free end, the segment
-    /// behind it, interior, attached end.
     Run(RunParams),
 }
 
-/// The parameters of a run kind.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct RunParams {
-    /// Which way the run is ATTACHED: the cell in this direction holds the
-    /// run up, and the forms taper away from it.
     pub root: RunRoot,
 }
 
-/// The two ways a vertical run can be attached.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RunRoot {
-    /// Hangs from the cell above (a stalactite, an icicle, a hanging root).
     Up,
-    /// Stands on the cell below (a stalagmite, a pillar, a bamboo stalk).
     Down,
 }
 
 impl RunRoot {
-    /// Unit step toward the root.
     #[inline]
     pub fn dir(self) -> crate::mathh::IVec3 {
         match self {
@@ -487,7 +338,6 @@ impl RunRoot {
         }
     }
 
-    /// Unit step toward the free end.
     #[inline]
     pub fn tip(self) -> crate::mathh::IVec3 {
         -self.dir()
@@ -501,7 +351,6 @@ impl RunRoot {
         }
     }
 
-    /// The JSON spelling.
     pub fn name(self) -> &'static str {
         match self {
             RunRoot::Up => "up",
@@ -510,11 +359,6 @@ impl RunRoot {
     }
 }
 
-/// A run cell's resolved form (cell-state byte 1, the slot a corner form
-/// uses): the free end, the segment behind it, an interior segment, the
-/// attached end, or a free end meeting an OPPOSING run's free end (two
-/// spikes forming a column). Resolved by [`run_form::run_form`]; an
-/// out-of-range stored byte reads as the free end.
 pub type RunForm = u8;
 pub const RUN_TIP: RunForm = 0;
 pub const RUN_FRUSTUM: RunForm = 1;
@@ -522,22 +366,14 @@ pub const RUN_MIDDLE: RunForm = 2;
 pub const RUN_BASE: RunForm = 3;
 pub const RUN_MERGE: RunForm = 4;
 
-/// A corner-joining cell's resolved form (stored in cell-state byte 1; byte 0
-/// stays the placed facing — the stair's identity/refined split):
-/// [`STRAIGHT`](CornerForm) `0`, outer corner `1`/`2`, inner corner `3`/`4`,
-/// where odd = the perpendicular neighbour faces one quarter turn CLOCKWISE of
-/// this cell and even = counter-clockwise. Resolved by the same neighbour rule
-/// stairs use; an out-of-range stored byte reads as straight.
 pub type CornerForm = u8;
 
 impl BoxSetParams {
-    /// Whether this kind resolves stair-style corner forms.
     #[inline]
     pub fn corner_joins(&self) -> bool {
         self.refine == BoxSetRefine::Corners
     }
 
-    /// This kind's run parameters, if it is a run.
     #[inline]
     pub fn run(&self) -> Option<RunParams> {
         match self.refine {
@@ -546,8 +382,6 @@ impl BoxSetParams {
         }
     }
 
-    /// An out-of-vocabulary stored byte (an old world's stale state, until
-    /// the load sweep rewrites it) reads as STRAIGHT — never a wrong corner.
     #[inline]
     fn form_idx(form: CornerForm) -> usize {
         if form > 4 {
@@ -557,73 +391,42 @@ impl BoxSetParams {
         }
     }
 
-    /// The drawn boxes at `turns` quarter turns about Y (`0` = as authored)
-    /// in corner form `form`.
     #[inline]
     pub fn boxes(&self, turns: u8, form: CornerForm) -> &'static [BoxDef] {
         self.forms[(turns & 3) as usize][Self::form_idx(form)]
     }
 
-    /// The `collides` boxes, ready to hand out.
     #[inline]
     pub fn collision(&self, turns: u8, form: CornerForm) -> &'static [Aabb] {
         self.collision[(turns & 3) as usize][Self::form_idx(form)]
     }
 
-    /// Every drawn box as aimable geometry, matter or not — a walk-through
-    /// cover is still what the player sees and points at.
     #[inline]
     pub fn targets(&self, turns: u8, form: CornerForm) -> &'static [crate::block::PosedBox] {
         self.targets[(turns & 3) as usize][Self::form_idx(form)]
     }
 
-    /// The union of every DRAWN box, posed and clipped to the cell — the
-    /// selection outline and target box.
     #[inline]
     pub fn bounds(&self, turns: u8, form: CornerForm) -> Aabb {
         self.bounds[(turns & 3) as usize][Self::form_idx(form)]
     }
 }
 
-/// One shape-kind registry row: the family, its canonical key, the parameters
-/// that distinguish this kind from others of the same family, and the facet
-/// singletons consumers dispatch through.
 pub struct ShapeKindDef {
-    /// Canonical key — `petramond:<family>` for a parameterless engine kind,
-    /// `petramond:lowered_cube/<n>` / `petramond:model/<model_key>` for the
-    /// parameterized engine kinds, or a `mod_id:name` for a parameterized or custom kind.
     pub key: &'static str,
     pub family: ShapeFamily,
     pub params: ShapeParams,
-    /// Deterministic sim behavior (collision, support, nav).
     pub sim: &'static dyn ShapeSim,
-    /// Client presentation behavior (selection outline, item form).
     pub render: &'static dyn ShapeRender,
-    /// Placement behavior (which cells the write lands in, what state it
-    /// writes) — the seam that replaced the engine's per-family placement
-    /// match.
     pub placement: &'static dyn facets::ShapePlacement,
-    /// Which chunk-mesher emitter draws this kind ([`ShapeRender::mesh_emitter`])
-    /// — the mesher's per-cell class. A plain field so the hot loop reads it
-    /// without a virtual call; set from the family at intern time.
     pub mesh_emitter: MeshEmitter,
-    /// Whether this kind's cell collision is fully determined by the block id
-    /// (see [`ShapeSim::collision_state_free`]) — a plain field so
-    /// `World::collision_boxes_at` and the navigation probes can take the
-    /// baked per-id table instead of a virtual resolve.
     pub collision_state_free: bool,
-    /// Whether this family overrides [`ShapeSim::refine_state`] — the edit
-    /// cascade's per-cell gate, a plain field so every ordinary block edit
-    /// pays 7 lookups and no virtual calls when nothing shaped is nearby.
     pub refines: bool,
 }
 
 impl<'de> Deserialize<'de> for RawShape {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         use serde::de::Error;
-        // Self-describing (block rows load through serde_json): a bare string is
-        // an engine family name or a namespaced custom-shape reference; an object
-        // is one of the parameterized tagged forms.
         let value = serde_json::Value::deserialize(d)?;
         if let serde_json::Value::String(s) = &value {
             return match s.as_str() {
@@ -661,11 +464,6 @@ impl<'de> Deserialize<'de> for RawShape {
     }
 }
 
-/// Interns shape kinds during block load — one [`ShapeKindDef`] row per distinct
-/// canonical key (all plain cubes share a row, a farmland and a snow lowered
-/// cube are two rows, each model kind its own). The block loader interns every
-/// row's resolved shape and reads back the finished table with
-/// [`into_table`](Self::into_table).
 pub(super) struct ShapeKindInterner {
     table: Vec<ShapeKindDef>,
     index: HashMap<String, u16>,
@@ -679,7 +477,6 @@ impl ShapeKindInterner {
         }
     }
 
-    /// Intern `(family, params)` under `key`, returning the (possibly reused) id.
     pub(super) fn intern(
         &mut self,
         family: ShapeFamily,
@@ -711,7 +508,6 @@ impl ShapeKindInterner {
         Ok(BlockShapeKind(id))
     }
 
-    /// The finished id-ordered shape-kind table.
     pub(super) fn into_table(self) -> Vec<ShapeKindDef> {
         self.table
     }

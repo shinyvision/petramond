@@ -1,5 +1,3 @@
-//! Whole ticks of the worker, and the upkeep every tick does.
-
 use super::{at_work, unit};
 use crate::host::fake::rows::{AIR, GRASS, STONE, TORCH, WATER};
 use crate::host::prelude::*;
@@ -10,8 +8,6 @@ use crate::worker::{tick, Step, Task, FULL_HEALTH_TAG, HEALTH_TAG};
 
 const AT: [i32; 3] = [1, 0, -2];
 
-/// The row with only its middle left to lay, and a golem in front of it
-/// carrying the stone.
 fn middle_left() -> (Session, crate::project::ProjectId, u64) {
     let (mut session, id) = Session::row();
     session.world.set([0, 0, 0], STONE);

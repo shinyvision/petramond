@@ -4,18 +4,14 @@ use mod_sdk::GenRng;
 
 use super::*;
 
-/// Roll candidate cells over a spread of lattice cells, at the two
-/// vertical cells the synthetic terrain's floors actually cross.
 fn rolled(seed: u32, n: i32) -> Vec<Cell> {
     (0..n)
         .flat_map(|i| Cell::roll(seed, i * 3 + 1, -i.rem_euclid(2), i * 7 - 4))
         .collect()
 }
 
-/// A synthetic cave with LONG contour edges: open above a floor that
-/// descends ~3 rows every 9 columns of x (terraces running along z),
-/// folded into a triangle wave so every lattice cell holds relief, with
-/// positional roughness so the lips wander like real ground.
+/// Fake cave with long contour edges - floor drops ~3 rows every 9 cols of x, terraced along z.
+/// Triangle wave keeps relief everywhere, positional roughness makes lips wander like real ground.
 fn terraced(p: [i32; 3]) -> bool {
     let t = p[0].rem_euclid(180);
     let d = t.min(180 - t);
@@ -24,15 +20,10 @@ fn terraced(p: [i32; 3]) -> bool {
     p[1] < floor
 }
 
-/// Dead-flat floor.
 fn flat(p: [i32; 3]) -> bool {
     p[1] < 0
 }
 
-/// Run the whole pipeline for one cell over a synthetic terrain, exactly
-/// as the dispatcher would: coarse scan, traces, band probe, build. The
-/// probed set returned is the WINNING trace's, so a `finish` driven from
-/// it sees the same terrain the build did.
 fn run_built(c: &Cell, terrain: fn([i32; 3]) -> bool) -> Option<(Built, HashSet<[i32; 3]>)> {
     let mut coarse = Vec::new();
     c.coarse_plan(|p| coarse.push(terrain(p)));
@@ -56,10 +47,6 @@ fn run(c: &Cell, terrain: fn([i32; 3]) -> bool) -> Option<Feature> {
     Some(b.finish(&oracle, &[]))
 }
 
-/// Flat ground must be structurally unacceptable: no step edge exists, so
-/// no trace is even offered, and a hand-built trace finds no second
-/// terrace. This is the anti-"hole in the floor" guarantee — the failure
-/// Rachel rejected twice — enforced as a gate rather than styled around.
 #[test]
 fn a_cascade_refuses_flat_ground() {
     let mut sited = 0;
@@ -77,10 +64,6 @@ fn a_cascade_refuses_flat_ground() {
     );
 }
 
-/// On terraced terrain the feature must actually generate — optimism is
-/// the whole point of the rework — and every accepted feature must
-/// satisfy the invariants the flood is trusted for, re-checked from the
-/// outputs alone.
 #[test]
 fn accepted_cascades_are_sealed_grounded_and_confined() {
     let mut accepted = 0;
@@ -112,7 +95,6 @@ fn accepted_cascades_are_sealed_grounded_and_confined() {
                 }
             }
         }
-        // Confinement: everything inside the candidate's own lattice cell.
         let cell = |p: [i32; 3]| {
             p[0].div_euclid(LATTICE) == c.lx
                 && p[2].div_euclid(LATTICE) == c.lz
@@ -132,10 +114,6 @@ fn accepted_cascades_are_sealed_grounded_and_confined() {
     );
 }
 
-/// The basin must be LONG — it follows a contour, it is not a blob. On
-/// terrain whose terraces run the full length of the cell, an accepted
-/// feature's water must span tens of blocks along the terrace axis and
-/// read as a band, not a disc.
 #[test]
 fn a_basin_follows_the_contour_for_tens_of_blocks() {
     let mut longest = 0i32;
@@ -151,7 +129,6 @@ fn a_basin_follows_the_contour_for_tens_of_blocks() {
             .filter(|(_, k)| *k == Kind::Water)
             .map(|(p, _)| *p)
             .collect();
-        // terraces run along z in `terraced`
         let (mut z0, mut z1) = (i32::MAX, i32::MIN);
         for p in &water {
             z0 = z0.min(p[2]);
@@ -167,8 +144,6 @@ fn a_basin_follows_the_contour_for_tens_of_blocks() {
     );
 }
 
-/// The chain descends: the water sits at several heights and each basin's
-/// surface is a full step under the one that feeds it.
 #[test]
 fn accepted_cascades_descend() {
     let mut checked = 0;
@@ -192,8 +167,6 @@ fn accepted_cascades_descend() {
     assert!(checked >= 40, "only {checked} chains to judge");
 }
 
-/// Probe budgets: the coarse scan is a fixed two batches, and a trace's
-/// band plan never exceeds its declared cap however the chain rolls.
 #[test]
 fn probes_stay_within_budget() {
     for c in rolled(0xC0FFEE, 400) {
@@ -214,10 +187,6 @@ fn probes_stay_within_budget() {
     }
 }
 
-/// A giant rooted in a pool is SUPPRESSED — no giant stands in water,
-/// shallow or deep, and the basin's water survives it untouched. A giant
-/// that would break containment is likewise suppressed and the basin
-/// survives — a giant never vetoes a basin.
 #[test]
 fn giants_adapt_to_the_basin_never_veto_it() {
     for c in rolled(0xC0FFEE, 400) {
@@ -227,7 +196,6 @@ fn giants_adapt_to_the_basin_never_veto_it() {
         let oracle = |p: [i32; 3]| probed.contains(&p).then(|| terraced(p));
         let base = b.finish(&oracle, &[]);
 
-        // A giant standing in the head basin, rooted a block over the bed.
         let (&(x, z), &(_pi, bed)) = b
             .basins
             .cols
@@ -264,10 +232,6 @@ fn giants_adapt_to_the_basin_never_veto_it() {
             "suppressing the in-pool giant changed the basin's water"
         );
 
-        // A giant body burying every MOVING water cell (the falls and
-        // spill flows — reach minus the still pools): delivery is
-        // severed, containment breaks, and it is the GIANT that goes,
-        // never the basin.
         let still: HashSet<[i32; 3]> = base
             .writes
             .iter()
@@ -305,9 +269,6 @@ fn giants_adapt_to_the_basin_never_veto_it() {
     panic!("no accepted candidate to test the giant path on");
 }
 
-/// Determinism: two builds of the same cell produce identical writes and
-/// reserves, in identical order. Everything downstream (probe reply
-/// indexing, section-unanimous emission) rests on this.
 #[test]
 fn a_build_is_deterministic() {
     let mut compared = 0;
@@ -324,9 +285,6 @@ fn a_build_is_deterministic() {
     assert!(compared > 5, "only {compared} features compared");
 }
 
-/// Two walled basins on a synthetic floor: pool 0 at `x ∈ -2..=2` (surface
-/// 0), pool 1 at `x ∈ 10..=14` (surface -4), both `z ∈ -2..=2`. `chasm`
-/// opens the whole column plane at `x = 15`, east of pool 1.
 fn two_pools(chasm: bool) -> (basin::Basins, impl Fn([i32; 3]) -> Option<bool>) {
     let mut cols = BTreeMap::new();
     for z in -2..=2 {
@@ -353,7 +311,6 @@ fn two_pools(chasm: bool) -> (basin::Basins, impl Fn([i32; 3]) -> Option<bool>) 
     (basins, terrain)
 }
 
-/// A rim with walls all round needs no silt but the beds.
 #[test]
 fn a_walled_chain_seals_with_beds_alone() {
     let (mut basins, terrain) = two_pools(false);
@@ -363,8 +320,6 @@ fn a_walled_chain_seals_with_beds_alone() {
     assert_eq!(sealed.silt.len(), 50, "only the bed courses are placed");
 }
 
-/// An edge over a chasm does not reject the chain: the water RETREATS from
-/// it, and the new edge is dammed on footing instead.
 #[test]
 fn an_edge_over_a_chasm_retreats_the_water_instead_of_rejecting() {
     let (mut basins, terrain) = two_pools(true);
@@ -385,8 +340,6 @@ fn an_edge_over_a_chasm_retreats_the_water_instead_of_rejecting() {
     }
 }
 
-/// The containment flood: a pool nothing feeds is scenery, and one open side
-/// into unprobed terrain is a rejection, never a guess.
 #[test]
 fn the_flood_rejects_unfed_pools_and_water_past_the_probe() {
     let (basins, terrain) = two_pools(false);
@@ -424,8 +377,6 @@ fn a_rim_of_tall_walls_is_a_tank_not_a_terrace() {
     assert!(seal::rim_is_a_wall(&tall, &rim));
 }
 
-/// The spill path runs source-first and ends on the plunge column inside
-/// the lower basin, through unowned columns only.
 #[test]
 fn a_notch_path_runs_from_the_source_rim_to_the_plunge() {
     let mut cols = BTreeMap::new();
@@ -443,9 +394,6 @@ fn a_notch_path_runs_from_the_source_rim_to_the_plunge() {
     );
 }
 
-/// Column classification against a working surface: a member within the
-/// bed band, a shore above it, a seed a full step below, and nothing past
-/// the growth band.
 #[test]
 fn columns_classify_against_a_working_surface() {
     let terrain = |[x, y, _]: [i32; 3]| {
@@ -478,8 +426,6 @@ fn columns_classify_against_a_working_surface() {
     );
 }
 
-/// The memo encoding round-trips a feature exactly and refuses bytes it did
-/// not write.
 #[test]
 fn a_settled_cell_round_trips_through_the_memo() {
     let feature = Feature {
@@ -515,13 +461,6 @@ fn a_settled_cell_round_trips_through_the_memo() {
     );
 }
 
-/// A settled feature must always PUBLISH: a lease holder whose value the memo
-/// refuses leaves every other worker deferred and then re-flooding the cell.
-/// One trace's refined probe is capped at [`BAND_PROBE_MAX`] cells, and every
-/// cell a feature names comes from that band (a write, the wet set, the cell
-/// over water, a giant anchor overlapping it), so twice the cap per list is a
-/// generous ceiling — above one plain memo entry, which is why cascades
-/// publish through the paged blob, and inside the blob's limit.
 #[test]
 fn the_worst_case_feature_fits_the_memo_blob() {
     let ceiling = 2 * BAND_PROBE_MAX;

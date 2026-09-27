@@ -31,7 +31,6 @@ struct DepthPattern {
     fingerprint: u64,
 }
 
-/// A bounded floor course, with an optional expression sampled at its top cell.
 #[derive(Clone, Copy, Debug)]
 pub struct FloorDepth {
     max: i32,
@@ -43,8 +42,6 @@ impl FloorDepth {
         self.max
     }
 
-    /// The depth at a floor top, through a per-column cache of the
-    /// expression's evaluation.
     pub(crate) fn at_cached(
         self,
         seed: u32,

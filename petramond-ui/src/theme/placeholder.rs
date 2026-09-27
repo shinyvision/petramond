@@ -1,14 +1,8 @@
-//! The synthesized placeholder theme.
-
 use super::load::parse_hex;
 use super::{palette, FaceState, ImageData, Metrics, Part, PartFace, Theme};
 use std::collections::BTreeMap;
 
 impl Theme {
-    /// A synthesized programmer-art theme covering every default part key:
-    /// flat fills with 2px borders, distinct hues per state. Lets documents
-    /// render and tests run before the real kit exists; replaced visually by
-    /// the shipped `assets/ui/theme/`.
     pub fn placeholder() -> Theme {
         let mut atlas = PlaceholderAtlas::new(256, 256);
         let mut parts: BTreeMap<String, Part> = BTreeMap::new();
@@ -337,7 +331,6 @@ impl Theme {
     }
 }
 
-/// Shelf-packs flat-colored bordered cells into an RGBA atlas.
 struct PlaceholderAtlas {
     rgba: Vec<u8>,
     size: (u32, u32),

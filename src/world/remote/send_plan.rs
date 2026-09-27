@@ -6,11 +6,6 @@ use crate::world::SentSections;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 
 impl ServerWorld {
-    /// Whether `sp`'s light is presentable: baked (possibly stale — a pending
-    /// rebake follows as `LightData`) or fully opaque (never bakes; neighbour
-    /// meshes cull against it and sample nothing). The terrain sender holds a
-    /// section back until this holds, so every install lands light-complete
-    /// and the replica performs NO light work of its own.
     pub fn section_light_final(&self, sp: SectionPos) -> bool {
         self.data
             .sections
@@ -18,20 +13,10 @@ impl ServerWorld {
             .is_some_and(|s| s.has_baked_light() || s.all_opaque())
     }
 
-    /// Drain the sections whose server bake landed since the last streaming
-    /// pump (filled by `ServerWorld::pump_light_bakes`).
     pub fn take_light_ship_log(&mut self) -> Vec<SectionPos> {
         self.side.replication.light_ship_log.drain().collect()
     }
 
-    /// Opaque key over everything the per-connection wanted-vs-sent diff
-    /// depends on: the anchor's load target (chunk/section centre and render
-    /// distance) and the world's terrain-content revision.
-    /// While the key is unchanged, a rescan cannot find new work — the sender
-    /// skips it (mirroring how `update_load_target` gates its scans).
-    /// The wanted-terrain shape for one connection: its anchor at the
-    /// anchor's own radius (the connection's view distance), clamped by this
-    /// world's `render_dist` budget.
     fn send_target(&self, anchor: LoadAnchor) -> LoadTarget {
         LoadTarget::new(
             anchor.cx,
@@ -52,9 +37,6 @@ impl ServerWorld {
         h.finish()
     }
 
-    /// Anchor-only part of [`terrain_send_key`](Self::terrain_send_key). A
-    /// connection consumes its current plan across content revisions, but an
-    /// anchor move invalidates that plan immediately.
     pub fn terrain_target_key(&self, anchor: LoadAnchor) -> u64 {
         let t = self.send_target(anchor);
         use std::hash::{Hash, Hasher};
@@ -63,15 +45,12 @@ impl ServerWorld {
         h.finish()
     }
 
-    /// Diff one connection's WANTED terrain shape against what it was already
-    /// sent: which loaded, stream-final sections to ship now (nearest-first,
-    /// budgeted), and which sent sections/columns left the keep shape (or the
-    /// server) and must unload client-side. Pure planning — the caller owns
-    /// the sent sets and the message emission (column before its sections).
+    /// Diffs wanted terrain shape against what's already sent: ship nearest-first up to budget,
+    /// unload what left the keep shape or server. Just planning. The caller owns the sent sets and
+    /// emits messages, column before sections.
     ///
-    /// The wanted/keep shapes are exactly the streamer's own
-    /// (`column_wanted`/`column_kept` over the anchor's target), so a
-    /// client is offered precisely what the server streams for its anchor.
+    /// Wanted/keep shapes match the streamer's `column_wanted`/`column_kept`, so the client gets
+    /// what the server actually streams for its anchor.
     pub fn plan_terrain_send(
         &self,
         anchor: LoadAnchor,
@@ -101,12 +80,6 @@ impl ServerWorld {
                     })
             })
         };
-        // Deep sections (below the column surface band) are deferred until the
-        // connection's vertical window or 5×5×5 near ring needs them — the
-        // replica would park them without meshing anyway, so shipping early
-        // only burns bandwidth + client install. Cave BFS visibility still
-        // works once the player approaches (window moves → sections enter
-        // the plan). Already-sent deep sections are not yanked here.
         let vwin = Self::vertical_window(target.center_cy, 0);
         let mut sections: Vec<(i64, SectionPos)> = Vec::new();
         for (&cp, &bits) in &self.data.section_column_cys {
@@ -116,7 +89,6 @@ impl ServerWorld {
             let band_lo = band_lo_of(self, cp);
             let near_xz =
                 (cp.cx - target.center.cx).abs() <= 2 && (cp.cz - target.center.cz).abs() <= 2;
-            // Whole-column skip: every loaded section of it already sent.
             let mut b = bits & !sent.column_bits(cp);
             while b != 0 {
                 let cy = petramond_world::chunk::SECTION_MIN_CY + b.trailing_zeros() as i32;
@@ -141,9 +113,6 @@ impl ServerWorld {
         sections.truncate(budget);
         let sections: Vec<SectionPos> = sections.into_iter().map(|(_, sp)| sp).collect();
 
-        // Keep test mirrors `unload_far`'s column hysteresis; a section the
-        // server itself evicted (vertical window exit) is gone from `sections`
-        // and unloads client-side through the same message.
         let drop_columns: Vec<ChunkPos> = sent_columns
             .iter()
             .filter(|cp| !Self::column_kept(target, **cp) || !self.data.columns.contains_key(cp))
@@ -173,12 +142,8 @@ impl ServerWorld {
     }
 }
 
-/// Output of [`World::plan_terrain_send`].
 pub struct TerrainSendPlan {
-    /// Loaded, stream-final, wanted, unsent sections — nearest-first, budgeted.
     pub sections: Vec<SectionPos>,
-    /// Sent sections that left the keep shape or the server world.
     pub drop_sections: Vec<SectionPos>,
-    /// Sent columns that left the keep shape (their sections drop with them).
     pub drop_columns: Vec<ChunkPos>,
 }

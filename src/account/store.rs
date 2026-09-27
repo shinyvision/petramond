@@ -1,34 +1,20 @@
-//! The stored sign-in: `account.json` in the base data dir.
-//!
-//! Separate from `client.json` on purpose. `client.json` is materialized with
-//! defaults so its knobs are discoverable by opening it; this file holds a
-//! bearer credential, exists only while somebody is signed in, and is written
-//! owner-readable only.
-
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-/// What the client remembers about the signed-in player between launches.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedSignIn {
-    /// The sign-in token. Never sent to a game server — see [`super`].
     pub token: String,
     pub user_id: i64,
-    /// The account username. This is the player name in every online session.
     pub username: String,
     pub avatar_url: String,
     pub profile_url: String,
-    /// Unix seconds: past this the client rotates the token before using it.
     pub refresh_after: i64,
-    /// Unix seconds: past this the token is dead and the password is needed.
     pub expires_at: i64,
 }
 
 impl SavedSignIn {
-    /// Bank a fresh service answer against the local clock. `token` carries over
-    /// when the answer minted none (an identity check).
     pub fn from_service(previous_token: &str, signed_in: &super::SignedIn) -> SavedSignIn {
         let now = super::now_unix();
         SavedSignIn {
@@ -54,12 +40,10 @@ impl SavedSignIn {
         }
     }
 
-    /// The token is worth trading for a fresh one.
     pub fn due_for_refresh(&self) -> bool {
         super::now_unix() >= self.refresh_after
     }
 
-    /// The token is past its hard limit — only a password can replace it.
     pub fn expired(&self) -> bool {
         super::now_unix() >= self.expires_at
     }
@@ -69,9 +53,6 @@ fn path() -> PathBuf {
     crate::save::base_data_dir().join("account.json")
 }
 
-/// The stored sign-in, or `None` when nobody is signed in (absent file) or the
-/// file is unusable. An unreadable credential file is the same situation as no
-/// credential: the player signs in again.
 pub fn load() -> Option<SavedSignIn> {
     let bytes = std::fs::read(path()).ok()?;
     match serde_json::from_slice::<SavedSignIn>(&bytes) {
@@ -84,7 +65,6 @@ pub fn load() -> Option<SavedSignIn> {
     }
 }
 
-/// Replace the stored sign-in (atomic tmp+rename, then owner-only permissions).
 pub fn store(saved: &SavedSignIn) -> std::io::Result<()> {
     let path = path();
     if let Some(dir) = path.parent() {
@@ -96,7 +76,6 @@ pub fn store(saved: &SavedSignIn) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Forget the stored sign-in. Absent is the goal, so a missing file is success.
 pub fn clear() {
     match std::fs::remove_file(path()) {
         Ok(()) => {}

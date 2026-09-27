@@ -1,10 +1,3 @@
-//! Core day/night cycle system.
-//!
-//! This is intentionally built through the same tick-stage and shader-param
-//! surfaces mods use. The cycle arithmetic, the sky derivation and the
-//! engine-owned `petramond:*` keys live in `crate::rules::daynight`, shared
-//! with the client.
-
 use crate::events::{Attach, Stage, TickSystems};
 use crate::rules::daynight::{
     clock_from_fraction, day_fraction, fresh_clock, moon_phase, morning_after, sky_params,
@@ -25,8 +18,6 @@ pub fn install_core(world: &mut ServerWorld, systems: &mut TickSystems) {
 
 #[derive(Debug)]
 struct DayNightCycle {
-    /// The world's full day+night cycle length in ticks (per-world setting,
-    /// fixed for the session — set before core systems install).
     cycle: u64,
     clock: u64,
     last_tick: u64,
@@ -98,9 +89,6 @@ impl DayNightCycle {
     }
 }
 
-/// Whether it is night per the published `petramond:is_night` KV (day fraction in
-/// [0.5, 1.0) — sunset through sunrise). False on a world where the cycle has
-/// not published yet.
 pub(super) fn is_night(world: &ServerWorld) -> bool {
     world
         .data()
@@ -109,9 +97,6 @@ pub(super) fn is_night(world: &ServerWorld) -> bool {
         == Some(Some(1))
 }
 
-/// The published day clock (`petramond:clock`), or 0 on a world whose cycle has
-/// not published yet — stamped on every `TickUpdate` so a client's sky follows
-/// the server's.
 pub(super) fn current_clock(world: &ServerWorld) -> u64 {
     read_clock(world).unwrap_or(0)
 }
@@ -124,8 +109,6 @@ pub enum TimePreset {
     Midnight,
 }
 
-/// Set the named point within the current absolute day. The core cycle adopts
-/// this ordinary clock write on its next deterministic tick.
 pub fn set_time(world: &mut ServerWorld, preset: TimePreset) {
     let cycle = world.day_cycle_ticks();
     let within_day = match preset {
@@ -139,15 +122,10 @@ pub fn set_time(world: &mut ServerWorld, preset: TimePreset) {
     world.world_kv_set(CLOCK_KEY.into(), clock.to_le_bytes().to_vec());
 }
 
-/// Freeze/unfreeze the deterministic cycle at its current clock. The flag is
-/// world KV, so save-all/autosave and reload preserve it.
 pub fn set_frozen(world: &mut ServerWorld, frozen: bool) {
     world.world_kv_set(FROZEN_KEY.into(), vec![u8::from(frozen)]);
 }
 
-/// Skip the clock to early morning of the NEXT day (sleeping through the
-/// night — or the day). Written as a `petramond:clock` KV like any external write;
-/// the core cycle adopts it on its next tick (clock writes win exactly).
 pub(super) fn skip_to_morning(world: &mut ServerWorld) {
     let cycle = world.day_cycle_ticks();
     let clock = read_clock(world).unwrap_or(fresh_clock(cycle));
@@ -203,7 +181,6 @@ mod tests {
             "the skip writes the adopted petramond:clock format"
         );
 
-        // A shorter per-world day skips by ITS cycle, not the default.
         let mut world = ServerWorld::new(1, 1);
         world.set_day_cycle_ticks(crate::rules::daynight::cycle_ticks_for_day_minutes(10));
         let c10 = world.day_cycle_ticks();

@@ -1,8 +1,3 @@
-//! Live validation panel: the game's own load-time rules
-//! (`petramond_ui::contract`, via `engine_check`) against the loaded theme,
-//! the kind's engine contract and the project's pack. Clicking an issue
-//! selects the offending node.
-
 use crate::app::App;
 use crate::doc_edit;
 use eframe::egui;

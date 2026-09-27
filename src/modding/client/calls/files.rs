@@ -1,7 +1,3 @@
-//! A mod's own FILES in its storage buckets: the calls validate here and
-//! hand the work to the file store, which orders it per file and carries it
-//! out off the frame.
-
 use mod_api::{ClientFileAnswer, ClientFileCall, ClientStorageScope, HostRet};
 
 use crate::modding::client::files::{self, FileRef, TicketSink};
@@ -10,7 +6,6 @@ use crate::modding::client::state::ClientStoreData;
 const NO_WORLD_BUCKET: &str = "there is no world bucket on the shell; use scope Pack";
 const NO_FOLDER: &str = "no folder has been chosen for this yet";
 
-/// `Error` for a path breaking the portable-name rule: the mod's bug.
 pub(super) fn checked_path(call: &str, path: &str) -> Result<(), HostRet> {
     match mod_api::file_path_problem(path) {
         Some(problem) => Err(HostRet::invalid(format!(
@@ -20,8 +15,6 @@ pub(super) fn checked_path(call: &str, path: &str) -> Result<(), HostRet> {
     }
 }
 
-/// Whether the world on screen is a presentation's, whose `World` bucket
-/// refuses writes.
 pub(super) fn presents(client: &ClientStoreData) -> bool {
     !client.shell
         && matches!(
@@ -30,7 +23,6 @@ pub(super) fn presents(client: &ClientStoreData) -> bool {
         )
 }
 
-/// Why a WRITE into `scope` is refused right now, if it is.
 pub(super) fn write_refusal(client: &ClientStoreData, scope: ClientStorageScope) -> Option<String> {
     match scope {
         ClientStorageScope::World if presents(client) => {
@@ -40,7 +32,6 @@ pub(super) fn write_refusal(client: &ClientStoreData, scope: ClientStorageScope)
     }
 }
 
-/// Why `scope` has nothing to read or write right now, if it has not.
 fn read_refusal(client: &ClientStoreData, scope: ClientStorageScope) -> Option<String> {
     match scope {
         ClientStorageScope::Pack => None,
@@ -61,7 +52,6 @@ fn reply_fits(call: &str, what: &str, bytes: u64, guest_memory_max: u64) -> Resu
     Ok(())
 }
 
-/// The file a synchronous call names; `Error` = `World` on the shell.
 fn bucket_file(
     client: &ClientStoreData,
     scope: ClientStorageScope,
@@ -76,9 +66,6 @@ fn bucket_file(
     })
 }
 
-/// Issue a ticket for work on `scope`'s bucket: `start` queues it (or
-/// refuses) with the file it names and the ticket's sink. `writes` = the
-/// work changes the bucket.
 fn ticketed(
     client: &mut ClientStoreData,
     scope: ClientStorageScope,
@@ -223,7 +210,6 @@ pub(super) fn handle(
             Ok(Some(Err(failed))) => HostRet::refused(failed),
             Err(why) => HostRet::invalid(format!("ClientFilePoll: {why}")),
         },
-        // An unchosen folder holds nothing: no file there, nothing to show.
         ClientFileCall::ClientFileStat {
             scope: scope @ ClientStorageScope::Chosen(_),
             path,

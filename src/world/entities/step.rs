@@ -1,8 +1,3 @@
-//! How one item entity advances a world tick: each motion variant's step,
-//! composed from the entity's own physics (`entity::DroppedItem`) and what
-//! only the world store can see — the live bodies a flight sweeps, and the
-//! announced block changes a lodged item watches its anchor through.
-
 use crate::world::ServerWorld;
 use std::collections::HashSet;
 
@@ -14,19 +9,11 @@ use petramond_math::world_pos::WorldPos;
 use super::sweep::{sweep, SweepBodies};
 use super::ItemImpact;
 
-/// How far behind the impact point a striking item's centre comes to rest,
-/// in blocks: the head buried, the tail standing proud of the surface.
 const IMPACT_SEAT: f32 = 0.15;
 
-/// Past this many announced cells the anchor test hashes them rather than
-/// scanning: a wall of lodged items against a bulk edit must not go
-/// quadratic.
 const CHANGED_HASH_THRESHOLD: usize = 16;
 
-/// The announced block changes since the last item tick, shaped as the one
-/// question a lodged item asks of them: was my anchor touched?
 pub(super) enum ChangedCells<'a> {
-    /// Changes were lost: every cell may have changed.
     All,
     Few(&'a [IVec3]),
     Many(HashSet<IVec3>),
@@ -52,23 +39,16 @@ impl<'a> ChangedCells<'a> {
     }
 }
 
-/// What every item's step shares this tick beyond the entity itself.
 pub(super) struct StepCtx<'a> {
     pub world: &'a ServerWorld,
     pub dt: f32,
     pub anchors: &'a [PlayerAnchor],
     pub changed: ChangedCells<'a>,
-    /// The mobs a flight may strike, bucketed for the sweep; gathered only
-    /// while something is in flight.
     pub bodies: Option<SweepBodies>,
 }
 
 impl StepCtx<'_> {
-    /// Whether the segment `from → from + motion` meets `body`'s box —
-    /// starts inside it, or crosses it. A body that is gone (a spectator, a
-    /// departed session, a dead or unloaded mob) meets nothing.
     fn segment_meets_body(&self, body: EntityRef, from: WorldPos, motion: Vec3) -> bool {
-        // In the segment's own frame, so the test stays exact far out.
         let rel = |p: [f64; 3]| {
             Vec3::new(
                 (p[0] - from.x) as f32,
@@ -101,9 +81,6 @@ impl StepCtx<'_> {
         }
     }
 
-    /// The body centre a requested drop magnets toward: ITS requester's —
-    /// never someone else's, so two players vacuuming side by side each
-    /// pull their own reservations.
     fn magnet_for(&self, item: &DroppedItem) -> Option<WorldPos> {
         let by = item.pickup_requested?;
         self.anchors.iter().find(|a| a.id == by).map(|a| a.pos)
@@ -114,8 +91,6 @@ fn contains(lo: Vec3, hi: Vec3, p: Vec3) -> bool {
     (lo.x..=hi.x).contains(&p.x) && (lo.y..=hi.y).contains(&p.y) && (lo.z..=hi.z).contains(&p.z)
 }
 
-/// Whether the segment `from → from + motion` starts inside or crosses the
-/// box `lo..hi`.
 fn segment_meets_box(from: Vec3, motion: Vec3, lo: Vec3, hi: Vec3) -> bool {
     if contains(lo, hi, from) {
         return true;
@@ -127,9 +102,6 @@ fn segment_meets_box(from: Vec3, motion: Vec3, lo: Vec3, hi: Vec3) -> bool {
 }
 
 impl DroppedItem {
-    /// Advance this item one tick by its motion's own step. Only a flight
-    /// has anything to report: the impact that stopped it, for the stage
-    /// owner to resolve.
     pub(super) fn step(&mut self, ctx: &StepCtx) -> Option<ItemImpact> {
         match self.motion {
             Motion::Loose => {
@@ -137,8 +109,6 @@ impl DroppedItem {
                 None
             }
             Motion::Flight(_) => self.step_flight(ctx),
-            // A lodged item a player reaches for comes loose into the magnet
-            // like any drop; otherwise it holds while its block does.
             Motion::Stuck(_) if self.pickup_requested.is_some() => {
                 self.release();
                 self.step_loose(ctx.dt, ctx.world, ctx.magnet_for(self));
@@ -151,9 +121,6 @@ impl DroppedItem {
         }
     }
 
-    /// The FLIGHT step: integrate the velocity, then sweep this tick's
-    /// motion for the first body or block on it. A strike seats the item at
-    /// the impact — still in flight; what happens next is the server's.
     fn step_flight(&mut self, ctx: &StepCtx) -> Option<ItemImpact> {
         let motion = self.advance_flight(ctx.dt)?;
         let Motion::Flight(flight) = &mut self.motion else {
@@ -186,11 +153,6 @@ impl DroppedItem {
         })
     }
 
-    /// The STUCK step: hold still; probe the anchor only when it was
-    /// announced changed, or once after a reload (the block may have gone
-    /// while the section was out). The probe waits for the anchor's column
-    /// to be loaded — an unloaded column reads as empty and would release a
-    /// lodged item that has lost nothing.
     fn step_stuck(&mut self, ctx: &StepCtx) {
         self.prev_pos = self.pos;
         self.prev_spin = self.spin;

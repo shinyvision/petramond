@@ -13,7 +13,6 @@ use petramond_world::item::{ItemStack, ItemType};
 #[test]
 fn place_with_empty_hand_does_nothing() {
     let mut game = game();
-    // The starting inventory is already empty.
     assert!(game.server_player().inventory.selected().is_none());
     game.session_mut().input_mut().look = Some(hit(IVec3::new(0, 40, 0), IVec3::Y));
     assert!(!game.sim_mut().try_place_for_test());
@@ -44,15 +43,10 @@ fn right_clicking_interactable_blocks_requests_their_screen() {
             events.player_at(0).placed_block.is_none(),
             "{block:?} should interact, not place"
         );
-        // Every consumed interaction reports through the generic flag, so the
-        // interact hand jab is the default for ALL interactables — a new
-        // interaction kind must not need remembering in the presentation.
         assert!(
             events.player_at(0).interacted,
             "{block:?} should report interacted"
         );
-        // Every engine container opens through the SAME unified request lane
-        // a mod GUI uses: one (kind, anchor) shape, no per-kind fields.
         assert_eq!(
             game.session().replication().request_open_gui,
             Some((expected_kind, Some(pos.into()))),
@@ -111,10 +105,7 @@ fn right_clicking_a_door_toggles_it_through_block_interaction() {
 fn place_into_loaded_air_decrements_selected() {
     let mut game = game();
     game.server_player_mut().inventory = filled_inventory();
-    // Player at the surface (section cy 4 ≈ y64): the vertical window streams the surface
-    // band, and the y=200 placement below is into open air via materialize-on-write.
     game.server_world_mut().update_load(0, 4, 0);
-    // `TestGame` uses an inline job pool — gen finishes inside `poll`.
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     let mut loaded = false;
     while std::time::Instant::now() < deadline {
@@ -151,20 +142,16 @@ fn place_into_loaded_air_decrements_selected() {
 
 #[test]
 fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
-    // Right-clicking short grass (a replaceable plant) while holding a block places
-    // the block straight INTO the grass cell, overwriting it with no drop — not on
-    // top of it.
     let mut game = game_on_empty_chunk();
-    game.server_player_mut().inventory = filled_inventory(); // a stack of Dirt
+    game.server_player_mut().inventory = filled_inventory();
     game.server_player_mut().inventory.set_active(0);
-    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of the cell
+    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
 
     let g = IVec3::new(8, 100, 8);
     game.server_world_mut()
         .set_block_world(g.x, g.y, g.z, Block::ShortGrass);
     let before = game.server_player().inventory.selected().unwrap().count;
 
-    // Look straight at the grass and place into it.
     game.session_mut().input_mut().look = Some(hit(g, IVec3::Y));
     assert!(
         game.sim_mut().try_place_for_test(),
@@ -189,15 +176,11 @@ fn placing_into_replaceable_grass_overwrites_it_with_no_drop() {
 
 #[test]
 fn placing_a_replaceable_block_on_itself_is_refused() {
-    // Clicking short grass while HOLDING short grass must not "replace" it:
-    // the rewrite would be invisible yet still eat one item off the hotbar.
     let mut game = game_on_empty_chunk();
     give(&mut game, ItemType::ShortGrass, 64);
-    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of the cell
+    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
 
     let g = IVec3::new(8, 100, 8);
-    // Real ground below, so the refusal comes from the same-block rule and
-    // not the substrate gate.
     game.server_world_mut()
         .set_block_world(g.x, g.y - 1, g.z, Block::Grass);
     game.server_world_mut()
@@ -223,9 +206,6 @@ fn placing_a_replaceable_block_on_itself_is_refused() {
 
 #[test]
 fn rooted_plants_place_only_on_their_required_ground() {
-    // The data-driven substrate gate: a flower roots in soil (grass/dirt), a cactus
-    // in sand (sand/red sand). Building onto the wrong ground is a no-op; the right
-    // ground accepts it. Each case uses its own column so they don't interfere.
     fn place_on(
         game: &mut super::common::TestGame,
         ground: Block,
@@ -236,9 +216,8 @@ fn rooted_plants_place_only_on_their_required_ground() {
         game.server_world_mut()
             .set_block_world(g.x, g.y, g.z, ground);
         give(game, item, 1);
-        game.session_mut().input_mut().look = Some(hit(g, IVec3::Y)); // build on TOP of the ground block
+        game.session_mut().input_mut().look = Some(hit(g, IVec3::Y));
         let placed = game.sim_mut().try_place_for_test();
-        // The return must agree with whether the block actually landed above.
         let above = Block::from_id(game.server_world().data().chunk_block(g.x, g.y + 1, g.z));
         assert_eq!(
             placed,
@@ -249,9 +228,8 @@ fn rooted_plants_place_only_on_their_required_ground() {
     }
 
     let mut game = game_on_empty_chunk();
-    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of every cell
+    game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
 
-    // A flower (Dandelion) roots in soil only.
     assert!(
         !place_on(&mut game, Block::Stone, ItemType::Dandelion, 2),
         "no flower on stone"
@@ -269,7 +247,6 @@ fn rooted_plants_place_only_on_their_required_ground() {
         "no flower on sand"
     );
 
-    // A cactus roots in sand only.
     assert!(
         !place_on(&mut game, Block::Grass, ItemType::Cactus, 10),
         "no cactus on grass"
@@ -283,7 +260,6 @@ fn rooted_plants_place_only_on_their_required_ground() {
         "cactus on red sand"
     );
 
-    // A mushroom roots in soil OR any stone (its two RootsIn* tags combine).
     assert!(
         place_on(&mut game, Block::Grass, ItemType::BrownMushroom, 1),
         "mushroom on grass"
@@ -306,14 +282,6 @@ fn rooted_plants_place_only_on_their_required_ground() {
     );
 }
 
-/// The SHAPE half of the substrate gate, and the reason it cannot be a tag:
-/// a TOP slab of stone is the same MATERIAL as stone and presents a complete
-/// top face, yet it is not whole matter, so a mushroom must refuse it while
-/// still taking the full cube beside it.
-///
-/// Both sides are asserted because a predictor that says yes where the server
-/// says no is its own bug class — the player gets a ghost the next delta
-/// deletes, which is exactly the "it breaks right after placing" report.
 #[test]
 fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
     use crate::game::tick::PlacePrediction;
@@ -326,8 +294,6 @@ fn a_full_cube_substrate_is_required_by_the_server_and_the_predictor() {
     game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
     game.game.local.player.pos = WorldPos::new(100.0, 64.0, 100.0);
 
-    // Column 4: a whole stone cube. Column 6: a stone TOP slab — complete top
-    // face, shaped body.
     let whole = IVec3::new(4, 64, 4);
     let slab = IVec3::new(6, 64, 6);
     fn stage<S: petramond::world::WorldSide>(
@@ -476,16 +442,11 @@ fn slabs_stack_vertically_with_mixed_materials() {
     assert_eq!(state.layers, [Block::StoneSlab, Block::DirtSlab]);
 }
 
-/// A wall torch mounts only on a FULL support face: a stair's flat back
-/// qualifies, its stepped open side does not; a lone slab layer's side does
-/// not, a completed two-layer stack's side does.
 #[test]
 fn torch_support_face_cases() {
     struct Case {
         label: &'static str,
-        /// Install the support block at the given cell; false = setup failed.
         setup: fn(&mut super::common::TestGame, IVec3) -> bool,
-        /// The clicked face (torch cell = support + normal).
         normal: IVec3,
         expect_place: bool,
         expected_block: Block,
@@ -606,9 +567,6 @@ fn slab_side_clicks_build_into_the_adjacent_cell_not_the_hit_cell() {
     game.session_mut().input_mut().look = Some(hit(p - IVec3::Y, IVec3::Y));
     assert!(game.sim_mut().try_place_for_test(), "bottom slab places");
 
-    // Hold TOP rotation and click the bottom slab's SIDE face: the hit cell's
-    // empty top half must not swallow the click — only a face looking along
-    // the split axis stacks. The top slab builds in the adjacent cell.
     game.toggle_held_block_rotation();
     game.session_mut().input_mut().look = Some(hit(p, IVec3::X));
     assert!(game.sim_mut().try_place_for_test(), "side click places");
@@ -630,9 +588,6 @@ fn held_rotation_does_not_leak_across_item_swaps() {
     game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
     let p = IVec3::new(4, 64, 4);
 
-    // Rotate a held stair, then swap the ACTIVE SLOT's content to a slab (an
-    // inventory-GUI style swap — no hotbar switch, so nothing clears the
-    // latched rotation). The stale stair rotation must not orient the slab.
     give(&mut game, ItemType::DirtStairs, 1);
     game.toggle_held_block_rotation();
 
@@ -678,7 +633,7 @@ fn rotating_held_log_places_horizontal_axis() {
 fn held_rotation_state_toggles_only_for_rotatable_blocks() {
     let mut game = game();
     give(&mut game, ItemType::OakLog, 1);
-    game.sync_self_view_for_test(); // held_block_state reads the replicated view
+    game.sync_self_view_for_test();
 
     assert_eq!(game.held_block_state(), HeldBlockState::Log(LogAxis::Y));
     game.toggle_held_block_rotation();
@@ -692,15 +647,11 @@ fn held_rotation_state_toggles_only_for_rotatable_blocks() {
     assert_eq!(game.held_block_state(), HeldBlockState::None);
 }
 
-/// A model block's data row picks how it turns to meet the player: LeftToRight spans
-/// the authored X axis across the view (workbench), FrontToBack runs it away from the
-/// player with the clicked cell at the near end (bed: foot first, headboard far).
 #[test]
 fn model_placement_orientation_spans_across_or_away() {
-    // The default camera (yaw 0) looks south (+Z).
     let place = |item: ItemType, target: IVec3| -> super::common::TestGame {
         let mut game = game_on_empty_chunk();
-        game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0); // park clear of every cell
+        game.server_player_mut().pos = WorldPos::new(100.0, 64.0, 100.0);
         give(&mut game, item, 1);
         game.session_mut().input_mut().look = Some(hit(target - IVec3::new(0, 1, 0), IVec3::Y));
         assert!(game.sim_mut().try_place_for_test(), "{item:?} should place");
@@ -710,8 +661,6 @@ fn model_placement_orientation_spans_across_or_away() {
         Block::from_id(game.server_world().data().chunk_block(p.x, p.y, p.z))
     };
 
-    // FrontToBack: the bed occupies the clicked cell and the cell BEYOND it (south,
-    // away from the player) — never the cells beside it.
     let p = IVec3::new(4, 64, 4);
     let bed = place(ItemType::Bed, p);
     assert_eq!(
@@ -727,7 +676,6 @@ fn model_placement_orientation_spans_across_or_away() {
     assert_eq!(at(&bed, p + IVec3::new(1, 0, 0)), Block::Air);
     assert_eq!(at(&bed, p - IVec3::new(1, 0, 0)), Block::Air);
 
-    // LeftToRight: the workbench spans sideways (east-west) across the same view.
     let wb = place(ItemType::FurnitureWorkbench, p);
     assert_eq!(at(&wb, p), Block::FurnitureWorkbench);
     assert_eq!(
@@ -741,7 +689,6 @@ fn model_placement_orientation_spans_across_or_away() {
 
 #[test]
 fn furnace_front_faces_the_player_on_placement() {
-    // The front points opposite the look direction (back toward the player).
     assert_eq!(facing_from_forward(Vec3::new(0.0, 0.0, 1.0)), Facing::North);
     assert_eq!(
         facing_from_forward(Vec3::new(0.0, 0.0, -1.0)),
@@ -749,21 +696,12 @@ fn furnace_front_faces_the_player_on_placement() {
     );
     assert_eq!(facing_from_forward(Vec3::new(1.0, 0.0, 0.0)), Facing::West);
     assert_eq!(facing_from_forward(Vec3::new(-1.0, 0.0, 0.0)), Facing::East);
-    // A pitched, mostly-horizontal look snaps to the dominant horizontal axis.
     assert_eq!(
         facing_from_forward(Vec3::new(0.2, -0.9, 0.95)),
         Facing::North
     );
 }
 
-/// Stacking a second slab into a cell must not take the sitting layer's
-/// per-cell data with it.
-///
-/// A block write clears the cell's whole KV map, which is right when the cell
-/// is replaced and wrong here: the placement AUGMENTS the cell, so the layer
-/// already sitting there keeps its own data (its dye) while the newcomer's
-/// lands on the part it filled. Without this a white slab under an orange one
-/// came out orange on both halves — and dropped two orange slabs.
 #[test]
 fn stacking_a_slab_keeps_the_sitting_layers_data() {
     use petramond_world::block::{part_kv_key, TINT_KV_KEY};
@@ -776,7 +714,6 @@ fn stacking_a_slab_keeps_the_sitting_layers_data() {
     game.session_mut().input_mut().look = Some(hit(p - IVec3::Y, IVec3::Y));
     assert!(game.sim_mut().try_place_for_test(), "first slab places");
 
-    // Dye the sitting bottom layer (what the carry courier would have written).
     let white = vec![255u8, 255, 255];
     assert!(game.server_world_mut().cell_kv_set(
         p.x,
@@ -800,8 +737,6 @@ fn stacking_a_slab_keeps_the_sitting_layers_data() {
         Some(white),
         "the bottom layer's data must survive the stacking write"
     );
-    // The newcomer carried nothing, so the layer it filled stays plain — the
-    // two layers are addressed independently.
     assert_eq!(
         game.server_world()
             .data()
@@ -811,11 +746,6 @@ fn stacking_a_slab_keeps_the_sitting_layers_data() {
     );
 }
 
-/// The slab family's part numbering has to be ONE numbering: the boxes the
-/// mesher tints, the parts the drop courier reads, and the part a placement
-/// claims all address the same layer. They are three separate impls, so
-/// nothing but a test stops them drifting — and drift here does not crash, it
-/// just quietly paints or drops the wrong layer.
 #[test]
 fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
     use petramond_world::block::{ShapeCtx, NO_PART_TINT};
@@ -859,8 +789,6 @@ fn slab_parts_and_boxes_agree_on_the_layer_numbering() {
     assert_eq!(boxes.len(), parts.len(), "one box per part");
     for (b, &(part, _)) in boxes.iter().zip(parts.iter()) {
         assert_eq!(b.part, part, "box parts must match the family's part list");
-        // Part 0 is the lower half of the split axis, part 1 the upper — the
-        // ordering the placement plan and the mesher both assume.
         let lower = b.aabb.min[1] < 0.25;
         assert_eq!(lower, part == 0, "part {part} sits in the wrong half");
     }

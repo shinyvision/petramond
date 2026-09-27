@@ -1,19 +1,9 @@
-//! Per-column surface / direct-sky-cover map maintenance, plus the change
-//! envelope ([`SkyCoverChange`]) streaming and edits use to bound skylight
-//! invalidation.
-//! (Data-half queries; the mutation/orchestration half stays in the engine crate.)
-
 use crate::block::Block;
 use crate::chunk::{section_idx, SectionPos, SECTION_MAX_CY, SECTION_MIN_CY, SECTION_SIZE};
 use crate::column::NO_SURFACE;
 use crate::world::data::WorldData;
 
 impl WorldData {
-    /// Merge one deterministic generated/cache section into the analytical bare
-    /// surface and sky-cover maps. It can only add feature blocks above those
-    /// baselines; authoritative saved terrain uses
-    /// `recompute_column_heightmaps` because
-    /// it may also remove them. Returns the changed cover envelope.
     pub fn raise_column_heightmaps_from_section(
         &mut self,
         pos: SectionPos,
@@ -23,7 +13,6 @@ impl WorldData {
         let mut raised_surface = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let mut raised_sky = [NO_SURFACE; SECTION_SIZE * SECTION_SIZE];
         let section = self.sections.get(&pos)?;
-        // Air neither raises the surface nor covers the sky.
         if section.is_empty_air() {
             return None;
         }
@@ -107,9 +96,6 @@ impl WorldData {
     }
 }
 
-/// Vertical envelope of one column's direct-sky-cover changes. Skylight can
-/// only differ between the lower endpoint's seep reach and the upper endpoint,
-/// so streaming invalidation need not touch the rest of the world stack.
 #[derive(Copy, Clone, Debug)]
 pub struct SkyCoverChange {
     min_cover: i32,
@@ -133,11 +119,6 @@ impl SkyCoverChange {
         super::light::cover_change_affects_section(pos, self.min_cover, self.max_cover)
     }
 
-    /// L1 gap from `pos`'s cell box to the changed direct-sky segment of the
-    /// world column `(wx, wz)` — the cells between the two cover endpoints,
-    /// whose direct-sky status flipped. Light can only change within the
-    /// flood reach of that segment, so a single-column cover move needs no
-    /// blanket 3×3-column invalidation.
     pub fn segment_gap(self, pos: SectionPos, wx: i32, wz: i32) -> i32 {
         let (ox, oy, oz) = pos.origin_world();
         let side = SECTION_SIZE as i32 - 1;
@@ -149,9 +130,6 @@ impl SkyCoverChange {
         gx + gz + gy
     }
 
-    /// Generated-section ingest already invalidates that section's 3x3x3. Only
-    /// an unusual cover jump spanning farther vertically needs the additional
-    /// column-map invalidation pass.
     pub fn escapes_section_neighborhood(self, changed: SectionPos) -> bool {
         (SECTION_MIN_CY..=SECTION_MAX_CY).any(|cy| {
             (cy - changed.cy).abs() > 1 && self.affects(SectionPos::new(changed.cx, cy, changed.cz))

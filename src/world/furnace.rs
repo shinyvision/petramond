@@ -1,12 +1,3 @@
-//! Furnace block-entities at the world level: the per-tick smelting fan-out and
-//! world-coordinate access to the section-owned furnace state.
-//!
-//! A furnace is machine state ([`Furnace`]) plus slots in the block's generic
-//! [`Container`](petramond_world::container::Container) plus an entity facing — three
-//! sibling section maps under one key. These are thin world↔section coordinate
-//! wrappers plus the tick driver that supplies the recipe set the storage
-//! layer is kept ignorant of.
-
 #[cfg(test)]
 use crate::world::{ReplicaWorld, ServerWorld};
 use crate::world::{World, WorldSide};
@@ -18,24 +9,8 @@ use petramond_world::crafting::Recipes;
 use petramond_world::furnace::{Furnace, FURNACE_SLOTS};
 
 impl<S: WorldSide> World<S> {
-    /// Advance every loaded furnace by one game tick, smelting per `recipes`.
-    /// Furnaces are section-owned, so this fans out to each section, then
-    /// swaps any furnace whose lit state changed onto its matching skin row
-    /// (`furnace` ⇄ `furnace_lit`). The swap rides the ordinary block-write
-    /// lanes — delta capture, relight (the lit row's `emission` makes it a
-    /// torch-class emitter), remesh, block updates, save `modified` — with the
-    /// sibling entity maps (machine state, container, facing) preserved by
-    /// [`World::swap_block_skin`]. Cheap for the common furnace-free section
-    /// (an empty-map early-out).
-    ///
-    /// One step of the per-tick sequence owned by [`World::game_tick`]; not a
-    /// public entry point.
     pub(super) fn tick_furnaces(&mut self, recipes: &Recipes) {
         let mut reskin = Vec::new();
-        // Only indexed sections can hold a furnace; skip the Arc::make_mut
-        // (a potential copy-on-write clone) for chest/door-only ones. Sorted:
-        // set order reflects streaming history, and the lit-flip block writes
-        // must land in a deterministic order (the multiplayer tick contract).
         let mut candidates: Vec<_> = self.data.block_entity_sections.iter().copied().collect();
         candidates.sort_unstable_by_key(|p| (p.cx, p.cy, p.cz));
         for cpos in candidates {
@@ -52,28 +27,20 @@ impl<S: WorldSide> World<S> {
         }
 
         for (pos, desired) in reskin {
-            // A refused swap (stream-finality guard) is retried by the next
-            // tick's skin comparison — the mismatch check self-heals.
             self.swap_block_skin(pos, desired);
         }
     }
 
-    /// The furnace state at a world block position, if one is stored there.
     pub fn furnace_at(&self, pos: IVec3) -> Option<&Furnace> {
         let (c, lx, ly, lz) = self.data.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.furnace_at(lx, ly, lz)
     }
 
-    /// The furnace state and its container slots at a world position,
-    /// split-borrowed for GUI edits and the furnace view.
     pub fn furnace_parts_mut(&mut self, pos: IVec3) -> Option<(&mut Furnace, &mut Container)> {
         let (c, lx, ly, lz) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z)?;
         c.furnace_parts_mut(lx, ly, lz)
     }
 
-    /// Install an empty furnace facing `facing` at a freshly placed furnace
-    /// block: default machine state, an empty 3-slot container, and the
-    /// facing. No-op if the owning chunk is not loaded or `y` is out of range.
     pub fn insert_furnace(&mut self, pos: IVec3, facing: Facing) {
         if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) {
             c.insert_furnace(lx, ly, lz, Furnace::default());
@@ -118,7 +85,6 @@ mod tests {
         )
     }
 
-    /// Install a fueled furnace (state + slots + facing) at a section-local cell.
     fn insert_fueled_furnace(section: &mut Section, x: usize, y: usize, z: usize) {
         section.insert_furnace(x, y, z, Furnace::default());
         let mut container = Container::with_len(FURNACE_SLOTS);
@@ -139,10 +105,6 @@ mod tests {
             .count()
     }
 
-    /// A lit flip is a row swap through the ordinary block-write lanes: the
-    /// block id flips to the lit row, while the sibling entity maps — machine
-    /// counters, container slots, facing — and the cell's mod KV survive the
-    /// swap. Going out swaps back.
     #[test]
     fn furnace_lit_flip_swaps_the_row_and_preserves_the_block_entity() {
         let spos = SectionPos::new(0, 4, 0);
@@ -157,7 +119,6 @@ mod tests {
 
         world.game_tick(&furnace_recipes());
         assert_eq!(block(&world, 8, 64, 8), Block::FurnaceLit, "lit row swap");
-        // The swap preserves the sibling entity maps and the cell's mod KV.
         let furnace = world.furnace_at(pos).expect("machine state survives");
         assert!(furnace.is_lit());
         assert_eq!(
@@ -184,8 +145,6 @@ mod tests {
              is carried across the row swap"
         );
 
-        // Burn out: drain the fuel and input, then let the flame die — the
-        // skin swaps back to the unlit row.
         {
             let (furnace, container) = world.furnace_parts_mut(pos).unwrap();
             furnace.burn_remaining = 1;
@@ -197,9 +156,6 @@ mod tests {
         assert!(world.furnace_at(pos).is_some(), "machine state still there");
     }
 
-    /// The lit row is its own mesh skin: a replica meshing a furnace section
-    /// draws the unlit front, and the lit row (what the server's flip ships
-    /// as a block delta) draws the lit front.
     #[test]
     fn a_replica_meshes_each_furnace_row_with_its_own_front() {
         let spos = SectionPos::new(0, 4, 0);
@@ -210,8 +166,6 @@ mod tests {
             let mut section = Section::new(spos.cx, spos.cy, spos.cz);
             section.set_block(8, 0, 8, row);
             insert_fueled_furnace(&mut section, 8, 0, 8);
-            // Settled light, so the mesh builds now instead of waiting on a bake;
-            // the tile count is what's under test, not the light value.
             section.set_skylight(vec![0u8; SECTION_VOLUME].into());
 
             let mut replica = ReplicaWorld::new(0, 0);
@@ -225,27 +179,23 @@ mod tests {
 
     #[test]
     fn furnace_lit_flip_emits_neighbor_block_update() {
-        // Build the section directly so the furnace BLOCK-ENTITY is present: a column
-        // `Chunk` fixture carries blocks + water through the split, but not block-entities
-        // (real worldgen produces none), so a pre-placed furnace's fuel would be lost.
-        // Section (0,4,0) → world y 64..79; floor at local y 0 (world 64).
         let spos = SectionPos::new(0, 4, 0);
         let mut section = Section::new(spos.cx, spos.cy, spos.cz);
         for z in 0..16 {
             for x in 0..16 {
-                section.set_block(x, 0, z, Block::Stone); // floor at world y 64
+                section.set_block(x, 0, z, Block::Stone);
             }
         }
-        section.set_block(8, 1, 8, Block::Water); // source water at world (8,65,8)
+        section.set_block(8, 1, 8, Block::Water);
         section.set_block(9, 1, 8, Block::Furnace);
-        insert_fueled_furnace(&mut section, 9, 1, 8); // world (9,65,8)
+        insert_fueled_furnace(&mut section, 9, 1, 8);
 
         let mut world = ServerWorld::new(0, 0);
         world.insert_section_for_test(spos, section);
         let recipes = furnace_recipes();
 
-        world.game_tick(&recipes); // the furnace lights and queues block updates
-        world.game_tick(&recipes); // the water receives the update and schedules flow
+        world.game_tick(&recipes);
+        world.game_tick(&recipes);
         assert_eq!(block(&world, 7, 65, 8), Block::Air);
 
         for _ in 0..10 {

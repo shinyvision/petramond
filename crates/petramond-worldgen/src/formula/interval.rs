@@ -1,9 +1,3 @@
-//! Conservative interval arithmetic over the recipe operators: a bound on
-//! what a node can produce over a column's heights, used to skip members a
-//! scan would otherwise evaluate lane by lane. Every rule must contain the
-//! true value; where no rule is known the result is unknown and the member
-//! is kept.
-
 use super::Op;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -56,7 +50,6 @@ impl Interval {
         self.lo.is_infinite() || self.hi.is_infinite()
     }
 
-    /// A predicate value that can never be `> 0.0`.
     pub fn never_positive(self) -> bool {
         self.hi <= 0.0
     }
@@ -88,8 +81,6 @@ fn mul(a: Interval, b: Interval) -> Interval {
         .fold(Interval::EMPTY, |range, &p| range.hull_point(p))
 }
 
-/// `a * a`: never negative whatever the sign of `a`, which a product of two
-/// independent ranges cannot know.
 pub(super) fn square(a: Interval) -> Interval {
     if a.unknown() {
         return Interval::new(0.0, f64::INFINITY);
@@ -226,8 +217,6 @@ pub(super) fn apply(op: Op, [a, b, c, _]: [Interval; 4]) -> Interval {
                 b.hull(c)
             }
         }
-        // Simplex noise stays within one either way and a seeded uniform draw
-        // within [0, 1); a Perlin stack's bound is not derived here.
         Op::Noise2 | Op::Noise3 => I::new(-1.0, 1.0),
         Op::Random => I::new(0.0, 1.0),
         Op::Perlin(_) => I::UNKNOWN,
@@ -238,9 +227,6 @@ pub(super) fn apply(op: Op, [a, b, c, _]: [Interval; 4]) -> Interval {
 mod tests {
     use super::*;
 
-    /// Every rule must contain the operator's value at every point of its
-    /// operand intervals, edges included; a violated bound would skip a
-    /// member that carves.
     #[test]
     fn every_rule_contains_the_pointwise_values() {
         let samples = [-3.5, -1.0, -0.25, 0.0, 0.5, 1.0, 2.75];

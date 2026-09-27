@@ -46,8 +46,6 @@ fn fluid(block: Block, contact: FluidContact) -> &'static FluidDef {
     }))
 }
 
-/// Deals contact damage and applies the hot condition's strong stage. The block
-/// ids only order the synthetic fluids; no row of theirs is read.
 fn hazard() -> &'static FluidDef {
     fluid(
         Block::Grass,
@@ -89,7 +87,6 @@ fn douse() -> &'static FluidDef {
     )
 }
 
-/// `touched` in any order; the tick's contract is sorted and unique.
 fn step(body: &mut BodyExposure, touched: &[&'static FluidDef]) -> Vec<ExposureDamage> {
     let mut touched = touched.to_vec();
     touched.sort_by_key(|f| f.block.id());

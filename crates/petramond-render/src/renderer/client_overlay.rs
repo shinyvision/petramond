@@ -1,11 +1,3 @@
-//! Physical-pixel client-WASM overlays and modal canvases.
-//!
-//! These images deliberately bypass GUI documents and `gui_scale`: placement
-//! and display dimensions are physical screen pixels. The renderer owns upload
-//! caching and draws nearest-sampled quads in the ordinary depthless UI pass.
-//! A canvas's rules and labels ride the same ordered batch list as its images,
-//! sampling the theme's solid sentinel and font the way document chrome does.
-
 use super::*;
 
 #[derive(Default)]
@@ -16,8 +8,6 @@ pub(super) struct ClientOverlays {
     images: ClientImageBinds,
 }
 
-/// Client images uploaded as textures, by key: re-uploaded when the image's
-/// revision moves, by its recorded blit rects when they cover the gap.
 #[derive(Default)]
 pub(super) struct ClientImageBinds {
     binds: Vec<(String, OverlayBind)>,
@@ -27,13 +17,11 @@ pub(super) struct OverlayBatch {
     tex: OverlayTex,
     start: u32,
     count: u32,
-    /// Physical-px scissor; `None` = the whole screen.
     clip: Option<[i32; 4]>,
 }
 
 #[derive(Copy, Clone)]
 enum OverlayTex {
-    /// Index into the uploaded image binds.
     Image(usize),
     Solid,
     Font,
@@ -137,9 +125,6 @@ impl ClientOverlays {
             .write_buffer(self.vbuf.as_ref().unwrap(), 0, bytes);
     }
 
-    /// Carry painted batches over as they are: px → NDC per vertex, the
-    /// batch's clip kept for the draw's scissor. `true` when a run samples
-    /// the font.
     fn push_paint(
         &mut self,
         paint: &petramond_ui::DrawList,
@@ -154,7 +139,6 @@ impl ClientOverlays {
             let tex = match batch.tex {
                 petramond_ui::TexId::Solid => OverlayTex::Solid,
                 petramond_ui::TexId::Font => OverlayTex::Font,
-                // A canvas paints geometry and glyphs only.
                 petramond_ui::TexId::ThemePage(_) | petramond_ui::TexId::DocImage(_) => continue,
             };
             font |= matches!(tex, OverlayTex::Font);
@@ -212,18 +196,15 @@ impl ClientOverlays {
 }
 
 impl ClientImageBinds {
-    /// Free the textures of every key not among `drawn`, this frame's.
     pub(super) fn retain_keys<'a>(&mut self, drawn: impl IntoIterator<Item = &'a str>) {
         let drawn: Vec<&str> = drawn.into_iter().collect();
         self.binds.retain(|(key, _)| drawn.contains(&key.as_str()));
     }
 
-    /// The bind at `index`, as [`ensure`](Self::ensure) returned it.
     pub(super) fn bind(&self, index: usize) -> Option<&wgpu::BindGroup> {
         self.binds.get(index).map(|(_, image)| &image.bind)
     }
 
-    /// Upload `image` if its texture is missing or stale; its bind's index.
     pub(super) fn ensure(
         &mut self,
         gpu: &super::doc_ui::UiGpu<'_>,
@@ -233,9 +214,6 @@ impl ClientImageBinds {
             let existing = &mut self.binds[index].1;
             if existing.size == image.size {
                 if existing.revision != image.revision {
-                    // Partial refresh when every revision step since the one
-                    // this texture holds is a recorded blit rect; otherwise
-                    // the whole image.
                     let chain_covers = image
                         .recent_blits
                         .first()
@@ -300,8 +278,6 @@ impl ClientImageBinds {
     }
 }
 
-/// Upload one pixel rect from the full image buffer: byte offset + full-row
-/// stride address the sub-rect in place, no repacking.
 fn write_overlay_texture_rect(
     queue: &wgpu::Queue,
     texture: &wgpu::Texture,

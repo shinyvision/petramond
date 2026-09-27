@@ -1,17 +1,3 @@
-//! A small world in memory that answers every host call the builder makes,
-//! so its planning runs natively under test.
-//!
-//! The world is air until a test lays blocks, and loaded everywhere until it
-//! unloads a box. Bodies stand where the engine's footholds would have them
-//! and walk by the navigator's moves ([`nav`]); placements and digs change
-//! the world at once and are logged for the test to read. Rows come from a
-//! fixed palette ([`rows`]), so ids are constants a test names.
-//!
-//! [`Fake::install`] runs the mod on the test's thread against the world. It
-//! also answers the calls mod-sdk's own record stores and change cursor make
-//! (world KV and the block change log), which never pass through
-//! [`Host`](super::Host).
-
 mod answers;
 mod nav;
 pub mod rows;
@@ -25,14 +11,12 @@ use crate::host::prelude::*;
 
 use rows::{BlockRow, ItemRow, AIR};
 
-/// One schematic the world holds, stored a section at a time.
 pub struct Schematic {
     pub title: String,
     pub size: [i32; 3],
     pub sections: Vec<SchematicCellsData>,
 }
 
-/// A live mob and what it wears.
 pub struct Mob {
     pub kind: MobId,
     pub pos: [f64; 3],
@@ -42,13 +26,10 @@ pub struct Mob {
     pub tags: BTreeMap<String, MobTagValue>,
     pub anims: BTreeSet<String>,
     pub held: (Option<String>, Option<String>),
-    /// Primitives drawn over it, as last set.
     pub drawn: usize,
-    /// The velocity it was last driven at.
     pub driven: Option<[f32; 3]>,
 }
 
-/// What the world was asked to do, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deed {
     Placed([i32; 3], String),
@@ -66,13 +47,10 @@ pub enum Deed {
     Logged(String),
 }
 
-/// Everything the fake world holds.
 pub struct State {
     pub now: u64,
     pub blocks: HashMap<[i32; 3], BlockId>,
-    /// Boxes whose sections are not loaded.
     pub unloaded: Vec<([i32; 3], [i32; 3])>,
-    /// The block change log, oldest first.
     pub changes: Vec<[i32; 3]>,
     pub block_rows: Vec<BlockRow>,
     pub item_rows: Vec<ItemRow>,
@@ -82,7 +60,6 @@ pub struct State {
     next_mob: u64,
     pub containers: HashMap<ContainerAddress, Vec<Option<ItemStackData>>>,
     pub schematics: HashMap<SchematicId, Schematic>,
-    /// Assets that answer something other than their cells.
     pub lookups: HashMap<SchematicId, SchematicLookup>,
     pub kv: BTreeMap<String, Vec<u8>>,
     pub players: Vec<(PlayerId, [f64; 3])>,
@@ -90,7 +67,6 @@ pub struct State {
     pub held: HashMap<PlayerId, ItemStackData>,
     pub identities: HashMap<PlayerId, PlayerIdentityData>,
     pub viewers: Vec<GuiViewerData>,
-    /// Route searches this tick may still make; `None`: no limit.
     pub route_budget: Option<u32>,
     pub deeds: Vec<Deed>,
 }
@@ -132,7 +108,6 @@ impl State {
         self.item_rows.iter().find(|row| row.name == name)
     }
 
-    /// The item that places `block`, by name.
     pub fn item_of(&self, block: BlockId) -> Option<&'static str> {
         let item = self.row(block).info.item?;
         Some(self.item_rows[usize::from(item.0)].name)
@@ -161,8 +136,6 @@ impl State {
         id
     }
 
-    /// Put `stack` into `at` as a transfer would: onto a matching stack
-    /// with room, then into the first empty slot. What did not fit.
     pub fn stow(&mut self, at: ContainerAddress, mut stack: ItemStackData) -> u8 {
         let most = self
             .item_row(&stack.item)
@@ -191,7 +164,6 @@ impl State {
         stack.count
     }
 
-    /// Take `count` of `item` out of `at`, if it holds that many.
     pub fn spend(&mut self, at: ContainerAddress, item: &str, count: u8) -> bool {
         let Some(slots) = self.containers.get_mut(&at) else {
             return false;
@@ -221,8 +193,6 @@ impl State {
     }
 }
 
-/// The fake world. Shared with the test through an `Rc`; every call borrows
-/// its state for the length of the call.
 pub struct Fake {
     state: RefCell<State>,
 }
@@ -234,7 +204,6 @@ impl Default for Fake {
 }
 
 impl Fake {
-    /// Air everywhere, loaded everywhere, at tick 1, with the standard rows.
     pub fn new() -> Self {
         Self {
             state: RefCell::new(State {
@@ -271,7 +240,6 @@ impl Fake {
         self.state.borrow_mut()
     }
 
-    /// Run the mod on this thread against this world until the guard drops.
     pub fn install(self: &Rc<Self>) -> Installed {
         let world = Rc::clone(self);
         Installed {
@@ -284,7 +252,6 @@ impl Fake {
         self.state_mut().set(cell, block);
     }
 
-    /// Fill the inclusive box with `block`.
     pub fn fill(&self, min: [i32; 3], max: [i32; 3], block: BlockId) {
         let mut state = self.state_mut();
         for x in min[0]..=max[0] {
@@ -296,7 +263,6 @@ impl Fake {
         }
     }
 
-    /// The block at `cell`, loaded or not.
     pub fn block(&self, cell: [i32; 3]) -> BlockId {
         self.state().blocks.get(&cell).copied().unwrap_or(AIR)
     }
@@ -309,13 +275,11 @@ impl Fake {
         self.state_mut().now = now;
     }
 
-    /// A golem standing with its feet at the bottom centre of `cell`.
     pub fn golem_at(&self, cell: [i32; 3]) -> u64 {
         self.state_mut()
             .spawn(rows::GOLEM_KIND, crate::geometry::feet_of(cell), 0.0)
     }
 
-    /// A container of `slots` empty slots at `cell`.
     pub fn chest(&self, cell: [i32; 3], slots: usize) {
         let mut state = self.state_mut();
         state.set(cell, rows::CHEST);
@@ -324,7 +288,6 @@ impl Fake {
             .insert(ContainerAddress::Block(cell), vec![None; slots]);
     }
 
-    /// Put `count` of `item` into `at`, as a transfer would.
     pub fn give(&self, at: ContainerAddress, item: &str, count: u8) {
         let left = self.state_mut().stow(at, stack(item, count));
         assert_eq!(left, 0, "{at:?} has no room for {count}x {item}");
@@ -345,7 +308,6 @@ impl Fake {
             .unwrap_or_default()
     }
 
-    /// How many of `item` `at` holds.
     pub fn count(&self, at: ContainerAddress, item: &str) -> u32 {
         self.container(at)
             .iter()
@@ -355,8 +317,6 @@ impl Fake {
             .sum()
     }
 
-    /// Store a schematic of `cells` (local position, block row name), `per`
-    /// cells to a section.
     pub fn schematic(
         &self,
         asset: SchematicId,
@@ -397,7 +357,6 @@ impl Fake {
         );
     }
 
-    /// Make `asset` answer `lookup` instead of its cells.
     pub fn schematic_lookup(&self, asset: SchematicId, lookup: SchematicLookup) {
         self.state_mut().lookups.insert(asset, lookup);
     }
@@ -423,7 +382,6 @@ impl Fake {
     }
 }
 
-/// A plain stack of `count` `item`.
 pub fn stack(item: &str, count: u8) -> ItemStackData {
     ItemStackData {
         item: item.into(),
@@ -432,7 +390,6 @@ pub fn stack(item: &str, count: u8) -> ItemStackData {
     }
 }
 
-/// The record building block row `name` with its default state.
 pub fn record(name: &str) -> BlockRecord {
     BlockRecord {
         block: name.into(),
@@ -442,15 +399,12 @@ pub fn record(name: &str) -> BlockRecord {
     }
 }
 
-/// The world installed on a test's thread; uninstalled when dropped.
 pub struct Installed {
     _sdk_host: mod_sdk::testing::HostGuard,
     _host: super::installed::Installed,
 }
 
 mod bridge {
-    //! mod-sdk's own host calls (its record stores' world KV, its change
-    //! cursor, its log) reach the world installed on the calling thread.
 
     use mod_sdk::{HostCall, HostRet};
 

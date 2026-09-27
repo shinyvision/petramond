@@ -10,8 +10,7 @@ fn search_recipes(app: &mut super::TestApp, screen: (u32, u32), query: &str) {
     app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.handle_text_input(query));
-    // The first frame resolves TextChanged; the second repopulates the real
-    // list document from the browser's new query.
+    // Needs two frames: one resolves `TextChanged`, the next repopulates the list from the query.
     app.solve_menu_frame_for_test(screen);
     app.solve_menu_frame_for_test(screen);
 }
@@ -257,7 +256,6 @@ fn closing_a_menu_stashes_the_cursor_stack() {
     assert!(app.inventory().cursor().is_some());
 
     assert!(app.handle_control(Control::CloseScreen, true));
-    // The close is a latched message now; apply it as the next tick would.
     app.apply_latched_actions_for_test();
 
     assert!(app.inventory().cursor().is_none());
@@ -295,9 +293,6 @@ fn fast_double_click_keeps_stack_on_cursor_to_gather() {
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
 
-    // First click picks the stack up; a second click within the double-click
-    // window gathers matching items instead of dropping it back - so the stack
-    // stays on the cursor and the source slot stays empty.
     app.click_screen_for_test(screen, 0.0);
     app.click_screen_for_test(screen, 0.1);
     assert!(
@@ -315,8 +310,6 @@ fn slow_second_click_drops_the_stack_back() {
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
 
-    // Two clicks spaced beyond the double-click window: the second is a normal
-    // click that drops the held stack back into the now-empty slot.
     app.click_screen_for_test(screen, 0.0);
     app.click_screen_for_test(screen, 1.0);
     assert!(app.inventory().cursor().is_none(), "stack dropped back");
@@ -328,14 +321,11 @@ fn fast_click_on_a_different_slot_is_not_a_double_click() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    // Pick up slot 0's stack.
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.inventory().cursor().is_some());
 
-    // A fast click on a DIFFERENT slot is a normal drop, not a gather: the held
-    // stack lands in the first (empty) main-grid slot.
     let dest = petramond_world::inventory::HOTBAR_LEN;
     let (dx, dy) = cursor_over_slot(&mut app, screen, dest);
     app.set_cursor_position(dx, dy);
@@ -365,7 +355,6 @@ fn route_inventory_right_click_splits_slot_stack() {
     let screen = (1280, 720);
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
-    // Slot 0 starts at 64; right-click drags off the larger half (32).
     let consumed = app.right_click_screen_for_test(screen, 0.0);
     assert!(consumed);
     assert_eq!(app.inventory().cursor().unwrap().count, 32);
@@ -559,7 +548,6 @@ fn secondary_drag_places_once_per_distinct_slot_per_press() {
 
 #[test]
 fn route_inventory_right_click_closed_falls_through_to_placement() {
-    // Closed inventory: a right-click is NOT consumed, so it can place a block.
     let mut app = app();
     assert!(!app.screen.inventory_open());
     assert!(!app.right_click_screen_for_test((1280, 720), 0.0));
@@ -569,7 +557,6 @@ fn route_inventory_right_click_closed_falls_through_to_placement() {
 fn route_inventory_shift_click_moves_hotbar_to_main_grid() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
-    // Physical Shift modifier held (NOT via the sneak control).
     app.set_modifiers(Modifiers {
         ctrl: false,
         shift: true,
@@ -596,12 +583,10 @@ fn route_click_outside_panel_throws_held_stack() {
     let mut app = app_with_grass();
     app.handle_control(Control::ToggleInventory, true);
     let screen = (1280, 720);
-    // Drag slot 0's stack onto the cursor.
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
     app.click_screen_for_test(screen, 0.0);
     assert!(app.inventory().cursor().is_some());
-    // Click the top-left corner: confidently outside the inventory panel.
     app.set_cursor_position(0.0, 0.0);
     app.click_screen_for_test(screen, 0.1);
     assert!(
@@ -617,9 +602,8 @@ fn route_click_on_panel_background_does_not_throw() {
     let screen = (1280, 720);
     let (cx, cy) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(cx, cy);
-    app.click_screen_for_test(screen, 0.0); // pick up the stack
+    app.click_screen_for_test(screen, 0.0);
     assert!(app.inventory().cursor().is_some());
-    // A point inside the panel but on no slot: the held stack is kept.
     let inside_panel_gap = panel_gap_point(&mut app, screen);
     app.set_cursor_position(inside_panel_gap.0, inside_panel_gap.1);
     app.click_screen_for_test(screen, 0.1);
@@ -632,7 +616,6 @@ fn route_click_on_panel_background_does_not_throw() {
 #[test]
 fn craftable_recipes_sort_first_and_the_filter_hides_the_rest() {
     let mut app = app();
-    // Catalog order deliberately puts the UNAFFORDABLE recipe first.
     app.install_test_crafting_catalog(vec![
         super::test_recipe(
             "test:planks",
@@ -707,7 +690,6 @@ fn stackable_output_keeps_craft_enabled_and_shift_crafts_the_maximum() {
         "a same-item output must not disable CRAFT"
     );
 
-    // A repeat click merges into the output stack.
     let (x, y) = cursor_over_widget(&mut app, screen, "craft", None);
     app.set_cursor_position(x, y);
     app.click_screen_for_test(screen, 0.3);
@@ -716,7 +698,6 @@ fn stackable_output_keeps_craft_enabled_and_shift_crafts_the_maximum() {
         Some(ItemStack::new(ItemType::Stick, 4))
     );
 
-    // Shift+CRAFT fills the rest of the output stack in one request.
     app.set_modifiers(Modifiers {
         shift: true,
         ..Modifiers::default()
@@ -737,9 +718,6 @@ fn stackable_output_keeps_craft_enabled_and_shift_crafts_the_maximum() {
     );
 }
 
-/// Hover is the browser's whole discovery channel now that the grid shows
-/// icons only, and it has to work for the recipes you CANNOT afford — that is
-/// exactly when "what does this need?" matters.
 #[test]
 fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
     let mut app = app();
@@ -750,7 +728,6 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
 
     let (x, y) = cursor_over_widget(&mut app, screen, "recipe", Some(0));
     app.set_cursor_position(x, y);
-    // One frame resolves the hover, the next repopulates from it.
     app.solve_menu_frame_for_test(screen);
     app.solve_menu_frame_for_test(screen);
 
@@ -767,7 +744,6 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         "result count is spelled out: {name}"
     );
 
-    // The tooltip's own hooks are overlay-tier; the grid cell's is not.
     let hooks = app.doc_hooks_for_test();
     let tip: Vec<_> = hooks
         .iter()
@@ -786,7 +762,6 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .filter(|hook| hook.kind == petramond::gui::DocHookKind::RecipeResult)
         .all(|hook| !hook.overlay));
 
-    // Off the grid the tooltip goes away entirely.
     let (x, y) = cursor_over_widget(&mut app, screen, "craft_search", None);
     app.set_cursor_position(x, y);
     app.solve_menu_frame_for_test(screen);
@@ -798,10 +773,6 @@ fn hovering_an_unaffordable_grid_cell_publishes_its_tooltip() {
         .all(|hook| hook.kind != petramond::gui::DocHookKind::TipResult));
 }
 
-/// Every filled slot names itself on hover now, not just the recipe grid: the
-/// item tooltip floats the stack's display name, hides over an empty slot,
-/// and steps aside while the cursor holds a stack (it would fight the held
-/// icon for the same pixels — the recipe tip's rule).
 #[test]
 fn hovering_a_filled_slot_publishes_the_item_tooltip() {
     let mut app = app_with_grass();
@@ -810,7 +781,6 @@ fn hovering_a_filled_slot_publishes_the_item_tooltip() {
 
     let (x, y) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(x, y);
-    // One frame resolves the hover, the next repopulates from it.
     app.solve_menu_frame_for_test(screen);
     app.solve_menu_frame_for_test(screen);
 
@@ -825,15 +795,12 @@ fn hovering_a_filled_slot_publishes_the_item_tooltip() {
         "grass declares no info line"
     );
 
-    // An empty slot hides the tooltip entirely.
     let (x, y) = cursor_over_slot(&mut app, screen, 5);
     app.set_cursor_position(x, y);
     app.solve_menu_frame_for_test(screen);
     app.solve_menu_frame_for_test(screen);
     assert_eq!(app.ui.state_mut().get_bool("show_item_tip"), Some(false));
 
-    // Back over the filled slot, then pick HALF the stack up: the slot stays
-    // filled but the held cursor stack suppresses the tooltip.
     let (x, y) = cursor_over_slot(&mut app, screen, 0);
     app.set_cursor_position(x, y);
     app.right_click_screen_for_test(screen, 0.2);
@@ -844,8 +811,6 @@ fn hovering_a_filled_slot_publishes_the_item_tooltip() {
     assert_eq!(app.ui.state_mut().get_bool("show_item_tip"), Some(false));
 }
 
-/// Selection is carried by the cell's own selected face, not by a detail
-/// line: spelling it out again cost two grid rows of the browser.
 #[test]
 fn selecting_a_recipe_arms_craft_without_a_detail_line() {
     let mut app = app();
@@ -863,7 +828,6 @@ fn selecting_a_recipe_arms_craft_without_a_detail_line() {
     app.click_screen_for_test(screen, 0.1);
     app.solve_menu_frame_for_test(screen);
 
-    // The grid binds `selected`, so the cell paints its selected face.
     assert_eq!(app.ui.state_mut().get_i32("craft_recipe_sel"), Some(0));
     assert_eq!(app.ui.state_mut().get_bool("can_craft"), Some(true));
     assert!(
@@ -876,8 +840,6 @@ fn selecting_a_recipe_arms_craft_without_a_detail_line() {
     );
 }
 
-/// Nine cells to a row, in filtered order: a grid that silently dropped or
-/// reordered stamps would craft the wrong thing on click.
 #[test]
 fn the_recipe_grid_tiles_nine_cells_per_row_in_filtered_order() {
     let mut app = app();
@@ -918,8 +880,6 @@ fn the_recipe_grid_tiles_nine_cells_per_row_in_filtered_order() {
     assert_eq!(cells[9].x, cells[0].x, "and returns to the first column");
     assert_eq!(cells[10].x, cells[1].x);
 
-    // A column count that squeezed cells below the icon size would crop every
-    // result, so the icon hook has to fit inside its own cell.
     for (i, cell) in cells.iter().enumerate() {
         let icon = app
             .ui
@@ -939,13 +899,6 @@ fn the_recipe_grid_tiles_nine_cells_per_row_in_filtered_order() {
     }
 }
 
-/// A machine's SWITCH must reach the mod the same way its buttons do.
-///
-/// A pack's lever is a `toggle` node, and a toggle resolves to `UiEvent::Toggle`
-/// rather than `Click` — a lane that reaches `Game::menu_click` and nothing
-/// else. Everything downstream of that hop is covered by `game/tests/menu.rs`;
-/// the hop itself needs a live App with a mod document open, so the decision it
-/// makes is pinned here instead.
 #[test]
 fn a_toggle_activates_its_widget_like_a_primary_click() {
     use crate::app::shell_docs::menu_widget_activation;
@@ -978,16 +931,12 @@ fn a_toggle_activates_its_widget_like_a_primary_click() {
             Some("lever"),
             "the node's own latch is presentation; the mod decides what it means"
         );
-        // A toggle carries the button for the same reason a click does, and
-        // this lane applies the same rule to both: a right-click on a
-        // machine's lever must not reach the mod as a pull.
         assert_eq!(
             menu_widget_activation(&toggle(PointerButton::Secondary, on)),
             None
         );
     }
 
-    // A slot click is the OTHER lane and must not be swallowed by this one.
     assert_eq!(
         menu_widget_activation(&UiEvent::SlotClick {
             role: "container".into(),

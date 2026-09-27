@@ -1,7 +1,3 @@
-//! A presentation opened on the shell: a live session captures itself into
-//! its mod's files through the capture calls, and the shell presents those
-//! files — no server, no save, and the captured player's own view.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -23,11 +19,8 @@ use petramond_math::world_pos::WorldPos;
 use petramond_render::camera::Camera;
 
 const DT: f32 = 0.05;
-/// The client mod that captures, then presents from the shell: its pack
-/// bucket holds the files either way.
 const MOD: &str = "minimap";
 
-/// Every file under `dir` with its size and modification time.
 fn listing(dir: &Path) -> BTreeMap<PathBuf, (u64, std::time::SystemTime)> {
     let mut out = BTreeMap::new();
     let mut stack = vec![dir.to_path_buf()];
@@ -48,8 +41,6 @@ fn listing(dir: &Path) -> BTreeMap<PathBuf, (u64, std::time::SystemTime)> {
     out
 }
 
-/// A client guest that does nothing at all: whatever a presentation changes
-/// on disk, no mod asked for it.
 fn inert_guest(dir: &Path) -> PathBuf {
     let unit = mod_api::encode(&mod_api::GuestRet::Unit).unwrap();
     let bytes: String = unit.iter().map(|b| format!("\\{b:02x}")).collect();
@@ -70,16 +61,13 @@ fn inert_guest(dir: &Path) -> PathBuf {
     path
 }
 
-/// What a capture left in the mod's files.
 struct Captured {
-    /// The folder in the mod's bucket it lives in.
     dir: &'static str,
     state: [u64; 2],
     tables: [u64; 2],
     tick: u64,
     events: [u64; 2],
     seed: u32,
-    /// Where the captured player's eye was.
     eye: [f64; 3],
 }
 
@@ -88,10 +76,8 @@ fn call(game: &mut Game, call: HostCall) -> HostRet {
         .expect("the capturing mod is loaded")
 }
 
-/// A live session served in process, frame by frame.
 struct Live {
     game: TestGame,
-    /// Where the captured eye looks, when a frame's view is captured.
     look: Option<f32>,
 }
 
@@ -103,8 +89,6 @@ impl Live {
         }
     }
 
-    /// One production frame, the pipe serviced in the middle, ended as the
-    /// app ends it: with the eye it presented, looking along `look`.
     fn frame(&mut self) {
         self.game.tick(DT, &GameInput::default());
         let view = self
@@ -127,8 +111,6 @@ impl Live {
     }
 }
 
-/// Capture `live` into `dir/`: its state now, and every frame after it for
-/// `frames` frames, until the log ends and the state is on disk.
 fn capture(live: &mut Live, dir: &'static str, frames: u32) -> Captured {
     let game = &mut live.game;
     let HostRet::ClientStateTicket(written) = call(
@@ -221,8 +203,6 @@ fn capture(live: &mut Live, dir: &'static str, frames: u32) -> Captured {
         .expect("every record whole")
         .len();
     assert!(whole > 10, "the log holds the frames it ran: {whole}");
-    // Begun beside the state, the log takes the very next frame's apply: the
-    // two together miss no batch.
     let first_batch = records(&events, 0).find_map(|record| {
         let (at, head) = record.unwrap();
         match record_envelope(&events[at as usize..(at + head.len) as usize]).unwrap() {
@@ -247,8 +227,6 @@ fn capture(live: &mut Live, dir: &'static str, frames: u32) -> Captured {
     }
 }
 
-/// Open `captured` on the shell as the app does: the desk's open request,
-/// its tables read and checked, the presentation client built.
 fn present(shell: ClientModRuntime, captured: &Captured) -> Game {
     let mut shell = shell;
     let opened = shell.call_as_for_test(
@@ -299,8 +277,6 @@ fn present(shell: ClientModRuntime, captured: &Captured) -> Game {
     )
 }
 
-/// Apply the captured state and events up to `ahead` ticks past it, and
-/// run frames until it lands.
 fn seek(game: &mut Game, captured: &Captured, ahead: f64) -> u64 {
     let HostRet::Ticket(id) = call(
         game,
@@ -351,8 +327,6 @@ fn a_presentation_opened_on_the_shell_presents_mod_files_and_never_touches_a_sav
     let world = format!("presented-{}", std::process::id());
     let input = GameInput::default();
 
-    // A real saved world, captured, then gone: what is on disk now is all
-    // the presentation may find.
     let captured = {
         let mut live = Live::new(&world);
         for _ in 0..20 {
@@ -419,7 +393,6 @@ fn a_presentation_opened_on_the_shell_presents_mod_files_and_never_touches_a_sav
         mod_api::ClientContext::Shell
     );
 
-    // Left from outside (the pause menu's Leave), the owner hears it ended.
     let mut game = present(shell, &captured);
     game.tick(DT, &input);
     let shell = game
@@ -448,9 +421,6 @@ fn a_presentation_opened_on_the_shell_presents_mod_files_and_never_touches_a_sav
     );
 }
 
-/// The captured player's first person in a presentation is what their
-/// client presented — the captured eye, not their replicated row — and their
-/// HUD is their own captured state, not the viewer's.
 #[test]
 fn the_captured_players_view_and_hud_present_as_they_saw_them() {
     use petramond::modding::client::view::ViewFold;

@@ -13,7 +13,6 @@ const OPEN: Cell = Cell {
     floor: false,
     door: false,
 };
-/// What no tool breaks.
 const WALL: Cell = Cell {
     open: false,
     dig: None,
@@ -36,7 +35,6 @@ fn earth(moves: u32) -> Cell {
     }
 }
 
-/// A box of walls from `lo` to `hi` with the listed cells set.
 fn grid(lo: [i32; 3], hi: [i32; 3], cells: &[([i32; 3], Cell)]) -> HashMap<[i32; 3], Cell> {
     let mut grid = HashMap::default();
     for x in lo[0]..=hi[0] {
@@ -52,7 +50,6 @@ fn grid(lo: [i32; 3], hi: [i32; 3], cells: &[([i32; 3], Cell)]) -> HashMap<[i32;
     grid
 }
 
-/// A corridor along x from 0 to 4 at z = 0, two cells high, floored.
 fn corridor(extra: &[([i32; 3], Cell)]) -> HashMap<[i32; 3], Cell> {
     let mut cells: Vec<([i32; 3], Cell)> = Vec::new();
     for x in 0..=4 {
@@ -134,8 +131,6 @@ fn a_door_in_the_way_is_opened_and_passed() {
         false,
         true,
     );
-    // Into the doorway (a door's worth), out of it (the panel may be in the
-    // way: another), and on.
     let cost = 1 + DOOR_MOVES + 1 + DOOR_MOVES + 1;
     assert_eq!(
         way(found),
@@ -198,7 +193,6 @@ fn earth_in_the_way_is_dug_through_by_what_it_costs() {
     );
 }
 
-/// A ledge five blocks over the only ground that walks home.
 fn ledge() -> HashMap<[i32; 3], Cell> {
     let mut cells = vec![([0, 5, 0], OPEN), ([0, 6, 0], OPEN)];
     cells.extend((0..=6).map(|y| ([1, y, 0], OPEN)));
@@ -217,7 +211,6 @@ fn a_drop_is_taken_only_getting_out_and_never_a_deadly_one() {
         false,
         true,
     );
-    // Five blocks down, two past the safe fall: two points of damage.
     let cost = 1 + 5 + 2 * HURT_MOVES;
     assert_eq!(
         way(found),
@@ -259,7 +252,6 @@ fn a_drop_is_taken_only_getting_out_and_never_a_deadly_one() {
 
 #[test]
 fn a_scaffold_to_rise_on_is_the_last_way_out() {
-    // A shaft with ground beside its top.
     let mut cells: Vec<([i32; 3], Cell)> = (0..=4).map(|y| ([0, y, 0], OPEN)).collect();
     cells.extend((2..=4).map(|y| ([1, y, 0], OPEN)));
     let grid = grid([-1, -1, -1], [2, 5, 1], &cells);
@@ -311,7 +303,6 @@ fn the_ground_is_read_as_what_it_costs_to_get_through() {
     };
     let grid = read(&mut session, &body, true);
     assert_eq!(grid.len(), 6 * 3 * 9);
-    // Stone by hand: fruitless without a pickaxe, four times slower.
     assert_eq!(grid[&[0, -1, 0]].dig, Some(60));
     assert!(grid[&[0, -1, 0]].floor && !grid[&[0, -1, 0]].open);
     assert_eq!(grid[&[3, 0, -5]].dig, Some(5), "earth by hand");

@@ -1,21 +1,8 @@
-//! Event subscription filters: which events of a kind a handler wants,
-//! evaluated HOST-side so an event nobody asked for never crosses into a
-//! guest.
-//!
-//! A filter has one lane per fact a payload can carry — the block, item or
-//! mob species involved, a key (a mod event's key, a tag key, a schematic
-//! tag), a world cell. An empty lane admits everything; a non-empty lane
-//! admits only payloads that carry the fact AND match it. A lane the
-//! registered kind never carries is refused at registration
-//! ([`EventFilter::check`]), so a typo'd filter fails loudly at load instead
-//! of silently matching nothing.
-
 use serde::{Deserialize, Serialize};
 
 use super::{EventKind, EventPayload};
 use crate::ids::{BlockId, ItemId, MobId};
 
-/// An inclusive box of world cells.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellRegion {
     pub min: [i32; 3],
@@ -27,40 +14,20 @@ impl CellRegion {
         (0..3).all(|i| self.min[i] <= cell[i] && cell[i] <= self.max[i])
     }
 
-    /// Whether the inclusive box `min..=max` overlaps this region.
     pub fn overlaps(&self, min: [i32; 3], max: [i32; 3]) -> bool {
         (0..3).all(|i| self.min[i] <= max[i] && min[i] <= self.max[i])
     }
 }
 
-/// Which events of the registered kind reach the handler
-/// ([`CoreCall::RegisterEventHandler`](crate::CoreCall::RegisterEventHandler)).
-/// `EventFilter::default()` admits every event of the kind.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct EventFilter {
-    /// The block the event is about: `BlockPlacePre`, `BlockBreakPre`,
-    /// `BlockPlaced`, `BlockBroken`.
     pub blocks: Vec<BlockId>,
-    /// The item the event is about: `ItemUsePre`, `ItemUsed`,
-    /// `ItemPickedUp`, `ItemObtained`, `ProjectileHit` (what is flying).
     pub items: Vec<ItemId>,
-    /// The mob species the event is about: `MobDamagePre`, `MobDied`,
-    /// `MobSpawned`, `MobTagAdded`, `MobTagRemoved`, `MobDamaged`.
     pub mobs: Vec<MobId>,
-    /// Key PREFIXES: a `ModEvent`'s key, a `MobTagAdded`/`MobTagRemoved`
-    /// tag key, a `SchematicChosen`/`SchematicPositioned` tag. A mod
-    /// listening for one peer's events registers that peer's
-    /// `"mod_id:"` prefix, or the exact keys it handles.
     pub keys: Vec<String>,
-    /// The world cell the event happens at must lie inside this box: block
-    /// events, interactions and attacks at a block (a click at a mob or at
-    /// nothing carries no cell and never matches), item uses at a target,
-    /// mob births and deaths, pickups, projectile impacts, actor actions,
-    /// schematic anchors, and a cell edit whose bounds overlap it.
     pub region: Option<CellRegion>,
 }
 
-/// The facts one filter lane can test.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FilterLane {
     Blocks,
@@ -71,7 +38,6 @@ pub enum FilterLane {
 }
 
 impl EventKind {
-    /// Whether payloads of this kind carry the fact `lane` tests.
     pub fn carries(self, lane: FilterLane) -> bool {
         use EventKind as K;
         use FilterLane as L;
@@ -123,10 +89,6 @@ impl EventKind {
         }
     }
 
-    /// Whether the engine reads anything back from a handler's copy of this
-    /// kind's payload. Only these kinds echo the payload in their reply
-    /// ([`GuestRet::Event`](crate::GuestRet::Event)); every other dispatch
-    /// answers just its verdict.
     pub fn echoes_payload(self) -> bool {
         matches!(
             self,
@@ -138,7 +100,6 @@ impl EventKind {
     }
 }
 
-/// What one payload offers the filter lanes.
 #[derive(Default)]
 struct Facts<'a> {
     block: Option<BlockId>,
@@ -236,8 +197,6 @@ impl EventPayload {
 }
 
 impl EventFilter {
-    /// A filter admitting only mod events whose key starts with one of
-    /// `prefixes`.
     pub fn keys<S: Into<String>>(prefixes: impl IntoIterator<Item = S>) -> Self {
         Self {
             keys: prefixes.into_iter().map(Into::into).collect(),
@@ -245,7 +204,6 @@ impl EventFilter {
         }
     }
 
-    /// A filter admitting only events about one of `blocks`.
     pub fn blocks(blocks: impl IntoIterator<Item = BlockId>) -> Self {
         Self {
             blocks: blocks.into_iter().collect(),
@@ -253,7 +211,6 @@ impl EventFilter {
         }
     }
 
-    /// A filter admitting only events about one of `items`.
     pub fn items(items: impl IntoIterator<Item = ItemId>) -> Self {
         Self {
             items: items.into_iter().collect(),
@@ -261,7 +218,6 @@ impl EventFilter {
         }
     }
 
-    /// A filter admitting only events about one of the mob species `mobs`.
     pub fn mobs(mobs: impl IntoIterator<Item = MobId>) -> Self {
         Self {
             mobs: mobs.into_iter().collect(),
@@ -269,7 +225,6 @@ impl EventFilter {
         }
     }
 
-    /// Whether every event passes (no lane is set).
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
             && self.items.is_empty()
@@ -278,7 +233,6 @@ impl EventFilter {
             && self.region.is_none()
     }
 
-    /// The lanes this filter sets.
     fn lanes(&self) -> impl Iterator<Item = FilterLane> + '_ {
         [
             (!self.blocks.is_empty()).then_some(FilterLane::Blocks),
@@ -291,8 +245,6 @@ impl EventFilter {
         .flatten()
     }
 
-    /// Refuse a filter for `kind` that sets a lane the kind never carries
-    /// (it could never match), or an inverted region.
     pub fn check(&self, kind: EventKind) -> Result<(), String> {
         if let Some(lane) = self.lanes().find(|&lane| !kind.carries(lane)) {
             return Err(format!(
@@ -307,7 +259,6 @@ impl EventFilter {
         Ok(())
     }
 
-    /// Whether `payload` passes every lane this filter sets.
     pub fn matches(&self, payload: &EventPayload) -> bool {
         if self.is_empty() {
             return true;
@@ -455,7 +406,6 @@ mod tests {
 
     #[test]
     fn every_carried_lane_is_offered_by_its_payloads() {
-        // Spot-check that the kind table and the payload facts agree.
         let hit = EventPayload::ProjectileHit {
             entity: 1,
             item: ItemId(5),

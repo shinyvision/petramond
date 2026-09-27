@@ -1,38 +1,19 @@
-//! Spatial LOOPS as the replication stream carries them: a looping row
-//! (`sounds.json` `loop: true`) started by `SoundPlayAt`/`SoundPlayOnMob`
-//! plays until its `SoundStop`, so unlike a one-shot it has STATE. Whoever
-//! follows the stream — the server's broadcast, a capture of what a client
-//! presented — keeps the loops still sounding with these, and restarts them
-//! for an observer that never heard them start.
-
 use std::collections::BTreeMap;
 
 use super::protocol::{SpatialSoundMsg, WorldEventMsg};
 
-/// Live loops keyed by session handle, as the command that (re)starts them.
 pub type LiveSpatialLoops = BTreeMap<u64, SpatialSoundMsg>;
 
-/// Whether sound row `sound_id` loops until stopped (an unknown row never
-/// does).
 pub fn is_looped(sound_id: u8) -> bool {
     petramond_world::sound_registry::defs()
         .get(sound_id as usize)
         .is_some_and(|def| def.looped)
 }
 
-/// The commands that restart every loop in `live`: what an observer that
-/// never heard them start needs, ahead of anything else it is sent.
 pub fn loop_restarts(live: &LiveSpatialLoops) -> impl Iterator<Item = WorldEventMsg> + '_ {
     live.values().map(|cmd| WorldEventMsg::SpatialSound(*cmd))
 }
 
-/// Fold one tick window's spatial commands into `live`: a play of a looping
-/// row (`looped(sound_id)`) is remembered as its own restart command, a
-/// `Set` retunes the remembered play, a `Stop` forgets it. Then every
-/// remembered mob-pinned loop whose mob `alive(mob_id)` denies is dropped
-/// and a `Stop` for it is APPENDED to the window, so observers hear it end
-/// where the mob died and a mod that forgot (or was disabled) leaves no
-/// orphan humming forever.
 pub fn fold_spatial_loops(
     live: &mut LiveSpatialLoops,
     world_events: &mut Vec<WorldEventMsg>,
@@ -55,8 +36,6 @@ pub fn fold_spatial_loops(
     }
 }
 
-/// The first half of [`fold_spatial_loops`]: remember, retune and forget
-/// loops as `world_events` commands them.
 pub fn note_loop_commands(
     live: &mut LiveSpatialLoops,
     world_events: &[WorldEventMsg],
@@ -125,9 +104,6 @@ mod tests {
         })
     }
 
-    /// A loop row is remembered through its retunes until its stop; a
-    /// one-shot never is; a remembered loop on a dead mob is stopped for
-    /// everyone by the window that finds it gone.
     #[test]
     fn loops_are_remembered_retuned_forgotten_and_ended_with_their_mob() {
         let mut live = LiveSpatialLoops::new();

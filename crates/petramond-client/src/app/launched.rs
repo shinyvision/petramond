@@ -1,12 +1,3 @@
-//! Client mods on the SHELL: a pack started from its title-screen launch
-//! entry runs with no world behind it, its own document or canvas standing in
-//! for the title, until it closes its UI or the player presses Escape.
-//!
-//! The launched mod may open a PRESENTATION there: a world-less `Game` built
-//! from its files, whose client mods are the presented world's own beside
-//! the launched instance. Closing it brings the launched instance back to the
-//! shell screen it left — or, if the instance did not survive, the title.
-
 use std::sync::mpsc::Receiver;
 
 use petramond::capture::body::NameTables;
@@ -17,20 +8,13 @@ use super::client_mod_ui::{client_canvas_owned_by, client_gui_owned_by, ClientCa
 use super::session::Session;
 use super::{App, AppScreen};
 
-/// A pack running on the shell.
 pub(super) struct LaunchedShell {
-    /// Its client mods (the launched instance alone); `None` while they are
-    /// lent to a presentation.
     runtime: Option<ClientModRuntime>,
-    /// The shell screen the presentation left, and comes back to.
     screen: AppScreen,
     canvas: Option<ClientCanvasState>,
-    /// A presentation being opened: its request, while its tables are read.
     opening: Option<(Request, Receiver<Result<NameTables, String>>)>,
 }
 
-/// Every installed pack's title-screen launch entry, in pack load order, with
-/// the pack id it starts.
 pub(super) fn launch_entries(
 ) -> impl Iterator<Item = (&'static str, &'static petramond_world::assets::LaunchEntry)> {
     petramond_world::assets::packs()
@@ -39,9 +23,6 @@ pub(super) fn launch_entries(
 }
 
 impl App {
-    /// Start pack `pack_id`'s `client_wasm` on the shell. It opens its UI in
-    /// `mod_init` or on its first frame; one that opens none has nothing to
-    /// show, and ends at once.
     pub(super) fn launch_pack(&mut self, pack_id: &str, screen: (u32, u32)) {
         if self.session.is_some() {
             return;
@@ -52,7 +33,6 @@ impl App {
         }
     }
 
-    /// Put a launched runtime on the shell and give it its first frame.
     pub(super) fn host_launched(&mut self, runtime: ClientModRuntime, screen: (u32, u32)) {
         let pack_id = runtime.launched().unwrap_or_default().to_owned();
         self.launched = Some(LaunchedShell {
@@ -61,17 +41,13 @@ impl App {
             canvas: None,
             opening: None,
         });
-        // One frame's dispatch, then the commands of init and frame together.
         self.drive_client_mod_frame(0.0, 0.0, petramond::gui::UiViewport::new(screen, 0), true);
         if self.launched.is_none() {
             log::warn!("launch '{pack_id}': the mod opened no UI; nothing to show");
         }
-        // Its keys resolve, and its labels publish, only once the table
-        // holds the actions it registered.
         self.rebuild_action_table();
     }
 
-    /// The shell's client mods, while a pack runs there with no world.
     pub(super) fn shell_mods(&self) -> Option<&ClientModRuntime> {
         self.launched
             .as_ref()
@@ -87,8 +63,6 @@ impl App {
         self.launched.as_mut()?.runtime.as_mut()
     }
 
-    /// The client mods of what is presented now: the session's, or the
-    /// shell's while a pack runs there with no world.
     pub(super) fn client_mods_now(&self) -> Option<&ClientModRuntime> {
         match self.session.as_ref() {
             Some(session) => Some(session.game.client_mod_runtime()),
@@ -96,7 +70,6 @@ impl App {
         }
     }
 
-    /// The open canvas's key, while a client canvas is the screen.
     pub(super) fn client_canvas_key(&self) -> Option<&str> {
         self.client_canvas
             .as_ref()
@@ -104,8 +77,6 @@ impl App {
             .map(ClientCanvasState::key)
     }
 
-    /// The screen a client mod's UI returns to when it closes: the world, or
-    /// on the shell the title (which ends the shell).
     pub(super) fn leave_client_screen(&mut self) {
         self.client_canvas = None;
         let next = if self.session.is_some() {
@@ -116,7 +87,6 @@ impl App {
         self.set_screen(next);
     }
 
-    /// End the shell once its mod's own UI is no longer what is on screen.
     pub(super) fn settle_shell(&mut self) {
         let Some(runtime) = self.shell_mods() else {
             return;
@@ -135,10 +105,6 @@ impl App {
         self.rebuild_action_table();
     }
 
-    /// Carry out a presentation the launched mod opened: on the shell, or
-    /// over its own open presentation (which the new one replaces). Its
-    /// tables are read and checked first; the client is built the frame they
-    /// land.
     pub(super) fn drive_shell_presentation(&mut self) {
         let asked = match self.session.as_mut() {
             Some(session) => session.game.take_presentation_reopen(),
@@ -194,7 +160,6 @@ impl App {
         mods: Vec<String>,
         viewer: Option<mod_api::ClientPose>,
     ) {
-        // Opened over its own presentation: the owner leaves that one first.
         let runtime = match self.session.take() {
             Some(Session { game, .. }) => {
                 self.teardown_game_scene();
@@ -232,8 +197,6 @@ impl App {
         self.renderer_world_clear_pending = true;
     }
 
-    /// Close a presentation: its owner goes back to the shell screen the
-    /// presentation left, or the title when it did not survive.
     pub(super) fn end_presentation(&mut self) {
         if !self
             .session
@@ -251,8 +214,6 @@ impl App {
             (Some(runtime), Some(shell)) => {
                 shell.runtime = Some(runtime);
                 let (screen, canvas) = (shell.screen, shell.canvas.take());
-                // The funnel drops the canvas of the screen it leaves; the
-                // owner's comes back once its screen is current.
                 self.set_screen(screen);
                 self.client_canvas = canvas;
             }
@@ -261,14 +222,10 @@ impl App {
                 self.set_screen(AppScreen::Title);
             }
         }
-        // The table was rebuilt while the runtime was still the
-        // presentation's: the shell's actions come back with it.
         self.rebuild_action_table();
         self.settle_shell();
     }
 
-    /// The document view a client mod publishes for `kind_key`, from the
-    /// session's mods or the shell's.
     pub(super) fn client_mod_view(
         &self,
         kind_key: &str,

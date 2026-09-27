@@ -6,9 +6,7 @@ use super::{
 const MAGIC: &[u8; 8] = b"LLSCHEM\0";
 const VERSION: u16 = 2;
 pub const HEADER_SIZE: usize = 48;
-/// Longest side of a design, in blocks. Real designs are a few hundred.
 pub const MAX_AXIS: i32 = 1024;
-/// Most stored cells in one design (a solid 256³).
 pub const MAX_CELLS: usize = 1 << 24;
 const MAX_METADATA_BYTES: usize = 256;
 const MAX_NAME_BYTES: usize = 128;

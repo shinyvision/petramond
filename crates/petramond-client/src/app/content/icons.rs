@@ -1,9 +1,3 @@
-//! Pack icons for the content lists, all through `content::icon::normalize`
-//! so every icon reaches the UI square: the installed packs' own icons (read
-//! once per content registry), and the
-//! site's icons, cached on disk under the version they belong to and fetched
-//! one at a time by a worker when the cache misses.
-
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -12,12 +6,10 @@ use std::sync::{Arc, Mutex};
 use petramond::content::ListingRow;
 use petramond::modding::ClientImageData;
 
-/// The image name an installed pack's icon is bound under (the Mods tab's).
 pub(in crate::app) fn pack_icon_name(key: &str) -> String {
     format!("pack_icon:{key}")
 }
 
-/// The image name the site's icon for `mod_id` is bound under.
 pub(in crate::app) fn site_icon_name(mod_id: &str) -> String {
     format!("content_icon:{mod_id}")
 }
@@ -33,8 +25,6 @@ fn image(key: String, rgba: image::RgbaImage) -> ClientImageData {
     }
 }
 
-/// Every discovered or refused pack's own icon, normalized, keyed by pack id
-/// (or directory name for a pack without one).
 pub(in crate::app) fn pack_icons() -> &'static [ClientImageData] {
     static ICONS: Mutex<Option<(u64, &'static [ClientImageData])>> = Mutex::new(None);
     let serial = petramond_world::content::current().serial();
@@ -84,7 +74,6 @@ pub(in crate::app) fn dir_name(dir: &std::path::Path) -> String {
         .unwrap_or_default()
 }
 
-/// One icon to fetch: where the site serves it, and the version it is.
 struct Want {
     mod_id: String,
     sha256: String,
@@ -92,7 +81,6 @@ struct Want {
 }
 
 pub(in crate::app) struct Icons {
-    /// The site's icons that have landed.
     pub(in crate::app) site: Vec<ClientImageData>,
     asked: BTreeSet<(String, String)>,
     worker: Option<Sender<Want>>,
@@ -111,7 +99,6 @@ impl Icons {
         }
     }
 
-    /// Ask for the icons of `rows` not already asked for at their version.
     pub(super) fn want(&mut self, rows: &[ListingRow]) {
         if !self.network {
             return;
@@ -137,7 +124,6 @@ impl Icons {
         }
     }
 
-    /// The worker blocks on its queue: it costs nothing while idle.
     fn start_worker(&mut self) {
         let (want_tx, want_rx) = mpsc::channel::<Want>();
         let (done_tx, done_rx) = mpsc::channel();
@@ -183,7 +169,6 @@ impl Icons {
     }
 }
 
-/// The cached icon, or the site's, normalized and cached.
 fn load(dir: &std::path::Path, want: &Want) -> Option<image::RgbaImage> {
     let cached = petramond::content::icon::cache_path(dir, &want.mod_id, &want.sha256);
     if let Ok(bytes) = std::fs::read(&cached) {

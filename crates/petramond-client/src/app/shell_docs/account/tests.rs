@@ -1,17 +1,11 @@
 use super::*;
 use petramond_ui::{solve, InstTree, ThemeEnv};
 
-/// Both account lines are engine copy in a FIXED, non-wrapping box, and the
-/// shipped-document guard seeds its own short sample strings — so nothing else
-/// measures what a player actually reads. Overrunning the box does not wrap, it
-/// ellipsizes mid-sentence: "Sign in to play on servers that requ..." is how
-/// this screen shipped its first draft.
 #[test]
 fn the_account_lines_fit_their_inset() {
     let doc = petramond::gui::documents::doc_for(petramond_world::gui_state::GuiKind::Account)
         .expect("account document loads");
     let theme = petramond::gui::doc_theme::theme();
-    // The longest name the website can issue (its username rule is 3..=24).
     let widest = SavedSignIn {
         username: "w".repeat(24),
         ..SavedSignIn::default()
@@ -28,7 +22,6 @@ fn the_account_lines_fit_their_inset() {
             gui_scale: 3,
             image_size: &|_| None,
         };
-        // The smallest viewport the game scales to, as the document guard uses.
         let solved = solve(&tree, &env, (320, 240), &|_| 0);
         for key in ["account_name", "account_detail"] {
             let i = (0..tree.len() as u32)
@@ -45,16 +38,6 @@ fn the_account_lines_fit_their_inset() {
     }
 }
 
-/// The same blind spot one screen over. The shipped-document guard proves every
-/// screen FITS, but it seeds its own sample strings — so a panel that only
-/// overflows once the controller's real (longer) copy wraps to a second line
-/// passes it. Both account-flow screens carry engine copy the guard never sees,
-/// so solve them with the real thing.
-///
-/// Each row is checked against ITS PARENT's content box, never the viewport:
-/// the root frame is `grow`, so it IS the viewport by construction and an
-/// assertion against it can never fail. The first draft of this test made
-/// exactly that mistake and sat green while four extra rows ran off the panel.
 #[test]
 fn the_account_flow_panels_fit_the_smallest_viewport_with_their_real_copy() {
     use petramond_ui::LayoutEnv;
@@ -76,8 +59,6 @@ fn the_account_flow_panels_fit_the_smallest_viewport_with_their_real_copy() {
         ),
     ] {
         let doc = petramond::gui::documents::doc_for(kind).expect("document loads");
-        // Every gui_scale bottoms out at the same logical box, so one scale
-        // solves the layout the others do.
         let tree = InstTree::expand(&doc.doc, &state);
         let env = ThemeEnv {
             theme: &theme,
@@ -85,7 +66,6 @@ fn the_account_flow_panels_fit_the_smallest_viewport_with_their_real_copy() {
             image_size: &|_| None,
         };
         let solved = solve(&tree, &env, viewport, &|_| 0);
-        // Overflowing a `scroll` is what it is for.
         let in_scroll = |mut i: u32| {
             while let Some(p) = tree.get(i).parent {
                 if matches!(tree.get(p).node.kind, petramond_ui::NodeKind::Scroll { .. }) {
@@ -98,7 +78,6 @@ fn the_account_flow_panels_fit_the_smallest_viewport_with_their_real_copy() {
         for i in 0..tree.len() {
             let inst = tree.get(i as u32);
             let Some(p) = inst.parent else { continue };
-            // `abs` children are deliberately out of flow (the backdrop image).
             if in_scroll(i as u32) || inst.layout.abs.is_some() || solved.rects[i].h == 0 {
                 continue;
             }
@@ -126,8 +105,6 @@ fn the_account_flow_panels_fit_the_smallest_viewport_with_their_real_copy() {
     );
 }
 
-/// The sign-in form mid-request, with a refusal showing — every row the screen
-/// can put up at once.
 fn real_sign_in_state() -> UiState {
     let mut state = UiState::new();
     state.set("account_id", UiValue::Str("explorer".to_owned()));
@@ -147,8 +124,6 @@ fn real_sign_in_state() -> UiState {
     state
 }
 
-/// The Account screen as a signed-OUT player sees it, with every transient row
-/// showing at once (the worst case the screen can reach).
 fn real_account_state() -> UiState {
     let mut state = UiState::new();
     state.set("account_name", UiValue::Str(name_line(None)));
@@ -168,8 +143,6 @@ fn real_account_state() -> UiState {
     state
 }
 
-/// The Connect screen mid-attempt, signed out — the longest identity line the
-/// controller can bind, plus the progress row and an inline failure.
 fn real_connect_state() -> UiState {
     let mut state = UiState::new();
     state.set("server_addr", UiValue::Str("play.petramond.com".to_owned()));

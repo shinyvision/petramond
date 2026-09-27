@@ -1,47 +1,30 @@
-//! A body's environmental exposure: its conditions plus the contact clocks of
-//! the fluids it touches, advanced once per fixed tick with one generic rule.
-//! Every grant of a condition, from a fluid or from a mod, passes through here,
-//! so what a body refuses is decided in one place.
-
 use crate::block::Block;
 use crate::condition::{BodyConditions, ConditionDef, ConditionId};
 use crate::fluid::FluidDef;
 
-/// The row that dealt exposure damage.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ExposureSource {
-    /// Contact with this fluid block.
     Fluid(Block),
-    /// A pulse of this condition.
     Condition(ConditionId),
 }
 
-/// Damage due this tick.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ExposureDamage {
     pub amount: i32,
     pub source: ExposureSource,
 }
 
-/// What a body is unaffected by. A tolerated fluid is not felt at all (it
-/// deals, applies and clears nothing); a tolerated condition is never held.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Tolerance {
     pub blocks: &'static [Block],
     pub conditions: &'static [ConditionId],
 }
 
-/// Shared by players and mobs. Transient: never saved.
 #[derive(Clone, Debug, Default)]
 pub struct BodyExposure {
     conditions: BodyConditions,
     tolerance: Tolerance,
-    /// Per-fluid contact clocks ordered by block id. Clocks run whether or not
-    /// the fluid is touched, so stepping out and back cannot hurry a hit.
     contact_in: Vec<(Block, u32)>,
-    /// Sorted conditions cleared by the fluids felt at the last known contact.
-    /// Grants of these are refused until the body leaves those fluids, so a
-    /// grant landing later in the same tick cannot relight what contact put out.
     doused: Vec<ConditionId>,
 }
 
@@ -57,30 +40,19 @@ impl BodyExposure {
         &self.conditions
     }
 
-    /// Whether a grant of `condition` would be refused right now.
     pub fn refuses(&self, condition: ConditionId) -> bool {
         self.tolerance.conditions.contains(&condition)
             || self.doused.binary_search(&condition).is_ok()
     }
 
-    /// Grant `ticks` of `def` at `stage` (see [`BodyConditions`] for how grants
-    /// compose). `false` when refused or nothing was granted.
     pub fn apply(&mut self, def: &ConditionDef, stage: u8, ticks: u32) -> bool {
         !self.refuses(def.id) && self.conditions.apply(def, stage, ticks)
     }
 
-    /// Consume `ticks` of a condition without moving its pulse boundary;
-    /// `u32::MAX` clears it.
     pub fn cool(&mut self, condition: ConditionId, ticks: u32) {
         self.conditions.cool(condition, ticks);
     }
 
-    /// Advance one tick, appending contact damage then condition pulses.
-    ///
-    /// `touched` is every fluid the body's boxes overlap, sorted and unique by
-    /// block id; `None` when the terrain around the body is not final. Unknown
-    /// contact touches nothing and keeps the last known doused set, while the
-    /// clocks and conditions still advance.
     pub fn tick(
         &mut self,
         touched: Option<&[&'static FluidDef]>,
@@ -154,8 +126,6 @@ impl BodyExposure {
         }
     }
 
-    /// Start a fresh life: no conditions, no contact cooldowns. The body's
-    /// tolerance is kept.
     pub fn clear(&mut self) {
         *self = Self::new(self.tolerance);
     }

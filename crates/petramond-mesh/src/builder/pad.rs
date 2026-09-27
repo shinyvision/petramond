@@ -2,12 +2,8 @@ use petramond_world::block::{Block, BlockTable, ShapeState};
 use petramond_world::chunk::SECTION_SIZE;
 use petramond_world::fluid_math;
 
-/// The pad's side: the section plus one cell of border on each face.
 pub(super) const SECTION_PAD: usize = SECTION_SIZE + 2;
-/// How far the biome pad reaches past the section on X/Z (the tint blend
-/// window's radius).
 pub(super) const BIOME_PAD_RADIUS: i32 = 2;
-/// The biome pad's side.
 pub(super) const BIOME_PAD: usize = SECTION_SIZE + (BIOME_PAD_RADIUS as usize * 2);
 
 #[inline]
@@ -20,24 +16,13 @@ pub(super) fn biome_pad_idx(x: usize, z: usize) -> usize {
     z * BIOME_PAD + x
 }
 
-/// Everything one section mesh reads of the world: 18³ cells (the section and
-/// a one-cell border, indexed by `mesh_pad_idx`) plus a 20×20 biome window.
-/// Reads beyond the pad answer air / no state / open sky / not loaded.
 pub struct SectionMeshPad<'a> {
-    /// The registry `blocks` ids resolve against, taken once per mesh job.
     pub table: BlockTable,
     pub blocks: &'a [u16],
     pub fluid: &'a [u8],
-    /// Baked skylight. Cells above the world must hold `SKY_FULL` and cells
-    /// below it `0` — the lighting gather reads this array directly.
     pub skylight: &'a [u8],
-    /// Per-cell block light, packed RGB — the mesher averages it PER CHANNEL
-    /// and emits all three into the vertex's split light lanes.
     pub blocklight: &'a [petramond_world::light::LightRgb],
-    /// The UNIFIED per-cell block state (opaque; decoded by the owning
-    /// family's codec gated on the cell's block).
     pub cell_states: &'a [ShapeState],
-    /// Per-cell appearance exclusions (dye or snow), including neighbour cells.
     pub transition_blocked: &'a [bool],
     pub loaded: &'a [bool],
     pub biome: &'a [u8],
@@ -55,9 +40,6 @@ impl SectionMeshPad<'_> {
         }
     }
 
-    /// Pad-local fluid probes for in-section cells and their ±1 neighbours.
-    /// The neighbour-above sample for `fills_cell` can sit one cell past the
-    /// top pad face — that matches `block_world` returning air out of pad.
     #[inline]
     fn local_pad_xyz(lx: i32, ly: i32, lz: i32) -> Option<(usize, usize, usize)> {
         let n = SECTION_PAD as i32;

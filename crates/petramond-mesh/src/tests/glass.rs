@@ -1,8 +1,5 @@
 use super::*;
 
-/// Faces between two adjacent glass blocks are invisible (you'd see a frame
-/// floating inside the glass), so the mesher culls them BOTH ways — a glass
-/// wall reads as one sheet. Glass↔air and glass↔stone faces still draw.
 #[test]
 fn adjacent_glass_blocks_cull_their_shared_faces() {
     let m_solo = mesh(&section_with(&[((8, 8, 8), Block::Glass)]));
@@ -19,19 +16,11 @@ fn adjacent_glass_blocks_cull_their_shared_faces() {
     );
 }
 
-/// A lone pane is a bare post (4 edge sides + 2 caps). Two adjacent panes grow
-/// arms toward each other and bury the end faces at the shared cell boundary,
-/// so the run reads as one continuous sheet of glass. A pane beside a
-/// `no_pane_connect` block (the inset cactus) stays a bare post.
 #[test]
 fn pane_arms_connect_and_bury_shared_end_faces() {
     let m_lone = mesh(&section_with(&[((8, 8, 8), Block::GlassPane)]));
     assert_eq!(m_lone.opaque.len(), 24, "bare post: 4 sides + 2 caps");
 
-    // Two connected panes: per pane an east/west run (2 broad faces + 1 free-end
-    // edge strip) + the run's merged top/bottom caps (2) = 5 quads; nothing on
-    // the shared plane. (The box-set emitter caps the whole run once — the old
-    // per-segment post/arm caps are gone.)
     let m_pair = mesh(&section_with(&[
         ((8, 8, 8), Block::GlassPane),
         ((9, 8, 8), Block::GlassPane),
@@ -58,9 +47,6 @@ fn pane_arms_connect_and_bury_shared_end_faces() {
         "no quad may lie in the shared cell-boundary plane"
     );
 
-    // The cactus carries no_pane_connect: the pane beside it stays a bare post.
-    // Every pane vertex lives in the post's thin span (x < 9), every cactus
-    // vertex at x >= 9, so the pane's share of the mesh is cleanly separable.
     let m = mesh(&section_with(&[
         ((8, 8, 8), Block::GlassPane),
         ((9, 8, 8), Block::Cactus),

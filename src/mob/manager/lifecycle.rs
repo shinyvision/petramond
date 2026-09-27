@@ -8,7 +8,6 @@ use petramond_world::chunk::{ChunkPos, SectionPos};
 use super::Mobs;
 
 impl Mobs {
-    /// Spawn a mob of `kind` at `pos` (feet) facing `yaw`.
     pub fn spawn(&mut self, kind: Mob, pos: petramond_math::world_pos::WorldPos, yaw: f32) -> bool {
         self.spawn_lit(
             kind,
@@ -37,29 +36,15 @@ impl Mobs {
         Some(id)
     }
 
-    /// Remaining room for `kind` under its species and category spawn caps.
     pub fn spawn_room_for(&self, kind: Mob) -> u32 {
         spawn::room_for(&self.list, kind)
     }
 
-    /// Run one natural-spawn step: a single spawn attempt at a random loaded position.
-    /// Called once per game tick by `Game`, after [`tick`](Self::tick). Returns the
-    /// spawns actually performed (stable id + kind + feet position), for the caller
-    /// to report as `mob_spawned` events.
-    ///
-    /// Mobs that leave the loaded area are no longer dropped here — they are saved into
-    /// their chunk as it unloads (see `take_in_chunk`) and reload
-    /// with it. Because the unload harvests them out of the live set, the set still only
-    /// holds loaded-area mobs, so the "in the loaded area" caps stay honest — provided
-    /// the spawn-relevant area is actually loaded. While saved records within the
-    /// nine-chunk census neighborhood are still streaming back in, the attempt holds
-    /// off, or every join would refill the caps before those nearby mobs restore.
     pub fn spawn_tick(
         &mut self,
         world: &ServerWorld,
         player_pos: petramond_math::world_pos::WorldPos,
     ) -> Vec<(u64, Mob, petramond_math::world_pos::WorldPos)> {
-        // Disjoint borrows: the room test reads the live list, the picker draws `rng`.
         let list = &self.list;
         let chosen = spawn::attempt(world, player_pos, &mut self.rng, |kind| {
             spawn::room_for(list, kind)
@@ -80,13 +65,6 @@ impl Mobs {
         spawned
     }
 
-    /// Run one worldgen-population step around `player_pos` (see `populate`):
-    /// roll a budgeted batch of nearby unchecked chunks and place their one-time
-    /// herds, ignoring the population caps (worldgen stock).
-    /// Returns the spawns performed plus the chunks to
-    /// record as populated; the caller owns the persisted populated set, and a
-    /// chunk is only recorded once at least one member actually spawned, so a
-    /// fully-failed placement retries in a later session.
     pub fn populate_tick(
         &mut self,
         world: &ServerWorld,
@@ -118,10 +96,6 @@ impl Mobs {
         (spawned, populated)
     }
 
-    /// Drain and return the live mobs resting in section `pos`, as [`SavedMob`]s — used
-    /// to bundle them into that section's save record as it unloads. A dead/ragdolling
-    /// corpse in the section is removed too, but *not* saved: a corpse is ephemeral (its
-    /// loot already dropped when it died), so only living mobs persist.
     pub fn take_in_section(&mut self, pos: SectionPos) -> Vec<SavedMob> {
         let mut taken = Vec::new();
         let mut i = self.list.len();
@@ -138,11 +112,6 @@ impl Mobs {
         taken
     }
 
-    /// Clone the live mobs grouped by owning section (as [`SavedMob`]s), for the periodic
-    /// save flush — the mobs stay active; the clones persist with the section records so a
-    /// crash can't lose them. Dead corpses are skipped, as in
-    /// [`take_in_section`](Self::take_in_section). A mob outside the world vertical range
-    /// (none in normal play) is skipped.
     pub fn saved_by_section(&self) -> HashMap<SectionPos, Vec<SavedMob>> {
         let mut map: HashMap<SectionPos, Vec<SavedMob>> = HashMap::new();
         for m in &self.list {
@@ -157,11 +126,6 @@ impl Mobs {
         map
     }
 
-    /// Re-spawn mobs read back from a section's save record now that its section has
-    /// loaded. Each gets a fresh AI brain (a reloaded owl simply resumes wandering) and
-    /// restores like any spawn. The saved tag map carries over —
-    /// health, shear regrowth, confinement, mod keys — overlaid on the spawn tags,
-    /// so a shorn, wounded sheep reloads shorn and wounded.
     pub fn restore(&mut self, mobs: impl IntoIterator<Item = SavedMob>) {
         for m in mobs {
             self.restore_saved_mob_lit(m, 63, petramond_world::light::BlockLight6::DARK);
@@ -181,10 +145,6 @@ impl Mobs {
         }
     }
 
-    /// Remove the mob `id` from the live set immediately — the mod
-    /// `DespawnMob` HostCall (no death, no loot table, not saved; carried stacks
-    /// still scatter). `false` when it is already gone. Every other mob keeps
-    /// its handle.
     pub fn remove(&mut self, id: MobId) -> bool {
         let Some(slot) = self.slot(id) else {
             return false;

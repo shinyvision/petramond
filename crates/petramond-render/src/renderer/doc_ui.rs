@@ -1,16 +1,16 @@
-//! GUI-document draw path: uploads a [`petramond_ui::DrawList`] and draws it in
-//! the UI pass — every screen's chrome (panels, widgets, text, dim) comes
-//! through here; `ui_frame.rs` adds only game-owned content on top.
+//! GUI-document draw path: uploads a [`petramond_ui::DrawList`] and draws it in the UI pass.
+//! All screen chrome (panels, widgets, text, dim) goes through here; `ui_frame.rs` only adds
+//! game-owned content on top.
 //!
-//! petramond-ui vertices are physical px (y down); the px→NDC conversion happens
-//! here on upload so the shared crate stays resolution-agnostic. Batches map
-//! `TexId` to bind groups: the theme's atlas pages upload once (lazily), the
-//! font atlas again whenever painting rasterized new glyphs, and per-batch
-//! scissor rects carry the runtime's clip semantics to the GPU.
+//! petramond-ui vertices are physical px, y down. We convert px to NDC here on upload so the shared
+//! crate stays resolution-agnostic.
+//!
+//! Batches map `TexId` to bind groups: theme atlas pages upload once lazily, font atlas re-uploads
+//! whenever painting rasterizes new glyphs. Per-batch scissor rects carry the runtime's clip
+//! semantics to the GPU.
 
 use super::*;
 
-/// One uploaded batch: which texture, which vertex range, which scissor.
 pub(super) struct DocBatch {
     tex: petramond_ui::TexId,
     start: u32,
@@ -21,30 +21,21 @@ pub(super) struct DocBatch {
 #[derive(Default)]
 pub(super) struct DocUi {
     pub(super) batches: Vec<DocBatch>,
-    /// First overlay-tier batch (see [`petramond_ui::DrawList`]): base-tier
-    /// batches draw under the host's item icons, overlay-tier ones over them.
     pub(super) overlay_start: usize,
     vbuf: Option<wgpu::Buffer>,
     verts: Vec<UiVertex>,
-    /// This frame's `TexId::DocImage` index → source order.
     frame_images: Vec<petramond::gui::DocImageSource>,
-    /// Uploaded image textures by path (session-lived; image file changes
-    /// need a restart).
     image_binds: HashMap<std::path::PathBuf, wgpu::BindGroup>,
     dynamic_binds: HashMap<String, DynamicBind>,
 }
 
-/// The theme's atlas pages and font, shared by every UI layer.
 pub(super) struct ThemeBinds {
-    /// One bind per theme atlas page, indexed by `TexId::ThemePage`.
     pub(super) pages: Vec<wgpu::BindGroup>,
     pub(super) font: wgpu::BindGroup,
-    /// The font atlas revision `font` was uploaded at.
     font_revision: u64,
 }
 
 impl ThemeBinds {
-    /// The bind of theme atlas page `page`, if the theme has that page.
     pub(super) fn page(&self, page: u16) -> Option<&wgpu::BindGroup> {
         self.pages.get(page as usize)
     }
@@ -57,7 +48,6 @@ struct DynamicBind {
     bind: wgpu::BindGroup,
 }
 
-/// What a UI layer uploads through.
 pub(super) struct UiGpu<'a> {
     pub(super) device: &'a wgpu::Device,
     pub(super) queue: &'a wgpu::Queue,
@@ -65,10 +55,6 @@ pub(super) struct UiGpu<'a> {
 }
 
 impl UiGpu<'_> {
-    /// The theme's binds: the pages uploaded the first time any layer asks,
-    /// the font atlas again whenever its revision moved (glyphs rasterize the
-    /// first time anything draws them — this frame's paint included, which is
-    /// why every layer asks after it painted).
     pub(super) fn theme<'t>(&self, theme: &'t mut Option<ThemeBinds>) -> &'t ThemeBinds {
         let doc_theme = petramond::gui::doc_theme::theme();
         let revision = doc_theme.ui_font().atlas_revision();
@@ -122,7 +108,6 @@ impl UiGpu<'_> {
         (texture, bind)
     }
 
-    /// A nearest-sampled bind of `texture` in the UI texture layout.
     pub(super) fn nearest_bind(&self, texture: &wgpu::Texture, label: &str) -> wgpu::BindGroup {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
@@ -149,7 +134,6 @@ impl UiGpu<'_> {
 }
 
 impl DocUi {
-    /// Upload this frame's GUI-document draw list (`None` = no document UI).
     pub(super) fn prepare(
         &mut self,
         gpu: &UiGpu<'_>,
@@ -185,8 +169,6 @@ impl DocUi {
         }
         gpu.theme(theme);
 
-        // px (y down) → NDC (y up); uv/color pass through, including the
-        // solid sentinel.
         self.verts.clear();
         self.verts.extend(draw.vertices.iter().map(|v| UiVertex {
             pos: crate::ui::pixel_to_ndc(screen, v.pos[0], v.pos[1]),
@@ -281,19 +263,14 @@ impl DocUi {
         }
     }
 
-    /// The base tier: everything under the host's own item icons.
     pub(super) fn base(&self) -> &[DocBatch] {
         &self.batches[..self.overlay_start]
     }
 
-    /// The overlay tier: floating tooltip chrome, which has to cover the
-    /// host content the base tier drew under.
     pub(super) fn overlay(&self) -> &[DocBatch] {
         &self.batches[self.overlay_start..]
     }
 
-    /// Draw a batch range inside the UI pass. The pipeline is already set;
-    /// each batch binds its texture and scissors its clip.
     pub(super) fn draw(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -344,8 +321,6 @@ impl DocUi {
     }
 }
 
-/// Scissor to a batch's physical-px clip (`None` = the whole screen). `false`
-/// when the clip is empty on screen and the batch draws nothing.
 pub(super) fn set_batch_scissor(
     pass: &mut wgpu::RenderPass<'_>,
     clip: Option<[i32; 4]>,

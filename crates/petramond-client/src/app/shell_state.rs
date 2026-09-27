@@ -1,11 +1,3 @@
-//! The title-flow shell's own state: the world list and its selection, the
-//! open per-screen page (World Settings / Create World sessions exist only
-//! while their screen is up), the Connect to Server and account sessions, a
-//! local world waiting on the Missing Mods screen, and the last disconnect
-//! reason. Everything here is world-list I/O and form state — no
-//! game session, no rendering — so shell screen controllers are handed this
-//! directly instead of the whole `App`.
-
 use petramond::save::settings::WorldSettings;
 use petramond::save::WorldInfo;
 
@@ -13,9 +5,6 @@ use super::account::AccountSession;
 use super::connect::ConnectSession;
 use super::shell_docs::MissingWorld;
 
-/// One World Settings row: an installed pack. Content-only packs (no `id`)
-/// are listed but not toggleable — disable semantics are namespace-based and
-/// they have none (their bare-key overrides are process-wide).
 pub(super) struct ModPackRow {
     pub(super) name: String,
     pub(super) id: Option<String>,
@@ -24,8 +13,6 @@ pub(super) struct ModPackRow {
     pub(super) summary: Option<String>,
 }
 
-/// Which tab of the tabbed World Settings / Create World screens is active.
-/// Purely a shell UI concern; never persisted.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub(super) enum SettingsTab {
     #[default]
@@ -50,31 +37,19 @@ impl SettingsTab {
     }
 }
 
-/// The open World Settings screen's state: which world, the installed pack
-/// rows, and the world's disabled set (mirrors `settings.json`; every toggle
-/// writes the file immediately).
 pub(super) struct WorldSettingsSession {
     pub(super) dir_name: String,
     pub(super) world_name: String,
     pub(super) rows: Vec<ModPackRow>,
     pub(super) settings: WorldSettings,
     pub(super) selected: usize,
-    /// The header's inline rename editor is open.
     pub(super) renaming: bool,
     pub(super) tab: SettingsTab,
-    /// The world's seed (`level.dat` header); `None` before the first open.
     pub(super) seed: Option<u32>,
-    /// Save-directory size, reported by the scan thread below.
     pub(super) size_bytes: Option<u64>,
-    /// The off-thread size scan (region stores can hold many files); polled
-    /// per frame, then dropped.
     pub(super) size_rx: Option<std::sync::mpsc::Receiver<u64>>,
 }
 
-/// The open Create World screen's state: the installed pack rows and the
-/// settings the new world will be created with. Unlike World Settings there
-/// is no world yet — mod toggles buffer here and `settings.json` is written
-/// once on Create.
 pub(super) struct CreateWorldSession {
     pub(super) rows: Vec<ModPackRow>,
     pub(super) settings: WorldSettings,
@@ -82,8 +57,6 @@ pub(super) struct CreateWorldSession {
     pub(super) tab: SettingsTab,
 }
 
-/// The per-screen state of the open shell page, owned by the page: opening a
-/// page creates it, leaving the page drops it.
 #[derive(Default)]
 enum ShellPage {
     #[default]
@@ -97,20 +70,12 @@ pub(super) struct ShellState {
     worlds: Vec<WorldInfo>,
     selected_world: Option<usize>,
     page: ShellPage,
-    /// The Connect to Server session: entry fields, the off-thread connect
-    /// worker's channel, and the mods a refused join reported missing.
     pub(super) connect: ConnectSession,
-    /// The cached view of the stored Petramond sign-in plus the account worker
-    /// (see [`super::account`]).
     pub(super) account: AccountSession,
-    /// A local world waiting on the Missing Mods screen to be opened anyway.
     pub(super) missing_world: Option<MissingWorld>,
-    /// Why the last session ended, shown by the Disconnected screen.
     disconnect_message: String,
 }
 
-/// One row per installed pack, in discovery order (parallel to
-/// `petramond_world::assets::packs()` — the Mods-tab icon binding relies on that).
 fn pack_rows() -> Vec<ModPackRow> {
     petramond_world::assets::packs()
         .iter()
@@ -124,8 +89,6 @@ fn pack_rows() -> Vec<ModPackRow> {
         .collect()
 }
 
-/// Flip one pack row's enabled state in `settings`. Returns false for
-/// content-only packs (no id — always on) and out-of-range rows.
 pub(super) fn toggle_pack_row(
     rows: &[ModPackRow],
     settings: &mut WorldSettings,
@@ -153,13 +116,10 @@ impl ShellState {
         self.selected_world = index;
     }
 
-    /// The selected world, if the selection still names one.
     pub(super) fn selected_world_info(&self) -> Option<&WorldInfo> {
         self.selected_world.and_then(|index| self.worlds.get(index))
     }
 
-    /// Clamp-move the world-list selection by `step` (the first row when
-    /// nothing is selected).
     pub(super) fn move_world_selection(&mut self, step: i32) {
         if self.worlds.is_empty() {
             return;
@@ -171,7 +131,6 @@ impl ShellState {
         self.selected_world = Some(next);
     }
 
-    /// Re-read the world list from disk, dropping a selection past its end.
     pub(super) fn refresh_worlds(&mut self) {
         self.worlds = match petramond::save::list_worlds() {
             Ok(worlds) => worlds,
@@ -223,12 +182,10 @@ impl ShellState {
         }
     }
 
-    /// Leave the open page, dropping its state.
     pub(super) fn close_page(&mut self) {
         self.page = ShellPage::None;
     }
 
-    /// Take the Create World session (closing its page) for the Create step.
     pub(super) fn take_create_world(&mut self) -> Option<CreateWorldSession> {
         match std::mem::take(&mut self.page) {
             ShellPage::CreateWorld(session) => Some(session),
@@ -239,9 +196,6 @@ impl ShellState {
         }
     }
 
-    /// Open the World Settings page for the selected world: the installed
-    /// pack list (from pack discovery) plus the world's `settings.json`, and
-    /// an off-thread scan of its save size. False when nothing is selected.
     pub(super) fn open_world_settings(&mut self) -> bool {
         let Some(world) = self.selected_world_info() else {
             return false;
@@ -266,7 +220,6 @@ impl ShellState {
         true
     }
 
-    /// Adopt the off-thread save-dir size once it lands.
     pub(super) fn poll_world_size(&mut self) {
         if let Some(session) = self.world_settings_mut() {
             if let Some(rx) = &session.size_rx {
@@ -278,7 +231,6 @@ impl ShellState {
         }
     }
 
-    /// Open the Create World page with a fresh session (all mods enabled).
     pub(super) fn open_create_world(&mut self) {
         self.page = ShellPage::CreateWorld(CreateWorldSession {
             rows: pack_rows(),
@@ -288,10 +240,6 @@ impl ShellState {
         });
     }
 
-    /// Flip one pack's enabled state for the open World Settings world and
-    /// write `settings.json` immediately (a crash can't lose toggles; there
-    /// is no unsaved state). Content-only packs (no id) are not toggleable.
-    /// Takes effect the next time the world is OPENED — never live.
     pub(super) fn toggle_world_settings_row(&mut self, row: usize) {
         let Some(session) = self.world_settings_mut() else {
             return;
@@ -301,12 +249,11 @@ impl ShellState {
         }
         session.selected = row;
         if !toggle_pack_row(&session.rows, &mut session.settings, row) {
-            return; // content-only packs are always on
+            return;
         }
         self.write_world_settings();
     }
 
-    /// Flip the keep-inventory-on-death world rule. Takes effect next open.
     pub(super) fn toggle_keep_inventory(&mut self) {
         if let Some(session) = self.world_settings_mut() {
             session.settings.keep_inventory = !session.settings.keep_inventory;
@@ -314,7 +261,6 @@ impl ShellState {
         }
     }
 
-    /// Flip the open-to-LAN-on-load world rule.
     pub(super) fn toggle_auto_open_lan(&mut self) {
         if let Some(session) = self.world_settings_mut() {
             session.settings.auto_open_lan = !session.settings.auto_open_lan;
@@ -322,8 +268,6 @@ impl ShellState {
         }
     }
 
-    /// Slide the world's day length (minutes). Live drags update the session
-    /// (the label follows); only the committed release writes the file.
     pub(super) fn set_day_minutes(&mut self, minutes: u32, committed: bool) {
         if let Some(session) = self.world_settings_mut() {
             session.settings.day_minutes = minutes.clamp(10, 30);
@@ -333,8 +277,6 @@ impl ShellState {
         }
     }
 
-    /// Write the open World Settings session's settings.json (the toggles'
-    /// crash-can't-lose-it policy: every change writes immediately).
     fn write_world_settings(&self) {
         let Some(session) = self.world_settings() else {
             return;
@@ -348,8 +290,6 @@ impl ShellState {
         }
     }
 
-    /// Flip one pack's enabled state for the world being created. Buffered in
-    /// the session only; written as the new world's `settings.json` on Create.
     pub(super) fn toggle_create_world_row(&mut self, row: usize) {
         let Some(session) = self.create_world_mut() else {
             return;
@@ -361,8 +301,6 @@ impl ShellState {
         toggle_pack_row(&session.rows, &mut session.settings, row);
     }
 
-    /// Delete the selected world's save and its client-mod data, then clear
-    /// the selection and re-read the list.
     pub(super) fn delete_selected_world(&mut self) {
         let Some(world) = self.selected_world_info().cloned() else {
             return;
@@ -372,9 +310,6 @@ impl ShellState {
         } else if let Err(e) =
             petramond::modding::client::delete_local_world_storage(&world.dir_name)
         {
-            // Client-mod data (minimap exploration, waypoints) keys on the
-            // save-directory name and lives outside the save — deleted with
-            // the world, or a future world reusing the name inherits it.
             log::warn!(
                 "could not delete client mod data for world '{}': {e}",
                 world.name
@@ -384,7 +319,6 @@ impl ShellState {
         self.refresh_worlds();
     }
 
-    /// Replace the listed worlds without touching disk.
     #[cfg(test)]
     pub(super) fn set_worlds_for_test(&mut self, worlds: Vec<WorldInfo>) {
         self.worlds = worlds;
