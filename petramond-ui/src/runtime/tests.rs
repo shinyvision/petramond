@@ -2020,3 +2020,94 @@ fn a_bound_icon_swaps_between_a_theme_part_and_document_art() {
     surface_run(&rt, &state, &scene, &mut fs, &mut out, 0.0, &[]);
     assert!(!doc_art(&out), "the binding replaced it");
 }
+
+#[test]
+fn a_list_row_painted_over_a_button_takes_the_press() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:test_popup", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 200, "h": 200 },
+                    "children": [
+                        { "type": "button", "id": "scrim", "style": "button.invisible",
+                          "layout": { "w": { "grow": 1 }, "h": { "grow": 1 }, "abs": { "x": 0, "y": 0 } } },
+                        { "type": "frame", "overlay": true,
+                          "layout": { "abs": { "x": 20, "y": 20 }, "w": 120 },
+                          "children": [
+                            { "type": "list", "id": "rows", "bind": { "items": "rows", "selected": "sel" },
+                              "children": [
+                                { "type": "row", "style": "list.row", "layout": { "h": 20 },
+                                  "children": [
+                                    { "type": "label", "bind": { "text": "name" } },
+                                    { "type": "button", "id": "row_btn", "text": "x" }
+                                  ] }
+                              ] }
+                          ] }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let mut h = Harness::new();
+    h.rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    h.state.set("sel", UiValue::I32(0));
+    h.frame(&[]);
+    let rows = h.out.rect("rows").unwrap();
+    let row_h = rows.h / 6;
+    let (x, y) = ((rows.x + 4) as f32, (rows.y + row_h + row_h / 2) as f32);
+    let ev = h.frame(&[down(x, y), up(x, y)]);
+    assert!(
+        ev.iter()
+            .any(|e| matches!(e, UiEvent::ListSelect { id, index: 1 } if id == "rows")),
+        "{ev:?}"
+    );
+    assert!(
+        !ev.iter().any(|e| matches!(e, UiEvent::Click { .. })),
+        "{ev:?}"
+    );
+
+    h.frame(&[]);
+    let (bx, by) = h.center("row_btn");
+    let ev = h.frame(&[down(bx, by), up(bx, by)]);
+    assert!(
+        ev.iter()
+            .any(|e| matches!(e, UiEvent::Click { id, .. } if id == "row_btn")),
+        "a button inside the row still wins: {ev:?}"
+    );
+}
+
+/// An icon-only tab names itself through the hovered item: the tab bar's
+/// id and the index of the tab under the pointer.
+#[test]
+fn the_tab_under_the_pointer_is_the_hovered_item() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:test_tabs", "class": "screen",
+                "root": { "type": "column", "layout": { "w": 200, "h": 100 },
+                    "children": [
+                        { "type": "tab_bar", "id": "tabs", "tabs": [
+                            { "key": "a", "label": "Alpha" },
+                            { "key": "b", "label": "Beta" }
+                        ] }
+                    ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let mut h = Harness::new();
+    h.rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    h.frame(&[]);
+    let bar = h.out.rect("tabs").unwrap();
+    let y = (bar.y + bar.h / 2) as f32;
+    h.frame(&[InputEvent::PointerMove {
+        x: (bar.x + 2) as f32,
+        y,
+    }]);
+    assert_eq!(h.out.hover_item, Some(("tabs".into(), 0)));
+    h.frame(&[InputEvent::PointerMove {
+        x: (bar.x + bar.w - 2) as f32,
+        y,
+    }]);
+    assert_eq!(h.out.hover_item, Some(("tabs".into(), 1)));
+}

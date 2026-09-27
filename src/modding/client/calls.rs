@@ -789,6 +789,9 @@ fn bucket(
                     .into(),
             )
         }),
+        ClientStorageScope::Chosen(_) => Err(HostRet::invalid(
+            "a chosen folder holds files only; keep storage keys in scope Pack or World".into(),
+        )),
     }
 }
 

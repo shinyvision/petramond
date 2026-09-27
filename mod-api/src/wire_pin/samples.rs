@@ -1200,6 +1200,9 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::ClientFilePoll", &HostCall::from(calls::ClientFilePoll { ticket: 7 }));
     s.pin("HostCall::ClientFileStat", &HostCall::from(calls::ClientFileStat { scope: ClientStorageScope::Pack, path: "a".into() }));
     s.pin("HostCall::ClientFileReveal", &HostCall::from(calls::ClientFileReveal { scope: ClientStorageScope::Pack, path: "videos".into() }));
+    s.pin("HostCall::ClientFolderChoose", &HostCall::from(calls::ClientFolderChoose { folder: 2, title: "Videos".into() }));
+    s.pin("HostCall::ClientFolderState", &HostCall::from(calls::ClientFolderState { folder: 2 }));
+    s.pin("ClientStorageScope::Chosen", &ClientStorageScope::Chosen(2));
     s.pin("HostCall::ClientWorldStateWrite", &HostCall::from(calls::ClientWorldStateWrite {
         scope: ClientStorageScope::Pack, path: "r/w.pmc".into(),
         select: crate::ClientStateSelect::Keys(vec![
@@ -1322,6 +1325,8 @@ pub(super) fn samples() -> Samples {
     s.pin("HostRet::ClientWallClock", &HostRet::ClientWallClock(crate::ClientWallTime {
         unix_ms: 1_758_844_800_000, utc_offset_min: -420,
     }));
+    s.pin("HostRet::ClientFolder", &HostRet::ClientFolder(Some(crate::ClientFolderInfo { label: "/v".into() })));
+    s.pin("ClientFileAnswer::Folder", &crate::ClientFileAnswer::Folder(None));
     s.pin("ClientEnvelopeEntry", &crate::ClientEnvelopeEntry {
         record: [0, 300],
         envelope: crate::ClientEnvelope::Frame(crate::ClientFrameEnvelope {

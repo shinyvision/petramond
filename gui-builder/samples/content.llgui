@@ -200,6 +200,23 @@
                   ]
                 },
                 {
+                  "id": "tabs",
+                  "type": "tab_bar",
+                  "tabs": [
+                    {
+                      "key": "installed",
+                      "icon": "icon.tab_installed"
+                    },
+                    {
+                      "key": "browse",
+                      "icon": "icon.tab_browse"
+                    }
+                  ],
+                  "bind": {
+                    "selected": "tab_sel"
+                  }
+                },
+                {
                   "id": "search",
                   "type": "text_input",
                   "placeholder": "Search content… (Ctrl+F)",
@@ -308,89 +325,6 @@
                             "justify": "start"
                           },
                           "children": [
-                            {
-                              "type": "row",
-                              "layout": {
-                                "w": "auto",
-                                "h": "auto",
-                                "pad": [
-                                  2,
-                                  4,
-                                  2,
-                                  2
-                                ],
-                                "margin": [
-                                  0,
-                                  0,
-                                  0,
-                                  0
-                                ],
-                                "gap": 5,
-                                "dir": "column",
-                                "align": "center",
-                                "justify": "start"
-                              },
-                              "bind": {
-                                "visible": "is_header"
-                              },
-                              "children": [
-                                {
-                                  "type": "image",
-                                  "image": "pixel.png",
-                                  "layout": {
-                                    "w": 6,
-                                    "h": 1,
-                                    "pad": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "margin": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
-                                  }
-                                },
-                                {
-                                  "type": "label",
-                                  "style": "label.muted",
-                                  "bind": {
-                                    "text": "header"
-                                  }
-                                },
-                                {
-                                  "type": "image",
-                                  "image": "pixel.png",
-                                  "layout": {
-                                    "w": {
-                                      "grow": 1
-                                    },
-                                    "h": 1,
-                                    "pad": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "margin": [
-                                      0,
-                                      0,
-                                      0,
-                                      0
-                                    ],
-                                    "gap": 0,
-                                    "dir": "column",
-                                    "justify": "start"
-                                  }
-                                }
-                              ]
-                            },
                             {
                               "type": "column",
                               "layout": {
@@ -1436,6 +1370,50 @@
               "text": "Refresh the list (F5)",
               "wrap": true,
               "small": true
+            }
+          ]
+        },
+        {
+          "id": "tabs_tooltip",
+          "type": "tooltip",
+          "hover": "tabs",
+          "layout": {
+            "w": "auto",
+            "h": "auto",
+            "pad": [
+              3,
+              2,
+              3,
+              3
+            ],
+            "margin": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "gap": 0,
+            "dir": "column",
+            "align": "stretch",
+            "justify": "start",
+            "max_w": 200,
+            "abs": {
+              "x": 4,
+              "y": 4
+            }
+          },
+          "style": "panel.inset",
+          "bind": {
+            "visible": "tab_tip"
+          },
+          "children": [
+            {
+              "type": "label",
+              "wrap": true,
+              "small": true,
+              "bind": {
+                "text": "tab_tip"
+              }
             }
           ]
         },

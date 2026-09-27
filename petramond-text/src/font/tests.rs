@@ -275,3 +275,17 @@ fn glyph_bitmaps_are_lazy_but_advances_are_available() {
     assert_eq!(font.atlas_revision(), after);
     assert_eq!(font.atlas_size(), size);
 }
+
+#[test]
+fn a_newline_ends_its_line_and_is_never_drawn() {
+    let f = Font::builtin();
+    let text = "reach it.\nrefused";
+    let lines = f.wrap(text, f.width("reach it. refused"));
+    let words: Vec<&str> = lines.iter().map(|r| &text[r.clone()]).collect();
+    assert_eq!(words, ["reach it.", "refused"]);
+    assert_eq!(
+        f.wrap("a\n", 100).len(),
+        2,
+        "a trailing newline opens a line"
+    );
+}

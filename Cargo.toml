@@ -85,6 +85,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
 mimalloc = "0.1.52"
 pollster = "0.4"
+rfd = "0.15"
 postcard = { version = "1", default-features = false, features = ["alloc"] }
 rayon = "1.10"
 # Fast fixed-seed hasher for the per-voxel hot maps (world sections, A* scratch,

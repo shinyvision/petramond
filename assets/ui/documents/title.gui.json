@@ -167,6 +167,7 @@
       },
       "children": [
        {
+        "id": "launchers_scroll",
         "type": "scroll",
         "layout": {
          "max_h": 214
@@ -183,8 +184,8 @@
           },
           "children": [
            {
-            "type": "frame",
-            "style": "button.default",
+            "type": "button",
+            "id": "launcher",
             "layout": {
              "w": 22,
              "h": 22,

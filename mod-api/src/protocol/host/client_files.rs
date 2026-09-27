@@ -123,5 +123,23 @@ host_domain! {
             scope: ClientStorageScope,
             path: String,
         } => legal(CLIENT_SHELL, Any, Write),
+        /// CLIENT: open the OS folder picker, titled `title`, for this mod's
+        /// folder slot `folder` ([`ClientStorageScope::Chosen`]). It starts at
+        /// the slot's current folder, else the player's videos folder. What the
+        /// player picks is remembered for the slot across runs.
+        /// → [`HostRet::Ticket`](crate::HostRet::Ticket), answered
+        /// `Folder(Some(info))`, or `Folder(None)` when the player cancels.
+        /// REFUSED ([`ErrorCode::Refused`](crate::ErrorCode::Refused)): a picker
+        /// is already open, or this build has none.
+        ClientFolderChoose {
+            folder: u32,
+            title: String,
+        } => legal(CLIENT_SHELL, Any, Write),
+        /// CLIENT: the folder chosen for slot `folder`.
+        /// → [`HostRet::ClientFolder`](crate::HostRet::ClientFolder): `None` =
+        /// none chosen, or it is gone.
+        ClientFolderState {
+            folder: u32,
+        } => legal(CLIENT_SHELL, Any, Read),
     }
 }

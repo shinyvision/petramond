@@ -419,6 +419,18 @@ fn a_presentation_opened_on_the_shell_presents_mod_files_and_never_touches_a_sav
         mod_api::ClientContext::Shell
     );
 
+    // Left from outside (the pause menu's Leave), the owner hears it ended.
+    let mut game = present(shell, &captured);
+    game.tick(DT, &input);
+    let shell = game
+        .leave_presentation()
+        .expect("the launched instance survives");
+    let state = shell.presented().lock().presentation.state();
+    assert!(
+        state.owner.is_none() && !state.open && !state.opening,
+        "a presentation left without its owner is over for it too: {state:?}"
+    );
+
     assert_eq!(
         listing(&save),
         before,

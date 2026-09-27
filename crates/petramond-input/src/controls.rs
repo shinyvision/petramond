@@ -543,6 +543,13 @@ enum ActionTarget {
     ClientMod,
 }
 
+impl ActionRow {
+    /// A client mod's action (its screens decide where it is live).
+    pub fn is_mod(&self) -> bool {
+        matches!(self.target, ActionTarget::ClientMod)
+    }
+}
+
 /// Every remappable action of the current session: the engine actions plus
 /// whatever the loaded client mods registered. App-owned; rebuilt when a
 /// session starts or ends.
@@ -599,17 +606,26 @@ impl ActionTable {
     }
 
     /// The rows `input` fires under the currently held `mods`: a binding
-    /// matches when its input matches and its required modifiers are all held.
-    /// When bindings on the same input differ in specificity (`B` vs `Ctrl+B`),
-    /// only the most specific satisfied chord(s) fire.
-    fn matches(&self, set: &BindingSet, input: BoundInput, mods: Modifiers) -> Vec<usize> {
+    /// matches when its row is `live` here, its input matches and its
+    /// required modifiers are all held. When bindings on the same input
+    /// differ in specificity (`B` vs `Ctrl+B`), only the most specific
+    /// satisfied chord(s) fire — among live rows only, so a chord that does
+    /// nothing on this screen never swallows the plain key (sprint + strafe).
+    fn matches(
+        &self,
+        set: &BindingSet,
+        input: BoundInput,
+        mods: Modifiers,
+        live: &dyn Fn(&ActionRow) -> bool,
+    ) -> Vec<usize> {
         let satisfied: Vec<(usize, u32)> = self
             .rows
             .iter()
             .enumerate()
             .filter_map(|(i, row)| {
                 let b = self.effective(set, row);
-                (b.input == input && b.mods.satisfied_by(mods)).then_some((i, b.mods.count()))
+                (b.input == input && b.mods.satisfied_by(mods) && live(row))
+                    .then_some((i, b.mods.count()))
             })
             .collect();
         let best = satisfied.iter().map(|(_, n)| *n).max().unwrap_or(0);
@@ -646,7 +662,9 @@ pub struct BindingEngine {
 }
 
 impl BindingEngine {
-    /// Resolve one raw input edge into `(action, down)` transitions.
+    /// Resolve one raw input edge into `(action, down)` transitions. A press
+    /// considers only the rows `live` says fire where the player is.
+    #[allow(clippy::too_many_arguments)]
     pub fn on_input(
         &mut self,
         table: &ActionTable,
@@ -654,10 +672,11 @@ impl BindingEngine {
         input: BoundInput,
         down: bool,
         mods: Modifiers,
+        live: &dyn Fn(&ActionRow) -> bool,
         out: &mut Vec<(ActionOut, bool)>,
     ) {
         if down {
-            for i in table.matches(set, input, mods) {
+            for i in table.matches(set, input, mods, live) {
                 let row = &table.rows()[i];
                 if self.active.iter().any(|a| a.id == row.id) {
                     continue; // key repeat
@@ -792,7 +811,7 @@ mod binding_tests {
         m: Modifiers,
     ) -> Vec<String> {
         table
-            .matches(set, input, m)
+            .matches(set, input, m, &|_| true)
             .into_iter()
             .map(|i| table.rows()[i].id.clone())
             .collect()
@@ -830,6 +849,45 @@ mod binding_tests {
         assert_eq!(
             back.get("minimap:open_map"),
             Some(Binding::key(KeyCode::KeyO))
+        );
+    }
+
+    /// A chord only takes an input from the plain binding where it fires: a
+    /// mod's Ctrl+D for its editor never eats D (strafe) while Ctrl (sprint)
+    /// is held in gameplay.
+    #[test]
+    fn a_chord_that_does_not_fire_here_leaves_the_plain_key_alone() {
+        let mut table = ActionTable::engine();
+        table.push_registered_action(
+            "studio:duplicate".into(),
+            "Duplicate".into(),
+            "Studio".into(),
+            Binding {
+                mods: BindMods {
+                    ctrl: true,
+                    ..BindMods::default()
+                },
+                ..Binding::key(KeyCode::KeyD)
+            },
+        );
+        let set = BindingSet::default();
+        let fired = |live: &dyn Fn(&ActionRow) -> bool| -> Vec<String> {
+            table
+                .matches(
+                    &set,
+                    BoundInput::Key(KeyCode::KeyD),
+                    mods(true, false),
+                    live,
+                )
+                .into_iter()
+                .map(|i| table.rows()[i].id.clone())
+                .collect()
+        };
+        assert_eq!(fired(&|row| !row.is_mod()), ["strafe_right"]);
+        assert_eq!(
+            fired(&|_| true),
+            ["studio:duplicate"],
+            "where it fires, the chord wins"
         );
     }
 
@@ -903,6 +961,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyB),
             true,
             mods(true, false),
+            &|_| true,
             &mut out,
         );
         assert_eq!(out, vec![(ActionOut::Control(Control::Sprint), true)]);
@@ -915,6 +974,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyB),
             true,
             mods(true, false),
+            &|_| true,
             &mut out,
         );
         assert!(out.is_empty());
@@ -931,6 +991,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyB),
             false,
             mods(false, false),
+            &|_| true,
             &mut out,
         );
         assert!(out.is_empty());
@@ -955,6 +1016,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyM),
             true,
             mods(false, false),
+            &|_| true,
             &mut out,
         );
         assert_eq!(
@@ -973,6 +1035,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyM),
             false,
             mods(false, false),
+            &|_| true,
             &mut out,
         );
         assert_eq!(
@@ -993,6 +1056,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyW),
             true,
             mods(false, false),
+            &|_| true,
             &mut out,
         );
         assert_eq!(out, vec![(ActionOut::Control(Control::MoveForward), true)]);
@@ -1007,6 +1071,7 @@ mod binding_tests {
             BoundInput::Key(KeyCode::KeyW),
             false,
             mods(true, false),
+            &|_| true,
             &mut out,
         );
         assert_eq!(out, vec![(ActionOut::Control(Control::MoveForward), false)]);

@@ -144,6 +144,12 @@ pub enum ClientStorageScope {
     /// The mod's own bucket, keyed by mod alone: it follows the pack across
     /// every world, the shell and every presentation — projects, preferences.
     Pack,
+    /// FILES only: the folder the PLAYER chose for this mod's folder slot `n`
+    /// in the OS folder picker ([`HostCall::ClientFolderChoose`](crate::HostCall::ClientFolderChoose)),
+    /// remembered across runs. The mod never names or learns the path it
+    /// writes to, only what to show the player. Until a folder is chosen (or
+    /// once the chosen one is gone) writes are refused and nothing is found.
+    Chosen(u32),
 }
 
 /// The modifier chord a registered key action's DEFAULT requires held

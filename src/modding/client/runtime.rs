@@ -655,6 +655,15 @@ impl ClientModRuntime {
         }
     }
 
+    /// Whether a press of action `full_id` reaches a live mod at `at`.
+    pub fn action_fires(&self, full_id: &str, at: super::keys::KeyContext<'_>) -> bool {
+        self.actions.iter().any(|a| {
+            a.full_id == full_id
+                && super::keys::fires_in(&a.contexts, at)
+                && !self.mods[a.mod_index].instance.disabled()
+        })
+    }
+
     /// The live (non-disabled) mod owning a namespaced `mod_id:name` key.
     /// THE ownership rule for every keyed dispatch — images, canvases, shapes,
     /// mod cues — so a key routes to one place however it arrived.

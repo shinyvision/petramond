@@ -1,7 +1,8 @@
-//! Content browser controller: ONE list of what this game has and what
-//! petramond.com offers — Installed, Available on petramond.com, Part of
-//! Petramond — with Get, Update, Replace, undo and delete per row, and an
-//! in-panel confirm page for everything destructive.
+//! Content browser controller: two tabs, Installed (the addons and mods this
+//! game has) and Browse (what petramond.com offers), with Get, Update,
+//! Replace, undo and delete per row, and an in-panel confirm page for
+//! everything destructive. Content packs are part of Petramond and never
+//! listed: they are there whatever the player does.
 //!
 //! The SET of rows changes only when the browser opens, when the first
 //! listing of this open arrives, and on an explicit refresh; everything else
@@ -23,13 +24,33 @@ use super::{ScreenCtx, ShellCommand};
 use crate::app::content::ListingState;
 use crate::app::{App, AppScreen};
 use confirm::ConfirmPage;
-use rows::{Action, Entry, Local, Message, MessageAction, Section, Slot};
+use rows::{Action, Entry, Local, Message, MessageAction, Slot};
 
 const LIST: &str = "content";
+const TABS: &str = "tabs";
 const SEARCH_MAX_CHARS: usize = 64;
+
+/// The browser's two tabs, in tab bar order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::app) enum Tab {
+    Installed,
+    Browse,
+}
+
+impl Tab {
+    const ALL: [Tab; 2] = [Tab::Installed, Tab::Browse];
+
+    fn tip(self) -> &'static str {
+        match self {
+            Tab::Installed => "Installed",
+            Tab::Browse => "Browse content",
+        }
+    }
+}
 
 /// The open browser's own state; the session (downloads, listing) outlives it.
 pub(in crate::app) struct ContentView {
+    pub(in crate::app) tab: Tab,
     /// Where Back leads (see `StartRoute::back`).
     pub(in crate::app) back: Option<String>,
     /// Show only these pack ids ("Get missing").
@@ -64,6 +85,12 @@ impl ContentView {
         rebuild_on_arrival: bool,
     ) -> Self {
         Self {
+            // "Get missing" is for what this game lacks: petramond.com's.
+            tab: if filter.is_some() {
+                Tab::Browse
+            } else {
+                Tab::Installed
+            },
             back,
             filter,
             locals: Vec::new(),
@@ -96,7 +123,16 @@ impl ContentView {
         }
     }
 
-    /// Lay the sections out afresh.
+    /// Show `tab`, its rows laid out afresh.
+    pub(in crate::app) fn show_tab(&mut self, tab: Tab) {
+        if self.tab != tab {
+            self.tab = tab;
+            self.selected = None;
+            self.needs_rebuild = true;
+        }
+    }
+
+    /// Lay the tab's rows out afresh.
     fn rebuild(&mut self, session: &crate::app::content::ContentSession) {
         self.needs_rebuild = false;
         for row in &session.rows {
@@ -106,40 +142,41 @@ impl ContentView {
         if self.filter.is_some() {
             layout.push(Slot::FilterBanner);
         }
-        let by_name = |locals: &[Local], shipped: bool| {
-            let mut picked: Vec<usize> = (0..locals.len())
-                .filter(|&i| (locals[i].tier == petramond::content::Tier::ContentPack) == shipped)
-                .collect();
-            picked.sort_by_key(|&i| locals[i].name.to_lowercase());
-            picked
-        };
-        let installed = by_name(&self.locals, false);
-        if !installed.is_empty() {
-            layout.push(Slot::Header(Section::Installed));
-            layout.extend(installed.into_iter().map(Slot::Local));
-        }
-        layout.push(Slot::Header(Section::Available));
-        if !session.installs_enabled {
-            layout.push(Slot::InstallsOff);
-        }
-        layout.push(Slot::ListingStatus);
-        let here: BTreeSet<&str> = self.locals.iter().filter_map(|l| l.id.as_deref()).collect();
-        if session.rows_known {
-            layout.extend(
-                session
-                    .rows
-                    .iter()
-                    .filter(|r| !here.contains(r.mod_id.as_str()))
-                    .map(|r| Slot::Listed(r.mod_id.clone())),
-            );
-        }
-        if self.filter.is_some() {
-            layout.push(Slot::NotListed);
-        }
-        let shipped = by_name(&self.locals, true);
-        if !shipped.is_empty() {
-            layout.push(Slot::Header(Section::Shipped));
-            layout.extend(shipped.into_iter().map(Slot::Local));
+        let local_of = |id: &str| self.locals.iter().position(|l| l.id.as_deref() == Some(id));
+        match self.tab {
+            Tab::Installed => {
+                let mut installed: Vec<usize> = (0..self.locals.len())
+                    .filter(|&i| !self.locals[i].shipped())
+                    .collect();
+                installed.sort_by_key(|&i| self.locals[i].name.to_lowercase());
+                if installed.is_empty() {
+                    layout.push(Slot::NothingInstalled);
+                }
+                layout.extend(installed.into_iter().map(Slot::Local));
+            }
+            Tab::Browse => {
+                if !session.installs_enabled {
+                    layout.push(Slot::InstallsOff);
+                }
+                layout.push(Slot::ListingStatus);
+                if session.rows_known {
+                    // What this game already has shows as it is here: with
+                    // its update, undo and delete.
+                    layout.extend(
+                        session
+                            .rows
+                            .iter()
+                            .filter_map(|r| match local_of(&r.mod_id) {
+                                Some(i) if self.locals[i].shipped() => None,
+                                Some(i) => Some(Slot::Local(i)),
+                                None => Some(Slot::Listed(r.mod_id.clone())),
+                            }),
+                    );
+                }
+                if self.filter.is_some() {
+                    layout.push(Slot::NotListed);
+                }
+            }
         }
         self.layout = layout;
     }
@@ -182,45 +219,29 @@ impl ContentView {
             || id.is_some_and(|id| id.contains(&needle))
     }
 
-    /// The rows this frame shows: the layout with search and filter applied,
-    /// section headers only over sections that still show something.
+    /// The rows this frame shows: the layout with search and filter applied.
     fn refresh_shown(&mut self, session: &crate::app::content::ContentSession) {
         let searching = !self.search.trim().is_empty();
-        let mut shown = Vec::new();
-        let mut section: Vec<Slot> = Vec::new();
-        let mut header: Option<Slot> = None;
-        let flush = |shown: &mut Vec<Slot>, header: &mut Option<Slot>, section: &mut Vec<Slot>| {
-            if !section.is_empty() {
-                shown.extend(header.take());
-                shown.append(section);
-            }
-            *header = None;
-        };
-        for slot in &self.layout {
-            match slot {
-                Slot::Header(_) => {
-                    flush(&mut shown, &mut header, &mut section);
-                    header = Some(slot.clone());
+        let shown = self
+            .layout
+            .iter()
+            .filter(|slot| match slot {
+                Slot::FilterBanner => true,
+                Slot::InstallsOff | Slot::NothingInstalled => !searching,
+                Slot::ListingStatus | Slot::NotListed => {
+                    !searching && self.message(slot, session).is_some()
                 }
-                Slot::FilterBanner => shown.push(slot.clone()),
-                Slot::InstallsOff if !searching => section.push(slot.clone()),
-                Slot::ListingStatus | Slot::NotListed if !searching => {
-                    if self.message(slot, session).is_some() {
-                        section.push(slot.clone());
-                    }
-                }
-                Slot::Local(_) | Slot::Listed(_) if self.passes(slot) => section.push(slot.clone()),
-                _ => {}
-            }
-        }
-        flush(&mut shown, &mut header, &mut section);
+                Slot::Local(_) | Slot::Listed(_) => self.passes(slot),
+            })
+            .cloned()
+            .collect();
         self.shown = shown;
     }
 
     fn available_count(&self) -> usize {
         self.layout
             .iter()
-            .filter(|s| matches!(s, Slot::Listed(_)) && self.passes(s))
+            .filter(|s| matches!(s, Slot::Listed(_) | Slot::Local(_)) && self.passes(s))
             .count()
     }
 
@@ -230,6 +251,7 @@ impl ContentView {
         session: &crate::app::content::ContentSession,
     ) -> Option<Message> {
         match slot {
+            Slot::NothingInstalled => Some(rows::nothing_installed_message()),
             Slot::FilterBanner => Some(rows::filter_message()),
             Slot::InstallsOff => Some(rows::installs_off_message()),
             Slot::ListingStatus => rows::listing_message(session, self.available_count()),
@@ -342,18 +364,13 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     let mut hovered_entry = None;
     for (i, slot) in view.shown.iter().enumerate() {
         let mut row = UiMap::new();
-        let kind = |row: &mut UiMap, header: bool, message: bool, entry: bool| {
-            row.insert("is_header".into(), UiValue::Bool(header));
+        let kind = |row: &mut UiMap, message: bool| {
             row.insert("is_message".into(), UiValue::Bool(message));
-            row.insert("is_entry".into(), UiValue::Bool(entry));
+            row.insert("is_entry".into(), UiValue::Bool(!message));
         };
         match slot {
-            Slot::Header(section) => {
-                kind(&mut row, true, false, false);
-                row.insert("header".into(), UiValue::Str(section.caption().into()));
-            }
             Slot::Local(_) | Slot::Listed(_) => {
-                kind(&mut row, false, false, true);
+                kind(&mut row, false);
                 if let Some(entry) = view.entry(slot, session, now) {
                     let expanded = view.expanded.contains(&entry.key);
                     bind_entry(&mut row, &entry, expanded);
@@ -363,7 +380,7 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
                 }
             }
             _ => {
-                kind(&mut row, false, true, false);
+                kind(&mut row, true);
                 if let Some(message) = view.message(slot, session) {
                     bind_message(&mut row, &message, sweep);
                     if hovered == Some(i) {
@@ -380,6 +397,16 @@ pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
         bound.push(row);
     }
     state.set("rows", UiValue::List(Arc::new(bound)));
+    state.set(
+        "tab_sel",
+        UiValue::I32(Tab::ALL.iter().position(|&t| t == view.tab).unwrap_or(0) as i32),
+    );
+    let tab_tip = ctx
+        .ui
+        .hover_item(TABS)
+        .and_then(|i| Tab::ALL.get(i))
+        .map_or("", |t| t.tip());
+    state.set("tab_tip", UiValue::Str(tab_tip.into()));
     state.set("row_sel", UiValue::I32(selected.map_or(-1, |i| i as i32)));
     state.set("search", UiValue::Str(view.search.clone()));
     bind_tips(
@@ -564,6 +591,13 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
             }
         }
         UiEvent::Submit { id, .. } if id == "search" => primary(ctx),
+        UiEvent::TabSelect { id, index } if id == TABS => {
+            if let (Some(view), Some(&tab)) =
+                (ctx.content.view.as_mut(), Tab::ALL.get(index as usize))
+            {
+                view.show_tab(tab);
+            }
+        }
         UiEvent::ListSelect { index, .. } => select_row(ctx, index, true),
         UiEvent::ListActivate { index, .. } => {
             if let Some(view) = ctx.content.view.as_mut() {
@@ -644,6 +678,11 @@ fn message_action(ctx: &mut ScreenCtx, slot: Option<Slot>) {
         MessageAction::SignIn => ctx.request(ShellCommand::OpenAccountSignIn),
         MessageAction::CancelLoad => ctx.content.cancel_listing(),
         MessageAction::Retry => refresh(ctx),
+        MessageAction::Browse => {
+            if let Some(view) = ctx.content.view.as_mut() {
+                view.show_tab(Tab::Browse);
+            }
+        }
         MessageAction::ShowAll => {
             if let Some(view) = ctx.content.view.as_mut() {
                 view.filter = None;

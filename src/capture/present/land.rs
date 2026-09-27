@@ -200,6 +200,29 @@ impl Presentation {
             self.release_frame(replica, &frame, out, &mut installed);
         }
         replica.finish_remote_install_batch(&installed);
+        // The view samples ahead of the position, from the frames already
+        // read: what the captured view moves toward until their frames are
+        // due. A frame that applies a batch waits for that tick, and without
+        // them the view would hold still and then jump. They are handed out
+        // again with their frames.
+        let floor = self.position.max(0.0).floor();
+        'ahead: for span in self.queue.spans() {
+            let mut offset = span.offset;
+            while offset < span.end {
+                let Some(Ok(next)) = self.frames.get(&(span.file.incarnation, offset)) else {
+                    break 'ahead;
+                };
+                for item in &next.items {
+                    if let FrameItem::View(view) = item {
+                        out.views.push((**view).clone());
+                        if view.at > floor + 1.0 {
+                            break 'ahead;
+                        }
+                    }
+                }
+                offset += next.record.len;
+            }
+        }
     }
 
     fn release_frame(
@@ -480,7 +503,7 @@ impl Presentation {
 
     /// Keep read what the position will need before a new read could land:
     /// its measured rate × the measured read latency, and at least the next
-    /// release.
+    /// two releases (the view samples ahead of the position live there).
     pub(super) fn read_ahead(&mut self, dt: f32, before: f64) {
         if dt > 0.0 {
             let rate = ((self.position - before) / f64::from(dt)).max(0.0);
@@ -489,7 +512,7 @@ impl Presentation {
         if !self.ops.is_empty() {
             return;
         }
-        let horizon = (self.ticks_per_second * self.read_seconds * 2.0).max(1.0);
+        let horizon = (self.ticks_per_second * self.read_seconds * 2.0).max(2.0);
         let target = self.position.max(0.0).floor() as u64 + 1 + horizon.ceil() as u64;
         let mut need = None;
         'spans: for span in self.queue.spans() {

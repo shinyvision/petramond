@@ -589,6 +589,9 @@ pub enum HostRet {
     ClientPacks(Vec<crate::ClientPackInfo>),
     /// [`ClientCall::ClientWallClock`].
     ClientWallClock(crate::ClientWallTime),
+    /// [`ClientFileCall::ClientFolderState`]: `None` = none chosen, or it is
+    /// gone.
+    ClientFolder(Option<crate::ClientFolderInfo>),
 }
 
 impl HostRet {

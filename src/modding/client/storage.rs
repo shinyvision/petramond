@@ -74,7 +74,7 @@ fn deliverable(values: &Values, reply_max: u64) -> Result<(), String> {
 
 impl ClientStorage {
     /// The bucket's directory: its KV blobs, and its mod files under `files/`.
-    pub(super) fn dir(&self) -> &Path {
+    pub(in crate::modding) fn dir(&self) -> &Path {
         &self.dir
     }
 

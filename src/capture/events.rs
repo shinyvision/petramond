@@ -67,12 +67,19 @@ pub struct FrameInput {
 impl FrameInput {
     /// Whether anything happened this frame, given the view the logs last
     /// wrote.
-    fn happened(&self, last_view: Option<&ClientCapturedView>) -> bool {
+    /// A still frame that fired a hand event (a place jab) or changed what
+    /// the hands show happened too, though the eye never moved.
+    fn happened(&self, last_view: Option<&ViewCue>) -> bool {
+        let view = match (self.view.as_ref().map(|(cue, _)| cue), last_view) {
+            (Some(cue), Some(last)) => !cue.events.is_empty() || !cue.presents_as(last),
+            (None, None) => false,
+            _ => true,
+        };
         !self.applied.is_empty()
             || !self.changes.touched.is_empty()
             || !self.changes.removed.is_empty()
             || self.cues.is_some()
-            || self.view.as_ref().map(|(_, v)| v) != last_view
+            || view
     }
 }
 
@@ -144,7 +151,7 @@ struct Log {
 pub struct EventsLogs {
     logs: BTreeMap<u64, Log>,
     /// The view the last frame record carried.
-    last_view: Option<ClientCapturedView>,
+    last_view: Option<ViewCue>,
 }
 
 impl EventsLogs {
@@ -286,7 +293,7 @@ impl EventsLogs {
         if takers.is_empty() || !input.happened(self.last_view.as_ref()) {
             return;
         }
-        self.last_view = input.view.as_ref().map(|(_, v)| *v);
+        self.last_view = input.view.as_ref().map(|(cue, _)| cue.clone());
         let mut slots = Vec::with_capacity(takers.len());
         for log in takers {
             let seq = log.seq;

@@ -245,7 +245,7 @@ impl App {
         let runtime = self
             .session
             .take()
-            .and_then(|Session { game, .. }| game.into_shell());
+            .and_then(|Session { game, .. }| game.leave_presentation());
         self.teardown_game_scene();
         match (runtime, self.launched.as_mut()) {
             (Some(runtime), Some(shell)) => {

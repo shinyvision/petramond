@@ -15,6 +15,8 @@ use crate::app::{AppScreen, ExitKind};
 use petramond_ui::{NavKey, UiEvent, UiMap, UiState, UiValue};
 
 const LAUNCHERS: &str = "launchers";
+/// Each dock row's button; its click carries the row's item index.
+const LAUNCHER: &str = "launcher";
 
 /// Launch entries the digit keys reach, as many as the dock shows unscrolled.
 const DIGIT_LAUNCHERS: usize = 9;
@@ -122,7 +124,7 @@ pub(super) fn handle(ctx: &mut ScreenCtx, ev: UiEvent) {
             "account" => ctx.request(ShellCommand::OpenAccount(None)),
             "options" => ctx.request(ShellCommand::Push(AppScreen::Options)),
             "quit" => ctx.request(ShellCommand::Exit(ExitKind::Quit)),
-            LAUNCHERS => {
+            LAUNCHER => {
                 if let Some(index) = item {
                     launch(ctx, index as usize);
                 }

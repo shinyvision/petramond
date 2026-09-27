@@ -370,6 +370,7 @@
               "style": "panel.inset",
               "children": [
                 {
+                  "id": "launchers_scroll",
                   "type": "scroll",
                   "axis": "vertical",
                   "layout": {
@@ -420,7 +421,8 @@
                       },
                       "children": [
                         {
-                          "type": "frame",
+                          "id": "launcher",
+                          "type": "button",
                           "layout": {
                             "w": 22,
                             "h": 22,
@@ -441,7 +443,6 @@
                             "align": "center",
                             "justify": "center"
                           },
-                          "style": "button.default",
                           "children": [
                             {
                               "type": "image",

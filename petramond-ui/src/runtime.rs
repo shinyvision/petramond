@@ -97,7 +97,9 @@ pub struct FrameOutput {
     /// The slot cell under the cursor, if any.
     pub hover_slot: Option<(String, u32)>,
     /// The list stamp under the cursor as `(list id, item index)` — the index
-    /// into the bound items, so the host can look the row's data up directly.
+    /// into the bound items, so the host can look the row's data up directly
+    /// — or the tab under it as `(tab bar id, tab index)`, so an icon-only
+    /// tab can name itself in a tooltip.
     pub hover_item: Option<(String, u32)>,
     /// The topmost NAMED widget under the cursor, interactive or not.
     pub hover_widget: Option<InstKey>,
@@ -385,6 +387,11 @@ impl UiRuntime {
             }
             _ => None,
         });
+        // An icon-only tab names itself through the hovered item.
+        if out.hover_item.is_none() {
+            out.hover_item =
+                tab_hover.and_then(|(i, t)| Some((tree.get(i).key.as_ref()?.id.clone(), t)));
+        }
         // Next frame's expansion reads the hover anchor (one frame of lag).
         fs.hover_widget = hovered.anchor;
         out.hover_widget = fs.hover_widget.clone();

@@ -890,6 +890,22 @@
         16
       ]
     },
+    "icon.tab_installed": {
+      "rect": [
+        96,
+        144,
+        16,
+        16
+      ]
+    },
+    "icon.tab_browse": {
+      "rect": [
+        112,
+        144,
+        16,
+        16
+      ]
+    },
     "tab": {
       "states": {
         "default": {

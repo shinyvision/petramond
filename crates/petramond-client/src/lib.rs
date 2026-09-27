@@ -8,6 +8,7 @@ static TEST_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 pub mod animation;
 pub mod app;
+mod folder_picker;
 pub mod game;
 pub mod keymap;
 pub mod media;

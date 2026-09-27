@@ -124,6 +124,19 @@ impl Game {
         std::mem::replace(&mut self.client_mods, ClientModRuntime::empty()).into_shell()
     }
 
+    /// End a presentation for good, however it was left (its owner closed
+    /// it, or the player left from the pause menu): the owner hears it
+    /// ended, exactly as if it had closed it itself.
+    pub fn leave_presentation(self) -> Option<ClientModRuntime> {
+        {
+            let mut desk = self.client_mods.presented().lock();
+            if desk.presentation.owner().is_some() {
+                desk.presentation.ended(None);
+            }
+        }
+        self.into_shell()
+    }
+
     /// The presented position, fractional ticks.
     pub(crate) fn presentation_position(&self) -> Option<f64> {
         self.presenting.engine.as_ref().map(|e| e.position())

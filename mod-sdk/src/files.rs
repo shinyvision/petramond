@@ -10,8 +10,8 @@
 use core::ops::Deref;
 
 use mod_api::{
-    ClientFileAnswer, ClientFileEntry, ClientFileInfo, ClientStorageScope, HostCall, HostError,
-    HostRet,
+    ClientFileAnswer, ClientFileEntry, ClientFileInfo, ClientFolderInfo, ClientStorageScope,
+    HostCall, HostError, HostRet,
 };
 
 use crate::__rt::{host_call_reply, host_fn, recoverable, try_host_fn, Answer, Reply};
@@ -77,6 +77,8 @@ pub enum FileAnswer {
         entries: Vec<ClientFileEntry>,
         more: bool,
     },
+    /// A folder choice: the folder now chosen, or `None` = cancelled.
+    Folder(Option<ClientFolderInfo>),
 }
 
 impl From<ClientFileAnswer> for FileAnswer {
@@ -85,6 +87,7 @@ impl From<ClientFileAnswer> for FileAnswer {
             ClientFileAnswer::Done { range, envelope } => FileAnswer::Done { range, envelope },
             ClientFileAnswer::Read(bytes) => FileAnswer::Read(Bytes(Repr::Owned(bytes))),
             ClientFileAnswer::Listing { entries, more } => FileAnswer::Listing { entries, more },
+            ClientFileAnswer::Folder(info) => FileAnswer::Folder(info),
         }
     }
 }
@@ -218,6 +221,23 @@ host_fn! {
     /// `false` = no such path, or no file manager.
     pub fn client_file_reveal(scope: ClientStorageScope, path: &str) -> bool
         => ClientFileReveal { scope, path: path.into() } => Bool
+}
+
+try_host_fn! {
+    /// CLIENT: open the OS folder picker for this mod's folder slot `folder`
+    /// (`ClientStorageScope::Chosen(folder)`); what the player picks is
+    /// remembered. Answered `Folder(Some(info))`, or `Folder(None)` when the
+    /// player cancels; `Err` = refused (a picker is already open, or this
+    /// build has none).
+    pub fn client_folder_choose(folder: u32, title: &str) -> u64
+        => ClientFolderChoose { folder, title: title.into() } => Ticket
+}
+
+host_fn! {
+    /// CLIENT: the folder chosen for slot `folder`; `None` = none chosen, or
+    /// it is gone.
+    pub fn client_folder_state(folder: u32) -> Option<ClientFolderInfo>
+        => ClientFolderState { folder } => ClientFolder
 }
 
 #[cfg(test)]

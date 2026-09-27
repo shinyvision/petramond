@@ -99,6 +99,23 @@
         ]
        },
        {
+        "type": "tab_bar",
+        "id": "tabs",
+        "tabs": [
+         {
+          "key": "installed",
+          "icon": "icon.tab_installed"
+         },
+         {
+          "key": "browse",
+          "icon": "icon.tab_browse"
+         }
+        ],
+        "bind": {
+         "selected": "tab_sel"
+        }
+       },
+       {
         "type": "text_input",
         "id": "search",
         "placeholder": "Search content… (Ctrl+F)",
@@ -147,49 +164,6 @@
              "align": "stretch"
             },
             "children": [
-             {
-              "type": "row",
-              "bind": {
-               "visible": "is_header"
-              },
-              "layout": {
-               "pad": [
-                2,
-                4,
-                2,
-                2
-               ],
-               "gap": 5,
-               "align": "center"
-              },
-              "children": [
-               {
-                "type": "image",
-                "image": "pixel.png",
-                "layout": {
-                 "w": 6,
-                 "h": 1
-                }
-               },
-               {
-                "type": "label",
-                "style": "label.muted",
-                "bind": {
-                 "text": "header"
-                }
-               },
-               {
-                "type": "image",
-                "image": "pixel.png",
-                "layout": {
-                 "w": {
-                  "grow": 1
-                 },
-                 "h": 1
-                }
-               }
-              ]
-             },
              {
               "type": "column",
               "bind": {
@@ -720,6 +694,39 @@
       "small": true,
       "wrap": true,
       "text": "Refresh the list (F5)"
+     }
+    ]
+   },
+   {
+    "type": "tooltip",
+    "hover": "tabs",
+    "id": "tabs_tooltip",
+    "style": "panel.inset",
+    "bind": {
+     "visible": "tab_tip"
+    },
+    "layout": {
+     "max_w": 200,
+     "abs": {
+      "x": 4,
+      "y": 4
+     },
+     "pad": [
+      3,
+      2,
+      3,
+      3
+     ],
+     "align": "stretch"
+    },
+    "children": [
+     {
+      "type": "label",
+      "small": true,
+      "wrap": true,
+      "bind": {
+       "text": "tab_tip"
+      }
      }
     ]
    },

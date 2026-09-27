@@ -35,6 +35,24 @@ pub struct ViewCue {
     pub events: Vec<(crate::player::RigId, u16)>,
 }
 
+impl ViewCue {
+    /// Whether `other` presents the same view: every field but the time it
+    /// was presented at.
+    pub fn presents_as(&self, other: &ViewCue) -> bool {
+        self.pos == other.pos
+            && self.yaw == other.yaw
+            && self.pitch == other.pitch
+            && self.roll == other.roll
+            && self.fov_y == other.fov_y
+            && self.shake == other.shake
+            && self.motion == other.motion
+            && self.hands == other.hands
+            && self.hotbar == other.hotbar
+            && self.animator == other.animator
+            && self.events == other.events
+    }
+}
+
 /// The hurt shake as the frame wore it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CueShake {

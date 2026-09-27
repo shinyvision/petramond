@@ -364,6 +364,58 @@ fn an_events_log_holds_every_frame_in_order_with_its_cues_and_view() {
     assert_eq!(named, written, "one entry per record, in record order");
 }
 
+/// A still frame is skipped, but not one whose hands fired an event (a
+/// place jab) or changed what they hold: the eye alone is not the view.
+#[test]
+fn a_still_frame_is_written_when_its_hands_moved() {
+    let pool = Arc::new(JobPool::new(1));
+    let scratch = TestScratchDir::new("capture-still");
+    let file = FileRef::in_dir(&scratch, "events.pmc");
+    let mut logs = EventsLogs::default();
+    logs.begin(3, "studio", file.clone(), None, 0).unwrap();
+    let jab = |mut v: (ViewCue, ClientCapturedView)| {
+        v.0.events = vec![(crate::player::RigId::default(), 1)];
+        v
+    };
+    let swapped = |mut v: (ViewCue, ClientCapturedView)| {
+        v.0.hotbar = 4;
+        v
+    };
+    let frames = [
+        view(1.0),
+        view(1.1),
+        jab(view(1.2)),
+        jab(view(1.3)),
+        view(1.4),
+        swapped(view(1.5)),
+        swapped(view(1.6)),
+    ];
+    for (frame, v) in frames.into_iter().enumerate() {
+        logs.submit(
+            frame as u64 + 1,
+            FrameInput {
+                world: 1,
+                presented_tick: v.0.at,
+                applied: Vec::new(),
+                cues: None,
+                view: Some(v),
+                changes: Default::default(),
+                predicted: Arc::from(Vec::new()),
+            },
+            &pool,
+        );
+    }
+    let ended = logs.watch(3);
+    logs.end(3, None);
+    assert_eq!(ended.recv_timeout(WAIT), Ok(ClientEventsPhase::Ended));
+    let bytes = read_all(&file);
+    assert_eq!(
+        records(&bytes, 0).count(),
+        5,
+        "the first, both jabs, the rest after them, the hotbar switch"
+    );
+}
+
 /// The frame-side cost of writing a whole RD 32 world (~36k sections) as
 /// one State record, and how long its bytes take to land. Manual:
 /// `cargo test --profile fasttest -p petramond capture_profile -- --ignored --nocapture`.

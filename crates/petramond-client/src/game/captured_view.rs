@@ -88,9 +88,13 @@ impl Game {
         }
     }
 
-    /// Keep a view sample the presentation released.
+    /// A view sample arrives ahead of its frame, and again with it: keep it
+    /// once.
     pub(super) fn receive_view_cue(&mut self, cue: ViewCue) {
-        self.presenting.view.cues.push_back(cue);
+        let cues = &mut self.presenting.view.cues;
+        if cues.back().is_none_or(|last| last.at < cue.at) {
+            cues.push_back(cue);
+        }
     }
 
     /// Resolve the captured player's view at the position, once a frame

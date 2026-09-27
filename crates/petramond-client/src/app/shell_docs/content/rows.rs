@@ -13,24 +13,6 @@ use petramond::content::{InstallRecord, Kind, ListingRow, Tier};
 
 use crate::app::content::{ContentSession, Pending, PendingKind, Phase};
 
-/// Where a row sits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::app) enum Section {
-    Installed,
-    Available,
-    Shipped,
-}
-
-impl Section {
-    pub(in crate::app) fn caption(self) -> &'static str {
-        match self {
-            Section::Installed => "INSTALLED",
-            Section::Available => "AVAILABLE ON PETRAMOND.COM",
-            Section::Shipped => "PART OF PETRAMOND",
-        }
-    }
-}
-
 /// A pack this game has, loaded or refused.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app) struct Local {
@@ -54,7 +36,7 @@ pub(in crate::app) struct Local {
 }
 
 impl Local {
-    fn shipped(&self) -> bool {
+    pub(in crate::app) fn shipped(&self) -> bool {
         self.tier == Tier::ContentPack
     }
 }
@@ -116,7 +98,8 @@ pub(in crate::app) fn locals_from_discovery(dirs: &petramond::content::Dirs) -> 
 /// One place in the list, fixed between rebuilds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::app) enum Slot {
-    Header(Section),
+    /// The Installed tab has nothing to show.
+    NothingInstalled,
     /// The id filter's banner ("Show all").
     FilterBanner,
     /// Installs are off (a `PETRAMOND_MODS` override).
@@ -138,6 +121,7 @@ pub(in crate::app) enum MessageAction {
     CancelLoad,
     Retry,
     ShowAll,
+    Browse,
 }
 
 impl MessageAction {
@@ -147,6 +131,7 @@ impl MessageAction {
             MessageAction::CancelLoad => "Cancel",
             MessageAction::Retry => "Retry",
             MessageAction::ShowAll => "Show all",
+            MessageAction::Browse => "Browse",
         }
     }
 
@@ -156,6 +141,7 @@ impl MessageAction {
             MessageAction::CancelLoad => "Cancel (F5 tries again)",
             MessageAction::Retry => "Retry (F5)",
             MessageAction::ShowAll => "Show every pack",
+            MessageAction::Browse => "Find addons and mods on petramond.com",
         }
     }
 }
@@ -243,7 +229,7 @@ fn version_badge(version: &str) -> String {
     format!("v{}", cap(version, 12))
 }
 
-/// The listing-state message, when the Available section has one.
+/// The listing-state message, when the Browse tab has one.
 pub(in crate::app) fn listing_message(
     session: &ContentSession,
     available: usize,
@@ -265,11 +251,12 @@ pub(in crate::app) fn listing_message(
             .with(MessageAction::Retry),
         L::Cancelled => Message::new("Cancelled.", MUTED).with(MessageAction::Retry),
         L::Ready | L::Loading if available > 0 => return None,
-        L::Ready | L::Loading if session.rows.is_empty() => {
-            Message::new("Nothing to download yet.", MUTED)
-        }
-        L::Ready | L::Loading => Message::new("Everything on petramond.com is installed.", MUTED),
+        L::Ready | L::Loading => Message::new("Nothing on petramond.com yet.", MUTED),
     })
+}
+
+pub(in crate::app) fn nothing_installed_message() -> Message {
+    Message::new("No addons or mods installed yet.", MUTED).with(MessageAction::Browse)
 }
 
 pub(in crate::app) fn installs_off_message() -> Message {
@@ -442,11 +429,8 @@ impl Entry {
 pub(in crate::app) fn local_entry(local: &Local, session: &ContentSession, now: Instant) -> Entry {
     let mut entry = Entry::from_local(local);
     let name = cap(&local.name, NAME_CAP);
+    // Content packs are part of Petramond: never listed, never removable.
     if local.shipped() {
-        match &local.refusal {
-            Some(why) => entry.set(format!("Not loaded: {why}"), DANGER, why.clone()),
-            None => entry.set("Part of Petramond", MUTED, ""),
-        }
         return entry;
     }
     entry.can_delete = true;

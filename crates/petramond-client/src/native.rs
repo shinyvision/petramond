@@ -251,6 +251,7 @@ impl ApplicationHandler for NativeHost {
             size.width as f32 / size.height.max(1) as f32,
         );
         App::publish_device_frame_limits(&renderer);
+        crate::folder_picker::install();
         let mut app = App::new(cam, self.render_dist);
         if let Some(report) = self.content_report.take() {
             app.set_content_report(report);

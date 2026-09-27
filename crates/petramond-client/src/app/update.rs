@@ -91,9 +91,14 @@ impl App {
         // music belongs to the SESSION, not to whatever screen is open over
         // it — an inventory or a chest must never stop it. A frozen world lets
         // the current track finish but schedules no new one, and its spatial
-        // sounds freeze exactly when it does.
-        self.sound
-            .update_session(self.session.is_some(), world_frozen, dt);
+        // sounds freeze exactly when it does. A presentation is a recording
+        // on screen, not a session: the soundtrack is a player's, and a
+        // video's music is its maker's.
+        let in_session = self
+            .session
+            .as_ref()
+            .is_some_and(|session| !session.game.in_presentation());
+        self.sound.update_session(in_session, world_frozen, dt);
 
         // Document-backed SHELL screens run their whole UI frame here (input
         // → events → controller) and skip the simulation entirely; render

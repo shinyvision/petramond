@@ -321,8 +321,9 @@ impl Font {
     }
 
     /// Greedy word wrap into lines of at most `max_w` font-pixels, breaking at
-    /// spaces where possible and mid-word only when a word alone overflows.
-    /// Returns byte ranges into `s`; never empty (empty text = one empty line).
+    /// spaces where possible and mid-word only when a word alone overflows;
+    /// a `\n` always ends its line. Returns byte ranges into `s`, newlines
+    /// left out; never empty (empty text = one empty line).
     pub fn wrap(&self, s: &str, max_w: i32) -> Vec<Range<usize>> {
         self.with_wrapped(s, max_w, |w| w.lines.clone())
     }
@@ -368,6 +369,13 @@ impl Font {
         let mut line_w = 0i32;
         let mut last_space: Option<usize> = None;
         for (bi, ch) in s.char_indices() {
+            if ch == '\n' {
+                lines.push(line_start..bi);
+                line_start = bi + 1;
+                line_w = 0;
+                last_space = None;
+                continue;
+            }
             let advance = self.advance(ch);
             // Only a non-space can force a break: a trailing space that
             // overflows is swallowed by the break anyway, and checking it

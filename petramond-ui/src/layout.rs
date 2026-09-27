@@ -399,6 +399,14 @@ impl Solver<'_, '_, '_> {
             if n_flow > 1 {
                 main_sum += l.gap * (n_flow - 1);
             }
+            // A row with a definite width splits it now, exactly as arrange
+            // will, so a child it narrows (a wrapping label) is measured at
+            // that width and the row is as tall as the lines it wraps into.
+            if let (Dir::Row, Some(avail)) = (dir, content_avail_w) {
+                if main_sum > avail {
+                    cross_max = self.narrowed_row_height(idx, avail, cross_max);
+                }
+            }
             let (w, h) = main.pack(main_sum, cross_max);
             (w + pad_w, h + pad_h)
         } else {
@@ -453,64 +461,46 @@ impl Solver<'_, '_, '_> {
         self.in_raised = was_raised;
     }
 
-    fn arrange_children(&mut self, idx: u32, rect: RectI, clip: Option<RectI>) {
+    /// The height of row `idx` once its `avail` width is split: every child
+    /// the split narrows is measured again at its share.
+    fn narrowed_row_height(&mut self, idx: u32, avail: i32, mut height: i32) -> i32 {
         let tree = self.tree;
         let inst = tree.get(idx);
-        let node = inst.node;
-        if inst.children.is_empty() {
-            return;
-        }
-        let l = inst.layout;
-        let pad = content_pad(l, self.env.container_insets(node));
-        let content = rect.inset(pad);
-        if node.kind.list_cols() > 1 {
-            self.arrange_grid(idx, content, clip);
-            return;
-        }
-        let dir = inst.flow_dir();
-        let main = Ax::of_dir(dir);
-        let cross = Ax {
-            horizontal: !main.horizontal,
-        };
-
-        // Scroll nodes clip their children and shift them by the offset along
-        // the scroll axis (flow direction is independent of scroll axis).
-        let scroll_axis = match node.kind {
-            NodeKind::Scroll { axis } => Some(axis),
-            _ => None,
-        };
-        let (shift_x, shift_y) = match scroll_axis {
-            Some(ScrollAxis::Vertical) => (0, -(self.scroll_offset)(idx)),
-            Some(ScrollAxis::Horizontal) => (-(self.scroll_offset)(idx), 0),
-            None => (0, 0),
-        };
-        let child_clip = if scroll_axis.is_some() {
-            Some(match clip {
-                Some(c) => c.intersect(content),
-                None => content,
-            })
-        } else {
-            clip
-        };
-
         let flow: Vec<u32> = inst
             .children
             .iter()
             .copied()
             .filter(|&c| tree.get(c).layout.abs.is_none() && !is_tooltip(tree, c))
             .collect();
+        let main = Ax { horizontal: true };
+        let (mut bases, weights, outer_sum) = self.flow_bases(&flow, main, false);
+        let gaps = inst.layout.gap * (flow.len() as i32 - 1).max(0);
+        self.distribute(
+            &flow,
+            main,
+            &mut bases,
+            weights,
+            avail - outer_sum - gaps,
+            false,
+        );
+        for (&c, &share) in flow.iter().zip(&bases) {
+            if share < self.naturals[c as usize].0 {
+                let margin = tree.get(c).layout.margin;
+                let (_, h) = self.measure(c, Some(share.max(0)));
+                height = height.max(h + margin[1] + margin[3]);
+            }
+        }
+        height
+    }
 
-        // Main-axis base sizes + grow weights. Inside a scroll node, grow is
-        // inert along the scroll axis (content is unbounded there).
-        let grow_inert = match scroll_axis {
-            Some(ScrollAxis::Vertical) => !main.horizontal,
-            Some(ScrollAxis::Horizontal) => main.horizontal,
-            None => false,
-        };
+    /// Each flow child's base size along `main` (its fixed size, else its
+    /// natural one), its grow weight, and the sum of their outer sizes.
+    fn flow_bases(&self, flow: &[u32], main: Ax, grow_inert: bool) -> (Vec<i32>, Vec<u32>, i32) {
+        let tree = self.tree;
         let mut bases: Vec<i32> = Vec::with_capacity(flow.len());
         let mut weights: Vec<u32> = Vec::with_capacity(flow.len());
         let mut outer_sum = 0i32;
-        for &c in &flow {
+        for &c in flow {
             let cl = tree.get(c).layout;
             let nat_main = main.of(self.naturals[c as usize]);
             let base = match main.size_prop(cl) {
@@ -525,66 +515,28 @@ impl Solver<'_, '_, '_> {
             weights.push(weight);
             outer_sum += base + main.margin_lead(cl.margin) + main.margin_trail(cl.margin);
         }
-        let gaps = if flow.len() > 1 {
-            l.gap * (flow.len() as i32 - 1)
-        } else {
-            0
-        };
+        (bases, weights, outer_sum)
+    }
 
-        // Overflowing scroll content reserves the scrollbar lane so rows
-        // never run under the bar.
-        let mut avail = content;
-        if let Some(axis) = scroll_axis {
-            let flow_is_axis = matches!(
-                (axis, dir),
-                (ScrollAxis::Vertical, Dir::Column) | (ScrollAxis::Horizontal, Dir::Row)
-            );
-            let flow_len = if flow_is_axis {
-                outer_sum + gaps
-            } else {
-                flow.iter()
-                    .map(|&c| {
-                        let cl = tree.get(c).layout;
-                        match axis {
-                            ScrollAxis::Vertical => {
-                                self.naturals[c as usize].1 + cl.margin[1] + cl.margin[3]
-                            }
-                            ScrollAxis::Horizontal => {
-                                self.naturals[c as usize].0 + cl.margin[0] + cl.margin[2]
-                            }
-                        }
-                    })
-                    .max()
-                    .unwrap_or(0)
-            };
-            let (viewport_len, pad_axis) = match axis {
-                ScrollAxis::Vertical => (rect.h, pad[1] + pad[3]),
-                ScrollAxis::Horizontal => (rect.w, pad[0] + pad[2]),
-            };
-            if flow_len + pad_axis > viewport_len {
-                let bar = self.env.scrollbar_width();
-                match axis {
-                    ScrollAxis::Vertical => avail.w = (avail.w - bar).max(0),
-                    ScrollAxis::Horizontal => avail.h = (avail.h - bar).max(0),
-                }
-            }
+    /// Hand `leftover` main-axis space to the flow: growers take a surplus by
+    /// weight, and a deficit is taken back from growers, then from
+    /// ellipsizable text. Answers what is left over (negative = overflow).
+    /// Measure and arrange split a row the same way through here. Along a
+    /// scroll's axis (`scrolling`) nothing grows or shrinks: content there is
+    /// unbounded, and a squeezed child would spill over the ones after it.
+    fn distribute(
+        &self,
+        flow: &[u32],
+        main: Ax,
+        bases: &mut [i32],
+        weights: Vec<u32>,
+        mut leftover: i32,
+        scrolling: bool,
+    ) -> i32 {
+        if scrolling {
+            return leftover;
         }
-        if matches!(scroll_axis, Some(ScrollAxis::Vertical))
-            && dir == Dir::Column
-            && avail.w < content.w
-        {
-            // The scrollbar narrows wrapped rows; their new heights must also
-            // drive sibling placement and the scroll range.
-            outer_sum = 0;
-            for (i, &c) in flow.iter().enumerate() {
-                let cl = tree.get(c).layout;
-                let (_, h) = self.measure(c, Some((avail.w - cl.margin[0] - cl.margin[2]).max(0)));
-                bases[i] = h;
-                outer_sum += h + cl.margin[1] + cl.margin[3];
-            }
-        }
-        let content_main = main.of((avail.w, avail.h));
-        let mut leftover = content_main - outer_sum - gaps;
+        let tree = self.tree;
 
         // Distribute positive leftover to growers by weight; the integer
         // remainder goes +1 each to the first `rem` weighted children in
@@ -696,6 +648,131 @@ impl Solver<'_, '_, '_> {
             }
             leftover = -deficit;
         }
+        leftover
+    }
+
+    fn arrange_children(&mut self, idx: u32, rect: RectI, clip: Option<RectI>) {
+        let tree = self.tree;
+        let inst = tree.get(idx);
+        let node = inst.node;
+        if inst.children.is_empty() {
+            return;
+        }
+        let l = inst.layout;
+        let pad = content_pad(l, self.env.container_insets(node));
+        let content = rect.inset(pad);
+        if node.kind.list_cols() > 1 {
+            self.arrange_grid(idx, content, clip);
+            return;
+        }
+        let dir = inst.flow_dir();
+        let main = Ax::of_dir(dir);
+        let cross = Ax {
+            horizontal: !main.horizontal,
+        };
+
+        // Scroll nodes clip their children and shift them by the offset along
+        // the scroll axis (flow direction is independent of scroll axis).
+        let scroll_axis = match node.kind {
+            NodeKind::Scroll { axis } => Some(axis),
+            _ => None,
+        };
+        let (shift_x, shift_y) = match scroll_axis {
+            Some(ScrollAxis::Vertical) => (0, -(self.scroll_offset)(idx)),
+            Some(ScrollAxis::Horizontal) => (-(self.scroll_offset)(idx), 0),
+            None => (0, 0),
+        };
+        let child_clip = if scroll_axis.is_some() {
+            Some(match clip {
+                Some(c) => c.intersect(content),
+                None => content,
+            })
+        } else {
+            clip
+        };
+
+        let flow: Vec<u32> = inst
+            .children
+            .iter()
+            .copied()
+            .filter(|&c| tree.get(c).layout.abs.is_none() && !is_tooltip(tree, c))
+            .collect();
+
+        // Main-axis base sizes + grow weights. Inside a scroll node, grow is
+        // inert along the scroll axis (content is unbounded there).
+        let grow_inert = match scroll_axis {
+            Some(ScrollAxis::Vertical) => !main.horizontal,
+            Some(ScrollAxis::Horizontal) => main.horizontal,
+            None => false,
+        };
+        let (mut bases, weights, mut outer_sum) = self.flow_bases(&flow, main, grow_inert);
+        let gaps = if flow.len() > 1 {
+            l.gap * (flow.len() as i32 - 1)
+        } else {
+            0
+        };
+
+        // Overflowing scroll content reserves the scrollbar lane so rows
+        // never run under the bar.
+        let mut avail = content;
+        if let Some(axis) = scroll_axis {
+            let flow_is_axis = matches!(
+                (axis, dir),
+                (ScrollAxis::Vertical, Dir::Column) | (ScrollAxis::Horizontal, Dir::Row)
+            );
+            let flow_len = if flow_is_axis {
+                outer_sum + gaps
+            } else {
+                flow.iter()
+                    .map(|&c| {
+                        let cl = tree.get(c).layout;
+                        match axis {
+                            ScrollAxis::Vertical => {
+                                self.naturals[c as usize].1 + cl.margin[1] + cl.margin[3]
+                            }
+                            ScrollAxis::Horizontal => {
+                                self.naturals[c as usize].0 + cl.margin[0] + cl.margin[2]
+                            }
+                        }
+                    })
+                    .max()
+                    .unwrap_or(0)
+            };
+            let (viewport_len, pad_axis) = match axis {
+                ScrollAxis::Vertical => (rect.h, pad[1] + pad[3]),
+                ScrollAxis::Horizontal => (rect.w, pad[0] + pad[2]),
+            };
+            if flow_len + pad_axis > viewport_len {
+                let bar = self.env.scrollbar_width();
+                match axis {
+                    ScrollAxis::Vertical => avail.w = (avail.w - bar).max(0),
+                    ScrollAxis::Horizontal => avail.h = (avail.h - bar).max(0),
+                }
+            }
+        }
+        if matches!(scroll_axis, Some(ScrollAxis::Vertical))
+            && dir == Dir::Column
+            && avail.w < content.w
+        {
+            // The scrollbar narrows wrapped rows; their new heights must also
+            // drive sibling placement and the scroll range.
+            outer_sum = 0;
+            for (i, &c) in flow.iter().enumerate() {
+                let cl = tree.get(c).layout;
+                let (_, h) = self.measure(c, Some((avail.w - cl.margin[0] - cl.margin[2]).max(0)));
+                bases[i] = h;
+                outer_sum += h + cl.margin[1] + cl.margin[3];
+            }
+        }
+        let content_main = main.of((avail.w, avail.h));
+        let leftover = self.distribute(
+            &flow,
+            main,
+            &mut bases,
+            weights,
+            content_main - outer_sum - gaps,
+            grow_inert,
+        );
 
         // Justify only distributes space no grower claimed.
         let (mut cursor, extra_gap, mut gap_rem) = if leftover > 0 {

@@ -14,6 +14,7 @@
 //! positioned write announces the bytes it changes ([`subscribe`]), so a
 //! cache keyed by `(incarnation, offset, len)` is never stale.
 
+pub mod folders;
 mod io;
 mod paths;
 mod queue;
@@ -679,16 +680,19 @@ pub fn reveal(file: &FileRef) -> bool {
     reveal::reveal(file.path())
 }
 
-/// A bucket's files directory, `None` = no such bucket (`World` on the
-/// shell).
+/// A scope's files directory, `None` = no such bucket (`World` on the
+/// shell) or no folder chosen.
 pub(in crate::modding) fn root(
     client: &super::ClientStoreData,
     scope: ClientStorageScope,
 ) -> Option<Arc<Path>> {
     let bucket = match scope {
-        ClientStorageScope::Pack => Some(&client.pack_storage),
-        ClientStorageScope::World => client.storage.as_ref(),
-    }?;
+        ClientStorageScope::Pack => &client.pack_storage,
+        ClientStorageScope::World => client.storage.as_ref()?,
+        ClientStorageScope::Chosen(slot) => {
+            return folders::chosen(client.pack_storage.dir(), slot).map(Arc::from);
+        }
+    };
     Some(Arc::from(bucket.dir().join("files")))
 }
 

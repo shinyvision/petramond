@@ -237,13 +237,20 @@ impl Presentation {
     }
 
     /// No apply pending, and every batch the position needs is released or
-    /// the queue has nothing more.
+    /// the queue has nothing more. A frame applying several batches is due
+    /// at its newest: until then the next frame, read and not due, is what
+    /// the position needs next, not a batch it is missing.
     pub fn ready(&self) -> bool {
+        let floor = self.position.max(0.0).floor() as u64;
         self.ops.is_empty()
             && (self.exhausted()
-                || self
-                    .released_through
-                    .is_some_and(|t| t > self.position.floor() as u64))
+                || self.released_through.is_some_and(|t| t > floor)
+                || self.queue.front().is_some_and(|span| {
+                    matches!(
+                        self.frames.get(&(span.file.incarnation, span.offset)),
+                        Some(Ok(f)) if f.due > floor + 1
+                    )
+                }))
     }
 
     /// Every stated column outside the window.

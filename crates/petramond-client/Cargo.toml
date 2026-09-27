@@ -27,6 +27,9 @@ tools = ["petramond/tools"]
 audio = ["petramond-audio/playback"]
 
 [dependencies]
+# The OS folder picker a player chooses a mod's export folder in (the desktop
+# portal on Linux, the native dialog elsewhere).
+rfd = { workspace = true }
 petramond = { workspace = true }
 petramond-audio = { workspace = true }
 petramond-render = { workspace = true }

@@ -1699,3 +1699,120 @@ fn a_push_only_media_file_of_any_size_opens_and_its_path_is_its_own() {
         "an aborted file lets go of its path"
     );
 }
+
+/// A folder the player chose is a place the mod writes files into by slot,
+/// never by path: nothing before the choice, one picker at a time, a cancel
+/// keeps what was chosen, and the choice outlives the instance that asked.
+#[test]
+fn a_chosen_folder_takes_files_only_once_the_player_picked_it() {
+    use crate::modding::client::files::folders::{install_chooser, FolderRequest};
+    use mod_api::{ClientFileAnswer, ClientStorageScope::Chosen, ErrorCode};
+    use std::sync::{Arc, Mutex};
+
+    let refused = |ret: &HostRet| matches!(ret, HostRet::Err(e) if e.code == ErrorCode::Refused);
+    let scratch = TestScratchDir::new("client-calls-chosen-folder");
+    let picked = scratch.join("videos");
+    std::fs::create_dir_all(&picked).unwrap();
+    let asked: Arc<Mutex<Vec<FolderRequest>>> = Arc::default();
+    let queue = Arc::clone(&asked);
+    install_chooser(Some(Arc::new(move |request| {
+        queue.lock().unwrap().push(request)
+    })));
+    let answer = |data: &mut ModStoreData, ticket: u64| {
+        let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
+        loop {
+            match handle_host_call(data, HostCall::from(calls::ClientFilePoll { ticket })) {
+                HostRet::ClientFilePolled(Some(answer)) => return answer,
+                HostRet::ClientFilePolled(None) => {}
+                other => panic!("the poll answered {other:?}"),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "ticket {ticket} never answered"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    };
+    let choose = |data: &mut ModStoreData| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientFolderChoose {
+                folder: 0,
+                title: "Export to".into(),
+            }),
+        )
+    };
+    let state = |data: &mut ModStoreData| {
+        handle_host_call(data, HostCall::from(calls::ClientFolderState { folder: 0 }))
+    };
+    let append = || {
+        HostCall::from(calls::ClientFileAppend {
+            scope: Chosen(0),
+            path: "clip.bin".into(),
+            bytes: vec![1, 2, 3],
+        })
+    };
+
+    let mut data = client_data(&scratch);
+    assert!(
+        refused(&handle_host_call(&mut data, append())),
+        "nothing is written before the player chose"
+    );
+    assert_eq!(state(&mut data), HostRet::ClientFolder(None));
+
+    let HostRet::Ticket(ticket) = choose(&mut data) else {
+        panic!("the picker did not open");
+    };
+    assert!(refused(&choose(&mut data)), "one picker at a time");
+    let request = asked.lock().unwrap().pop().unwrap();
+    request.done.answer(Some(picked.clone()));
+    let ClientFileAnswer::Folder(Some(info)) = answer(&mut data, ticket) else {
+        panic!("the choice was not answered");
+    };
+    assert!(info.label.ends_with("videos"), "{}", info.label);
+
+    let HostRet::Ticket(write) = handle_host_call(&mut data, append()) else {
+        panic!("the chosen folder refused a file");
+    };
+    assert!(matches!(
+        answer(&mut data, write),
+        ClientFileAnswer::Done { .. }
+    ));
+    assert_eq!(std::fs::read(picked.join("clip.bin")).unwrap(), [1, 2, 3]);
+
+    let HostRet::Ticket(ticket) = choose(&mut data) else {
+        panic!("the picker did not open again");
+    };
+    let request = asked.lock().unwrap().pop().unwrap();
+    assert_eq!(
+        request.start.as_deref(),
+        Some(picked.as_path()),
+        "it opens where it was"
+    );
+    drop(request); // a picker that never answers cancels
+    assert_eq!(answer(&mut data, ticket), ClientFileAnswer::Folder(None));
+
+    let mut later = client_data(&scratch);
+    assert_eq!(
+        state(&mut later),
+        HostRet::ClientFolder(Some(info)),
+        "a cancel keeps the choice, and a new instance remembers it"
+    );
+    assert!(matches!(
+        handle_host_call(
+            &mut later,
+            HostCall::from(calls::ClientStorageGetMany {
+                scope: Chosen(0),
+                keys: vec!["weathertest:k".into()],
+            })
+        ),
+        HostRet::Err(_)
+    ));
+    std::fs::remove_dir_all(&picked).unwrap();
+    assert_eq!(
+        state(&mut later),
+        HostRet::ClientFolder(None),
+        "a folder that is gone is no choice"
+    );
+    install_chooser(None);
+}

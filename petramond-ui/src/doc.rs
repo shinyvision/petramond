@@ -562,6 +562,9 @@ impl NodeKind {
                 | NodeKind::Hook
                 | NodeKind::Canvas { .. }
                 | NodeKind::Viewport { .. }
+                // Its offset is kept by its key: a scroll without one draws a
+                // bar that never moves.
+                | NodeKind::Scroll { .. }
         )
     }
 

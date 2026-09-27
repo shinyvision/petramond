@@ -26,14 +26,7 @@ impl App {
             return true;
         }
         let mut out = Vec::new();
-        self.controls.binding_engine.on_input(
-            &self.controls.action_table,
-            &self.options.settings.bindings,
-            BoundInput::Key(code),
-            down,
-            self.controls.modifiers,
-            &mut out,
-        );
+        self.resolve_input(BoundInput::Key(code), down, &mut out);
         if !out.is_empty() {
             self.dispatch_actions(out);
             return true;
@@ -56,14 +49,7 @@ impl App {
         let gameplay = self.screen.gameplay_enabled() && self.session.is_some();
         if gameplay || !down {
             let mut out = Vec::new();
-            self.controls.binding_engine.on_input(
-                &self.controls.action_table,
-                &self.options.settings.bindings,
-                BoundInput::Mouse(button),
-                down,
-                self.controls.modifiers,
-                &mut out,
-            );
+            self.resolve_input(BoundInput::Mouse(button), down, &mut out);
             self.dispatch_actions(out);
             if gameplay {
                 return;
@@ -92,22 +78,8 @@ impl App {
         };
         for _ in 0..notches.unsigned_abs() {
             let mut out = Vec::new();
-            self.controls.binding_engine.on_input(
-                &self.controls.action_table,
-                &self.options.settings.bindings,
-                BoundInput::Scroll(dir),
-                true,
-                self.controls.modifiers,
-                &mut out,
-            );
-            self.controls.binding_engine.on_input(
-                &self.controls.action_table,
-                &self.options.settings.bindings,
-                BoundInput::Scroll(dir),
-                false,
-                self.controls.modifiers,
-                &mut out,
-            );
+            self.resolve_input(BoundInput::Scroll(dir), true, &mut out);
+            self.resolve_input(BoundInput::Scroll(dir), false, &mut out);
             self.dispatch_actions(out);
         }
     }
@@ -134,18 +106,53 @@ impl App {
     /// press never reaches a mod over a focused text input, and otherwise
     /// only where the action fires (its registered contexts, against the
     /// screen); a release always lands so the mod's edge filter can't latch.
-    fn dispatch_mod_action(&mut self, id: &str, pressed: bool) {
-        if pressed && self.ui.text_input_focused() {
-            return;
-        }
+    /// Where a mod key press lands now: gameplay, or the client document or
+    /// canvas on screen.
+    fn key_screen(&self) -> (bool, Option<String>) {
         let screen = match self.screen {
             AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
             _ => None,
         };
-        let canvas = self.client_canvas_key().map(str::to_owned);
+        let screen = screen
+            .map(str::to_owned)
+            .or_else(|| self.client_canvas_key().map(str::to_owned));
+        (self.screen.gameplay_enabled(), screen)
+    }
+
+    /// One raw input edge through the bindings. Only the actions that fire
+    /// here compete for it: a mod's chord for another screen never swallows
+    /// the plain key.
+    fn resolve_input(&mut self, input: BoundInput, down: bool, out: &mut Vec<(ActionOut, bool)>) {
+        let (gameplay, screen) = self.key_screen();
         let at = petramond::modding::client::keys::KeyContext {
-            gameplay: self.screen.gameplay_enabled(),
-            screen: screen.or(canvas.as_deref()),
+            gameplay,
+            screen: screen.as_deref(),
+        };
+        let mut engine = std::mem::take(&mut self.controls.binding_engine);
+        let mods = self.client_mods_now();
+        let live = |row: &petramond_input::controls::ActionRow| {
+            !row.is_mod() || mods.is_some_and(|m| m.action_fires(&row.id, at))
+        };
+        engine.on_input(
+            &self.controls.action_table,
+            &self.options.settings.bindings,
+            input,
+            down,
+            self.controls.modifiers,
+            &live,
+            out,
+        );
+        self.controls.binding_engine = engine;
+    }
+
+    fn dispatch_mod_action(&mut self, id: &str, pressed: bool) {
+        if pressed && self.ui.text_input_focused() {
+            return;
+        }
+        let (gameplay, screen) = self.key_screen();
+        let at = petramond::modding::client::keys::KeyContext {
+            gameplay,
+            screen: screen.as_deref(),
         };
         if let Some(session) = self.session.as_mut() {
             session.game.client_mod_action(id, pressed, at);

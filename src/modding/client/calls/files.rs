@@ -8,6 +8,7 @@ use crate::modding::client::files::{self, FileRef, TicketSink};
 use crate::modding::client::state::ClientStoreData;
 
 const NO_WORLD_BUCKET: &str = "there is no world bucket on the shell; use scope Pack";
+const NO_FOLDER: &str = "no folder has been chosen for this yet";
 
 /// `Error` for a path breaking the portable-name rule: the mod's bug.
 pub(super) fn checked_path(call: &str, path: &str) -> Result<(), HostRet> {
@@ -32,12 +33,21 @@ pub(super) fn presents(client: &ClientStoreData) -> bool {
 /// Why a WRITE into `scope` is refused right now, if it is.
 pub(super) fn write_refusal(client: &ClientStoreData, scope: ClientStorageScope) -> Option<String> {
     match scope {
-        ClientStorageScope::Pack => None,
-        ClientStorageScope::World if client.shell => Some(NO_WORLD_BUCKET.into()),
         ClientStorageScope::World if presents(client) => {
             Some("a presentation's world bucket is not this session's to keep".into())
         }
-        ClientStorageScope::World => None,
+        _ => read_refusal(client, scope),
+    }
+}
+
+/// Why `scope` has nothing to read or write right now, if it has not.
+fn read_refusal(client: &ClientStoreData, scope: ClientStorageScope) -> Option<String> {
+    match scope {
+        ClientStorageScope::Pack => None,
+        ClientStorageScope::World => client.shell.then(|| NO_WORLD_BUCKET.into()),
+        ClientStorageScope::Chosen(_) => files::root(client, scope)
+            .is_none()
+            .then(|| NO_FOLDER.into()),
     }
 }
 
@@ -79,7 +89,7 @@ fn ticketed(
     let refusal = if writes {
         write_refusal(client, scope)
     } else {
-        (scope == ClientStorageScope::World && client.shell).then(|| NO_WORLD_BUCKET.into())
+        read_refusal(client, scope)
     };
     if let Some(why) = refusal {
         return HostRet::refused(why);
@@ -213,6 +223,17 @@ pub(super) fn handle(
             Ok(Some(Err(failed))) => HostRet::refused(failed),
             Err(why) => HostRet::invalid(format!("ClientFilePoll: {why}")),
         },
+        // An unchosen folder holds nothing: no file there, nothing to show.
+        ClientFileCall::ClientFileStat {
+            scope: scope @ ClientStorageScope::Chosen(_),
+            path,
+        } => HostRet::ClientFileStat(
+            files::locate(client, scope, &path).and_then(|file| files::stat(&file)),
+        ),
+        ClientFileCall::ClientFileReveal {
+            scope: scope @ ClientStorageScope::Chosen(_),
+            path,
+        } => HostRet::Bool(files::locate(client, scope, &path).is_some_and(|f| files::reveal(&f))),
         ClientFileCall::ClientFileStat { scope, path } => match bucket_file(client, scope, &path) {
             Ok(file) => HostRet::ClientFileStat(files::stat(&file)),
             Err(bug) => bug,
@@ -222,5 +243,20 @@ pub(super) fn handle(
             Ok(file) => HostRet::Bool(files::reveal(&file)),
             Err(bug) => bug,
         },
+        ClientFileCall::ClientFolderChoose { folder, title } => {
+            let pack = client.pack_storage.dir().to_path_buf();
+            let sink = client.files.issue();
+            let ticket = sink.ticket();
+            match files::folders::choose(&pack, folder, title, sink) {
+                Ok(()) => HostRet::Ticket(ticket),
+                Err(why) => {
+                    client.files.withdraw(ticket);
+                    HostRet::refused(why)
+                }
+            }
+        }
+        ClientFileCall::ClientFolderState { folder } => {
+            HostRet::ClientFolder(files::folders::info(client.pack_storage.dir(), folder))
+        }
     }
 }

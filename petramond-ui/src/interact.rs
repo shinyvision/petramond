@@ -205,20 +205,26 @@ impl Interact<'_> {
     }
 
     /// The deepest list-template stamp (list direct child) under the cursor,
-    /// as `(list inst, row index)`.
-    fn row_hit(&self, fs: &FrameState) -> Option<(u32, u32)> {
+    /// as `(list inst, row index, stamp inst)`.
+    fn row_hit(&self, fs: &FrameState) -> Option<(u32, u32, u32)> {
         let (x, y) = self.cur(fs);
         (0..self.tree.len() as u32).rev().find_map(|i| {
             if !matches!(self.tree.get(i).node.kind, NodeKind::List { .. }) {
                 return None;
             }
-            self.tree
-                .get(i)
-                .children
+            let children = &self.tree.get(i).children;
+            children
                 .iter()
                 .position(|&c| self.tree.get(c).enabled && self.visible_at(c, x, y))
-                .map(|row| (i, row as u32))
+                .map(|row| (i, row as u32, children[row]))
         })
+    }
+
+    /// Whether instance `a` paints over instance `b`: the raised tier over
+    /// the base tier, then later over earlier.
+    fn paints_over(&self, a: u32, b: u32) -> bool {
+        let tier = |i: u32| self.solved.raised[i as usize];
+        (tier(a), a) > (tier(b), b)
     }
 
     /// The deepest scroll node under the cursor.
@@ -309,7 +315,13 @@ impl Interact<'_> {
             }
         }
 
-        if let Some(i) = self.hit(fs) {
+        // A list row painted over a widget (a popup's rows over a dismiss
+        // scrim) takes the press; a widget inside the row still wins.
+        let row = self.row_hit(fs);
+        let widget = self
+            .hit(fs)
+            .filter(|&i| row.is_none_or(|(_, _, stamp)| !self.paints_over(stamp, i)));
+        if let Some(i) = widget {
             let inst = self.tree.get(i);
             let rect = self.solved.rects[i as usize];
             if let Some(key) = &inst.key {
@@ -440,7 +452,7 @@ impl Interact<'_> {
             return;
         }
 
-        if let Some((list, row)) = self.row_hit(fs) {
+        if let Some((list, row, _)) = row {
             self.blur_editor(fs);
             if let Some(key) = self.key_of(list) {
                 events.push(UiEvent::ListSelect {

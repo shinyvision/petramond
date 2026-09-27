@@ -509,6 +509,54 @@ fn wrapping_label_uses_column_width_hint() {
     assert_eq!(s.rects[1].w, 60);
 }
 
+/// A wrapping label beside a button in a row wraps at the width the row
+/// gives it, and the row is as tall as the wrapped lines: what follows the
+/// row starts below them, never over them.
+#[test]
+fn a_wrapping_label_in_a_row_makes_the_row_as_tall_as_its_lines() {
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "column", "layout": { "w": 100, "align": "stretch" },
+                "children": [
+                    { "type": "row", "children": [
+                        { "type": "label", "text": "a line far too long", "wrap": true,
+                          "layout": { "w": { "grow": 1 }, "min_w": 0 } },
+                        { "type": "button", "id": "b", "text": "Go" }
+                    ] },
+                    { "type": "label", "text": "under" }
+                ] }
+        }"#,
+        (200, 100),
+    );
+    let (row, label, button, under) = (s.rects[1], s.rects[2], s.rects[3], s.rects[4]);
+    // The button keeps 20; the label's 80 px hold 13 chars a line: 2 lines.
+    assert_eq!((button.w, label.w), (20, 80));
+    assert_eq!(row.h, 20, "the button is the taller: {row:?}");
+    assert!(under.y >= row.y + row.h, "{under:?} overlaps {row:?}");
+
+    let (s, _) = solve_doc(
+        r#"{
+            "format": 1, "kind": "petramond:x", "class": "screen",
+            "root": { "type": "column", "layout": { "w": 60, "align": "stretch" },
+                "children": [
+                    { "type": "row", "children": [
+                        { "type": "label", "text": "a line far too long for this", "wrap": true,
+                          "layout": { "w": { "grow": 1 }, "min_w": 0 } },
+                        { "type": "button", "id": "b", "text": "Go" }
+                    ] },
+                    { "type": "label", "text": "under" }
+                ] }
+        }"#,
+        (200, 100),
+    );
+    let (row, label, under) = (s.rects[1], s.rects[2], s.rects[4]);
+    // 40 px hold 6 chars a line: 28 chars are 5 lines × 9.
+    assert_eq!(label.w, 40);
+    assert_eq!(row.h, 45, "{row:?}");
+    assert!(under.y >= row.y + row.h, "{under:?} overlaps {row:?}");
+}
+
 #[test]
 fn slot_grid_natural_size_and_row_major_cells() {
     let (s, _) = solve_doc(

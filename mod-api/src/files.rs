@@ -47,6 +47,17 @@ pub enum ClientFileAnswer {
         entries: Vec<ClientFileEntry>,
         more: bool,
     },
+    /// A folder choice ([`HostCall::ClientFolderChoose`](crate::HostCall::ClientFolderChoose)):
+    /// the folder now chosen, or `None` = the player cancelled and the slot
+    /// keeps what it had.
+    Folder(Option<ClientFolderInfo>),
+}
+
+/// A chosen folder, as the player reads it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ClientFolderInfo {
+    /// The folder's path, for showing where files go.
+    pub label: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

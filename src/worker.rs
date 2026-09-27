@@ -342,8 +342,14 @@ impl Drop for JobPool {
         let discarded = std::mem::take(&mut *self.shared.queue.lock().unwrap());
         drop(discarded);
         self.shared.available.notify_all();
+        // The last owner can be one of the pool's own jobs (it held the
+        // pool through a snapshot): that worker exits on its own once the
+        // job returns, and joining it from itself would deadlock.
+        let me = std::thread::current().id();
         for h in self.handles.drain(..) {
-            let _ = h.join();
+            if h.thread().id() != me {
+                let _ = h.join();
+            }
         }
     }
 }

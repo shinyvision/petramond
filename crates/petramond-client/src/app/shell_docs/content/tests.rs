@@ -115,18 +115,24 @@ fn entry_for(app: &App, key: &str) -> Entry {
     view.entry(slot, &app.content, Instant::now()).unwrap()
 }
 
+/// Show `tab`, its rows laid out.
+fn show(app: &mut App, tab: Tab) {
+    app.content.view.as_mut().unwrap().show_tab(tab);
+    assert!(in_ctx(app, prepare));
+}
+
 fn keys(app: &App) -> Vec<String> {
     let view = view(app);
     view.shown.iter().filter_map(|s| view.key_of(s)).collect()
 }
 
 #[test]
-fn content_packs_are_listed_but_never_deletable_and_only_addons_wear_the_sheep() {
+fn content_packs_are_never_listed_and_only_addons_wear_the_sheep() {
     let mut addon = local("studio", "Studio", Tier::Addon);
     addon.record = Some(record("studio", Kind::Addon, 'a', Some(1)));
     let mut forge = local("forge", "Forge", Tier::ContentPack);
     forge.refusal = Some("missing wasm".to_owned());
-    let (_root, app) = app_with(
+    let (_root, mut app) = app_with(
         "tiers",
         vec![
             local("forge_ok", "Anvil", Tier::ContentPack),
@@ -134,21 +140,25 @@ fn content_packs_are_listed_but_never_deletable_and_only_addons_wear_the_sheep()
             addon,
             local("tweaks", "Tweaks", Tier::Mod),
         ],
-        false,
+        true,
     );
-    for key in ["forge", "forge_ok"] {
-        let entry = entry_for(&app, key);
-        assert!(
-            !entry.can_delete,
-            "{key}: a content pack is never deletable"
-        );
-        assert_eq!(entry.action, Action::None);
-        assert!(!entry.is_addon);
-    }
+    assert_eq!(
+        keys(&app),
+        ["studio", "tweaks"],
+        "Installed: no content pack"
+    );
     assert!(entry_for(&app, "studio").is_addon);
     assert!(entry_for(&app, "studio").can_delete);
     assert!(!entry_for(&app, "tweaks").is_addon);
     assert!(entry_for(&app, "tweaks").can_delete);
+
+    // Not even the site listing a content pack's id puts it in Browse.
+    app.content.listing_arrived(Ok(vec![
+        listing_row("forge_ok", "Anvil", Kind::Addon, 'a', 4096),
+        listing_row("studio", "Studio", Kind::Addon, 'a', 4096),
+    ]));
+    show(&mut app, Tab::Browse);
+    assert_eq!(keys(&app), ["studio"]);
 }
 
 #[test]
@@ -264,7 +274,7 @@ fn a_busy_site_is_a_wait_never_a_failure() {
     let (_root, mut app) = app_with("busy", Vec::new(), true);
     let row = listing_row("sky", "Sky Tools", Kind::Mod, 'c', 470 * 1024);
     app.content.listing_arrived(Ok(vec![row.clone()]));
-    assert!(in_ctx(&mut app, prepare));
+    show(&mut app, Tab::Browse);
     app.content.get(&row).unwrap();
     let until = Instant::now() + Duration::from_secs(12);
     app.content
@@ -288,24 +298,24 @@ fn merges_never_add_move_or_drop_a_row_until_a_refresh() {
         listing_row("sky", "Sky Tools", Kind::Mod, 'c', 4096),
         listing_row("studio", "Studio", Kind::Addon, 'd', 4096),
     ];
-    // The open's first listing rebuilds: its rows appear above the shipped
-    // section.
+    // The open's first listing rebuilds; the content pack is never there.
+    show(&mut app, Tab::Browse);
     app.content.listing_arrived(Ok(first));
     assert!(in_ctx(&mut app, prepare));
-    assert_eq!(keys(&app), ["sky", "studio", "forge"]);
+    assert_eq!(keys(&app), ["sky", "studio"]);
 
     // A listing a download re-fetched merges: a row it drops stays put, a
     // row it adds waits for a refresh.
     app.content
         .listing_arrived(Ok(vec![listing_row("new", "New", Kind::Mod, 'e', 4096)]));
     assert!(in_ctx(&mut app, prepare));
-    assert_eq!(keys(&app), ["sky", "studio", "forge"]);
+    assert_eq!(keys(&app), ["sky", "studio"]);
 
     in_ctx(&mut app, refresh);
     app.content
         .listing_arrived(Ok(vec![listing_row("new", "New", Kind::Mod, 'e', 4096)]));
     assert!(in_ctx(&mut app, prepare));
-    assert_eq!(keys(&app), ["new", "forge"]);
+    assert_eq!(keys(&app), ["new"]);
 }
 
 #[test]
@@ -314,39 +324,36 @@ fn keyboard_selection_walks_entries_only_and_a_double_click_never_flickers() {
         "keys",
         vec![
             local("tweaks", "Tweaks", Tier::Mod),
-            local("forge", "Forge", Tier::ContentPack),
+            local("zebra", "Zebra", Tier::Mod),
         ],
         false,
     );
-    // Installed header, tweaks, Available header, sign-in message, shipped
-    // header, forge.
     in_ctx(&mut app, |ctx| key(ctx, NavKey::Down, false));
     assert_eq!(view(&app).selected.as_deref(), Some("tweaks"));
     in_ctx(&mut app, |ctx| key(ctx, NavKey::Down, false));
-    assert_eq!(view(&app).selected.as_deref(), Some("forge"));
+    assert_eq!(view(&app).selected.as_deref(), Some("zebra"));
     in_ctx(&mut app, |ctx| key(ctx, NavKey::Down, false));
-    assert_eq!(view(&app).selected.as_deref(), Some("forge"));
+    assert_eq!(view(&app).selected.as_deref(), Some("zebra"));
 
-    let index = view(&app)
-        .shown
-        .iter()
-        .position(|s| view(&app).key_of(s).as_deref() == Some("tweaks"))
-        .unwrap() as u32;
-    let header = 0;
+    // Browse, signed out: its one row is the sign-in message.
+    show(&mut app, Tab::Browse);
     in_ctx(&mut app, |ctx| {
         handle(
             ctx,
             UiEvent::ListSelect {
                 id: LIST.into(),
-                index: header,
+                index: 0,
             },
         )
     });
-    assert_eq!(
-        view(&app).selected.as_deref(),
-        Some("forge"),
-        "a header is not selectable"
-    );
+    assert_eq!(view(&app).selected, None, "a message is not selectable");
+
+    show(&mut app, Tab::Installed);
+    let index = view(&app)
+        .shown
+        .iter()
+        .position(|s| view(&app).key_of(s).as_deref() == Some("tweaks"))
+        .unwrap() as u32;
     in_ctx(&mut app, |ctx| {
         handle(
             ctx,
@@ -390,8 +397,7 @@ fn with_installs_off_no_row_offers_to_install() {
         listing_row("sky", "Sky Tools", Kind::Mod, 'c', 4096),
         listing_row("hand", "Hand", Kind::Mod, 'c', 4096),
     ]));
-    app.content.view.as_mut().unwrap().request_rebuild();
-    assert!(in_ctx(&mut app, prepare));
+    show(&mut app, Tab::Browse);
     assert_eq!(entry_for(&app, "sky").action, Action::None);
     assert_eq!(entry_for(&app, "hand").action, Action::None);
     assert!(app
@@ -580,17 +586,24 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
         MAX,
     );
     app.content.jobs.set_phase("check", Phase::Checking, MAX);
-    let mut state = state_of(&mut app);
-    let details: Vec<String> = match state.get("rows") {
-        Some(UiValue::List(rows)) => rows
-            .iter()
-            .filter_map(|r| match r.get("detail") {
-                Some(UiValue::Str(s)) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
+    let row_details = |state: &UiState| -> Vec<String> {
+        match state.get("rows") {
+            Some(UiValue::List(rows)) => rows
+                .iter()
+                .filter_map(|r| match r.get("detail") {
+                    Some(UiValue::Str(s)) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
     };
+    show(&mut app, Tab::Browse);
+    let mut details = row_details(&state_of(&mut app));
+    assert_fits(GuiKind::Content, &state_of(&mut app), None, "browse");
+    show(&mut app, Tab::Installed);
+    let mut state = state_of(&mut app);
+    details.extend(row_details(&state));
     for expected in [
         "100% · 20.0/20.0 MB",
         "Retrying in 300 s",
@@ -599,7 +612,6 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
         "Not loaded · update",
         "Installed locally",
         "Installed by hand",
-        "Part of Petramond",
         "Queued",
         "Checking…",
     ] {
@@ -651,6 +663,11 @@ fn the_fixed_detail_copy_never_ellipsizes_at_the_smallest_viewport() {
             .expanded
             .insert(key.into());
     }
+    // "hand" stages a removal on Installed; the rest are Browse rows.
+    state = state_of(&mut app);
+    assert!(shrunk_labels(&state, "detail").is_empty());
+    assert_fits(GuiKind::Content, &state, None, "staged installed");
+    show(&mut app, Tab::Browse);
     state = state_of(&mut app);
     assert!(
         shrunk_labels(&state, "detail").is_empty(),
@@ -708,7 +725,7 @@ fn the_messages_and_confirm_pages_fit_the_smallest_viewport_with_their_real_copy
     app.content.installs_enabled = false;
     app.content.view.as_mut().unwrap().filter =
         Some((0..9).map(|i| format!("missing_pack_{i}")).collect());
-    app.content.view.as_mut().unwrap().request_rebuild();
+    show(&mut app, Tab::Browse);
     for listing in [
         L::SignedOut { expired: false },
         L::SignedOut { expired: true },
@@ -834,5 +851,92 @@ fn the_title_notice_fits_under_the_menu_with_its_real_copy() {
                 solved.rects[i].w
             );
         });
+    }
+}
+
+/// The list's rows stack: whatever a row holds (a wrapped summary, a
+/// two-line failure), it holds all of it and the next row starts below, at
+/// every window size and scale, a list taller than its scroll included.
+#[test]
+fn the_list_rows_never_overlap() {
+    use crate::app::content::ListingState as L;
+    let (_root, mut app) = app_with(
+        "rows-stack",
+        vec![
+            Local {
+                summary: "Record your world and film it from any angle.".into(),
+                ..local("studio", "Studio", Tier::Addon)
+            },
+            local("weather", "Weather", Tier::ContentPack),
+        ],
+        true,
+    );
+    app.content.listing = L::Failed("petramond.com refused the request".into());
+    for tab in [Tab::Installed, Tab::Browse] {
+        show(&mut app, tab);
+        let state = state_of(&mut app);
+        for (viewport, gui_scale) in [
+            ((320, 240), 1),
+            ((640, 360), 1),
+            ((880, 520), 2),
+            ((586, 346), 3),
+            ((1280, 720), 1),
+            ((853, 480), 3),
+            ((1280, 720), 2),
+            ((960, 540), 2),
+            ((640, 360), 4),
+            ((480, 270), 4),
+        ] {
+            let doc = petramond::gui::documents::doc_for(GuiKind::Content).expect("document loads");
+            let theme = petramond::gui::doc_theme::theme();
+            let compact = doc.doc.compact_active(viewport.0);
+            let tree = InstTree::expand_form_hover(&doc.doc, &state, compact, None);
+            let env = ThemeEnv {
+                theme: &theme,
+                gui_scale,
+                image_size: &|_| None,
+            };
+            let solved = solve(&tree, &env, viewport, &|_| 0);
+            let list = (0..tree.len() as u32)
+                .find(|&i| tree.get(i).key.as_ref().is_some_and(|k| k.id == "content"))
+                .expect("the list");
+            // A row holds what it draws: a row squeezed shorter than its content
+            // spills over the rows after it.
+            fn bottom(tree: &InstTree<'_>, solved: &petramond_ui::Solved, i: u32) -> i32 {
+                let r = solved.rects[i as usize];
+                tree.get(i)
+                    .children
+                    .iter()
+                    .filter(|&&c| solved.rects[c as usize].h > 0)
+                    .map(|&c| bottom(tree, solved, c))
+                    .fold(r.y + r.h, i32::max)
+            }
+            for &c in &tree.get(list).children {
+                let r = solved.rects[c as usize];
+                if r.h > 0 {
+                    assert_eq!(
+                        bottom(&tree, &solved, c),
+                        r.y + r.h,
+                        "{viewport:?} x{gui_scale}: a row's content spills out of {r:?}"
+                    );
+                }
+            }
+            let rows: Vec<_> = tree
+                .get(list)
+                .children
+                .iter()
+                .map(|&c| solved.rects[c as usize])
+                .filter(|r| r.h > 0)
+                .collect();
+            assert!(!rows.is_empty(), "{tab:?} {viewport:?}: {rows:?}");
+            for pair in rows.windows(2) {
+                assert!(
+                    pair[1].y >= pair[0].y + pair[0].h,
+                    "{viewport:?}: {:?} overlaps {:?}",
+                    pair[1],
+                    pair[0]
+                );
+            }
+        }
     }
 }
