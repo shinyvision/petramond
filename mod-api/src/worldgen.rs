@@ -49,6 +49,11 @@ pub struct GenFeatureFilter {
     pub max_y: i32,
     pub surface_offsets: Option<[i32; 2]>,
     pub needs_blocks: bool,
+    /// Whether the dispatch carries the section's column surface heights and biomes.
+    pub needs_columns: bool,
+    /// Whether the feature keeps columns for itself ([`GuestCall::GenClaims`](crate::GuestCall)):
+    /// the engine's trees stay out of them.
+    pub claims: bool,
 }
 
 impl Default for GenFeatureFilter {
@@ -63,6 +68,8 @@ impl GenFeatureFilter {
         max_y: i32::MAX,
         surface_offsets: None,
         needs_blocks: true,
+        needs_columns: true,
+        claims: false,
     };
 
     pub const fn y_band(min_y: i32, max_y: i32) -> GenFeatureFilter {
@@ -83,6 +90,24 @@ impl GenFeatureFilter {
     pub const fn without_blocks(self) -> GenFeatureFilter {
         GenFeatureFilter {
             needs_blocks: false,
+            ..self
+        }
+    }
+
+    /// A feature that reads neither `GenCtx::surface_y` nor `GenCtx::biome`: its dispatches
+    /// skip copying and decoding the section's column data.
+    pub const fn without_columns(self) -> GenFeatureFilter {
+        GenFeatureFilter {
+            needs_columns: false,
+            ..self
+        }
+    }
+
+    /// A feature that answers [`GuestCall::GenClaims`](crate::GuestCall) for the columns it
+    /// keeps for itself.
+    pub const fn with_claims(self) -> GenFeatureFilter {
+        GenFeatureFilter {
+            claims: true,
             ..self
         }
     }

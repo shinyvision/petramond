@@ -116,6 +116,12 @@ pub trait Mod: Default {
         GenOutput::default()
     }
 
+    /// Every claim of feature `feature_id` touching the columns `min..=max`; see
+    /// [`GuestCall::GenClaims`].
+    fn gen_claims(&mut self, _feature_id: u32, _ctx: &ClaimsCtx) -> GenClaims {
+        GenClaims::default()
+    }
+
     fn gen_climate(&mut self, _callback_id: u32, _ctx: &GenCtx) -> Vec<u8> {
         Vec::new()
     }

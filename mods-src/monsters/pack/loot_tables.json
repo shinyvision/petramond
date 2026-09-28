@@ -23,6 +23,380 @@
           ]
         }
       ]
+    },
+    {
+      "loot": "monsters:camp_hut_chest",
+      "pools": [
+        {
+          "rolls": [
+            2,
+            4
+          ],
+          "entries": [
+            {
+              "weight": 20,
+              "result": {
+                "type": "item",
+                "item": "petramond:stick",
+                "count": [
+                  2,
+                  6
+                ]
+              }
+            },
+            {
+              "weight": 15,
+              "result": {
+                "type": "item",
+                "item": "petramond:coal",
+                "count": [
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "weight": 12,
+              "result": {
+                "type": "item",
+                "item": "petramond:torch",
+                "count": [
+                  2,
+                  5
+                ]
+              }
+            },
+            {
+              "weight": 10,
+              "result": {
+                "type": "item",
+                "item": "petramond:rope",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 8,
+              "result": {
+                "type": "item",
+                "item": "petramond:raw_iron",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 8,
+              "result": {
+                "type": "item",
+                "item": "petramond:raw_copper",
+                "count": [
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "weight": 5,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_ingot",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "weight": 4,
+              "result": {
+                "type": "item",
+                "item": "petramond:copper_ingot",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 2,
+              "result": {
+                "type": "item",
+                "item": "petramond:gold_ingot",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "weight": 10,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        },
+        {
+          "rolls": [
+            0,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:stone_axe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:stone_pickaxe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 1,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_axe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 1,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_pickaxe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 1,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_shovel",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 10,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        },
+        {
+          "rolls": [
+            0,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 3,
+              "result": {
+                "type": "item",
+                "item": "monsters:hushjaw_tooth",
+                "count": [
+                  1,
+                  2
+                ]
+              }
+            },
+            {
+              "weight": 20,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "loot": "monsters:camp_arena_chest",
+      "pools": [
+        {
+          "rolls": [
+            2,
+            5
+          ],
+          "entries": [
+            {
+              "weight": 10,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_ingot",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:gold_ingot",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 4,
+              "result": {
+                "type": "item",
+                "item": "petramond:raw_gold",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            },
+            {
+              "weight": 8,
+              "result": {
+                "type": "item",
+                "item": "petramond:coal",
+                "count": [
+                  2,
+                  5
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:torch",
+                "count": [
+                  2,
+                  6
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:copper_ingot",
+                "count": [
+                  1,
+                  4
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        },
+        {
+          "rolls": [
+            1,
+            1
+          ],
+          "entries": [
+            {
+              "weight": 3,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_axe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 3,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_pickaxe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 2,
+              "result": {
+                "type": "item",
+                "item": "petramond:iron_shovel",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 6,
+              "result": {
+                "type": "item",
+                "item": "petramond:stone_axe",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            },
+            {
+              "weight": 4,
+              "result": {
+                "type": "empty"
+              }
+            }
+          ]
+        },
+        {
+          "rolls": [
+            0,
+            2
+          ],
+          "entries": [
+            {
+              "weight": 1,
+              "result": {
+                "type": "item",
+                "item": "monsters:hushjaw_tooth",
+                "count": [
+                  1,
+                  3
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

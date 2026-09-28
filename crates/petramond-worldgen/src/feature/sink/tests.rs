@@ -21,11 +21,10 @@ fn generated_state_and_metadata_clip_together_without_becoming_player_edits() {
         .unwrap(),
     ));
     let plan = crate::hooks::GenerationPlan {
-        features: Vec::new(),
-        blocks: Vec::new(),
         structures: vec![template
             .place(IVec3::new(-1, -17, 0), Turn::default())
             .unwrap()],
+        ..Default::default()
     };
     let mut a = Section::new(-1, -2, 0);
     let mut b = Section::new(0, -2, 0);
@@ -47,9 +46,8 @@ fn generated_state_and_metadata_clip_together_without_becoming_player_edits() {
     apply_gen_plan(
         &mut b,
         &crate::hooks::GenerationPlan {
-            features: Vec::new(),
             blocks: vec![([0, -17, 0], Block::Stone.id())],
-            structures: Vec::new(),
+            ..Default::default()
         },
     );
     assert!(b.cell_kv().is_empty());

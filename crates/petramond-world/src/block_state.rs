@@ -369,6 +369,26 @@ impl BlockStates {
         self.flowing_count > 0
     }
 
+    /// Whether no cell carries fluid, shape state or cell data.
+    #[inline]
+    pub fn is_all_bare(&self) -> bool {
+        self.fluid.is_none()
+            && self
+                .sparse
+                .as_deref()
+                .is_none_or(|s| s.cell_states.is_empty() && s.cell_kv.is_empty())
+    }
+
+    /// Whether the cell carries no fluid, shape state or cell data.
+    #[inline]
+    pub fn is_bare(&self, idx: usize) -> bool {
+        self.fluid_meta(idx) == 0
+            && self.sparse.as_deref().is_none_or(|s| {
+                let key = idx as u16;
+                !s.cell_states.contains_key(&key) && !s.cell_kv.contains_key(&key)
+            })
+    }
+
     #[inline]
     pub fn clear_on_block_change(&mut self, idx: usize) {
         self.clear_fluid_meta(idx);
@@ -398,6 +418,20 @@ impl BlockStates {
     }
 
     #[inline]
+    /// [`set_cell_state`](Self::set_cell_state) for every `(cell index, state)` in order, none of
+    /// them empty. Into a section holding no state yet the map is built in one sorted pass.
+    pub fn extend_cell_states(&mut self, states: Vec<(u16, ShapeState)>) {
+        if states.is_empty() {
+            return;
+        }
+        let map = &mut self.sparse_mut().cell_states;
+        if map.is_empty() {
+            *map = states.into_iter().collect();
+        } else {
+            map.extend(states);
+        }
+    }
+
     pub fn set_cell_state(&mut self, x: usize, y: usize, z: usize, state: ShapeState) {
         let key = Self::key(x, y, z);
         if state.is_empty() {

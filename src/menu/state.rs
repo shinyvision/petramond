@@ -57,9 +57,8 @@ impl ContainerMenu {
     }
 
     pub fn open_chest_screen(&mut self, world: &mut ServerWorld, pos: IVec3) {
-        if world.container_at(pos).is_none() {
-            world.insert_chest(pos, petramond_math::facing::Facing::default());
-        }
+        world.stock_loot(pos);
+        world.ensure_container(pos, crate::world::chest::CHEST_SLOTS);
         self.target = ContainerTarget::Gui {
             kind: GuiKind::Chest,
             anchor: Some(MenuAnchor::Block(pos)),

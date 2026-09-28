@@ -416,6 +416,7 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::TerrainBlocksAt", &HostCall::from(calls::TerrainBlocksAt { positions: vec![[1, -2, 3]] }));
     s.pin("HostCall::TerrainHeightsAt", &HostCall::from(calls::TerrainHeightsAt { columns: vec![[1, -2]] }));
     s.pin("HostCall::TerrainSectionAt", &HostCall::from(calls::TerrainSectionAt { section: [1, -2, 3] }));
+    s.pin("HostCall::TerrainHeightsIn", &HostCall::from(calls::TerrainHeightsIn { min: [1, -2], max: [3, 4] }));
 
     s.pin("HostRet::Unit", &HostRet::Unit);
     s.pin("HostRet::U64", &HostRet::U64(1));
@@ -571,6 +572,7 @@ pub(super) fn samples() -> Samples {
     s.pin("HostRet::TerrainHeights", &HostRet::TerrainHeights(vec![1, -2]));
     s.pin("HostRet::MaybeU16", &HostRet::MaybeU16(Some(300)));
     s.pin("HostRet::SectionBlocks", &HostRet::SectionBlocks(vec![1, 0, 9, 0]));
+    s.pin("HostRet::TerrainHeightGrid", &HostRet::TerrainHeightGrid(vec![64, 0, 0, 0]));
     s.pin("HostRet::TerrainSpaces", &HostRet::TerrainSpaces(vec![TerrainSpace::Air, TerrainSpace::Fluid, TerrainSpace::Solid]));
     s.pin("GuestCall::TickSystem", &GuestCall::TickSystem { id: 1 });
     s.pin("GuestCall::HandleEvent", &GuestCall::HandleEvent {
@@ -580,6 +582,24 @@ pub(super) fn samples() -> Samples {
         feature_id: 1, section_pos: [1, 2, 3], seed: 4,
         blocks: vec![1, 2], surface_heights: vec![5], biomes: vec![6], sea_level: 7,
     });
+    s.pin("GuestCall::GenClaims", &GuestCall::GenClaims {
+        feature_id: 1, seed: 4, sea_level: 62, min: [-40, 8], max: [39, 87],
+    });
+    s.pin("GuestRet::GenClaims", &GuestRet::GenClaims(GenClaims {
+        claims: vec![ColumnMask {
+            bounds: ColumnBox { min: [-3, 5], max: [4, 5] },
+            bits: vec![0b1011_0110],
+        }],
+        deferred: false,
+        ahead: vec![SectionOutput {
+            section: [1, -2, 3],
+            output: vec![([16, -30, 49], BlockId(4))].into(),
+        }],
+    }));
+    s.pin("HostCall::RegisterWorldgenFeature (claims)", &HostCall::from(calls::RegisterWorldgenFeature {
+        feature_id: 1, stage: WorldgenStage::Trees,
+        filter: GenFeatureFilter::surface_band(-16, 44).without_blocks().without_columns().with_claims(),
+    }));
     s.pin("GuestCall::GenStage", &GuestCall::GenStage {
         callback_id: 1, stage: WorldgenStage::Underground, section_pos: [1, 2, 3], seed: 4,
         blocks: vec![1], surface_heights: vec![2], biomes: vec![3], sea_level: 4,
@@ -672,8 +692,35 @@ pub(super) fn samples() -> Samples {
     s.pin("ItemId (wide)", &ItemId(4095));
     s.pin("GuestRet::GenOutput (wide)", &GuestRet::GenOutput(vec![([1, 2, 3], BlockId(300))].into()));
     s.pin("GuestRet::GenOutput (structure)", &GuestRet::GenOutput(GenOutput {
-        features: Vec::new(), blocks: Vec::new(), structures: vec![StructurePlacement { template: "fixture:room".into(), origin: [-17, -32, 15], turn: 3 }],
-        deferred: false,
+        structures: vec![StructurePlacement { template: "fixture:room".into(), origin: [-17, -32, 15], turn: 3 }],
+        ..GenOutput::default()
+    }));
+    s.pin("GuestRet::GenOutput (authored)", &GuestRet::GenOutput(GenOutput {
+        authored: AuthoredWrites {
+            palette: {
+                let mut palette = AuthoredPalette::default();
+                palette.push(BlockId(300), [("facing", "east")]);
+                palette
+            },
+            cells: [([-17, -32, 15], 0)].into_iter().collect(),
+            data: vec![AuthoredData { pos: [-17, -32, 15], key: "m:k".into(), value: vec![1, 2] }],
+        },
+        ..GenOutput::default()
+    }));
+    s.pin("GuestRet::GenOutput (nothing_in)", &GuestRet::GenOutput(GenOutput {
+        nothing_in: vec![SectionBox { min: [-2, i32::MIN, 3], max: [4, i32::MAX, 3] }],
+        ..GenOutput::default()
+    }));
+    s.pin("GuestRet::GenOutput (fills)", &GuestRet::GenOutput(GenOutput {
+        fills: [GenFill { min: [-17, -32, 15], max: [-16, -30, 15], block: BlockId(300) }].into_iter().collect(),
+        ..GenOutput::default()
+    }));
+    s.pin("GuestRet::GenOutput (ahead)", &GuestRet::GenOutput(GenOutput {
+        ahead: vec![SectionOutput {
+            section: [2, 3, -4],
+            output: vec![([33, 50, -60], BlockId(5))].into(),
+        }],
+        ..GenOutput::default()
     }));
     s.pin("GuestRet::GenOutput (feature)", &GuestRet::GenOutput(GenOutput {
         features: vec![FeaturePlacement { feature: "fixture:tree".into(), origins: vec![[-17, -32, 15]], salt: 7 }],

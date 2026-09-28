@@ -54,6 +54,10 @@ use super::health::{ModHealth, ModHealthBoard};
 use super::host::Registration;
 use super::instance::ModInstance;
 
+mod ahead;
+mod claims;
+mod quiet;
+
 const STAGE_COUNT: usize = 5;
 
 fn stage_index(stage: WorldgenStage) -> usize {
@@ -86,6 +90,9 @@ struct FeatureHook {
     feature_id: u32,
     stage_idx: usize,
     filter: mod_api::GenFeatureFilter,
+    quiet: quiet::Quiet,
+    claims: claims::ClaimTiles,
+    ahead: ahead::Ahead,
 }
 
 struct StageHook {
@@ -103,7 +110,7 @@ pub struct GenHooks {
 }
 
 pub use petramond_worldgen::hooks::GenInputs;
-use petramond_worldgen::hooks::{FeatureOutcome, GenHookDispatch, GenerationPlan};
+use petramond_worldgen::hooks::{Claims, FeatureOutcome, GenHookDispatch, GenerationPlan};
 
 impl GenHooks {
     pub fn replaces(&self, stage: WorldgenStage) -> bool {
@@ -130,6 +137,12 @@ impl GenHooks {
         {
             return FeatureOutcome::Skipped;
         }
+        if hook.quiet.contains(inputs.section_pos) {
+            return FeatureOutcome::Skipped;
+        }
+        if let Some(plan) = hook.ahead.take(inputs.section_pos) {
+            return FeatureOutcome::Plan(plan);
+        }
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
             section_pos: inputs.section_pos,
@@ -138,15 +151,109 @@ impl GenHooks {
                 .blocks
                 .filter(|_| hook.filter.needs_blocks)
                 .map_or_else(Vec::new, |c| c.iter().collect()),
-            surface_heights: inputs.surface_heights.to_vec(),
-            biomes: inputs.biomes.to_vec(),
+            surface_heights: if hook.filter.needs_columns {
+                inputs.surface_heights.to_vec()
+            } else {
+                Vec::new()
+            },
+            biomes: if hook.filter.needs_columns {
+                inputs.biomes.to_vec()
+            } else {
+                Vec::new()
+            },
             sea_level: SEA_LEVEL,
         };
         self.dispatch(hook.mod_idx, &call, |ret| match ret {
-            GuestRet::GenOutput(w) => outcome(w, self.seed),
+            GuestRet::GenOutput(mut w) => {
+                self.hold_ahead(hook, std::mem::take(&mut w.ahead))?;
+                let nothing_in = std::mem::take(&mut w.nothing_in);
+                let Some(plan) = outcome(w, self.seed, self.epoch)? else {
+                    return Ok(FeatureOutcome::Deferred);
+                };
+                validate_nothing_in(&nothing_in, inputs.section_pos, &plan)?;
+                hook.quiet.declare(inputs.section_pos, &nothing_in);
+                Ok(FeatureOutcome::Plan(plan))
+            }
             other => Err(reply_shape("GenFeature", "GenOutput", &other)),
         })
         .unwrap_or(FeatureOutcome::Skipped)
+    }
+
+    /// Validates the section outputs a reply handed over and holds them for their sections.
+    fn hold_ahead(
+        &self,
+        hook: &FeatureHook,
+        ahead: Vec<mod_api::SectionOutput>,
+    ) -> Result<(), String> {
+        if ahead.len() > ahead::MAX_PER_REPLY {
+            return Err("generation output hands over too many sections".into());
+        }
+        let mut held = Vec::with_capacity(ahead.len());
+        for mod_api::SectionOutput {
+            section,
+            mut output,
+        } in ahead
+        {
+            if output.deferred || !output.ahead.is_empty() {
+                return Err(format!(
+                    "the output handed over for section {section:?} is deferred or nested"
+                ));
+            }
+            let nothing_in = std::mem::take(&mut output.nothing_in);
+            let plan = validated_writes(output, self.seed, self.epoch)?;
+            validate_nothing_in(&nothing_in, section, &plan)?;
+            hook.quiet.declare(section, &nothing_in);
+            held.push((section, plan));
+        }
+        hook.ahead.hold(held);
+        Ok(())
+    }
+
+    /// Every claim touching `min..=max` from the features that keep columns for themselves;
+    /// `None` when one is still being worked out on another worker.
+    pub fn claims(&self, min: [i32; 2], max: [i32; 2]) -> Option<Claims> {
+        let asked = mod_api::ColumnBox { min, max };
+        let tile = |v: i32| v.div_euclid(claims::TILE);
+        let mut found: Vec<Arc<mod_api::ColumnMask>> = Vec::new();
+        for hook in self.features.iter().filter(|h| h.filter.claims) {
+            for tz in tile(min[1])..=tile(max[1]) {
+                for tx in tile(min[0])..=tile(max[0]) {
+                    let tile_claims = match hook.claims.get([tx, tz]) {
+                        Some(tile_claims) => tile_claims,
+                        None => {
+                            let rect = claims::tile_box([tx, tz]);
+                            let call = GuestCall::GenClaims {
+                                feature_id: hook.feature_id,
+                                seed: self.seed,
+                                sea_level: SEA_LEVEL,
+                                min: rect.min,
+                                max: rect.max,
+                            };
+                            let reply = self.dispatch(hook.mod_idx, &call, |ret| match ret {
+                                GuestRet::GenClaims(mut reply) => {
+                                    self.hold_ahead(hook, std::mem::take(&mut reply.ahead))?;
+                                    claims::validated(reply)
+                                }
+                                other => Err(reply_shape("GenClaims", "GenClaims", &other)),
+                            });
+                            let tile_claims = match reply {
+                                Some(Some(tile_claims)) => tile_claims,
+                                Some(None) => return None,
+                                None => Arc::from([]),
+                            };
+                            hook.claims.put([tx, tz], Arc::clone(&tile_claims));
+                            tile_claims
+                        }
+                    };
+                    for mask in tile_claims.iter() {
+                        if mask.bounds.overlaps(&asked) && !found.iter().any(|m| **m == **mask) {
+                            found.push(Arc::clone(mask));
+                        }
+                    }
+                }
+            }
+        }
+        Some(Claims::new(found))
     }
 
     pub fn replace_stage(&self, stage: WorldgenStage, inputs: &GenInputs) -> FeatureOutcome {
@@ -155,7 +262,10 @@ impl GenHooks {
         };
         let call = self.stage_call(hook, stage, inputs);
         let res = self.dispatch(hook.mod_idx, &call, |ret| match ret {
-            GuestRet::GenOutput(w) => outcome(w, self.seed),
+            GuestRet::GenOutput(w) => Ok(match outcome(w, self.seed, self.epoch)? {
+                Some(plan) => FeatureOutcome::Plan(plan),
+                None => FeatureOutcome::Deferred,
+            }),
             other => Err(reply_shape("GenStage", "GenOutput", &other)),
         });
         match res {
@@ -335,25 +445,74 @@ fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
         GuestRet::BakedItem(_) => "BakedItem",
         GuestRet::ShapePlacement(_) => "ShapePlacement",
         GuestRet::Unsupported => "Unsupported",
+        GuestRet::GenClaims(_) => "GenClaims",
     };
     format!("{call} expected a {expected} reply, got {got}")
 }
 
-fn outcome(output: mod_api::GenOutput, seed: u32) -> Result<FeatureOutcome, String> {
+/// The output's validated writes; `None` when it deferred its section.
+fn outcome(
+    output: mod_api::GenOutput,
+    seed: u32,
+    epoch: u64,
+) -> Result<Option<GenerationPlan>, String> {
+    if !output.ahead.is_empty() {
+        return Err("only a feature may hand over outputs for other sections".into());
+    }
     if output.deferred {
         if !super::has_pending_key() {
             return Err("deferred its section without a pending memo claim to wait on".into());
         }
-        return Ok(FeatureOutcome::Deferred);
+        return Ok(None);
     }
-    validated_writes(output, seed).map(FeatureOutcome::Plan)
+    validated_writes(output, seed, epoch).map(Some)
 }
 
-fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationPlan, String> {
+fn validate_nothing_in(
+    nothing_in: &[mod_api::SectionBox],
+    section: [i32; 3],
+    plan: &GenerationPlan,
+) -> Result<(), String> {
+    if nothing_in.len() > MAX_GEN_BOXES {
+        return Err("generation output declares too many section boxes".into());
+    }
+    if let Some(bad) = nothing_in
+        .iter()
+        .find(|b| (0..3).any(|a| b.min[a] > b.max[a]))
+    {
+        return Err(format!(
+            "worldgen section box {:?}..={:?} is inverted",
+            bad.min, bad.max
+        ));
+    }
+    if !plan.is_empty() && nothing_in.iter().any(|b| b.contains(section)) {
+        return Err(format!(
+            "declared it writes nothing in section {section:?} while writing there"
+        ));
+    }
+    Ok(())
+}
+
+fn validated_writes(
+    output: mod_api::GenOutput,
+    seed: u32,
+    epoch: u64,
+) -> Result<GenerationPlan, String> {
     let registered = Block::all().len();
-    if output.blocks.len() > 262_144 || output.structures.len() > 256 || output.features.len() > 32
+    if output.blocks.len() + output.authored.cells.len() > MAX_GEN_WRITES
+        || output.fills.len() > MAX_GEN_FILLS
+        || output.structures.len() > 256
+        || output.features.len() > 32
     {
         return Err("generation output exceeds placement budget".into());
+    }
+    if let Some(bad) = output.fills.iter().find(|fill| {
+        fill.block.0 as usize >= registered || (0..3).any(|a| fill.min[a] > fill.max[a])
+    }) {
+        return Err(format!(
+            "worldgen fill {:?}..={:?} of block id {} is inverted or unregistered",
+            bad.min, bad.max, bad.block.0
+        ));
     }
     if let Some((_, bad)) = output
         .blocks
@@ -388,10 +547,104 @@ fn validated_writes(output: mod_api::GenOutput, seed: u32) -> Result<GenerationP
         })
         .collect::<Result<_, String>>()?;
     Ok(GenerationPlan {
+        fills: output.fills.iter().collect(),
         features,
+        authored: authored_cells(output.authored, registered, epoch)?,
         blocks: output.blocks.into_iter().map(|(p, id)| (p, id.0)).collect(),
         structures,
     })
+}
+
+const MAX_GEN_WRITES: usize = 262_144;
+const LAYOUT_CACHE_MAX: usize = 4096;
+
+type LayoutCache =
+    rustc_hash::FxHashMap<Box<[u8]>, Arc<[petramond_world::world::placement::CellWrite]>>;
+
+thread_local! {
+    /// Each authored palette entry's layout, by the entry's bytes, for the session `epoch`.
+    static LAYOUTS: RefCell<(u64, LayoutCache)> = RefCell::new((0, LayoutCache::default()));
+}
+const MAX_GEN_FILLS: usize = 4096;
+const MAX_GEN_BOXES: usize = 4096;
+
+/// Expands the authored palette through each block's own layout, exactly as a template's
+/// palette is, then attaches cell data to the cells those writes placed.
+fn authored_cells(
+    authored: mod_api::AuthoredWrites,
+    registered: usize,
+    epoch: u64,
+) -> Result<Vec<petramond_world::structure::Cell>, String> {
+    use petramond_world::world::placement::authored::{self, Expansion, Turn};
+    if authored.palette.len() > 4096 || authored.data.len() > MAX_GEN_WRITES {
+        return Err("authored generation output is malformed or exceeds its budget".into());
+    }
+    let layouts = LAYOUTS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let (cached_epoch, by_entry) = &mut *cache;
+        if *cached_epoch != epoch {
+            *cached_epoch = epoch;
+            by_entry.clear();
+        }
+        authored
+            .palette
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| {
+                let entry = entry.map_err(|()| "authored palette is malformed".to_string())?;
+                if entry.block.0 as usize >= registered {
+                    return Err(format!(
+                        "authored material {i} names unregistered block id {}",
+                        entry.block.0
+                    ));
+                }
+                if let Some(layout) = by_entry.get(entry.bytes) {
+                    return Ok(Arc::clone(layout));
+                }
+                let state = entry
+                    .state()
+                    .map(|(k, v)| (k.to_owned(), v.to_owned()))
+                    .collect();
+                let layout: Arc<[_]> =
+                    authored::layout(Block(entry.block.0), &state, Turn::default())
+                        .map_err(|e| format!("authored material {i}: {e}"))?
+                        .into();
+                if by_entry.len() >= LAYOUT_CACHE_MAX {
+                    by_entry.clear();
+                }
+                by_entry.insert(entry.bytes.into(), Arc::clone(&layout));
+                Ok(layout)
+            })
+            .collect::<Result<Vec<_>, String>>()
+    })?;
+    let mut expansion = Expansion::with_capacity(authored.cells.len());
+    for (pos, material) in authored.cells.iter() {
+        let layout = layouts
+            .get(material as usize)
+            .ok_or_else(|| format!("authored cell names missing material {material}"))?;
+        if expansion.writes() + layout.len() > MAX_GEN_WRITES {
+            return Err("authored footprints exceed the placement budget".into());
+        }
+        expansion.place(pos.into(), layout);
+    }
+    let mut cells = expansion.finish()?;
+    for datum in authored.data {
+        if !petramond_world::registry::is_namespaced(&datum.key)
+            || datum.key.len() > mod_api::KV_MAX_KEY_BYTES
+            || datum.value.len() > mod_api::KV_MAX_VALUE_BYTES
+        {
+            return Err(format!("invalid authored cell data '{}'", datum.key));
+        }
+        let cell = cells
+            .get_mut(datum.pos)
+            .ok_or_else(|| format!("cell data '{}' needs an authored cell", datum.key))?;
+        if cell.data.len() >= mod_api::CELL_KV_MAX_KEYS
+            || cell.data.insert(datum.key.clone(), datum.value).is_some()
+        {
+            return Err(format!("duplicate or excess cell data '{}'", datum.key));
+        }
+    }
+    Ok(cells.into_cells())
 }
 
 enum Slot {
@@ -465,6 +718,9 @@ impl GenHooksBuilder {
             feature_id,
             stage_idx: stage_index(stage),
             filter,
+            quiet: Default::default(),
+            claims: Default::default(),
+            ahead: Default::default(),
         });
     }
 
@@ -556,6 +812,9 @@ impl GenHookDispatch for GenHooks {
     }
     fn wait_deferred(&self) {
         super::wait_for_pending();
+    }
+    fn claims(&self, min: [i32; 2], max: [i32; 2]) -> Option<Claims> {
+        GenHooks::claims(self, min, max)
     }
 }
 

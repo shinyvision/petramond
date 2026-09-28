@@ -1,5 +1,6 @@
 use mod_api::calls;
 use mod_api::{BlockId, WorldgenStage};
+pub mod build;
 mod colony;
 mod terrain;
 pub use colony::{isqrt, smoothstep01, Colony, ColonyField};
@@ -105,6 +106,33 @@ pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
     }
 }
 
+/// [`terrain_heights_at`] over the inclusive column rectangle `min..=max`, row by row along x;
+/// `None` when the host refuses it (empty, or over [`TERRAIN_HEIGHTS_IN_MAX`](crate::TERRAIN_HEIGHTS_IN_MAX)
+/// columns).
+pub fn terrain_heights_in(min: [i32; 2], max: [i32; 2]) -> Option<Vec<i32>> {
+    match crate::__rt::host_call(&crate::HostCall::from(calls::TerrainHeightsIn { min, max })) {
+        crate::HostRet::TerrainHeightGrid(bytes) => Some(
+            bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&b| i32::from_le_bytes(b))
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
+/// What a [`GuestCall::GenClaims`](crate::GuestCall::GenClaims) asks about: the columns
+/// `min..=max` of the world `seed` generates.
+#[derive(Clone, Copy, Debug)]
+pub struct ClaimsCtx {
+    pub seed: u32,
+    pub sea_level: i32,
+    pub min: [i32; 2],
+    pub max: [i32; 2],
+}
+
 /// One worldgen dispatch's inputs, plus the accessors a well-behaved feature needs.
 /// Read the seam/determinism contract below before writing one. The engine can't check
 /// it for you, and a violation just shows up as features cut off at section borders.
@@ -190,7 +218,14 @@ impl GenCtx {
     }
 
     pub fn biome(&self, wx: i32, wz: i32) -> Option<u8> {
-        Some(self.biomes[self.column_index(wx, wz)?])
+        self.biomes.get(self.column_index(wx, wz)?).copied()
+    }
+
+    /// Whether this dispatch carries the section's column heights and biomes: a feature
+    /// registered `without_columns()` gets `None` from [`surface_y`](GenCtx::surface_y) and
+    /// [`biome`](GenCtx::biome).
+    pub fn has_columns(&self) -> bool {
+        self.surface_heights.len() == 256
     }
 
     pub fn biomes(&self) -> &[u8] {
@@ -257,6 +292,7 @@ impl GenRng {
         h
     }
 
+    #[inline]
     pub fn positional(seed: u32, salt: u64, wx: i32, wy: i32, wz: i32) -> Self {
         let z = splitmix64_mix(
             (seed as u64)
@@ -270,6 +306,7 @@ impl GenRng {
         }
     }
 
+    #[inline]
     pub fn next_u64(&mut self) -> u64 {
         let mut x = self.state;
         x ^= x << 13;
@@ -279,6 +316,7 @@ impl GenRng {
         x
     }
 
+    #[inline]
     pub fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
     }

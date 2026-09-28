@@ -28,7 +28,7 @@ pub(crate) struct RegionTile {
 
 pub(crate) type TileKey = (crate::cache::GenContext, [i32; 2]);
 
-fn cached_tile(
+pub(crate) fn cached_tile(
     surface: &SurfaceDensitySystem,
     caves: &crate::noise::cave_field::CaveField,
     tcx: i32,
@@ -50,6 +50,13 @@ fn cached_tile(
         tile.biomes.copy_from_slice(&bulk.biomes);
         Arc::new(tile)
     })
+}
+
+impl RegionTile {
+    /// The tile's raw (pre-cave) surface heights, row-major within the tile.
+    pub(crate) fn raw(&self) -> &[i32; 256] {
+        &self.raw
+    }
 }
 
 pub(crate) fn cached_tile_raw(

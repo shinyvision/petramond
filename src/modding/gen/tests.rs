@@ -7,25 +7,24 @@ fn invalid_plan_members_reject_the_whole_generation_output() {
     let good = ([0, 0, 0], mod_api::BlockId(Block::Stone.id()));
     assert!(validated_writes(
         mod_api::GenOutput {
-            features: Vec::new(),
             blocks: vec![good, ([1, 0, 0], mod_api::BlockId(u16::MAX))],
-            structures: Vec::new(),
-            deferred: false,
+            ..Default::default()
         },
+        1,
         1
     )
     .is_err());
     assert!(validated_writes(
         mod_api::GenOutput {
-            features: Vec::new(),
             blocks: vec![good],
             structures: vec![mod_api::StructurePlacement {
                 template: "fixture:missing".into(),
                 origin: [0, 0, 0],
                 turn: 0,
             }],
-            deferred: false,
+            ..Default::default()
         },
+        1,
         1
     )
     .is_err());
@@ -144,5 +143,74 @@ fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
         board.disabled_count(),
         1,
         "disabled once, not once per thread"
+    );
+}
+
+#[test]
+fn authored_writes_keep_state_and_data_across_the_sections_they_span() {
+    use petramond_world::block::CellView;
+    use petramond_world::block_state::StairState;
+    use petramond_world::door::DoorState;
+    use petramond_world::facing::Facing;
+    use petramond_world::section::Section;
+
+    let mut palette = mod_api::AuthoredPalette::default();
+    palette.push(
+        mod_api::BlockId(Block::OakStairs.id()),
+        [("facing", "east"), ("half", "top")],
+    );
+    palette.push(
+        mod_api::BlockId(Block::OakDoor.id()),
+        [("facing", "south"), ("open", "true")],
+    );
+    let authored = mod_api::AuthoredWrites {
+        palette,
+        cells: [([3, 15, 0], 0), ([5, 15, 0], 1)].into_iter().collect(),
+        data: vec![mod_api::AuthoredData {
+            pos: [3, 15, 0],
+            key: "fixture:once".into(),
+            value: b"1".to_vec(),
+        }],
+    };
+    let plan = validated_writes(
+        mod_api::GenOutput {
+            authored: authored.clone(),
+            ..Default::default()
+        },
+        1,
+        1,
+    )
+    .expect("authored writes validate");
+    let mut lower = Section::new(0, 0, 0);
+    let mut upper = Section::new(0, 1, 0);
+    petramond_worldgen::feature::apply_gen_plan(&mut upper, &plan);
+    petramond_worldgen::feature::apply_gen_plan(&mut lower, &plan);
+
+    let stair = StairState::from_cell(lower.cell_state(3, 15, 0));
+    assert_eq!(lower.block(3, 15, 0), Block::OakStairs);
+    assert_eq!(stair.facing, Facing::East);
+    assert_eq!(
+        lower.cell_kv_get(3, 15, 0, "fixture:once"),
+        Some(b"1".as_slice())
+    );
+    for (section, y, top) in [(&lower, 15, false), (&upper, 0, true)] {
+        assert_eq!(section.block(5, y, 0), Block::OakDoor);
+        let door = DoorState::from_cell(section.cell_state(5, y, 0));
+        assert_eq!(
+            (door.facing, door.open, door.top),
+            (Facing::South, true, top)
+        );
+    }
+
+    let mut cut = authored;
+    cut.palette.push(mod_api::BlockId(Block::Stone.id()), []);
+    cut.cells.push([5, 16, 0], 2);
+    let partial = mod_api::GenOutput {
+        authored: cut,
+        ..Default::default()
+    };
+    assert!(
+        validated_writes(partial, 1, 1).is_err(),
+        "half a door is rejected"
     );
 }

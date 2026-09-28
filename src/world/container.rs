@@ -2,7 +2,65 @@ use crate::world::{World, WorldSide};
 use petramond_math::math::IVec3;
 use petramond_world::container::Container;
 
+/// Cell data naming the loot table a generated container is stocked from: `{"table": "<key>"}`.
+pub const LOOT_KEY: &str = "petramond:loot";
+
+#[derive(serde::Deserialize)]
+struct LootMarker {
+    table: String,
+}
+
 impl<S: WorldSide> World<S> {
+    /// Stocks a container from the loot table its [`LOOT_KEY`] cell data names, once: the data is
+    /// consumed with the roll, so a looted container never refills, whether the world was saved
+    /// in between or not.
+    pub fn stock_loot(&mut self, pos: IVec3) {
+        let Some(bytes) = self.data.cell_kv_get(pos.x, pos.y, pos.z, LOOT_KEY) else {
+            return;
+        };
+        let marker = serde_json::from_slice::<LootMarker>(bytes);
+        self.cell_kv_remove(pos.x, pos.y, pos.z, LOOT_KEY);
+        let Ok(marker) = marker else {
+            log::warn!("{LOOT_KEY} at {pos:?} is not {{\"table\": \"<key>\"}}");
+            return;
+        };
+        let mut rng = petramond_worldgen::FeatureRng::positional(
+            self.data.seed,
+            0x1007_7ab1e,
+            pos.x,
+            pos.y,
+            pos.z,
+        );
+        let Some(stacks) = petramond_world::loot::catalog().roll(&marker.table, || rng.next_u64())
+        else {
+            log::warn!(
+                "{LOOT_KEY} at {pos:?} names unknown loot table '{}'",
+                marker.table
+            );
+            return;
+        };
+        let len = self
+            .container_at(pos)
+            .map_or(crate::world::chest::CHEST_SLOTS, |c| c.slots.len());
+        if !self.ensure_container(pos, len) {
+            return;
+        }
+        let Some(container) = self.container_at_mut(pos) else {
+            return;
+        };
+        let mut free: Vec<usize> = (0..container.slots.len())
+            .filter(|&i| container.slots[i].is_none())
+            .collect();
+        for i in (1..free.len()).rev() {
+            free.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
+        }
+        for stack in stacks {
+            let Some(slot) = free.pop() else { break };
+            container.slots[slot] = Some(stack);
+        }
+        self.mark_chunk_modified(pos);
+    }
+
     pub fn container_at(&self, pos: IVec3) -> Option<&Container> {
         let (c, lx, ly, lz) = self.data.chunk_at_world(pos.x, pos.y, pos.z)?;
         c.container_at(lx, ly, lz)
@@ -57,3 +115,6 @@ impl<S: WorldSide> World<S> {
             .unwrap_or(pos)
     }
 }
+
+#[cfg(test)]
+mod tests;

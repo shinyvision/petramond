@@ -4,7 +4,11 @@ mod host;
 #[cfg(test)]
 mod tests;
 
-pub use guest::{FeaturePlacement, GenOutput, GenWrite, GuestRet, HostCall, StructurePlacement};
+pub use guest::{
+    AuthoredCells, AuthoredData, AuthoredEntry, AuthoredPalette, AuthoredWrites, ColumnBox,
+    ColumnMask, FeaturePlacement, GenClaims, GenFill, GenFills, GenOutput, GenWrite, GuestRet,
+    HostCall, SectionBox, SectionOutput, StructurePlacement,
+};
 pub use host::{
     calls, decode_host_call, ActorCall, BlockCall, BodyCall, ClientCall, ClientCaptureCall,
     ClientFileCall, ClientMediaCall, ClientPresentationCall, ConditionCall, ConstructionCall,

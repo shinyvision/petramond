@@ -56,5 +56,14 @@ host_domain! {
         TerrainSectionAt {
             section: [i32; 3],
         } => legal(SERVER_WORLDGEN, Any, Read),
+        /// The top solid block's y of every column in the inclusive rectangle `min..=max`
+        /// (`[x, z]`), row by row along x, at most
+        /// [`TERRAIN_HEIGHTS_IN_MAX`](crate::TERRAIN_HEIGHTS_IN_MAX) columns: the same heights as
+        /// [`WorldgenCall::TerrainHeightsAt`] without sending a position per column.
+        /// → [`HostRet::TerrainHeightGrid`](crate::HostRet::TerrainHeightGrid).
+        TerrainHeightsIn {
+            min: [i32; 2],
+            max: [i32; 2],
+        } => legal(SERVER_WORLDGEN, Any, Read),
     }
 }

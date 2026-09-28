@@ -13,7 +13,8 @@ use super::super::rng::FeatureRng;
 use super::tree::{redwood_base_trunk_contains, REDWOOD_BASE_SUPPORT_REACH};
 #[cfg(test)]
 use super::SectionSink;
-use super::{FeatureCtx, FeatureField, TREELINE};
+use super::{FeatureCtx, FeatureField, VoxelSink, TREELINE};
+use crate::hooks::Claims;
 
 use crate::salts;
 
@@ -309,12 +310,30 @@ pub(super) fn place_features_section(
     let (ox, _oy, oz) = section.origin_world();
     let mut sink = SectionSink::new(section);
     let mut ctx = FeatureCtx::new(&mut sink);
-    place_feature_origins(&mut ctx, field, seed, ox, oz);
+    place_feature_origins(&mut ctx, field, &Claims::default(), seed, ox, oz);
+}
+
+/// Records where a tree would write, to test it against the claims before placing it: every
+/// column that replays the origin reaches the same answer.
+struct ClaimProbe<'a> {
+    claims: &'a Claims,
+    hit: bool,
+}
+
+impl VoxelSink for ClaimProbe<'_> {
+    fn get(&self, _: IVec3) -> Block {
+        Block::Air
+    }
+
+    fn set(&mut self, p: IVec3, _: Block) {
+        self.hit |= self.claims.claimed([p.x, p.z]);
+    }
 }
 
 pub(crate) fn place_feature_origins(
     ctx: &mut FeatureCtx,
     field: &mut impl FeatureField,
+    claims: &Claims,
     seed: u32,
     ox: i32,
     oz: i32,
@@ -344,13 +363,26 @@ pub(crate) fn place_feature_origins(
             {
                 continue;
             }
+            if claims.near([wx, wz], margin) {
+                let mut probe = ClaimProbe { claims, hit: false };
+                let mut probe_rng = rng;
+                cf.feature.generate(
+                    &mut FeatureCtx::new(&mut probe),
+                    &mut |p: IVec3| p.y > field.surf_at(p.x, p.z),
+                    origin,
+                    &mut probe_rng,
+                );
+                if probe.hit {
+                    continue;
+                }
+            }
             cf.feature.generate(
                 ctx,
                 &mut |p: IVec3| p.y > field.surf_at(p.x, p.z),
                 origin,
                 &mut rng,
             );
-            scatter_fallen_branches(ctx, field, seed, wx, wz);
+            scatter_fallen_branches(ctx, field, claims, seed, wx, wz);
         }
     }
 }
@@ -358,6 +390,7 @@ pub(crate) fn place_feature_origins(
 fn scatter_fallen_branches(
     ctx: &mut FeatureCtx,
     field: &mut impl FeatureField,
+    claims: &Claims,
     seed: u32,
     wx: i32,
     wz: i32,
@@ -372,6 +405,9 @@ fn scatter_fallen_branches(
             continue;
         }
         let (sx, sz) = (wx + dx, wz + dz);
+        if claims.claimed([sx, sz]) {
+            continue;
+        }
         let (surf, biome) = field.column_at(sx, sz);
         if surf <= SEA_LEVEL {
             continue;

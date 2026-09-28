@@ -31,18 +31,41 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: WorldgenCall) 
                 ),
             }
         }
-        WorldgenCall::TerrainSectionAt { section } => HostRet::SectionBlocks(
-            petramond_worldgen::terrain_section_at(data.world_seed(), section)
-                .into_iter()
-                .flat_map(u16::to_le_bytes)
-                .collect(),
-        ),
+        WorldgenCall::TerrainSectionAt { section } => {
+            let ids = petramond_worldgen::terrain_section_at(data.world_seed(), section);
+            let mut bytes = vec![0u8; ids.len() * 2];
+            for (out, id) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(ids) {
+                *out = id.to_le_bytes();
+            }
+            HostRet::SectionBlocks(bytes)
+        }
         WorldgenCall::TerrainHeightsAt { columns } => {
             match batch_guard("TerrainHeightsAt column", columns.len()) {
                 Some(err) => err,
                 None => HostRet::TerrainHeights(petramond_worldgen::terrain_heights_at(
                     data.world_seed(),
                     &columns,
+                )),
+            }
+        }
+        WorldgenCall::TerrainHeightsIn { min, max } => {
+            let columns = (0..2).try_fold(1usize, |n, a| {
+                let side = usize::try_from(i64::from(max[a]) - i64::from(min[a]) + 1).ok()?;
+                n.checked_mul(side)
+            });
+            match columns {
+                Some(n) if n > 0 && n <= mod_api::TERRAIN_HEIGHTS_IN_MAX => {
+                    let heights =
+                        petramond_worldgen::terrain_heights_in(data.world_seed(), min, max);
+                    let mut bytes = vec![0u8; heights.len() * 4];
+                    for (out, y) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(heights) {
+                        *out = y.to_le_bytes();
+                    }
+                    HostRet::TerrainHeightGrid(bytes)
+                }
+                _ => HostRet::invalid(format!(
+                    "TerrainHeightsIn {min:?}..={max:?} is empty or over {} columns",
+                    mod_api::TERRAIN_HEIGHTS_IN_MAX
                 )),
             }
         }

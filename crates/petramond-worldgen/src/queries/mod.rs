@@ -3,7 +3,7 @@ use mod_api::TerrainSpace;
 use crate::{cache, density, driver, feature, noise, section_memo};
 
 mod terrain;
-pub use terrain::{blocks_at, heights_at, section_blocks};
+pub use terrain::{blocks_at, heights_at, heights_in, section_blocks};
 
 pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
     let generator = driver::ChunkGenerator::shared(seed);
@@ -130,8 +130,25 @@ fn terrain_samples_in(
         }
     }
     if !sparse.is_empty() {
-        let mut fills = Vec::new();
-        caves.cave_fill_batch(&sparse, &mut fills);
+        let carved: Vec<([i32; 3], i32)> = sparse_idx
+            .iter()
+            .zip(&sparse)
+            .filter(|(&i, _)| !no_carve[i as usize])
+            .map(|(_, q)| *q)
+            .collect();
+        let mut carved_fills = Vec::new();
+        caves.cave_fill_batch(&carved, &mut carved_fills);
+        let mut carved_fills = carved_fills.into_iter();
+        let fills: Vec<_> = sparse_idx
+            .iter()
+            .map(|&i| {
+                if no_carve[i as usize] {
+                    None
+                } else {
+                    carved_fills.next().flatten()
+                }
+            })
+            .collect();
         for (k, &i) in sparse_idx.iter().enumerate() {
             let (p, surf_y) = queries[i as usize];
             space[i as usize] = match caves.field_space_at(p) {

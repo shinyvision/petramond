@@ -382,6 +382,8 @@ pub enum HostRet {
     ClientPacks(Vec<crate::ClientPackInfo>),
     ClientWallClock(crate::ClientWallTime),
     ClientFolder(Option<crate::ClientFolderInfo>),
+    /// Heights as little-endian `i32`s, row by row: answers `TerrainHeightsIn`.
+    TerrainHeightGrid(#[serde(with = "serde_bytes")] Vec<u8>),
 }
 
 impl HostRet {

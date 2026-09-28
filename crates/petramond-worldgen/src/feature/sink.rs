@@ -131,33 +131,79 @@ pub type ChunkSink<'a> = ClippedSink<'a, Chunk>;
 pub type SectionSink<'a> = ClippedSink<'a, Section>;
 
 pub fn apply_gen_writes(section: &mut Section, writes: &[([i32; 3], u16)]) {
-    let mut sink = SectionSink::new(section);
-    for &([x, y, z], id) in writes {
-        sink.set(IVec3::new(x, y, z), Block(id));
-    }
+    let (origin, _) = section.world_box();
+    section.set_blocks_raw(writes.iter().filter_map(|&(pos, id)| {
+        let d = IVec3::from(pos) - origin;
+        ((d.x as u32 | d.y as u32 | d.z as u32) < SECTION_SIZE as u32)
+            .then_some(([d.x as usize, d.y as usize, d.z as usize], id))
+    }));
 }
 
 pub fn apply_gen_plan(section: &mut Section, plan: &crate::hooks::GenerationPlan) {
     let modified = section.modified;
-    apply_gen_writes(section, &plan.blocks);
-    for feature in &plan.features {
-        feature.apply(section);
-    }
     let (origin, size) = section.world_box();
+    for fill in &plan.fills {
+        let lo = IVec3::from(fill.min).max(origin) - origin;
+        let hi = IVec3::from(fill.max).min(origin + size - IVec3::ONE) - origin;
+        if lo.cmple(hi).all() {
+            let local = |v: IVec3| v.to_array().map(|c| c as usize);
+            section.fill_box(local(lo), local(hi), fill.block.0);
+        }
+    }
+    apply_gen_writes(section, &plan.blocks);
     let clip = petramond_world::structure::Bounds {
         min: origin,
         max: origin + size - IVec3::ONE,
     };
-    for placement in &plan.structures {
-        placement.visit(clip, |pos, cell| {
-            let local = pos - origin;
-            let (x, y, z) = (local.x as usize, local.y as usize, local.z as usize);
-            section.set_block(x, y, z, cell.block);
-            section.set_cell_state(x, y, z, cell.state);
+    let local = |pos: IVec3| {
+        let d = pos - origin;
+        ((d.x as u32 | d.y as u32 | d.z as u32) < SECTION_SIZE as u32).then_some([
+            d.x as usize,
+            d.y as usize,
+            d.z as usize,
+        ])
+    };
+    section.set_blocks_raw(
+        plan.authored
+            .iter()
+            .filter_map(|cell| Some((local(cell.pos)?, cell.block.id()))),
+    );
+    let mut states = Vec::new();
+    for cell in &plan.authored {
+        if cell.state.is_empty() && cell.data.is_empty() {
+            continue;
+        }
+        if let Some([x, y, z]) = local(cell.pos) {
+            if !cell.state.is_empty() {
+                states.push((
+                    petramond_world::chunk::section_idx(x, y, z) as u16,
+                    cell.state,
+                ));
+            }
             for (key, value) in &cell.data {
                 section.cell_kv_set(x, y, z, key.clone(), value.clone());
             }
+        }
+    }
+    section.extend_cell_states(states);
+    for feature in &plan.features {
+        feature.apply(section);
+    }
+    for placement in &plan.structures {
+        placement.visit(clip, |pos, cell| {
+            write_authored(section, pos - origin, cell)
         });
     }
     section.modified = modified;
+}
+
+fn write_authored(section: &mut Section, local: IVec3, cell: &petramond_world::structure::Cell) {
+    let (x, y, z) = (local.x as usize, local.y as usize, local.z as usize);
+    section.set_block(x, y, z, cell.block);
+    if !cell.state.is_empty() {
+        section.set_cell_state(x, y, z, cell.state);
+    }
+    for (key, value) in &cell.data {
+        section.cell_kv_set(x, y, z, key.clone(), value.clone());
+    }
 }

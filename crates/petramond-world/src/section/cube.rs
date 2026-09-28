@@ -86,6 +86,17 @@ impl BlockCube {
         (0..self.len()).map(move |i| self.get(i))
     }
 
+    /// Whether the `len` cells from `start` all hold `id`.
+    #[inline]
+    pub fn run_is(&self, start: usize, len: usize, id: u16) -> bool {
+        match &self.repr {
+            Repr::Narrow(b) => {
+                id <= NARROW_MAX && b[start..start + len].iter().all(|&v| v == id as u8)
+            }
+            Repr::Wide(b) => b[start..start + len].iter().all(|&v| v == id),
+        }
+    }
+
     #[inline]
     pub fn set(&mut self, i: usize, id: u16) {
         match &mut self.repr {
@@ -127,9 +138,61 @@ impl BlockCube {
         matches!(self.repr, Repr::Narrow(_))
     }
 
+    /// The cells, writable, for ids up to `max_id`: a narrow cube that can't hold it widens.
+    pub fn cells_mut(&mut self, max_id: u16) -> CubeCells<'_> {
+        if max_id > NARROW_MAX {
+            self.widen();
+        }
+        match &mut self.repr {
+            Repr::Narrow(b) => CubeCells::Narrow(Arc::make_mut(b)),
+            Repr::Wide(b) => CubeCells::Wide(Arc::make_mut(b)),
+        }
+    }
+
     fn widen(&mut self) {
         if let Repr::Narrow(b) = &self.repr {
             self.repr = Repr::Wide(b.iter().map(|&v| v as u16).collect());
+        }
+    }
+}
+
+/// A [`BlockCube`]'s cells borrowed for a batch of writes.
+pub enum CubeCells<'a> {
+    Narrow(&'a mut [u8]),
+    Wide(&'a mut [u16]),
+}
+
+impl CubeCells<'_> {
+    #[inline]
+    pub fn get(&self, i: usize) -> u16 {
+        match self {
+            CubeCells::Narrow(b) => b[i] as u16,
+            CubeCells::Wide(b) => b[i],
+        }
+    }
+
+    /// Writes `id`, which must fit the width the cells were borrowed for.
+    #[inline]
+    pub fn set(&mut self, i: usize, id: u16) {
+        match self {
+            CubeCells::Narrow(b) => b[i] = id as u8,
+            CubeCells::Wide(b) => b[i] = id,
+        }
+    }
+
+    /// Whether these cells can hold `id` without widening.
+    #[inline]
+    pub fn holds(&self, id: u16) -> bool {
+        matches!(self, CubeCells::Wide(_)) || id <= NARROW_MAX
+    }
+
+    #[inline]
+    pub fn run_is(&self, start: usize, len: usize, id: u16) -> bool {
+        match self {
+            CubeCells::Narrow(b) => {
+                id <= NARROW_MAX && b[start..start + len].iter().all(|&v| v == id as u8)
+            }
+            CubeCells::Wide(b) => b[start..start + len].iter().all(|&v| v == id),
         }
     }
 }

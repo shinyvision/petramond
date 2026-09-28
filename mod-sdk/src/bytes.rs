@@ -10,32 +10,39 @@ impl ByteWriter {
         ByteWriter(Vec::with_capacity(capacity))
     }
 
+    #[inline]
     pub fn u16(&mut self, v: u16) {
         self.0.extend(v.to_le_bytes());
     }
 
+    #[inline]
     pub fn u32(&mut self, v: u32) {
         self.0.extend(v.to_le_bytes());
     }
 
+    #[inline]
     pub fn i32(&mut self, v: i32) {
         self.0.extend(v.to_le_bytes());
     }
 
+    #[inline]
     pub fn f32(&mut self, v: f32) {
         self.0.extend(v.to_le_bytes());
     }
 
+    #[inline]
     pub fn i32x3(&mut self, v: [i32; 3]) {
         for c in v {
             self.i32(c);
         }
     }
 
+    #[inline]
     pub fn raw(&mut self, bytes: &[u8]) {
         self.0.extend_from_slice(bytes);
     }
 
+    #[inline]
     pub fn blob(&mut self, bytes: &[u8]) {
         let len = bytes.len().min(u16::MAX as usize);
         self.u16(len as u16);
@@ -57,32 +64,45 @@ impl<'a> ByteReader<'a> {
         ByteReader { bytes, at: 0 }
     }
 
+    /// How many bytes have been read so far.
+    #[inline]
+    pub fn position(&self) -> usize {
+        self.at
+    }
+
+    #[inline]
     pub fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let value = self.bytes.get(self.at..self.at + n)?;
         self.at += n;
         Some(value)
     }
 
+    #[inline]
     pub fn u16(&mut self) -> Option<u16> {
         Some(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
 
+    #[inline]
     pub fn u32(&mut self) -> Option<u32> {
         Some(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 
+    #[inline]
     pub fn i32(&mut self) -> Option<i32> {
         Some(i32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 
+    #[inline]
     pub fn f32(&mut self) -> Option<f32> {
         Some(f32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
 
+    #[inline]
     pub fn i32x3(&mut self) -> Option<[i32; 3]> {
         Some([self.i32()?, self.i32()?, self.i32()?])
     }
 
+    #[inline]
     pub fn blob(&mut self) -> Option<&'a [u8]> {
         let len = self.u16()? as usize;
         self.take(len)

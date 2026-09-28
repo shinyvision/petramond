@@ -23,6 +23,15 @@ impl Section {
         self.modified = true;
     }
 
+    /// [`set_cell_state`](Self::set_cell_state) for every `(cell index, state)` in order, none
+    /// of them empty.
+    pub fn extend_cell_states(&mut self, states: Vec<(u16, ShapeState)>) {
+        if !states.is_empty() {
+            self.states.extend_cell_states(states);
+            self.modified = true;
+        }
+    }
+
     #[inline]
     pub fn cell_states(&self) -> &CellMap<ShapeState> {
         self.states.cell_states()

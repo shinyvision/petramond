@@ -42,7 +42,13 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": {
+        "petramond:material": {
+          "family": "mushroom",
+          "form": "log"
+        }
+      }
     },
     {
       "block": "exploration:glowcap_pink",
@@ -879,7 +885,13 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": {
+        "petramond:material": {
+          "family": "mushroom",
+          "form": "block"
+        }
+      }
     },
     {
       "block": "exploration:mushroom_stairs",
@@ -908,7 +920,13 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": {
+        "petramond:material": {
+          "family": "mushroom",
+          "form": "stairs"
+        }
+      }
     },
     {
       "block": "exploration:mushroom_slab",
@@ -937,7 +955,13 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": {
+        "petramond:material": {
+          "family": "mushroom",
+          "form": "slab"
+        }
+      }
     },
     {
       "block": "exploration:mushroom_door",
@@ -980,7 +1004,13 @@
           "max": 1,
           "chance": 1.0
         }
-      ]
+      ],
+      "data": {
+        "petramond:material": {
+          "family": "mushroom",
+          "form": "door"
+        }
+      }
     },
     {
       "block": "exploration:torch_pink",

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::block::Block;
 use crate::mathh::IVec3;
-use crate::world::placement::authored::{Inputs, Turn};
+use crate::world::placement::authored::{self, Expansion, Inputs, Turn};
 
-use super::{schema, Bounds, Cell, Connector, Template, Variant};
+use super::{schema, Bounds, Connector, Template, Variant};
 
 const MAX_VOLUME: usize = 131_072;
 const MAX_OPERATIONS: usize = 262_144;
@@ -122,64 +122,31 @@ pub(super) fn compile(
             let layouts = palette
                 .iter()
                 .map(|(&key, (block, state))| {
-                    let mut inputs = Inputs::new(IVec3::ZERO, turn, state);
-                    let plan = block
-                        .shape_kind_def()
-                        .placement
-                        .authored_plan(*block, &mut inputs)
-                        .map_err(|e| format!("palette '{key}': {e}"))?;
-                    inputs
-                        .finish()
-                        .map_err(|e| format!("palette '{key}': {e}"))?;
-                    Ok((key, plan.writes))
+                    authored::layout(*block, state, turn)
+                        .map(|writes| (key, writes))
+                        .map_err(|e| format!("palette '{key}': {e}"))
                 })
                 .collect::<Result<BTreeMap<_, _>, String>>()?;
-            let mut cells = BTreeMap::new();
-            let mut owner_sizes = Vec::with_capacity(entries.len());
-            let mut expanded_writes = 0;
+            let mut expansion = Expansion::default();
             for &(pos, key) in &entries {
                 let writes = layouts
                     .get(key)
                     .ok_or_else(|| format!("unknown palette entry '{key}'"))?;
-                expanded_writes += writes.len();
-                if expanded_writes > MAX_OPERATIONS {
+                if expansion.writes() + writes.len() > MAX_OPERATIONS {
                     return Err("expanded object footprints exceed operation budget".into());
                 }
                 let anchor = turn.apply(pos - pivot);
-                let owner = owner_sizes.len();
-                owner_sizes.push(writes.len());
-                for write in writes {
-                    let cell = anchor + write.cell;
-                    if !rotated_bounds.contains(cell) {
-                        return Err(format!(
-                            "'{key}' footprint extends outside template at {pos:?}"
-                        ));
-                    }
-                    cells.insert(
-                        cell.to_array(),
-                        (
-                            owner,
-                            Cell {
-                                pos: cell,
-                                block: write.block,
-                                state: write.state,
-                                data: BTreeMap::new(),
-                            },
-                        ),
-                    );
+                if writes
+                    .iter()
+                    .any(|write| !rotated_bounds.contains(anchor + write.cell))
+                {
+                    return Err(format!(
+                        "'{key}' footprint extends outside template at {pos:?}"
+                    ));
                 }
+                expansion.place(anchor, writes);
             }
-            let mut surviving = vec![0; owner_sizes.len()];
-            for (owner, _) in cells.values() {
-                surviving[*owner] += 1;
-            }
-            if surviving
-                .iter()
-                .zip(owner_sizes)
-                .any(|(&left, total)| left != 0 && left != total)
-            {
-                return Err("an overlay cuts through a multi-cell object".into());
-            }
+            let mut cells = expansion.finish()?;
             for marker in &raw.markers {
                 if !crate::registry::is_namespaced(&marker.key)
                     || marker.key.len() > mod_api::KV_MAX_KEY_BYTES
@@ -188,7 +155,7 @@ pub(super) fn compile(
                     return Err(format!("invalid marker '{}'", marker.key));
                 }
                 let pos = turn.apply(IVec3::from(marker.pos) - pivot);
-                let Some((_, cell)) = cells.get_mut(&pos.to_array()) else {
+                let Some(cell) = cells.get_mut(pos.to_array()) else {
                     return Err(format!(
                         "marker '{}' needs an authored cell at {:?}",
                         marker.key, marker.pos
@@ -218,7 +185,7 @@ pub(super) fn compile(
                 .collect::<Result<_, String>>()?;
             Ok(Variant {
                 bounds: rotated_bounds,
-                cells: cells.into_values().map(|(_, cell)| cell).collect(),
+                cells: cells.into_cells(),
                 connectors,
             })
         })

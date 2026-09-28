@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use mod_api::WorldgenStage;
 
 use crate::colgen::{ColumnCore, MESH_BIOME_RADIUS, MESH_BIOME_SIDE};
-use crate::hooks::{FeatureOutcome, GenHookDispatch, GenInputs};
+use crate::hooks::{Claims, FeatureOutcome, GenHookDispatch, GenInputs};
 use petramond_world::chunk::{
     idx, Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SEA_LEVEL, SECTION_SIZE,
 };
@@ -497,7 +497,7 @@ impl ChunkGenerator {
             }
             WorldgenStage::Trees => {
                 if !self.run_stage_replacement(stage, sp, section, col)? {
-                    self.place_trees(sp, section, col);
+                    self.place_trees(sp, section, col)?;
                 }
             }
             WorldgenStage::Climate => {}
@@ -538,7 +538,12 @@ impl ChunkGenerator {
         }
     }
 
-    fn place_trees(&self, sp: SectionPos, section: &mut Section, col: &ColumnGen) {
+    fn place_trees(
+        &self,
+        sp: SectionPos,
+        section: &mut Section,
+        col: &ColumnGen,
+    ) -> Result<(), Deferred> {
         let sec_lo = sp.cy * SECTION_SIZE as i32;
         let sec_hi = sec_lo + SECTION_SIZE as i32 - 1;
         let anchor_lo = col.core.cand_surf_min.max(SEA_LEVEL + 1);
@@ -546,7 +551,7 @@ impl ChunkGenerator {
         if anchor_lo > anchor_hi
             || !ranges_overlap(sec_lo, sec_hi, anchor_lo, anchor_hi + MAX_TREE_REACH_ABOVE)
         {
-            return;
+            return Ok(());
         }
         let rebuilt;
         let windows = match &col.feature_windows {
@@ -556,14 +561,38 @@ impl ChunkGenerator {
                 &rebuilt
             }
         };
-        let plan = windows.plan.get_or_init(|| {
-            let mut field = ColumnFeatureField::new(&windows.candidates, windows.support.as_ref());
-            let (ox, oz) = (sp.cx * SECTION_SIZE as i32, sp.cz * SECTION_SIZE as i32);
-            FeaturePlan::record(sp.cx, sp.cz, |ctx| {
-                super::feature::place_trees(ctx, &mut field, self.seed, ox, oz)
-            })
-        });
+        let (ox, oz) = (sp.cx * SECTION_SIZE as i32, sp.cz * SECTION_SIZE as i32);
+        let plan = match windows.plan.get() {
+            Some(plan) => plan,
+            None => {
+                let claims = self.tree_claims(ox, oz)?;
+                windows.plan.get_or_init(|| {
+                    let mut field =
+                        ColumnFeatureField::new(&windows.candidates, windows.support.as_ref());
+                    FeaturePlan::record(sp.cx, sp.cz, |ctx| {
+                        super::feature::place_trees(ctx, &mut field, &claims, self.seed, ox, oz)
+                    })
+                })
+            }
+        };
         plan.apply(section);
+        Ok(())
+    }
+
+    /// The claims every tree this column plans could reach: its origins lie within
+    /// [`feature::MARGIN`](super::feature::MARGIN) of the column, and each reaches as far again.
+    fn tree_claims(&self, ox: i32, oz: i32) -> Result<Claims, Deferred> {
+        let Some(hooks) = &self.hooks else {
+            return Ok(Claims::default());
+        };
+        let reach = 2 * super::feature::MARGIN;
+        let side = SECTION_SIZE as i32;
+        hooks
+            .claims(
+                [ox - reach, oz - reach],
+                [ox + side - 1 + reach, oz + side - 1 + reach],
+            )
+            .ok_or(Deferred { feature: 0 })
     }
 
     fn replaced_terrain_fill(&self, sp: SectionPos, col: &ColumnGen) -> Option<Vec<u16>> {

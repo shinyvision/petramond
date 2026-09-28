@@ -89,8 +89,15 @@ pub fn host_call_reply(call: &HostCall) -> Answer {
     if let Some(ret) = crate::testing::answer_natively(call) {
         return Answer::Native(ret);
     }
-    let request = mod_api::encode(call).expect("encode host call");
-    let packed = unsafe { host_dispatch(request.as_ptr() as u32, request.len() as u32) };
+    let packed = WIRE.with(|buf| {
+        // A host call made while this buffer is borrowed (from inside an encode) gets its own.
+        let Ok(mut buf) = buf.try_borrow_mut() else {
+            let request = mod_api::encode(call).expect("encode host call");
+            return unsafe { host_dispatch(request.as_ptr() as u32, request.len() as u32) };
+        };
+        let len = mod_api::encode_into(call, &mut buf).expect("encode host call");
+        unsafe { host_dispatch(buf.as_ptr() as u32, len as u32) }
+    });
     let (ptr, len) = mod_api::unpack_ptr_len(packed);
     Answer::Guest(Reply { ptr, len })
 }
@@ -223,7 +230,17 @@ pub fn dispatch<T: crate::Mod>(slot: &ModSlot<T>, ptr: u32, len: u32) -> u64 {
         Decoded::Known(call) => dispatch_call(mod_, call),
         Decoded::Unknown { .. } => GuestRet::Unsupported,
     };
-    to_wire(&mod_api::encode(&ret).expect("encode guest reply"))
+    WIRE.with(|buf| {
+        let mut buf = buf.borrow_mut();
+        let len = mod_api::encode_into(&ret, &mut buf).expect("encode guest reply");
+        to_wire(&buf[..len])
+    })
+}
+
+thread_local! {
+    /// Where replies and host-call requests are serialized: kept between calls, so a message
+    /// grows no buffer once one of its size has been sent.
+    static WIRE: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
@@ -256,6 +273,21 @@ fn dispatch_call<T: crate::Mod>(mod_: &mut T, call: GuestCall) -> GuestRet {
             };
             GuestRet::GenOutput(mod_.gen_feature(feature_id, &ctx))
         }
+        GuestCall::GenClaims {
+            feature_id,
+            seed,
+            sea_level,
+            min,
+            max,
+        } => GuestRet::GenClaims(mod_.gen_claims(
+            feature_id,
+            &crate::ClaimsCtx {
+                seed,
+                sea_level,
+                min,
+                max,
+            },
+        )),
         GuestCall::GenStage {
             callback_id,
             stage,

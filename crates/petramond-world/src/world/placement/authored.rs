@@ -5,7 +5,7 @@ use crate::block_state::{EntityFront, LogAxis};
 use crate::facing::Facing;
 use crate::mathh::IVec3;
 
-use super::PlacementPlan;
+use super::{CellWrite, PlacementPlan};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Turn(u8);
@@ -119,5 +119,188 @@ impl<'a> Inputs<'a> {
             ShapeState::NONE
         };
         Ok(PlacementPlan::single(self.anchor, block, state))
+    }
+}
+
+/// One material's writes relative to its anchor at `turn`, laid out by the block's own shape
+/// family. Templates and generation output both expand materials through this, so an authored
+/// stair, door or bed lands the same way whichever of them wrote it.
+pub fn layout(
+    block: Block,
+    properties: &BTreeMap<String, String>,
+    turn: Turn,
+) -> Result<Vec<CellWrite>, String> {
+    let mut inputs = Inputs::new(IVec3::ZERO, turn, properties);
+    let plan = block
+        .shape_kind_def()
+        .placement
+        .authored_plan(block, &mut inputs)?;
+    inputs.finish()?;
+    Ok(plan.writes)
+}
+
+#[derive(Clone)]
+pub struct Cell {
+    pub pos: IVec3,
+    pub block: Block,
+    pub state: ShapeState,
+    pub data: BTreeMap<String, Vec<u8>>,
+}
+
+/// Anchored layouts expanded into cells, later placements replacing earlier ones cell by cell.
+#[derive(Default)]
+pub struct Expansion {
+    cells: Vec<Cell>,
+    /// The placement each cell came from.
+    owners: Vec<u32>,
+    owner_sizes: Vec<u32>,
+}
+
+impl Expansion {
+    /// Room for `writes` cell writes before it grows.
+    pub fn with_capacity(writes: usize) -> Expansion {
+        Expansion {
+            cells: Vec::with_capacity(writes),
+            owners: Vec::with_capacity(writes),
+            owner_sizes: Vec::with_capacity(writes),
+        }
+    }
+
+    pub fn place(&mut self, anchor: IVec3, layout: &[CellWrite]) {
+        let owner = self.owner_sizes.len() as u32;
+        self.owner_sizes.push(layout.len() as u32);
+        for write in layout {
+            self.cells.push(Cell {
+                pos: anchor + write.cell,
+                block: write.block,
+                state: write.state,
+                data: BTreeMap::new(),
+            });
+            self.owners.push(owner);
+        }
+    }
+
+    pub fn writes(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// One cell per position, the last placement's. Fails when an overlay left only PART of a
+    /// multi-cell object standing: half a door is never a valid world state.
+    pub fn finish(self) -> Result<Expanded, String> {
+        if !self.repeats_a_position() {
+            return Ok(Expanded {
+                cells: self.cells,
+                index: None,
+                lookups: 0,
+            });
+        }
+        let mut last: rustc_hash::FxHashMap<Pos, u32> =
+            rustc_hash::FxHashMap::with_capacity_and_hasher(self.cells.len(), Default::default());
+        let mut replaced = vec![false; self.cells.len()];
+        for (i, cell) in self.cells.iter().enumerate() {
+            if let Some(earlier) = last.insert(Pos(cell.pos.to_array()), i as u32) {
+                replaced[earlier as usize] = true;
+            }
+        }
+        let mut surviving = vec![0u32; self.owner_sizes.len()];
+        let mut cells: Vec<Cell> = Vec::with_capacity(last.len());
+        for ((cell, owner), replaced) in self.cells.into_iter().zip(self.owners).zip(replaced) {
+            if !replaced {
+                surviving[owner as usize] += 1;
+                cells.push(cell);
+            }
+        }
+        if surviving
+            .iter()
+            .zip(&self.owner_sizes)
+            .any(|(&left, &total)| left != 0 && left != total)
+        {
+            return Err("an overlay cuts through a multi-cell object".into());
+        }
+        Ok(Expanded {
+            cells,
+            index: None,
+            lookups: 0,
+        })
+    }
+
+    /// Whether two writes land on the same cell. Checked against a bitset over the writes'
+    /// bounding box, so the common output (every cell written once) needs no hashing at all.
+    fn repeats_a_position(&self) -> bool {
+        const DENSE_MAX: i64 = 1 << 18;
+        let Some(first) = self.cells.first() else {
+            return false;
+        };
+        let (mut lo, mut hi) = (first.pos.to_array(), first.pos.to_array());
+        for w in &self.cells {
+            let pos = w.pos.to_array();
+            for a in 0..3 {
+                lo[a] = lo[a].min(pos[a]);
+                hi[a] = hi[a].max(pos[a]);
+            }
+        }
+        let side = |a: usize| i64::from(hi[a]) - i64::from(lo[a]) + 1;
+        let volume = side(0) * side(1) * side(2);
+        if volume > DENSE_MAX {
+            return true;
+        }
+        let (sx, sy) = (side(0), side(1));
+        let mut seen = vec![0u64; (volume as usize).div_ceil(64)];
+        for w in &self.cells {
+            let pos = w.pos.to_array();
+            let d = |a: usize| i64::from(pos[a]) - i64::from(lo[a]);
+            let i = ((d(2) * sy + d(1)) * sx + d(0)) as usize;
+            let bit = 1u64 << (i % 64);
+            if seen[i / 64] & bit != 0 {
+                return true;
+            }
+            seen[i / 64] |= bit;
+        }
+        false
+    }
+}
+
+/// A position hashed as one word.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Pos([i32; 3]);
+
+impl std::hash::Hash for Pos {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let [x, y, z] = self.0.map(|v| u64::from(v as u32));
+        state.write_u64(x ^ z.rotate_left(32) ^ y.rotate_left(16));
+    }
+}
+
+/// Expanded cells, one per position, in placement order.
+pub struct Expanded {
+    cells: Vec<Cell>,
+    index: Option<rustc_hash::FxHashMap<Pos, u32>>,
+    lookups: u32,
+}
+
+impl Expanded {
+    /// The cell at `pos`. The first few lookups scan (an output attaches data to a handful of
+    /// cells); later ones build an index.
+    pub fn get_mut(&mut self, pos: [i32; 3]) -> Option<&mut Cell> {
+        const SCANS: u32 = 8;
+        if self.index.is_none() && self.lookups < SCANS {
+            self.lookups += 1;
+            let pos = IVec3::from(pos);
+            return self.cells.iter_mut().rev().find(|c| c.pos == pos);
+        }
+        let cells = &self.cells;
+        let index = self.index.get_or_insert_with(|| {
+            cells
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (Pos(c.pos.to_array()), i as u32))
+                .collect()
+        });
+        let i = *index.get(&Pos(pos))?;
+        self.cells.get_mut(i as usize)
+    }
+
+    pub fn into_cells(self) -> Vec<Cell> {
+        self.cells
     }
 }

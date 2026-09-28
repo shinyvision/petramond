@@ -1,3 +1,4 @@
+mod camp;
 mod daylight;
 mod keys;
 
@@ -6,6 +7,7 @@ use weather_core::feed::FieldFeed;
 use weather_core::FieldParams;
 
 const MONSTERS_TICK_SYSTEM: u32 = 1;
+const GEN_CAMPS: u32 = 1;
 const MONSTERS_HOSTILE_SPAWNER: u32 = 1;
 const ON_MOD_EVENT: u32 = 1;
 
@@ -29,6 +31,7 @@ const DARK_COOL_TICKS: u32 = 60;
 const RAIN_COOL_BOOST: f32 = 3.0;
 #[derive(Default)]
 struct Monsters {
+    camps: Option<camp::Camps>,
     burning: Option<Burning>,
     weather: FieldFeed,
     spawn_proof: SpawnProof,
@@ -50,6 +53,10 @@ struct Species {
 
 impl Mod for Monsters {
     fn init(&mut self) {
+        self.camps = camp::Camps::new();
+        if self.camps.is_some() {
+            register_worldgen_feature(WorldgenStage::Trees, GEN_CAMPS, camp::GEN_FILTER);
+        }
         register_tick_system(Stage::Spawning, AttachSide::After, 20, MONSTERS_TICK_SYSTEM);
         register_hostile_spawner(0, MONSTERS_HOSTILE_SPAWNER);
         weather_core::feed::subscribe(ON_MOD_EVENT);
@@ -69,6 +76,20 @@ impl Mod for Monsters {
             "initialized: hostile spawner (zombie + hushjaw) + sunburn, {} spawn-proof surfaces",
             self.spawn_proof.count
         ));
+    }
+
+    fn gen_feature(&mut self, feature_id: u32, ctx: &GenCtx) -> GenOutput {
+        match (feature_id, self.camps.as_mut()) {
+            (GEN_CAMPS, Some(camps)) => camps.generate(ctx),
+            _ => GenOutput::default(),
+        }
+    }
+
+    fn gen_claims(&mut self, feature_id: u32, ctx: &ClaimsCtx) -> GenClaims {
+        match (feature_id, self.camps.as_mut()) {
+            (GEN_CAMPS, Some(camps)) => camps.claims(ctx),
+            _ => GenClaims::default(),
+        }
     }
 
     fn tick_system(&mut self, _system_id: u32) {

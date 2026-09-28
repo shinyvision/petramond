@@ -17,7 +17,7 @@ mod tests;
 pub use self::field::{
     cached_feature_region, cached_tile_biomes, ColumnFeatureField, FeatureField, SurfaceHeights,
 };
-pub(crate) use self::field::{cached_tile_raw, RegionTile, TileKey};
+pub(crate) use self::field::{cached_tile, cached_tile_raw, RegionTile, TileKey};
 pub use self::sink::*;
 
 use petramond_world::block::Block;

@@ -3,6 +3,8 @@ mod_sdk::pack_keys! {
     pub HUSHJAW: Mob = "monsters:hushjaw";
     pub BURNING: Condition = "petramond:burning";
     pub SPAWN_PROOF_TAG: Tag = "monsters:spawn_proof";
+    pub CAMP_HUT_LOOT: Loot = "monsters:camp_hut_chest";
+    pub CAMP_ARENA_LOOT: Loot = "monsters:camp_arena_chest";
 }
 
 #[cfg(test)]

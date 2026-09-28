@@ -395,6 +395,7 @@ impl ServerGame {
             .cell_parts(event.pos)
             .map(|parts| self.part_drop_stacks(event.pos, &parts));
         let container_pos = self.world.container_anchor(event.pos);
+        self.world.stock_loot(container_pos);
         let carry_variant = self.carry_variant_at(container_pos, event.block, 0);
         let broken_tint = self.world.data().cell_burst_tint(event.pos);
         if self.world.remove_compound(event.pos).is_none() {

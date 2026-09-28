@@ -12,7 +12,7 @@ impl FeatureField for Forest {
 #[test]
 fn replay_matches_direct_generation_in_any_section_order_and_on_occupied_cells() {
     let plan = FeaturePlan::record(-1, 2, |ctx| {
-        super::super::place_trees(ctx, &mut Forest, 786, -16, 32)
+        super::super::place_trees(ctx, &mut Forest, &Default::default(), 786, -16, 32)
     });
     for cy in [6, 4, 8, 5, 7] {
         let mut direct = Section::new(-1, cy, 2);
@@ -56,4 +56,45 @@ fn replay_keeps_predicates_and_write_order() {
     occupied.set_block_raw(1, 1, 1, Block::Sand.id());
     plan.apply(&mut occupied);
     assert_eq!(occupied.block(1, 1, 1), Block::Sand);
+}
+
+#[test]
+fn trees_and_their_litter_stay_out_of_claimed_columns() {
+    let bounds = mod_api::ColumnBox {
+        min: [-12, 36],
+        max: [2, 52],
+    };
+    let claimed = |[x, z]: [i32; 2]| (x + 5).pow(2) + (z - 44).pow(2) <= 49;
+    let mask = mod_api::ColumnMask::from_fn(bounds, claimed);
+    let claims = crate::hooks::Claims::new(vec![std::sync::Arc::new(mask)]);
+    // Blocks the trees of the chunk columns around the disc put inside and outside it.
+    let grown = |claims: &crate::hooks::Claims| {
+        let (mut inside, mut outside) = (0, 0);
+        for (cx, cz) in (-2..=0).flat_map(|cx| (1..=3).map(move |cz| (cx, cz))) {
+            let plan = FeaturePlan::record(cx, cz, |ctx| {
+                super::super::place_trees(ctx, &mut Forest, claims, 786, cx * 16, cz * 16)
+            });
+            for cy in 4..8 {
+                let mut section = Section::new(cx, cy, cz);
+                plan.apply(&mut section);
+                for i in 0..4096 {
+                    let (x, y, z) = (i % 16, i / 256, i / 16 % 16);
+                    if section.block(x, y, z) != Block::Air {
+                        match claimed([cx * 16 + x as i32, cz * 16 + z as i32]) {
+                            true => inside += 1,
+                            false => outside += 1,
+                        }
+                    }
+                }
+            }
+        }
+        (inside, outside)
+    };
+    assert!(
+        grown(&Default::default()).0 > 0,
+        "no tree reaches the disc unclaimed"
+    );
+    let (inside, outside) = grown(&claims);
+    assert_eq!(inside, 0, "a tree grew into a claim");
+    assert!(outside > 0, "the claim cleared the whole forest");
 }

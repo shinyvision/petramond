@@ -244,11 +244,103 @@ impl Section {
         let i = section_idx(x, y, z);
         let old = self.blocks.get(i);
         self.blocks.set(i, id);
-        self.adjust_random_tick_count(old, id);
-        self.adjust_opaque_count(x, y, z, old, id);
+        self.adjust_metrics(x, y, z, old, id);
         self.states.clear_on_block_change(i);
         self.dirty = true;
         self.mark_light_dirty();
+    }
+
+    /// Sets every cell of the inclusive local box `lo..=hi` to `id`. A cell that already holds
+    /// `id` with no fluid, state or cell data is skipped: writing it would change nothing.
+    pub fn fill_box(&mut self, lo: [usize; 3], hi: [usize; 3], id: u16) {
+        let bare = self.states.is_all_bare();
+        if bare && id == 0 && self.non_air_count == 0 {
+            return;
+        }
+        let len = hi[0] + 1 - lo[0];
+        let mut start = None;
+        'scan: for y in lo[1]..=hi[1] {
+            for z in lo[2]..=hi[2] {
+                if !bare || !self.blocks.run_is(section_idx(lo[0], y, z), len, id) {
+                    start = Some((y, z));
+                    break 'scan;
+                }
+            }
+        }
+        let Some((y0, z0)) = start else {
+            return;
+        };
+        let table = Self::metric_table();
+        let class = |id: u16| table.get(id as usize).copied().unwrap_or(0);
+        let new_bits = class(id);
+        let mut tally = metrics::MetricTally::default();
+        let mut changed = false;
+        let mut cells = self.blocks.cells_mut(id);
+        for y in y0..=hi[1] {
+            for z in if y == y0 { z0 } else { lo[2] }..=hi[2] {
+                let row = section_idx(lo[0], y, z);
+                if bare && cells.run_is(row, len, id) {
+                    continue;
+                }
+                for i in row..row + len {
+                    let old = cells.get(i);
+                    if old == id && (bare || self.states.is_bare(i)) {
+                        continue;
+                    }
+                    cells.set(i, id);
+                    tally.note(i, class(old), new_bits);
+                    if !bare {
+                        self.states.clear_on_block_change(i);
+                    }
+                    changed = true;
+                }
+            }
+        }
+        self.apply_metrics(tally);
+        if changed {
+            self.dirty = true;
+            self.mark_light_dirty();
+        }
+    }
+
+    /// [`set_block_raw`](Section::set_block_raw) for every `([x, y, z], id)`, reading the block
+    /// class table once for the batch.
+    pub fn set_blocks_raw(&mut self, cells: impl IntoIterator<Item = ([usize; 3], u16)>) {
+        let table = Self::metric_table();
+        let class = |id: u16| table.get(id as usize).copied().unwrap_or(0);
+        let bare = self.states.is_all_bare();
+        let mut tally = metrics::MetricTally::default();
+        let mut changed = false;
+        let mut writes = cells.into_iter().peekable();
+        if writes.peek().is_none() {
+            return;
+        }
+        let mut wider = None;
+        loop {
+            let mut cells = self.blocks.cells_mut(wider.map_or(0, |(_, id)| id));
+            for ([x, y, z], id) in wider.take().into_iter().chain(writes.by_ref()) {
+                if !cells.holds(id) {
+                    wider = Some(([x, y, z], id));
+                    break;
+                }
+                let i = section_idx(x, y, z);
+                let old = cells.get(i);
+                cells.set(i, id);
+                tally.note(i, class(old), class(id));
+                if !bare {
+                    self.states.clear_on_block_change(i);
+                }
+                changed = true;
+            }
+            if wider.is_none() {
+                break;
+            }
+        }
+        self.apply_metrics(tally);
+        if changed {
+            self.dirty = true;
+            self.mark_light_dirty();
+        }
     }
 
     pub fn blocks_mut(&mut self) -> &mut BlockCube {
@@ -307,8 +399,7 @@ impl Section {
         let id = b.id();
         let old = self.blocks.get(i);
         self.blocks.set(i, id);
-        self.adjust_random_tick_count(old, id);
-        self.adjust_opaque_count(x, y, z, old, id);
+        self.adjust_metrics(x, y, z, old, id);
         let meta = if b.is_fluid() { meta } else { 0 };
         self.states.store_fluid_meta(i, meta);
         self.dirty = true;

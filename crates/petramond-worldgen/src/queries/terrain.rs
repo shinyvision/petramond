@@ -2,20 +2,55 @@ use petramond_world::chunk::{section_idx, SectionPos};
 use petramond_world::section::BlockCube;
 use std::collections::BTreeMap;
 
+/// The top solid block's y of every column, read from the same memoized surface tiles column
+/// generation fills, so a query and the generator share the work in either order.
 pub fn heights_at(seed: u32, columns: &[[i32; 2]]) -> Vec<i32> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
-    let (_, caves) = generator.sources();
-    let mut tiles = BTreeMap::new();
+    let (surface, caves) = generator.sources();
+    let mut hot: Vec<([i32; 2], std::sync::Arc<crate::feature::RegionTile>)> = Vec::new();
     columns
         .iter()
         .map(|&[x, z]| {
             let cell = [x.div_euclid(16), z.div_euclid(16)];
-            let heights = tiles
-                .entry(cell)
-                .or_insert_with(|| caves.density_surface_tile(cell));
-            heights[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize]
+            let tile = match hot.iter().position(|(c, _)| *c == cell) {
+                Some(i) => &hot[i].1,
+                None => {
+                    if hot.len() == 16 {
+                        hot.remove(0);
+                    }
+                    hot.push((
+                        cell,
+                        crate::feature::cached_tile(surface, caves, cell[0], cell[1]),
+                    ));
+                    &hot[hot.len() - 1].1
+                }
+            };
+            tile.raw()[(z.rem_euclid(16) * 16 + x.rem_euclid(16)) as usize]
         })
         .collect()
+}
+
+/// [`heights_at`] over the inclusive column rectangle `min..=max`, row by row along x, copied a
+/// tile row at a time.
+pub fn heights_in(seed: u32, min: [i32; 2], max: [i32; 2]) -> Vec<i32> {
+    let generator = crate::driver::ChunkGenerator::shared(seed);
+    let (surface, caves) = generator.sources();
+    let width = (max[0] - min[0] + 1).max(0) as usize;
+    let mut out = vec![0; width * (max[1] - min[1] + 1).max(0) as usize];
+    for tz in min[1].div_euclid(16)..=max[1].div_euclid(16) {
+        for tx in min[0].div_euclid(16)..=max[0].div_euclid(16) {
+            let tile = crate::feature::cached_tile(surface, caves, tx, tz);
+            let (x0, x1) = (min[0].max(tx * 16), max[0].min(tx * 16 + 15));
+            for z in min[1].max(tz * 16)..=max[1].min(tz * 16 + 15) {
+                let src = ((z - tz * 16) * 16) as usize;
+                let dst = (z - min[1]) as usize * width;
+                let (a, b) = ((x0 - tx * 16) as usize, (x1 - tx * 16) as usize);
+                out[dst + (x0 - min[0]) as usize..=dst + (x1 - min[0]) as usize]
+                    .copy_from_slice(&tile.raw()[src + a..=src + b]);
+            }
+        }
+    }
+    out
 }
 
 fn whole_section(positions: &[[i32; 3]]) -> Option<[i32; 3]> {

@@ -359,6 +359,10 @@ impl<T: TypedMod> Mod for Typed<T> {
         self.state.gen_feature(feature_id, ctx)
     }
 
+    fn gen_claims(&mut self, feature_id: u32, ctx: &crate::ClaimsCtx) -> crate::GenClaims {
+        self.state.gen_claims(feature_id, ctx)
+    }
+
     fn gen_climate(&mut self, callback_id: u32, ctx: &crate::GenCtx) -> Vec<u8> {
         self.state.gen_climate(callback_id, ctx)
     }

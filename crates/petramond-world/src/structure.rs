@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-
-use crate::block::{Block, ShapeState};
+use crate::block::Block;
 use crate::mathh::IVec3;
 use crate::world::placement::authored::Turn;
 
@@ -9,6 +7,7 @@ mod load;
 mod placement;
 mod schema;
 
+pub use crate::world::placement::authored::Cell;
 pub use load::by_key;
 pub(crate) use load::CATALOG;
 pub use placement::Placement;
@@ -30,14 +29,6 @@ impl Bounds {
     pub fn intersects(self, other: Self) -> bool {
         self.min.cmple(other.max).all() && self.max.cmpge(other.min).all()
     }
-}
-
-#[derive(Clone)]
-pub struct Cell {
-    pub pos: IVec3,
-    pub block: Block,
-    pub state: ShapeState,
-    pub data: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Clone, Debug)]

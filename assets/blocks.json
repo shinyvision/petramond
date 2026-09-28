@@ -105,6 +105,12 @@
         "dirt"
       ],
       "material": "dirt",
+      "data": {
+        "petramond:material": {
+          "family": "dirt",
+          "form": "block"
+        }
+      },
       "hardness": 0.5,
       "drops": [
         {
@@ -151,6 +157,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone",
+          "form": "block"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -446,6 +456,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -541,6 +555,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -590,6 +608,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -639,6 +661,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -688,6 +714,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -1907,6 +1937,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "marble",
+          "form": "block"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -2807,6 +2841,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "cobblestone",
+          "form": "block"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -2858,6 +2896,10 @@
       },
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone_bricks",
+          "form": "block"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -2904,6 +2946,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -2946,6 +2994,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -2988,6 +3042,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3030,6 +3090,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3072,6 +3138,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3533,6 +3605,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3576,6 +3654,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3619,6 +3703,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3662,6 +3752,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3705,6 +3801,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3759,6 +3861,10 @@
         }
       ],
       "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "log"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -3835,6 +3941,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "block"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3878,6 +3990,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "door"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -3907,6 +4025,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3936,6 +4060,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3965,6 +4095,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -3994,6 +4130,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4023,6 +4165,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4052,6 +4200,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "stairs"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4082,6 +4236,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "cobblestone",
+          "form": "stairs"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4116,6 +4274,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone",
+          "form": "stairs"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4154,6 +4316,10 @@
       },
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone_bricks",
+          "form": "stairs"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4187,6 +4353,12 @@
         "dirt"
       ],
       "material": "dirt",
+      "data": {
+        "petramond:material": {
+          "family": "dirt",
+          "form": "stairs"
+        }
+      },
       "hardness": 0.5,
       "drops": [
         {
@@ -4249,6 +4421,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4278,6 +4456,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4307,6 +4491,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4336,6 +4526,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4365,6 +4561,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4394,6 +4596,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "slab"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4424,6 +4632,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "cobblestone",
+          "form": "slab"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4458,6 +4670,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone",
+          "form": "slab"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4496,6 +4712,10 @@
       },
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "stone_bricks",
+          "form": "slab"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4529,6 +4749,12 @@
         "dirt"
       ],
       "material": "dirt",
+      "data": {
+        "petramond:material": {
+          "family": "dirt",
+          "form": "slab"
+        }
+      },
       "hardness": 0.5,
       "drops": [
         {
@@ -4619,6 +4845,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4649,6 +4881,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4679,6 +4917,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4709,6 +4953,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4739,6 +4989,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4769,6 +5025,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "fence"
+        }
+      },
       "hardness": 2,
       "drops": [
         {
@@ -4811,6 +5073,12 @@
         "wool_block"
       ],
       "material": "wool",
+      "data": {
+        "petramond:material": {
+          "family": "wool",
+          "form": "block"
+        }
+      },
       "hardness": 0.7,
       "drops": [
         {
@@ -4840,6 +5108,12 @@
         "wool_block"
       ],
       "material": "wool",
+      "data": {
+        "petramond:material": {
+          "family": "wool",
+          "form": "stairs"
+        }
+      },
       "hardness": 0.7,
       "drops": [
         {
@@ -4869,6 +5143,12 @@
         "wool_block"
       ],
       "material": "wool",
+      "data": {
+        "petramond:material": {
+          "family": "wool",
+          "form": "slab"
+        }
+      },
       "hardness": 0.7,
       "drops": [
         {
@@ -4912,6 +5192,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "polished_marble",
+          "form": "block"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4946,6 +5230,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "marble",
+          "form": "stairs"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -4980,6 +5268,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "marble",
+          "form": "slab"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -5014,6 +5306,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "polished_marble",
+          "form": "stairs"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -5048,6 +5344,10 @@
       ],
       "material": "stone",
       "data": {
+        "petramond:material": {
+          "family": "polished_marble",
+          "form": "slab"
+        },
         "petramond:harvest": {
           "tier": 1
         }
@@ -6228,6 +6528,12 @@
         "oak_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "oak",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -6271,6 +6577,12 @@
         "spruce_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "spruce",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -6314,6 +6626,12 @@
         "birch_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "birch",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -6357,6 +6675,12 @@
         "jungle_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "jungle",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -6400,6 +6724,12 @@
         "acacia_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "acacia",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
@@ -6443,6 +6773,12 @@
         "redwood_planks"
       ],
       "material": "wood",
+      "data": {
+        "petramond:material": {
+          "family": "redwood",
+          "form": "trapdoor"
+        }
+      },
       "hardness": 3,
       "drops": [
         {
