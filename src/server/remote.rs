@@ -33,6 +33,7 @@ use crate::net::identity::{
 use crate::net::protocol::{
     ClientToServer, JoinCredential, JoinRejectReason, ModEntry, SectionCacheClaim, ServerToClient,
 };
+use crate::net::secure::{Ephemeral, Exchange, Role};
 use crate::net::PROTOCOL_VERSION;
 use crate::player::PlayerId;
 
@@ -129,7 +130,8 @@ struct Verifying {
 }
 
 struct JoinRequest {
-    challenge: crate::net::identity::JoinChallenge,
+    binding: crate::net::secure::Binding,
+    ticket_server_id: String,
     credential: JoinCredential,
     key: PlayerKey,
     proof: Vec<u8>,
@@ -382,7 +384,7 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
             Ok(None) => return PendingVerdict::Keep,
             Err(_) => return PendingVerdict::Drop,
         };
-        let sent = match (msg, pending.stage) {
+        let sent = match (msg, &pending.stage) {
             (ClientToServer::Hello { protocol }, Stage::Fresh) => {
                 if protocol != PROTOCOL_VERSION {
                     let _ = pending.send(&ServerToClient::HelloReject {
@@ -394,15 +396,49 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
                     log::error!("no OS randomness for a join challenge; refusing connection");
                     return PendingVerdict::Drop;
                 };
-                pending.stage = Stage::Helloed { challenge };
+                let Ok(ephemeral) = Ephemeral::generate() else {
+                    log::error!("no OS randomness for a key share; refusing connection");
+                    return PendingVerdict::Drop;
+                };
+                let key_share = ephemeral.share();
+                pending.stage = Stage::Helloed {
+                    challenge,
+                    ephemeral,
+                };
                 pending.send(&ServerToClient::HelloAck {
                     protocol: PROTOCOL_VERSION,
                     challenge,
                     requires_account: server.account_policy.requires_account(),
                     server_id: server.server_id.clone(),
+                    key_share,
                 })
             }
-            (ClientToServer::ModQuery, Stage::Helloed { .. }) => {
+            (ClientToServer::KeyExchange { key_share }, Stage::Helloed { .. }) => {
+                let Stage::Helloed {
+                    challenge,
+                    ephemeral,
+                } = std::mem::replace(&mut pending.stage, Stage::Fresh)
+                else {
+                    unreachable!("matched Helloed above");
+                };
+                let server_share = ephemeral.share();
+                let exchange = Exchange {
+                    server_id: &server.server_id,
+                    challenge: &challenge,
+                    client_share: &key_share,
+                    server_share: &server_share,
+                };
+                let Ok(session) = ephemeral.agree(Role::Server, &exchange) else {
+                    return PendingVerdict::Drop;
+                };
+                pending.key(session.channel(Role::Server));
+                pending.stage = Stage::Keyed {
+                    binding: *session.binding(),
+                    ticket_server_id: session.ticket_server_id(),
+                };
+                Ok(())
+            }
+            (ClientToServer::ModQuery, Stage::Keyed { .. }) => {
                 let mods = crate::modding::modset::active(server.world.data().disabled_mods())
                     .into_iter()
                     .map(|m| ModEntry {
@@ -420,10 +456,14 @@ fn step_pending(pending: &mut PendingConn, server: &ServerGame) -> PendingVerdic
                     view_distance,
                     cached_sections,
                 },
-                Stage::Helloed { challenge },
+                Stage::Keyed {
+                    binding,
+                    ticket_server_id,
+                },
             ) => {
                 return PendingVerdict::Join(JoinRequest {
-                    challenge,
+                    binding: *binding,
+                    ticket_server_id: ticket_server_id.clone(),
                     credential,
                     key,
                     proof,
@@ -450,7 +490,7 @@ fn begin_join(
     request: JoinRequest,
     server: &mut ServerGame,
 ) -> Option<Joining> {
-    if !verify_join(&request.challenge, &request.key, &request.proof) {
+    if !verify_join(&request.binding, &request.key, &request.proof) {
         return refuse(pending, JoinRejectReason::BadProof);
     }
     match (server.account_policy.requires_account(), request.credential) {
@@ -476,7 +516,9 @@ fn begin_join(
         (false, JoinCredential::Ticket(_)) => refuse(pending, JoinRejectReason::AccountNotAccepted),
         (true, JoinCredential::Name(_)) => refuse(pending, JoinRejectReason::AccountRequired),
         (true, JoinCredential::Ticket(ticket)) => {
-            let server_id = server.server_id.clone();
+            // The ticket was minted for this connection's binding, never the announced id: a
+            // ticket a relay obtained on another connection cannot redeem here.
+            let server_id = request.ticket_server_id;
             let (tx, verdict) = mpsc::channel();
             if std::thread::Builder::new()
                 .name("petramond-verify-join".to_string())

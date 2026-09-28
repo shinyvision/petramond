@@ -21,6 +21,7 @@ pub struct PackHeader {
     pub icon: Option<PathBuf>,
     pub dependencies: Vec<String>,
     pub touches_world: bool,
+    pub resources: manifest::ResourceNeeds,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,6 +56,8 @@ struct PackManifest {
     dependencies: Vec<String>,
     #[serde(default)]
     after: Vec<String>,
+    #[serde(default)]
+    resources: manifest::ResourceNeeds,
 }
 
 #[derive(serde::Deserialize)]
@@ -195,6 +198,7 @@ fn header_of(dir: &Path, m: &PackManifest, touches_world: bool) -> PackHeader {
         icon: m.icon.as_ref().map(|i| dir.join(i)).filter(|p| p.is_file()),
         dependencies: m.dependencies.clone(),
         touches_world,
+        resources: m.resources,
     }
 }
 
@@ -510,6 +514,45 @@ mod tests {
             std::fs::write(path, text).unwrap();
         }
         dir
+    }
+
+    #[test]
+    fn declared_resource_needs_parse_and_a_bad_tier_refuses_the_pack() {
+        use crate::pack_manifest::{ResourceNeeds, Tier};
+
+        let root = scratch("resources");
+        let mods = root.join("mods");
+        pack(
+            &mods,
+            "castles",
+            r#"{"name": "Castles", "id": "castles", "resources": {"tick": "heavy", "memory": "extreme"}}"#,
+            &[],
+        );
+        pack(&mods, "plain", r#"{"name": "Plain", "id": "plain"}"#, &[]);
+        pack(
+            &mods,
+            "typo",
+            r#"{"name": "Typo", "id": "typo", "resources": {"tick": "huge"}}"#,
+            &[],
+        );
+        let (packs, refused) = discover_from(vec![(mods, PackOrigin::Shipped)]);
+        let needs = |id: &str| {
+            packs
+                .iter()
+                .find(|p| p.id.as_deref() == Some(id))
+                .map(|p| p.resources)
+        };
+        assert_eq!(
+            needs("castles"),
+            Some(ResourceNeeds {
+                tick: Tier::Heavy,
+                memory: Tier::Extreme,
+                ..Default::default()
+            })
+        );
+        assert_eq!(needs("plain"), Some(ResourceNeeds::default()));
+        assert_eq!(needs("typo"), None);
+        assert!(refused.iter().any(|r| r.dir_name == "typo"), "{refused:?}");
     }
 
     #[test]

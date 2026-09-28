@@ -6,9 +6,11 @@ use std::str::FromStr;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
+use super::secure::Binding;
+
 pub const MAX_NAME_CHARS: usize = 24;
 
-const JOIN_PROOF_DOMAIN: &[u8] = b"petramond/join-proof/v1\0";
+const JOIN_PROOF_DOMAIN: &[u8] = b"petramond/join-proof/v2\0";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PlayerKey(pub [u8; 32]);
@@ -57,15 +59,17 @@ pub fn new_challenge() -> Option<JoinChallenge> {
     Some(challenge)
 }
 
-pub fn join_proof_message(challenge: &JoinChallenge, key: &PlayerKey) -> Vec<u8> {
+/// The proof signs the connection's key-exchange binding (`net::secure`), which covers the
+/// server's challenge, so it is good for this one connection to this one server only.
+pub fn join_proof_message(binding: &Binding, key: &PlayerKey) -> Vec<u8> {
     let mut msg = Vec::with_capacity(JOIN_PROOF_DOMAIN.len() + 64);
     msg.extend_from_slice(JOIN_PROOF_DOMAIN);
-    msg.extend_from_slice(challenge);
+    msg.extend_from_slice(binding);
     msg.extend_from_slice(&key.0);
     msg
 }
 
-pub fn verify_join(challenge: &JoinChallenge, key: &PlayerKey, signature: &[u8]) -> bool {
+pub fn verify_join(binding: &Binding, key: &PlayerKey, signature: &[u8]) -> bool {
     let Ok(verifying) = VerifyingKey::from_bytes(&key.0) else {
         return false;
     };
@@ -73,7 +77,7 @@ pub fn verify_join(challenge: &JoinChallenge, key: &PlayerKey, signature: &[u8])
         return false;
     };
     verifying
-        .verify_strict(&join_proof_message(challenge, key), &signature)
+        .verify_strict(&join_proof_message(binding, key), &signature)
         .is_ok()
 }
 
@@ -109,9 +113,9 @@ impl PlayerIdentity {
         PlayerKey(self.signing.verifying_key().to_bytes())
     }
 
-    pub fn sign_join(&self, challenge: &JoinChallenge) -> Vec<u8> {
+    pub fn sign_join(&self, binding: &Binding) -> Vec<u8> {
         self.signing
-            .sign(&join_proof_message(challenge, &self.key()))
+            .sign(&join_proof_message(binding, &self.key()))
             .to_bytes()
             .to_vec()
     }

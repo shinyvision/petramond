@@ -2,33 +2,36 @@
 //! `Read + Write` stream so it unit-tests over an in-memory transcript.
 //!
 //! Exact sequence:
-//! `Hello{protocol}` → `HelloAck{challenge, requires_account, server_id}` (or
-//! `HelloReject` = protocol mismatch) → `ModQuery` → `ModList{mods}` → compare
-//! ids against the installed packs (missing = CLOSE the socket, no farewell
-//! frame — the caller drops the stream) → `Join{credential, key, proof,
-//! view_distance, cached_sections}`, `proof` being the identity key's
-//! signature over the challenge (`net::identity`) → `JoinAccept(JoinData)`
+//! `Hello{protocol}` → `HelloAck{challenge, requires_account, server_id, key_share}` (or
+//! `HelloReject` = protocol mismatch) → `KeyExchange{key_share}`. Every frame after that is
+//! sealed with the session keys (`net::secure`): `ModQuery` → `ModList{mods}` → compare ids
+//! against the installed packs (missing = CLOSE the socket, no farewell frame — the caller drops
+//! the stream) → `Join{credential, key, proof, view_distance, cached_sections}`, `proof` being
+//! the identity key's signature over the exchange's binding (`net::identity`) → `JoinAccept(JoinData)`
 //! (or `JoinReject`).
 //!
-//! The credential is resolved by a CALLBACK, after `HelloAck`: only then does
+//! The credential is resolved by a CALLBACK, after the key exchange: only then does
 //! the client know whether this server wants a Petramond account ticket or a
 //! plain name, and minting a ticket is itself a blocking network call that must
-//! not happen for a server that did not ask for one.
+//! not happen for a server that did not ask for one. The ticket is minted for the
+//! binding-derived id in [`ServerOffer::server_id`], never for the server's own id.
 //!
 //! The function is I/O-agnostic: the caller sets per-read deadlines on the
 //! raw `TcpStream` (`set_read_timeout`, ~5 s) before calling; timeouts
 //! surface as [`HandshakeError::Timeout`]. Reads never over-read a frame, so
-//! the stream hands off cleanly to the connection threads afterwards.
+//! the stream hands off cleanly to the connection threads afterwards, together
+//! with the [`Channel`] that keeps sealing and opening its frames.
 
 use std::collections::BTreeSet;
 use std::io::{self, Read, Write};
 
-use super::framing::{read_msg, write_msg};
+use super::framing::{read_msg, read_opened, write_msg, write_sealed, MAX_FRAME};
 use super::identity::PlayerIdentity;
 use super::protocol::{
     ClientToServer, JoinCredential, JoinData, JoinRejectReason, ModEntry, SectionCacheClaim,
     ServerToClient,
 };
+use super::secure::{Channel, Ephemeral, Exchange, Role};
 use super::PROTOCOL_VERSION;
 
 #[derive(Debug)]
@@ -120,9 +123,25 @@ fn send<S: Write>(stream: &mut S, msg: &ClientToServer) -> Result<(), HandshakeE
     stream.flush().map_err(map_io)
 }
 
-fn reply<S: Read>(stream: &mut S) -> Result<ServerToClient, HandshakeError> {
+fn send_sealed<S: Write>(
+    stream: &mut S,
+    msg: &ClientToServer,
+    channel: &mut Channel,
+) -> Result<(), HandshakeError> {
+    write_sealed(stream, msg, &mut channel.sealer).map_err(map_io)?;
+    stream.flush().map_err(map_io)
+}
+
+fn reply<S: Read>(
+    stream: &mut S,
+    mut channel: Option<&mut Channel>,
+) -> Result<ServerToClient, HandshakeError> {
     loop {
-        match read_msg(stream).map_err(map_io)? {
+        let msg = match channel.as_deref_mut() {
+            Some(channel) => read_opened(stream, MAX_FRAME, &mut channel.opener).map(|(m, _)| m),
+            None => read_msg(stream),
+        };
+        match msg.map_err(map_io)? {
             // The server's writer keepalives after 2 s of outbound silence —
             // during the handshake too (admitting a join can take seconds on
             // a busy host: the spawn find runs worldgen). Liveness only,
@@ -142,6 +161,8 @@ pub struct HandshakeJoin {
 
 pub struct ServerOffer<'a> {
     pub requires_account: bool,
+    /// The id an account ticket is minted for: this connection's key-exchange binding, so a
+    /// ticket only ever redeems on the server this client actually exchanged keys with.
     pub server_id: &'a str,
 }
 
@@ -152,20 +173,22 @@ pub fn client_handshake<S: Read + Write>(
     view_distance: i32,
     installed_mod_ids: &BTreeSet<String>,
     cached_sections: Vec<SectionCacheClaim>,
-) -> Result<HandshakeJoin, HandshakeError> {
+) -> Result<(HandshakeJoin, Channel), HandshakeError> {
+    let ours = Ephemeral::generate().map_err(HandshakeError::Io)?;
     send(
         stream,
         &ClientToServer::Hello {
             protocol: PROTOCOL_VERSION,
         },
     )?;
-    let (challenge, requires_account, server_id) = match reply(stream)? {
+    let (challenge, requires_account, server_id, server_share) = match reply(stream, None)? {
         ServerToClient::HelloAck {
             challenge,
             requires_account,
             server_id,
+            key_share,
             ..
-        } => (challenge, requires_account, server_id),
+        } => (challenge, requires_account, server_id, key_share),
         ServerToClient::HelloReject { server_protocol } => {
             return Err(HandshakeError::ProtocolMismatch {
                 server: server_protocol,
@@ -174,8 +197,28 @@ pub fn client_handshake<S: Read + Write>(
         _ => return Err(HandshakeError::BadFrame),
     };
 
-    send(stream, &ClientToServer::ModQuery)?;
-    let mods = match reply(stream)? {
+    let client_share = ours.share();
+    let session = ours
+        .agree(
+            Role::Client,
+            &Exchange {
+                server_id: &server_id,
+                challenge: &challenge,
+                client_share: &client_share,
+                server_share: &server_share,
+            },
+        )
+        .map_err(|_| HandshakeError::BadFrame)?;
+    let mut channel = session.channel(Role::Client);
+    send(
+        stream,
+        &ClientToServer::KeyExchange {
+            key_share: client_share,
+        },
+    )?;
+
+    send_sealed(stream, &ClientToServer::ModQuery, &mut channel)?;
+    let mods = match reply(stream, Some(&mut channel))? {
         ServerToClient::ModList { mods } => mods,
         _ => return Err(HandshakeError::BadFrame),
     };
@@ -191,20 +234,21 @@ pub fn client_handshake<S: Read + Write>(
 
     let credential = credential(&ServerOffer {
         requires_account,
-        server_id: &server_id,
+        server_id: &session.ticket_server_id(),
     })?;
-    send(
+    send_sealed(
         stream,
         &ClientToServer::Join {
             credential,
             key: identity.key(),
-            proof: identity.sign_join(&challenge),
+            proof: identity.sign_join(session.binding()),
             view_distance: view_distance.clamp(4, 64) as u8,
             cached_sections,
         },
+        &mut channel,
     )?;
-    match reply(stream)? {
-        ServerToClient::JoinAccept(join) => Ok(HandshakeJoin { join, server_mods }),
+    match reply(stream, Some(&mut channel))? {
+        ServerToClient::JoinAccept(join) => Ok((HandshakeJoin { join, server_mods }, channel)),
         ServerToClient::JoinReject { reason } => Err(HandshakeError::Rejected(reason)),
         _ => Err(HandshakeError::BadFrame),
     }
@@ -217,43 +261,206 @@ pub fn installed_mod_ids() -> BTreeSet<String> {
         .collect()
 }
 
+/// A client that runs `Hello` and the key exchange by hand and then stops, so server tests can
+/// send a `Join` of their own making over the keyed connection.
+#[cfg(test)]
+pub(crate) struct ManualClient {
+    pub challenge: super::identity::JoinChallenge,
+    pub requires_account: bool,
+    pub server_id: String,
+    pub session: super::secure::Session,
+    channel: Channel,
+}
+
+#[cfg(test)]
+impl ManualClient {
+    pub(crate) fn hello<S: Read + Write>(stream: &mut S) -> ManualClient {
+        let ours = Ephemeral::generate().expect("os randomness");
+        send(
+            stream,
+            &ClientToServer::Hello {
+                protocol: PROTOCOL_VERSION,
+            },
+        )
+        .expect("send hello");
+        let (challenge, requires_account, server_id, server_share) =
+            match reply(stream, None).expect("a reply") {
+                ServerToClient::HelloAck {
+                    challenge,
+                    requires_account,
+                    server_id,
+                    key_share,
+                    ..
+                } => (challenge, requires_account, server_id, key_share),
+                other => panic!("expected HelloAck, got {other:?}"),
+            };
+        let client_share = ours.share();
+        let session = ours
+            .agree(
+                Role::Client,
+                &Exchange {
+                    server_id: &server_id,
+                    challenge: &challenge,
+                    client_share: &client_share,
+                    server_share: &server_share,
+                },
+            )
+            .expect("keys agree");
+        send(
+            stream,
+            &ClientToServer::KeyExchange {
+                key_share: client_share,
+            },
+        )
+        .expect("send key share");
+        let channel = session.channel(Role::Client);
+        ManualClient {
+            challenge,
+            requires_account,
+            server_id,
+            session,
+            channel,
+        }
+    }
+
+    pub(crate) fn send<S: Write>(&mut self, stream: &mut S, msg: &ClientToServer) {
+        send_sealed(stream, msg, &mut self.channel).expect("send sealed");
+    }
+
+    /// The next reply that is not a keepalive.
+    pub(crate) fn recv<S: Read>(&mut self, stream: &mut S) -> ServerToClient {
+        reply(stream, Some(&mut self.channel)).expect("a sealed reply")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::framing::{encode_frame, encode_sealed};
+    use crate::net::identity::JoinChallenge;
     use crate::net::protocol::{NameTables, SelfRestore};
+    use crate::net::secure::{Binding, KeyShare, Session};
     use crate::player::PlayerId;
     use petramond_math::world_pos::WorldPos;
 
+    /// A scripted server. Replies go out in order, in the clear up to and including the
+    /// `HelloAck` (which gets this server's key share filled in), then sealed with the keys it
+    /// agrees from the client's `KeyExchange` — just as a real server would.
     struct Scripted {
-        replies: io::Cursor<Vec<u8>>,
+        script: std::collections::VecDeque<ServerToClient>,
+        out: Vec<u8>,
+        read_at: usize,
         sent: Vec<u8>,
+        ephemeral: Option<Ephemeral>,
+        acked: Option<(JoinChallenge, String)>,
+        session: Option<Session>,
+        channel: Option<Channel>,
+        seal_after_ack: bool,
     }
 
     impl Scripted {
         fn new(replies: &[ServerToClient]) -> Scripted {
-            let mut buf = Vec::new();
-            for msg in replies {
-                write_msg(&mut buf, msg).expect("script encodes");
-            }
             Scripted {
-                replies: io::Cursor::new(buf),
+                script: replies.iter().cloned().collect(),
+                out: Vec::new(),
+                read_at: 0,
                 sent: Vec::new(),
+                ephemeral: Some(Ephemeral::generate().expect("os randomness")),
+                acked: None,
+                session: None,
+                channel: None,
+                seal_after_ack: true,
             }
+        }
+
+        fn client_share(&self) -> KeyShare {
+            let mut r = &self.sent[..];
+            loop {
+                match read_msg::<ClientToServer, _>(&mut r) {
+                    Ok(ClientToServer::KeyExchange { key_share }) => return key_share,
+                    Ok(_) => {}
+                    Err(e) => panic!("the client never sent its key share: {e}"),
+                }
+            }
+        }
+
+        fn keyed(&mut self) -> &mut Channel {
+            if self.channel.is_none() {
+                let client_share = self.client_share();
+                let (challenge, server_id) = self.acked.clone().expect("acked before keying");
+                let ours = self.ephemeral.take().expect("one exchange");
+                let server_share = ours.share();
+                let session = ours
+                    .agree(
+                        Role::Server,
+                        &Exchange {
+                            server_id: &server_id,
+                            challenge: &challenge,
+                            client_share: &client_share,
+                            server_share: &server_share,
+                        },
+                    )
+                    .expect("keys agree");
+                self.channel = Some(session.channel(Role::Server));
+                self.session = Some(session);
+            }
+            self.channel.as_mut().expect("keyed above")
+        }
+
+        fn binding(&self) -> Binding {
+            *self.session.as_ref().expect("keyed").binding()
+        }
+
+        fn next_reply(&mut self) -> Option<Vec<u8>> {
+            let mut msg = self.script.pop_front()?;
+            if self.acked.is_some() && self.seal_after_ack {
+                return Some(encode_sealed(&msg, &mut self.keyed().sealer).expect("seals"));
+            }
+            if let ServerToClient::HelloAck {
+                challenge,
+                server_id,
+                key_share,
+                ..
+            } = &mut msg
+            {
+                *key_share = self.ephemeral.as_ref().expect("unkeyed").share();
+                self.acked = Some((*challenge, server_id.clone()));
+            }
+            Some(encode_frame(&msg).expect("script encodes"))
         }
 
         fn sent_msgs(&self) -> Vec<ClientToServer> {
             let mut r = &self.sent[..];
             let mut out = Vec::new();
-            while !r.is_empty() {
+            while !r.is_empty() && !matches!(out.last(), Some(ClientToServer::KeyExchange { .. })) {
                 out.push(read_msg(&mut r).expect("client frames decode"));
             }
+            if let Some(session) = &self.session {
+                let mut opener = session.channel(Role::Server).opener;
+                while !r.is_empty() {
+                    let (msg, _) =
+                        read_opened(&mut r, MAX_FRAME, &mut opener).expect("sealed frames open");
+                    out.push(msg);
+                }
+            }
+            assert!(r.is_empty(), "every sent byte belongs to a frame");
             out
         }
     }
 
     impl Read for Scripted {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            self.replies.read(buf)
+            if self.read_at == self.out.len() {
+                let Some(frame) = self.next_reply() else {
+                    return Ok(0);
+                };
+                self.out = frame;
+                self.read_at = 0;
+            }
+            let n = buf.len().min(self.out.len() - self.read_at);
+            buf[..n].copy_from_slice(&self.out[self.read_at..self.read_at + n]);
+            self.read_at += n;
+            Ok(n)
         }
     }
 
@@ -321,6 +528,7 @@ mod tests {
             challenge: CHALLENGE,
             requires_account: false,
             server_id: "test-server".to_string(),
+            key_share: [0; 32],
         }
     }
 
@@ -338,7 +546,7 @@ mod tests {
             ServerToClient::JoinAccept(join_data()),
         ]);
         let me = identity();
-        let data = client_handshake(
+        let (data, _) = client_handshake(
             &mut s,
             &me,
             offers_name,
@@ -358,7 +566,7 @@ mod tests {
         let proof = match &sent[..] {
             [ClientToServer::Hello {
                 protocol: PROTOCOL_VERSION,
-            }, ClientToServer::ModQuery, ClientToServer::Join {
+            }, ClientToServer::KeyExchange { .. }, ClientToServer::ModQuery, ClientToServer::Join {
                 credential: JoinCredential::Name(name),
                 key,
                 proof,
@@ -368,8 +576,12 @@ mod tests {
             other => panic!("the exact frame sequence, nothing more; got {other:?}"),
         };
         assert!(
-            crate::net::identity::verify_join(&CHALLENGE, &me.key(), proof),
-            "the Join proves the identity against the HelloAck's challenge"
+            crate::net::identity::verify_join(&s.binding(), &me.key(), proof),
+            "the Join proves the identity against this connection's key exchange"
+        );
+        assert!(
+            !crate::net::identity::verify_join(&CHALLENGE, &me.key(), proof),
+            "the bare challenge alone does not verify: a relay cannot reuse the proof"
         );
     }
 
@@ -416,15 +628,19 @@ mod tests {
             }
             other => panic!("expected MissingMods, got {other:?}"),
         }
-        assert_eq!(
-            s.sent_msgs(),
-            vec![
-                ClientToServer::Hello {
-                    protocol: PROTOCOL_VERSION
-                },
-                ClientToServer::ModQuery,
-            ],
-            "no Join (and no farewell) frame follows a mod refusal"
+        let sent = s.sent_msgs();
+        assert!(
+            matches!(
+                &sent[..],
+                [
+                    ClientToServer::Hello {
+                        protocol: PROTOCOL_VERSION
+                    },
+                    ClientToServer::KeyExchange { .. },
+                    ClientToServer::ModQuery,
+                ]
+            ),
+            "no Join (and no farewell) frame follows a mod refusal; got {sent:?}"
         );
     }
 
@@ -493,7 +709,7 @@ mod tests {
             ServerToClient::KeepAlive,
             ServerToClient::JoinAccept(join_data()),
         ]);
-        let data = client_handshake(
+        let (data, _) = client_handshake(
             &mut s,
             &identity(),
             offers_name,
@@ -503,5 +719,51 @@ mod tests {
         )
         .expect("keepalive-interleaved handshake succeeds");
         assert_eq!(*data.join, *join_data());
+    }
+
+    #[test]
+    fn an_unsealed_reply_after_the_key_exchange_is_a_bad_frame() {
+        let mut s = Scripted::new(&[ack(), ServerToClient::ModList { mods: Vec::new() }]);
+        s.seal_after_ack = false;
+        match client_handshake(
+            &mut s,
+            &identity(),
+            offers_name,
+            16,
+            &installed(&[]),
+            Vec::new(),
+        ) {
+            Err(HandshakeError::BadFrame) => {}
+            other => panic!("expected BadFrame, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_ticket_is_minted_for_the_binding_not_the_announced_server_id() {
+        let mut s = Scripted::new(&[
+            ack(),
+            ServerToClient::ModList { mods: Vec::new() },
+            ServerToClient::JoinAccept(join_data()),
+        ]);
+        let mut offered = None;
+        client_handshake(
+            &mut s,
+            &identity(),
+            |offer: &ServerOffer| {
+                offered = Some(offer.server_id.to_string());
+                Ok(JoinCredential::Ticket("ticket".into()))
+            },
+            16,
+            &installed(&[]),
+            Vec::new(),
+        )
+        .expect("handshake succeeds");
+        let offered = offered.expect("the credential was asked for");
+        assert_ne!(offered, "test-server");
+        assert_eq!(
+            offered,
+            s.session.as_ref().unwrap().ticket_server_id(),
+            "both ends name the ticket the same way"
+        );
     }
 }

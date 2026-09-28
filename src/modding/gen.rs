@@ -51,7 +51,6 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{SEA_LEVEL, SECTION_VOLUME};
 
 use super::health::{ModHealth, ModHealthBoard};
-use super::host::budget::FuelBudget;
 use super::host::Registration;
 use super::instance::ModInstance;
 
@@ -97,7 +96,6 @@ struct StageHook {
 pub struct GenHooks {
     epoch: u64,
     seed: u32,
-    budget: FuelBudget,
     mods: Vec<GenModule>,
     features: Vec<FeatureHook>,
     replacements: [Option<StageHook>; STAGE_COUNT],
@@ -293,7 +291,6 @@ impl GenHooks {
             mod_api::RuntimeSide::Worldgen,
             None,
             Arc::clone(&m.health),
-            self.budget,
         ) {
             Ok(inst) => inst,
             Err(e) => {
@@ -417,18 +414,16 @@ thread_local! {
 pub struct GenHooksBuilder {
     seed: u32,
     health: ModHealthBoard,
-    budget: FuelBudget,
     mods: Vec<GenModule>,
     features: Vec<FeatureHook>,
     replacements: [Option<StageHook>; STAGE_COUNT],
 }
 
 impl GenHooksBuilder {
-    pub(super) fn new(seed: u32, health: ModHealthBoard, budget: FuelBudget) -> Self {
+    pub(super) fn new(seed: u32, health: ModHealthBoard) -> Self {
         Self {
             seed,
             health,
-            budget,
             mods: Vec::new(),
             features: Vec::new(),
             replacements: Default::default(),
@@ -526,7 +521,6 @@ impl GenHooksBuilder {
         Some(Arc::new(GenHooks {
             epoch: petramond_worldgen::hooks::next_epoch(),
             seed: self.seed,
-            budget: self.budget,
             mods: self.mods,
             features: self.features,
             replacements: self.replacements,

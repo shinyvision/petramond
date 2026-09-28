@@ -212,7 +212,12 @@ fn dispatch_node(
             callback_id: reg.callback_id,
             ctxs: &ctxs,
         };
-        match instance.call_guest_encoded(&call, batch_kind(), &call) {
+        match instance.call_guest_encoded(
+            &call,
+            batch_kind(),
+            super::watchdog::CallClass::Ai,
+            &call,
+        ) {
             Some(GuestRet::AiDecisions(decisions)) if decisions.len() == members.len() => {
                 return decisions;
             }

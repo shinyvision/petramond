@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
@@ -13,6 +13,9 @@ pub const DOCUMENTS_DIR: &str = "ui/documents";
 
 struct SlotTable {
     by_kind: HashMap<GuiKind, Arc<Vec<SlotSpec>>>,
+    // Every node id the loaded documents declare: the only widget ids a
+    // client's menu click may name, so wire input never grows the intern table.
+    widgets: HashSet<&'static str>,
 }
 
 static TABLE: OnceLock<SlotTable> = OnceLock::new();
@@ -23,6 +26,29 @@ fn table() -> &'static SlotTable {
 
 pub fn slot_specs_for_kind(kind: GuiKind) -> Arc<Vec<SlotSpec>> {
     table().by_kind.get(&kind).cloned().unwrap_or_default()
+}
+
+pub fn declared_widget(id: &str) -> Option<&'static str> {
+    if let Some(hit) = table().widgets.get(id) {
+        return Some(hit);
+    }
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(hit) = TEST_WIDGETS.lock().unwrap().iter().find(|w| **w == id) {
+        return Some(hit);
+    }
+    None
+}
+
+/// Widget ids a test's document-less mod GUI answers to, as if a document declared them.
+#[cfg(any(test, feature = "test-support"))]
+static TEST_WIDGETS: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn declare_widget_for_test(id: &str) {
+    let mut widgets = TEST_WIDGETS.lock().unwrap();
+    if !widgets.contains(&id) {
+        widgets.push(petramond_world::gui_state::intern_str(id));
+    }
 }
 
 pub fn declared_kinds() -> Vec<(&'static str, usize)> {
@@ -118,6 +144,7 @@ fn declaring_files() -> Vec<(PathBuf, Option<String>)> {
 
 fn load() -> SlotTable {
     let mut by_kind = HashMap::new();
+    let mut widgets = HashSet::new();
     for (path, pack_id) in declaring_files() {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
@@ -141,6 +168,11 @@ fn load() -> SlotTable {
             );
             continue;
         };
+        doc.root.visit(&mut |node| {
+            if let Some(id) = &node.id {
+                widgets.insert(petramond_world::gui_state::intern_str(id));
+            }
+        });
         match doc_container_specs(&doc) {
             Ok(specs) if specs.is_empty() => {}
             Ok(specs) => {
@@ -150,7 +182,7 @@ fn load() -> SlotTable {
         }
     }
     by_kind.insert(GuiKind::Furnace, Arc::new(furnace_slot_specs()));
-    SlotTable { by_kind }
+    SlotTable { by_kind, widgets }
 }
 
 #[cfg(test)]

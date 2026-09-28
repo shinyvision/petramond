@@ -32,9 +32,9 @@ fn slow_dispatch_logging() -> bool {
 }
 
 use super::health::ModHealth;
-use super::host::budget::FuelBudget;
-use super::host::{self, ModStoreData, Phase, Registration, DISPATCH_DEADLINE_EPOCHS};
+use super::host::{self, ModStoreData, Phase, Registration};
 use super::scope;
+use super::watchdog::{throttle_notice, CallClass, Context};
 
 pub(super) struct ModInstance {
     id: String,
@@ -46,6 +46,7 @@ pub(super) struct ModInstance {
     fn_dispatch: TypedFunc<(u32, u32), u64>,
     health: Arc<ModHealth>,
     armed_fuel: u64,
+    last_fuel: u64,
     dispatches: u64,
     request_buf: Vec<u8>,
     reply_buf: Vec<u8>,
@@ -62,7 +63,6 @@ impl ModInstance {
             mod_api::RuntimeSide::Server,
             None,
             ModHealth::standalone(id),
-            FuelBudget::DEFAULT,
         )
     }
 
@@ -73,17 +73,26 @@ impl ModInstance {
         side: mod_api::RuntimeSide,
         client_buckets: Option<super::client::ClientBuckets>,
         health: Arc<ModHealth>,
-        budget: FuelBudget,
     ) -> Result<Self, String> {
         let mut store = Store::new(
             host::engine(),
-            ModStoreData::new_for_side(id, world_seed, side, client_buckets),
+            ModStoreData::new_for_side(id, world_seed, side, client_buckets, Arc::clone(&health)),
         );
-        store.data_mut().meter.set_budget(budget);
+        store.limiter(|data| &mut data.limiter);
         store
             .set_fuel(u64::MAX)
             .map_err(|e| format!("arm fuel: {e:#}"))?;
-        store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
+        // A call that reaches its deadline asks the watchdog for more time instead of trapping
+        // outright; a refusal traps it.
+        store.epoch_deadline_callback(|mut ctx| {
+            let left = ctx
+                .data_mut()
+                .charge_guest_time()
+                .map_err(wasmtime::Error::msg)?;
+            Ok(wasmtime::UpdateDeadline::Continue(left.max(1)))
+        });
+        let deadline = store.data_mut().begin_dispatch(Context::Init);
+        store.set_epoch_deadline(deadline);
         let instance = host::linker()?
             .instantiate(&mut store, module)
             .map_err(|e| format!("instantiate: {e:#}"))?;
@@ -123,7 +132,8 @@ impl ModInstance {
             reply_buf: Vec::new(),
             declined: Vec::new(),
             health,
-            armed_fuel: budget.per_dispatch,
+            armed_fuel: u64::MAX,
+            last_fuel: 0,
             dispatches: 0,
         })
     }
@@ -132,13 +142,25 @@ impl ModInstance {
         self.health.is_disabled()
     }
 
-    pub(super) fn set_fuel_budget(&mut self, budget: FuelBudget) {
-        self.store.data_mut().meter.set_budget(budget);
+    /// Client frames are the beat a client instance is throttled on.
+    pub(super) fn begin_client_frame(&mut self) {
+        self.store.data_mut().client_period += 1;
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn fuel_used_this_tick(&self) -> u64 {
-        self.store.data().meter.used_this_tick()
+    #[cfg(test)]
+    pub(super) fn set_budgets_for_test(&mut self, budgets: super::watchdog::Budgets) {
+        self.health.watchdog().set_budgets_for_test(budgets);
+        self.store.data_mut().throttle = super::watchdog::Throttle::new(&budgets);
+    }
+
+    #[cfg(test)]
+    pub(super) fn last_dispatch_fuel(&self) -> u64 {
+        self.last_fuel
+    }
+
+    #[cfg(test)]
+    pub(super) fn throttled(&self, context: Context) -> bool {
+        self.store.data().throttle.paused(context)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -157,7 +179,7 @@ impl ModInstance {
 
     pub(super) fn call_init_detached(&mut self) {
         debug_assert!(self.store.data().phase == Phase::Init);
-        if !self.arm_dispatch() {
+        if !self.arm_dispatch(None) {
             self.store.data_mut().phase = Phase::Run;
             return;
         }
@@ -200,13 +222,19 @@ impl ModInstance {
     }
 
     pub(super) fn call_guest_detached(&mut self, call: &GuestCall) -> Option<GuestRet> {
-        self.call_guest_encoded(call, std::mem::discriminant(call), call)
+        self.call_guest_encoded(
+            call,
+            std::mem::discriminant(call),
+            CallClass::of(call),
+            call,
+        )
     }
 
     pub(super) fn call_guest_encoded<C: serde::Serialize>(
         &mut self,
         call: &C,
         kind: std::mem::Discriminant<GuestCall>,
+        class: CallClass,
         describe: &dyn std::fmt::Debug,
     ) -> Option<GuestRet> {
         if self.disabled() {
@@ -221,7 +249,7 @@ impl ModInstance {
                 return None;
             }
         };
-        if !self.arm_dispatch() {
+        if !self.arm_dispatch(Some(class)) {
             self.request_buf = request;
             return None;
         }
@@ -290,23 +318,40 @@ impl ModInstance {
         );
     }
 
-    fn arm_dispatch(&mut self) -> bool {
-        let tick = scope::with_active_ref(|ctx| ctx.world.current_tick())
-            .or_else(super::ai::detached_tick);
-        let fuel = self.store.data_mut().meter.arm(tick);
-        if let Err(e) = self.store.set_fuel(fuel) {
+    /// Readies one call. `false` means it doesn't run: a deferrable call while the mod is
+    /// throttled in its context, or a store that can't be armed (which disables the mod).
+    fn arm_dispatch(&mut self, call: Option<CallClass>) -> bool {
+        let data = self.store.data();
+        let context = Context::of(data.side, data.phase, call);
+        let period = match context {
+            Context::Client => Some(data.client_period),
+            _ => scope::with_active_ref(|ctx| ctx.world.current_tick())
+                .or_else(super::ai::detached_tick),
+        };
+        let budget = self.health.watchdog().budgets().context(context);
+        let throttle = &mut self.store.data_mut().throttle;
+        throttle.arm(context, &budget, period);
+        if call.is_some_and(CallClass::deferrable) {
+            let (runs, change) = throttle.admit(context);
+            throttle_notice(&self.id, context, change);
+            if !runs {
+                return false;
+            }
+        }
+        if let Err(e) = self.store.set_fuel(u64::MAX) {
             self.disable(&format!("arm fuel: {e:#}"));
             return false;
         }
-        self.armed_fuel = fuel;
-        self.store.set_epoch_deadline(DISPATCH_DEADLINE_EPOCHS);
-        self.store.data_mut().begin_dispatch();
+        self.armed_fuel = u64::MAX;
+        let deadline = self.store.data_mut().begin_dispatch(context);
+        self.store.set_epoch_deadline(deadline);
         true
     }
 
     fn settle_fuel(&mut self, call: Option<&dyn std::fmt::Debug>) {
         let remaining = self.store.get_fuel().unwrap_or(0);
         let used = self.armed_fuel.saturating_sub(remaining);
+        self.last_fuel = used;
         if log::log_enabled!(target: "petramond::modding::fuel", log::Level::Debug) {
             log::debug!(
                 target: "petramond::modding::fuel",
@@ -315,10 +360,8 @@ impl ModInstance {
                 call.map_or_else(|| "mod_init".to_owned(), |call| host::short_debug(call, 48)),
             );
         }
-        let meter = &mut self.store.data_mut().meter;
-        if let Some(warning) = meter.charge(self.armed_fuel, remaining) {
-            self.health.warn_fuel_once(&warning);
-        }
+        let data = self.store.data_mut();
+        data.throttle.charge(data.context, used);
     }
 
     fn dispatch_context(&self, call: Option<&dyn std::fmt::Debug>) -> String {

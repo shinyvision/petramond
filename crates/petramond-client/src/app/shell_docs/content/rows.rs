@@ -64,6 +64,7 @@ pub(in crate::app) fn locals_from_discovery(dirs: &petramond::content::Dirs) -> 
             icon: None,
             dependencies: Vec::new(),
             touches_world: true,
+            resources: Default::default(),
         });
         let pack = Pack {
             dir: refused.dir.clone(),

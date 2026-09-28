@@ -130,6 +130,15 @@ impl ServerGame {
         }
     }
 
+    fn deny_unknown_slot(&mut self, s: usize, request_id: crate::net::protocol::ClientRequestId) {
+        self.push_action_outcome(
+            s,
+            request_id,
+            false,
+            Some(crate::net::protocol::ActionDenyReason::Denied),
+        );
+    }
+
     pub fn apply_message(&mut self, s: usize, msg: ClientToServer) {
         match msg {
             ClientToServer::PlayerUpdate(u) => self.apply_player_update(s, &u),
@@ -144,10 +153,13 @@ impl ServerGame {
                 gather,
                 request_id,
             } => {
+                let Some(slot) = slot.to_menu_slot() else {
+                    return self.deny_unknown_slot(s, request_id);
+                };
                 self.queue_menu_action(
                     s,
                     PendingMenuAction::SlotClick {
-                        slot: slot.to_menu_slot(),
+                        slot,
                         button: crate::net::protocol::button_from_wire(button),
                         shift,
                         gather,
@@ -156,13 +168,10 @@ impl ServerGame {
                 );
             }
             ClientToServer::MenuSwapOffHand { slot, request_id } => {
-                self.queue_menu_action(
-                    s,
-                    PendingMenuAction::SwapOffHand {
-                        slot: slot.to_menu_slot(),
-                        request_id,
-                    },
-                );
+                let Some(slot) = slot.to_menu_slot() else {
+                    return self.deny_unknown_slot(s, request_id);
+                };
+                self.queue_menu_action(s, PendingMenuAction::SwapOffHand { slot, request_id });
             }
             ClientToServer::MenuDrag {
                 slots,
@@ -173,7 +182,10 @@ impl ServerGame {
                     .into_iter()
                     .take(petramond_world::gui_state::MAX_MENU_DRAG_SLOTS)
                     .map(|slot| slot.to_menu_slot())
-                    .collect();
+                    .collect::<Option<Vec<_>>>();
+                let Some(slots) = slots else {
+                    return self.deny_unknown_slot(s, request_id);
+                };
                 self.queue_menu_action(
                     s,
                     PendingMenuAction::SlotDrag {
@@ -187,14 +199,19 @@ impl ServerGame {
                 slot,
                 all,
                 request_id,
-            } => self.queue_menu_action(
-                s,
-                PendingMenuAction::DropSlot {
-                    slot: slot.to_menu_slot(),
-                    all,
-                    request_id,
-                },
-            ),
+            } => {
+                let Some(slot) = slot.to_menu_slot() else {
+                    return self.deny_unknown_slot(s, request_id);
+                };
+                self.queue_menu_action(
+                    s,
+                    PendingMenuAction::DropSlot {
+                        slot,
+                        all,
+                        request_id,
+                    },
+                );
+            }
             ClientToServer::CraftRecipe {
                 recipe,
                 bulk,
@@ -248,6 +265,7 @@ impl ServerGame {
             }
             ClientToServer::KeepAlive => {}
             ClientToServer::Hello { .. }
+            | ClientToServer::KeyExchange { .. }
             | ClientToServer::ModQuery
             | ClientToServer::Join { .. }
             | ClientToServer::Disconnect => {

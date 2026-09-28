@@ -48,7 +48,7 @@ fn trapping_module() -> Module {
 #[test]
 fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
     let module = trapping_module();
-    let mut b = GenHooksBuilder::new(1, ModHealthBoard::default(), FuelBudget::DEFAULT);
+    let mut b = GenHooksBuilder::new(1, ModHealthBoard::default());
     b.add_generator("alpha", &module, 7);
     b.add_stage_replacement("beta", &module, WorldgenStage::Terrain, 9);
     let hooks = b.build().expect("hooks registered");
@@ -66,17 +66,15 @@ fn stage_replacement_conflicts_resolve_to_last_in_load_order() {
         .unwrap();
     assert_eq!(hooks.mods[climate.mod_idx].id, "alpha");
 
-    assert!(
-        GenHooksBuilder::new(1, ModHealthBoard::default(), FuelBudget::DEFAULT)
-            .build()
-            .is_none()
-    );
+    assert!(GenHooksBuilder::new(1, ModHealthBoard::default())
+        .build()
+        .is_none());
 }
 
 #[test]
 fn trapping_gen_mod_falls_back_to_the_engine_stage() {
     let module = trapping_module();
-    let mut b = GenHooksBuilder::new(0x312, ModHealthBoard::default(), FuelBudget::DEFAULT);
+    let mut b = GenHooksBuilder::new(0x312, ModHealthBoard::default());
     b.add_stage_replacement("hostile", &module, WorldgenStage::Terrain, 1);
     b.add_stage_replacement("hostile", &module, WorldgenStage::Vegetation, 2);
     b.add_feature(
@@ -109,7 +107,7 @@ fn trapping_gen_mod_falls_back_to_the_engine_stage() {
 fn a_trap_on_one_worker_disables_the_mod_on_every_worker() {
     let module = trapping_module();
     let board = ModHealthBoard::default();
-    let mut b = GenHooksBuilder::new(7, board.clone(), FuelBudget::DEFAULT);
+    let mut b = GenHooksBuilder::new(7, board.clone());
     b.add_stage_replacement("hostile", &module, WorldgenStage::Terrain, 1);
     let hooks = b.build().expect("hooks registered");
     let heights = [64; 256];

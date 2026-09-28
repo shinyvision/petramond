@@ -4,9 +4,10 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
 use crate::net::connection::TcpServerConn;
-use crate::net::framing::{decode_frame, encode_frame};
+use crate::net::framing::{decode_frame, decode_opened, encode_frame, encode_sealed};
 use crate::net::identity::JoinChallenge;
 use crate::net::protocol::{ClientToServer, ServerToClient};
+use crate::net::secure::{Binding, Channel, Ephemeral, TAG_LEN};
 
 pub(super) const PRE_JOIN_DEADLINE: Duration = Duration::from_secs(10);
 
@@ -16,10 +17,18 @@ pub(super) const MAX_PENDING_PER_IP: usize = 4;
 
 pub(super) const PRE_JOIN_MAX_FRAME: usize = 256 * 1024;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Stage {
     Fresh,
-    Helloed { challenge: JoinChallenge },
+    /// `HelloAck` sent with our key share; waiting for the client's.
+    Helloed {
+        challenge: JoinChallenge,
+        ephemeral: Ephemeral,
+    },
+    /// Keys agreed: every frame is sealed, and a join proof or ticket must match this binding.
+    Keyed {
+        binding: Binding,
+        ticket_server_id: String,
+    },
 }
 
 pub(super) struct PendingConn {
@@ -28,6 +37,7 @@ pub(super) struct PendingConn {
     inbox: Vec<u8>,
     outbox: Vec<u8>,
     pub(super) stage: Stage,
+    channel: Option<Channel>,
     deadline: Instant,
 }
 
@@ -41,6 +51,7 @@ impl PendingConn {
             inbox: Vec::new(),
             outbox: Vec::new(),
             stage: Stage::Fresh,
+            channel: None,
             deadline: Instant::now() + PRE_JOIN_DEADLINE,
         })
     }
@@ -54,8 +65,18 @@ impl PendingConn {
     }
 
     pub(super) fn send(&mut self, msg: &ServerToClient) -> io::Result<()> {
-        self.outbox.extend_from_slice(&encode_frame(msg)?);
+        let frame = match &mut self.channel {
+            Some(channel) => encode_sealed(msg, &mut channel.sealer)?,
+            None => encode_frame(msg)?,
+        };
+        self.outbox.extend_from_slice(&frame);
         self.flush()
+    }
+
+    /// Switches both directions to sealed frames. The client seals everything after its key
+    /// share, so any of it already in the inbox opens with this channel too.
+    pub(super) fn key(&mut self, channel: Channel) {
+        self.channel = Some(channel);
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -78,7 +99,7 @@ impl PendingConn {
         if let Some(msg) = self.take_frame()? {
             return Ok(Some(msg));
         }
-        let limit = PRE_JOIN_MAX_FRAME + 16;
+        let limit = PRE_JOIN_MAX_FRAME + 16 + TAG_LEN;
         let mut chunk = [0u8; 4096];
         while self.inbox.len() < limit {
             match self.stream.read(&mut chunk) {
@@ -98,7 +119,11 @@ impl PendingConn {
     }
 
     fn take_frame(&mut self) -> io::Result<Option<ClientToServer>> {
-        match decode_frame(&self.inbox, PRE_JOIN_MAX_FRAME)? {
+        let frame = match &mut self.channel {
+            Some(channel) => decode_opened(&self.inbox, PRE_JOIN_MAX_FRAME, &mut channel.opener)?,
+            None => decode_frame(&self.inbox, PRE_JOIN_MAX_FRAME)?,
+        };
+        match frame {
             Some((msg, used)) => {
                 self.inbox.drain(..used);
                 Ok(Some(msg))
@@ -115,8 +140,11 @@ impl PendingConn {
                 "handshake traffic out of step at join",
             ));
         }
+        let channel = self.channel.ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "join before the key exchange")
+        })?;
         self.stream.set_nonblocking(false)?;
-        TcpServerConn::spawn(self.stream)
+        TcpServerConn::spawn(self.stream, channel)
     }
 }
 

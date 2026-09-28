@@ -203,3 +203,64 @@ fn a_slot_roundtrips_and_rejects_torn_or_empty_bytes() {
     assert_eq!(Slot::from_bytes(&torn), None);
     assert_eq!(Slot::from_bytes(&[0u8; SLOT_BYTES]), None);
 }
+
+fn wreck_both_slots(path: &Path) {
+    let mut bytes = fs::read(path).unwrap();
+    bytes[V3_PREFIX_BYTES as usize..DATA_START as usize].fill(0xAB);
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn salvage_recovers_the_latest_index_when_both_slots_are_wrecked() {
+    let (_dir, path) = temp_path("salvage-slots");
+    merge_region(
+        &path,
+        [(4, vec![1; 30]), (11, vec![2; 7])],
+        MergePolicy::Durable,
+    )
+    .expect("initial write");
+    merge_region(
+        &path,
+        [(11, vec![9; 5]), (12, vec![3; 3])],
+        MergePolicy::Durable,
+    )
+    .expect("append");
+    wreck_both_slots(&path);
+    assert_eq!(
+        RegionReader::open(&path).err().map(|e| e.kind()),
+        Some(io::ErrorKind::InvalidData)
+    );
+    assert_eq!(
+        salvage_region(&path).expect("salvage"),
+        vec![(4, vec![1; 30]), (11, vec![9; 5]), (12, vec![3; 3])],
+        "the newest intact index wins, with the records it names"
+    );
+}
+
+#[test]
+fn salvage_falls_back_to_an_older_index_when_the_newest_is_damaged() {
+    let (_dir, path) = temp_path("salvage-older");
+    merge_region(&path, [(4, vec![1; 30])], MergePolicy::Durable).expect("initial write");
+    merge_region(&path, [(4, vec![6; 9])], MergePolicy::Durable).expect("append");
+    let mut bytes = fs::read(&path).unwrap();
+    let newest_index = bytes.len() - (4 + INDEX_ENTRY_BYTES);
+    bytes[newest_index + 4 + 2..].fill(0xFF);
+    fs::write(&path, &bytes).unwrap();
+    wreck_both_slots(&path);
+    assert_eq!(
+        salvage_region(&path).expect("salvage"),
+        vec![(4, vec![1; 30])]
+    );
+}
+
+#[test]
+fn salvage_finds_nothing_in_bytes_that_never_were_a_region() {
+    let (_dir, path) = temp_path("salvage-garbage");
+    let noise: Vec<u8> = (0..4096u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
+    fs::write(&path, noise).unwrap();
+    assert_eq!(salvage_region(&path).expect("salvage"), Vec::new());
+    fs::write(&path, b"rotten").unwrap();
+    assert_eq!(salvage_region(&path).expect("salvage"), Vec::new());
+}

@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use mod_api::{Decoded, ErrorCode, HostCall, HostRet, RuntimeSide, Scope};
 use wasmtime::{AsContextMut, Caller, Config, Engine, Linker, Memory, TypedFunc};
 
 use super::client::ClientStoreData;
+use super::health::ModHealth;
+use super::watchdog::{Context, MemoryGuard, Throttle};
 
 pub(in crate::modding) mod budget;
 pub(in crate::modding) mod guards;
@@ -33,8 +35,6 @@ pub(in crate::modding) mod tags;
 mod worldgen;
 
 const EPOCH_PERIOD: Duration = Duration::from_millis(50);
-
-pub(in crate::modding) const DISPATCH_DEADLINE_EPOCHS: u64 = 1200;
 
 pub(in crate::modding) const DISPATCH_HOST_CALL_MAX: u32 = 65_536;
 
@@ -165,18 +165,29 @@ pub(in crate::modding) struct ModStoreData {
     pub stats: HostStats,
     pub side: RuntimeSide,
     pub client: Option<ClientStoreData>,
-    deadline_budget: u64,
-    deadline_armed_at: u64,
+    pub(in crate::modding) health: Arc<ModHealth>,
+    pub(in crate::modding) context: Context,
+    in_flight_allowance: u64,
+    in_flight_used: u64,
+    in_flight_armed_at: u64,
     dispatch_host_calls: u32,
     pub(in crate::modding) dispatch_host_wall: std::time::Duration,
     last_host_call: Option<(Vec<u8>, bool)>,
-    pub(in crate::modding) meter: budget::TickMeter,
+    pub(in crate::modding) throttle: Throttle,
+    pub(in crate::modding) client_period: u64,
+    pub(in crate::modding) limiter: MemoryGuard,
 }
 
 impl ModStoreData {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(in crate::modding) fn new(mod_id: &str, world_seed: u32) -> Self {
-        Self::new_for_side(mod_id, world_seed, RuntimeSide::Server, None)
+        Self::new_for_side(
+            mod_id,
+            world_seed,
+            RuntimeSide::Server,
+            None,
+            ModHealth::standalone(mod_id),
+        )
     }
 
     pub(in crate::modding) fn new_for_side(
@@ -184,7 +195,10 @@ impl ModStoreData {
         world_seed: u32,
         side: RuntimeSide,
         client_buckets: Option<super::client::ClientBuckets>,
+        health: Arc<ModHealth>,
     ) -> Self {
+        let budgets = health.watchdog().budgets();
+        let in_flight_allowance = health.watchdog().in_flight_allowance(Context::Init);
         Self {
             mod_id: mod_id.to_owned(),
             world_seed,
@@ -197,21 +211,54 @@ impl ModStoreData {
             stats: HostStats::default(),
             side,
             client: client_buckets.map(ClientStoreData::new),
-            deadline_budget: DISPATCH_DEADLINE_EPOCHS,
-            deadline_armed_at: epoch_now(),
+            limiter: MemoryGuard::new(Arc::clone(&health)),
+            throttle: Throttle::new(&budgets),
+            client_period: 0,
+            health,
+            context: Context::Init,
+            in_flight_allowance,
+            in_flight_used: 0,
+            in_flight_armed_at: epoch_now(),
             dispatch_host_calls: 0,
             dispatch_host_wall: std::time::Duration::ZERO,
             last_host_call: None,
-            meter: budget::TickMeter::new(budget::FuelBudget::DEFAULT),
         }
     }
 
-    pub(in crate::modding) fn begin_dispatch(&mut self) {
-        self.deadline_budget = DISPATCH_DEADLINE_EPOCHS;
-        self.deadline_armed_at = epoch_now();
+    /// Starts one call in `context`; returns the epochs it may run before the watchdog is asked.
+    pub(in crate::modding) fn begin_dispatch(&mut self, context: Context) -> u64 {
+        self.context = context;
+        self.in_flight_allowance = self.health.watchdog().in_flight_allowance(context);
+        self.in_flight_used = 0;
+        self.in_flight_armed_at = epoch_now();
         self.dispatch_host_calls = 0;
         self.dispatch_host_wall = std::time::Duration::ZERO;
         self.last_host_call = None;
+        self.in_flight_allowance
+    }
+
+    /// Charges the guest time since the call was last armed (host calls don't count) and, once
+    /// the call has spent its allowance, asks the watchdog for more. Returns the epochs left, or
+    /// why the watchdog stopped the call.
+    pub(in crate::modding) fn charge_guest_time(&mut self) -> Result<u64, String> {
+        let now = epoch_now();
+        self.in_flight_used += now.saturating_sub(self.in_flight_armed_at);
+        self.in_flight_armed_at = now;
+        if self.in_flight_used >= self.in_flight_allowance {
+            self.in_flight_allowance = self
+                .health
+                .watchdog()
+                .extend_in_flight(self.context, self.in_flight_used)?;
+        }
+        Ok(self.in_flight_allowance - self.in_flight_used)
+    }
+
+    /// Resumes the guest clock after a host call; returns the epochs the call has left.
+    fn rearm(&mut self) -> u64 {
+        self.in_flight_armed_at = epoch_now();
+        self.in_flight_allowance
+            .saturating_sub(self.in_flight_used)
+            .max(1)
     }
 
     pub(in crate::modding) fn last_host_call(&self) -> Option<(String, bool)> {
@@ -345,7 +392,7 @@ pub(in crate::modding) fn handle_host_call(
         HostCall::Body(call) if client => super::client::handle_body_call(data, call),
         HostCall::Body(call) => player::handle_body_call(&data.mod_id, call),
         HostCall::Sound(call) => sounds::handle_sound_call(&data.mod_id, call),
-        HostCall::Kv(call) => kv::handle_kv_call(&data.mod_id, call),
+        HostCall::Kv(call) => kv::handle_kv_call(&data.mod_id, &data.health, call),
         HostCall::Tag(call) => tags::handle_tag_call(&data.mod_id, call),
         HostCall::Registry(call) => registry::handle_registry_call(call),
         HostCall::Worldgen(call) => worldgen::handle_worldgen_call(data, call),
@@ -435,7 +482,6 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 };
                 let request_len = buf.len();
                 {
-                    let now = epoch_now();
                     let data = caller.data_mut();
                     data.dispatch_host_calls += 1;
                     if data.dispatch_host_calls > DISPATCH_HOST_CALL_MAX {
@@ -443,13 +489,7 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                             "dispatch exceeded {DISPATCH_HOST_CALL_MAX} host calls"
                         )));
                     }
-                    let used = now.saturating_sub(data.deadline_armed_at);
-                    data.deadline_budget = data.deadline_budget.saturating_sub(used);
-                    if data.deadline_budget == 0 {
-                        return Err(wasmtime::Error::msg(
-                            "dispatch exhausted its guest compute budget",
-                        ));
-                    }
+                    data.charge_guest_time().map_err(wasmtime::Error::msg)?;
                     data.last_host_call = Some((buf, false));
                 }
                 let host_started = std::time::Instant::now();
@@ -462,7 +502,7 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
                 let cost = budget::host_call_fuel(caller.data().side, request_len, bytes.len());
                 let fuel = caller.get_fuel()?;
-                caller.set_fuel(fuel.saturating_sub(cost).max(1))?;
+                caller.set_fuel(fuel.saturating_sub(cost))?;
                 let alloc =
                     caller.data().alloc.clone().ok_or_else(|| {
                         wasmtime::Error::msg("host_dispatch during instantiation")
@@ -472,8 +512,7 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     if let Some((_, returned)) = &mut data.last_host_call {
                         *returned = true;
                     }
-                    data.deadline_armed_at = epoch_now();
-                    data.deadline_budget
+                    data.rearm()
                 };
                 caller.as_context_mut().set_epoch_deadline(budget);
                 let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;

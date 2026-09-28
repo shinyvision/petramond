@@ -2,7 +2,9 @@ use super::*;
 use crate::net::connection::TcpClientConn;
 use crate::net::framing::{read_msg, write_msg};
 use crate::net::handle::ServerHandle;
-use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError, ServerOffer};
+use crate::net::handshake::{
+    client_handshake, installed_mod_ids, HandshakeError, ManualClient, ServerOffer,
+};
 use crate::net::identity::PlayerIdentity;
 use crate::net::protocol::{PlayerAction, PlayerUpdate, TargetRef};
 use crate::net::remap::IdRemap;
@@ -295,7 +297,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
 
     let visitor_id = identity();
     let mut stream = connect(port);
-    let join = client_handshake(
+    let (handshake, channel) = client_handshake(
         &mut stream,
         &visitor_id,
         joins_as("Visitor"),
@@ -303,8 +305,8 @@ fn full_lan_join_place_pause_gate_and_leave() {
         &installed_mod_ids(),
         Vec::new(),
     )
-    .expect("handshake succeeds")
-    .join;
+    .expect("handshake succeeds");
+    let join = handshake.join;
     assert_eq!(join.player_id, PlayerId(1));
     assert_eq!(join.seed, 7);
     assert_eq!(join.self_restore.transform.pos, visitor_feet);
@@ -321,7 +323,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
     assert_eq!(join.players[0].0, PlayerId(0));
     let remap = IdRemap::build(&join.tables);
     assert!(remap.is_identity(), "same process, same registries");
-    let conn = TcpClientConn::spawn(stream, remap).expect("connection threads");
+    let conn = TcpClientConn::spawn(stream, remap, channel).expect("connection threads");
     let mut remote = ServerHandle::from_remote(conn);
 
     let joined = drain_until(&mut host, remain(), |msg| match msg {
@@ -444,6 +446,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
             Vec::new(),
         )
         .expect("a duplicate name joins deduped, not rejected")
+        .0
         .join;
         let dup_id = data.player_id;
         let name = drain_until(&mut host, remain(), |msg| match msg {
@@ -474,6 +477,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
             Vec::new(),
         )
         .expect("guest joins")
+        .0
         .join;
         assert_eq!(
             data.players.len(),
@@ -553,7 +557,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
 
     let head = identity();
     let mut stream = connect(port);
-    let join = client_handshake(
+    let (handshake, channel) = client_handshake(
         &mut stream,
         &head,
         joins_as("Head"),
@@ -561,10 +565,11 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
         &installed_mod_ids(),
         Vec::new(),
     )
-    .expect("join")
-    .join;
+    .expect("join");
+    let join = handshake.join;
     assert_eq!(join.player_id, PlayerId(0));
-    let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+    let conn =
+        TcpClientConn::spawn(stream, IdRemap::build(&join.tables), channel).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
 
     drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| {
@@ -586,7 +591,7 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     std::thread::sleep(Duration::from_secs(1));
 
     let mut stream = connect(port);
-    let join = client_handshake(
+    let (handshake, channel) = client_handshake(
         &mut stream,
         &head,
         joins_as("Head"),
@@ -594,10 +599,11 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
         &installed_mod_ids(),
         Vec::new(),
     )
-    .expect("rejoin")
-    .join;
+    .expect("rejoin");
+    let join = handshake.join;
     assert_eq!(join.player_id, PlayerId(0), "the freed id recycles");
-    let conn = TcpClientConn::spawn(stream, IdRemap::build(&join.tables)).expect("conn threads");
+    let conn =
+        TcpClientConn::spawn(stream, IdRemap::build(&join.tables), channel).expect("conn threads");
     let mut remote = ServerHandle::from_remote(conn);
     let resumed = drain_until(&mut remote, TEST_HARD_DEADLINE, |msg| match msg {
         ServerToClient::Tick(u) => Some(u.tick),
@@ -614,61 +620,26 @@ fn headless_server_join_leave_cycle_freezes_the_world_when_empty() {
     host.shutdown_and_join();
 }
 
-fn reply<T>(stream: &mut TcpStream, mut f: impl FnMut(ServerToClient) -> Option<T>) -> T {
-    loop {
-        match read_msg::<ServerToClient, _>(stream).expect("a reply") {
-            ServerToClient::KeepAlive => continue,
-            other => {
-                let shown = format!("{other:?}");
-                if let Some(hit) = f(other) {
-                    return hit;
-                }
-                panic!("unexpected reply: {shown}");
-            }
-        }
-    }
-}
-
-fn hello(stream: &mut TcpStream) -> (crate::net::identity::JoinChallenge, bool, String) {
-    write_msg(
-        stream,
-        &ClientToServer::Hello {
-            protocol: PROTOCOL_VERSION,
-        },
-    )
-    .expect("send");
-    reply(stream, |msg| match msg {
-        ServerToClient::HelloAck {
-            challenge,
-            requires_account,
-            server_id,
-            ..
-        } => Some((challenge, requires_account, server_id)),
-        _ => None,
-    })
-}
-
 fn refused_join(
     stream: &mut TcpStream,
-    challenge: &crate::net::identity::JoinChallenge,
+    client: &mut ManualClient,
     credential: crate::net::protocol::JoinCredential,
 ) -> JoinRejectReason {
     let me = identity();
-    write_msg(
+    client.send(
         stream,
         &ClientToServer::Join {
             credential,
             key: me.key(),
-            proof: me.sign_join(challenge),
+            proof: me.sign_join(client.session.binding()),
             view_distance: 2,
             cached_sections: Vec::new(),
         },
-    )
-    .expect("send");
-    reply(stream, |msg| match msg {
-        ServerToClient::JoinReject { reason } => Some(reason),
-        _ => None,
-    })
+    );
+    match client.recv(stream) {
+        ServerToClient::JoinReject { reason } => reason,
+        other => panic!("expected JoinReject, got {other:?}"),
+    }
 }
 
 #[test]
@@ -680,13 +651,14 @@ fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
     let port = host.open_to_lan(0).expect("bind an ephemeral port");
 
     let mut probe = connect(port);
-    let (challenge, requires_account, server_id) = hello(&mut probe);
-    assert!(requires_account, "an online server says so up front");
-    assert_eq!(server_id.len(), 32, "a full-width opaque server id");
+    let mut client = ManualClient::hello(&mut probe);
+    assert!(client.requires_account, "an online server says so up front");
+    assert_eq!(client.server_id.len(), 32, "a full-width opaque server id");
+    let server_id = client.server_id.clone();
     assert_eq!(
         refused_join(
             &mut probe,
-            &challenge,
+            &mut client,
             crate::net::protocol::JoinCredential::Name("Sneaky".to_string()),
         ),
         JoinRejectReason::AccountRequired
@@ -696,12 +668,15 @@ fn an_online_server_advertises_its_policy_and_refuses_a_plain_name() {
     offline.unthrottle_for_test();
     let offline_port = offline.open_to_lan(0).expect("bind an ephemeral port");
     let mut probe = connect(offline_port);
-    let (challenge, requires_account, _) = hello(&mut probe);
-    assert!(!requires_account, "an offline server asks for no account");
+    let mut client = ManualClient::hello(&mut probe);
+    assert!(
+        !client.requires_account,
+        "an offline server asks for no account"
+    );
     assert_eq!(
         refused_join(
             &mut probe,
-            &challenge,
+            &mut client,
             crate::net::protocol::JoinCredential::Ticket(server_id),
         ),
         JoinRejectReason::AccountNotAccepted

@@ -106,13 +106,23 @@ fn merge_records(path: &Path, records: &[(u16, Vec<u8>)]) -> io::Result<()> {
     match region::merge_region(path, records.iter().cloned(), MergePolicy::Durable) {
         Err(e) if e.kind() == io::ErrorKind::InvalidData => {
             let aside = path.with_extension("dat.unreadable");
+            let salvaged = region::salvage_region(path).unwrap_or_else(|salvage| {
+                log::error!("salvaging region file {}: {salvage}", path.display());
+                Vec::new()
+            });
             log::error!(
-                "region file {} is unreadable ({e}); kept as {}",
+                "region file {} is unreadable ({e}); kept as {}, rebuilt from {} salvaged records",
                 path.display(),
-                aside.display()
+                aside.display(),
+                salvaged.len()
             );
             std::fs::rename(path, &aside)?;
-            region::merge_region(path, records.iter().cloned(), MergePolicy::Durable)
+            // Journal records come last so they replace any salvaged copy of the same section.
+            region::merge_region(
+                path,
+                salvaged.into_iter().chain(records.iter().cloned()),
+                MergePolicy::Durable,
+            )
         }
         result => result,
     }

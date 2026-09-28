@@ -1,9 +1,8 @@
 use super::admission::{MAX_PENDING_PER_IP, PRE_JOIN_MAX_FRAME};
 use super::tests::{headless, joins_as};
 use super::*;
-use crate::net::framing::{read_msg, write_msg};
-use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError};
-use crate::net::identity::{JoinChallenge, PlayerIdentity};
+use crate::net::handshake::{client_handshake, installed_mod_ids, HandshakeError, ManualClient};
+use crate::net::identity::PlayerIdentity;
 use petramond_util::test_time::TEST_HARD_DEADLINE;
 use petramond_world::item::{ItemStack, ItemType};
 use std::io::{Read, Write};
@@ -21,27 +20,14 @@ fn connect(port: u16) -> TcpStream {
     stream
 }
 
-fn hello(stream: &mut TcpStream) -> JoinChallenge {
-    write_msg(
-        stream,
-        &ClientToServer::Hello {
-            protocol: PROTOCOL_VERSION,
-        },
-    )
-    .expect("send hello");
-    match read_msg::<ServerToClient, _>(stream).expect("a reply") {
-        ServerToClient::HelloAck { challenge, .. } => challenge,
-        other => panic!("expected HelloAck, got {other:?}"),
-    }
-}
-
 fn join_reply(
     stream: &mut TcpStream,
+    client: &mut ManualClient,
     name: &str,
     key: PlayerKey,
     proof: Vec<u8>,
 ) -> ServerToClient {
-    write_msg(
+    client.send(
         stream,
         &ClientToServer::Join {
             credential: JoinCredential::Name(name.to_string()),
@@ -50,9 +36,8 @@ fn join_reply(
             view_distance: 2,
             cached_sections: Vec::new(),
         },
-    )
-    .expect("send join");
-    read_msg::<ServerToClient, _>(stream).expect("a reply")
+    );
+    client.recv(stream)
 }
 
 fn rejected(reply: ServerToClient) -> JoinRejectReason {
@@ -134,26 +119,48 @@ fn joins_without_a_valid_identity_proof_are_refused() {
     let (alice, mallory) = (identity(), identity());
 
     let mut s = connect(port);
-    let challenge = hello(&mut s);
-    let forged = mallory.sign_join(&challenge);
+    let mut client = ManualClient::hello(&mut s);
+    let forged = mallory.sign_join(client.session.binding());
     assert_eq!(
-        rejected(join_reply(&mut s, "Alice", alice.key(), forged)),
+        rejected(join_reply(
+            &mut s,
+            &mut client,
+            "Alice",
+            alice.key(),
+            forged
+        )),
         JoinRejectReason::BadProof
+    );
+    let earlier = *client.session.binding();
+
+    let mut s = connect(port);
+    let mut client = ManualClient::hello(&mut s);
+    let replayed = alice.sign_join(&earlier);
+    assert_eq!(
+        rejected(join_reply(
+            &mut s,
+            &mut client,
+            "Alice",
+            alice.key(),
+            replayed
+        )),
+        JoinRejectReason::BadProof,
+        "a proof from another connection's exchange never verifies"
+    );
+    let bare = alice.sign_join(&client.challenge);
+    let mut s = connect(port);
+    let mut client = ManualClient::hello(&mut s);
+    assert_eq!(
+        rejected(join_reply(&mut s, &mut client, "Alice", alice.key(), bare)),
+        JoinRejectReason::BadProof,
+        "nor does a proof over the bare challenge a relay could forward"
     );
 
     let mut s = connect(port);
-    let _ = hello(&mut s);
-    let replayed = alice.sign_join(&challenge);
-    assert_eq!(
-        rejected(join_reply(&mut s, "Alice", alice.key(), replayed)),
-        JoinRejectReason::BadProof
-    );
-
-    let mut s = connect(port);
-    let challenge = hello(&mut s);
-    let proof = alice.sign_join(&challenge);
+    let mut client = ManualClient::hello(&mut s);
+    let proof = alice.sign_join(client.session.binding());
     assert!(matches!(
-        rejected(join_reply(&mut s, "Ann!", alice.key(), proof)),
+        rejected(join_reply(&mut s, &mut client, "Ann!", alice.key(), proof)),
         JoinRejectReason::InvalidName(_)
     ));
 

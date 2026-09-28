@@ -12,6 +12,7 @@ pub use petramond_world::pack_manifest as manifest;
 pub mod modset;
 mod scope;
 mod shape_bake;
+mod watchdog;
 
 static ACTIVE_RECIPES: std::sync::RwLock<
     Option<std::sync::Arc<petramond_world::crafting::Recipes>>,
@@ -64,7 +65,6 @@ pub use client::{
     ClientCanvasSceneData, ClientCommand, ClientImageData, ClientOverlayRegistration,
 };
 use health::ModHealthBoard;
-pub use host::budget::FuelBudget;
 use host::Registration;
 use instance::ModInstance;
 
@@ -94,7 +94,6 @@ pub struct ModHost {
     block_behaviors: std::collections::HashMap<String, BlockBehaviorRegistration>,
     ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration>,
     health: ModHealthBoard,
-    budget: FuelBudget,
 }
 
 impl ModHost {
@@ -106,7 +105,6 @@ impl ModHost {
     pub fn from_wasm_list(world_seed: u32, mods: &[(String, PathBuf)]) -> Self {
         host::module_cache::prewarm(mods.iter().map(|(_, wasm)| wasm.clone()));
         let health = ModHealthBoard::default();
-        let budget = FuelBudget::DEFAULT;
         let mut instances = Vec::new();
         let mut metas = Vec::new();
         for (id, wasm) in mods {
@@ -124,7 +122,6 @@ impl ModHost {
                 mod_api::RuntimeSide::Server,
                 None,
                 health.health(id),
-                budget,
             ) {
                 Ok(inst) => {
                     log::info!("mod '{id}' loaded from {}", wasm.display());
@@ -146,14 +143,6 @@ impl ModHost {
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
             health,
-            budget,
-        }
-    }
-
-    pub fn set_fuel_budget(&mut self, budget: FuelBudget) {
-        self.budget = budget;
-        for inst in &self.instances {
-            inst.lock().unwrap().set_fuel_budget(budget);
         }
     }
 
@@ -195,7 +184,6 @@ impl ModHost {
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
             health: ModHealthBoard::default(),
-            budget: FuelBudget::DEFAULT,
         }
     }
 
@@ -218,7 +206,6 @@ impl ModHost {
             block_behaviors: std::collections::HashMap::new(),
             ai_nodes: std::collections::HashMap::new(),
             health: ModHealthBoard::default(),
-            budget: FuelBudget::DEFAULT,
         }
     }
 
@@ -229,8 +216,7 @@ impl ModHost {
         systems: &mut TickSystems,
         next_spatial_sound_handle: &mut u64,
     ) {
-        let mut gen_hooks =
-            gen::GenHooksBuilder::new(world.data().seed, self.health.clone(), self.budget);
+        let mut gen_hooks = gen::GenHooksBuilder::new(world.data().seed, self.health.clone());
         let mut ai_nodes: std::collections::HashMap<String, ai::AiNodeRegistration> =
             std::collections::HashMap::new();
         let mut hostile_order = self.hostile_spawners.len();

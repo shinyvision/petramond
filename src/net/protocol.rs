@@ -127,6 +127,11 @@ pub enum ClientToServer {
     Pause(bool),
     KeepAlive,
     Disconnect,
+    /// The client's half of the key exchange, sent in the clear right after `HelloAck`. Every
+    /// frame after it, in both directions, is sealed (`net::secure`).
+    KeyExchange {
+        key_share: crate::net::secure::KeyShare,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -136,6 +141,7 @@ pub enum ServerToClient {
         challenge: crate::net::identity::JoinChallenge,
         requires_account: bool,
         server_id: String,
+        key_share: crate::net::secure::KeyShare,
     },
     HelloReject {
         server_protocol: u16,

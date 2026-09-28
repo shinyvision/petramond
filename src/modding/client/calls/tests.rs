@@ -10,6 +10,7 @@ fn client_data(dir: &std::path::Path) -> ModStoreData {
         7,
         RuntimeSide::Client,
         Some(crate::modding::client::ClientBuckets::under(dir.to_owned())),
+        crate::modding::health::ModHealth::standalone("weathertest"),
     )
 }
 
@@ -162,6 +163,7 @@ fn client_instances_are_capability_isolated_and_namespace_their_state() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("map"),
     );
     assert_eq!(
         handle_host_call(&mut data, HostCall::from(calls::RuntimeSide)),
@@ -271,6 +273,7 @@ fn client_image_blit_mutates_in_place_and_validates_bounds() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("map"),
     );
     assert_eq!(
         handle_host_call(
@@ -386,6 +389,7 @@ fn client_surface_columns_gate_on_revision_and_pack_cells() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("map"),
     );
     let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
@@ -457,6 +461,7 @@ fn client_blocks_at_reads_the_replica_and_gates_on_stream_finality() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("map"),
     );
     let mut world = crate::world::ReplicaWorld::new(0, 0);
     let sp = petramond_world::chunk::SectionPos::new(0, 4, 0);
@@ -1051,6 +1056,7 @@ fn the_view_and_capability_calls_are_routed_on_a_client_and_refused_on_a_sim() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("weathertest"),
     );
     for call in view_and_session_calls() {
         let name = format!("{call:?}");
@@ -1071,6 +1077,7 @@ fn client_storage_writes_during_a_presentation_never_reach_the_session() {
             7,
             RuntimeSide::Client,
             Some(crate::modding::client::ClientBuckets::under(dir.to_owned())),
+            crate::modding::health::ModHealth::standalone("map"),
         )
     };
     let set = |data: &mut ModStoreData, value: u8| {
@@ -1263,6 +1270,7 @@ fn a_world_mark_set_is_kept_whole_or_refused_whole() {
         Some(crate::modding::client::ClientBuckets::under(
             scratch.to_path_buf(),
         )),
+        crate::modding::health::ModHealth::standalone("weathertest"),
     );
     assert!(matches!(set(&mut sim, vec![line(2.0)]), HostRet::Err(_)));
 }
@@ -1276,6 +1284,7 @@ fn shell_data(dir: &std::path::Path) -> ModStoreData {
             world: None,
             pack: dir.join("pack"),
         }),
+        crate::modding::health::ModHealth::standalone("map"),
     )
 }
 
@@ -1421,6 +1430,7 @@ fn pack_storage_survives_across_sessions_and_presentations() {
             world: Some(dir.join("world")),
             pack: dir.join("pack"),
         }),
+        crate::modding::health::ModHealth::standalone("map"),
     );
     let presented = world.client.as_ref().unwrap().presented.clone();
     let queued = |ret| matches!(ret, HostRet::ClientStorageWrite(_));
@@ -1495,6 +1505,7 @@ fn pack_storage_survives_across_sessions_and_presentations() {
                 world: Some(dir.join("world")),
                 pack: dir.join("pack"),
             }),
+            crate::modding::health::ModHealth::standalone("map"),
         )
     };
     assert_eq!(

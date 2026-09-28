@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use mod_api::calls;
 use mod_api::{HostCall, HostRet};
 
@@ -7,6 +9,8 @@ use crate::modding::host::guards::KV_MAX_VALUE_BYTES;
 use crate::modding::host::{handle_host_call, ModStoreData};
 use crate::modding::scope;
 use crate::world::ServerWorld;
+
+use super::namespace_usage;
 
 #[test]
 fn sparse_find_is_sorted_and_never_fabricates_unloaded_cells() {
@@ -244,4 +248,23 @@ fn section_kv_caps_distinct_keys_per_cell() {
             "a removal frees a slot"
         );
     });
+}
+
+#[test]
+fn namespace_usage_counts_only_the_key_namespace_and_nets_out_an_overwrite() {
+    let mut kv = BTreeMap::new();
+    kv.insert("alpha:a".to_owned(), vec![0; 10]);
+    kv.insert("alpha:b".to_owned(), vec![0; 5]);
+    kv.insert("alphabet:c".to_owned(), vec![0; 100]);
+    kv.insert("beta:d".to_owned(), vec![0; 100]);
+    assert_eq!(
+        namespace_usage(&kv, "alpha:new", 3),
+        Some(("alpha", 29, 41))
+    );
+    assert_eq!(
+        namespace_usage(&kv, "alpha:a", 1),
+        Some(("alpha", 29, 20)),
+        "an overwrite replaces the old value's bytes"
+    );
+    assert_eq!(namespace_usage(&kv, "no-namespace", 1), None);
 }

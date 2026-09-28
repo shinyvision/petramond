@@ -145,6 +145,10 @@ fn representative_messages_roundtrip_through_postcard() {
         challenge: [0x11; 32],
         requires_account: true,
         server_id: "0123456789abcdef0123456789abcdef".into(),
+        key_share: [0x22; 32],
+    });
+    roundtrip(&ClientToServer::KeyExchange {
+        key_share: [0x33; 32],
     });
     roundtrip(&ServerToClient::ModsDisabled {
         mods: vec!["farming".into(), "combat".into()],

@@ -154,7 +154,7 @@ fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
         .expect("read timeout");
     let identity = crate::net::identity::PlayerIdentity::generate().expect("os randomness");
-    let join = crate::net::handshake::client_handshake(
+    let (join, _) = crate::net::handshake::client_handshake(
         &mut stream,
         &identity,
         |offer| {

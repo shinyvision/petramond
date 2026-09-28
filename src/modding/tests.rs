@@ -72,6 +72,7 @@ fn disabled_packs_contribute_no_wasm_instance() {
             icon: None,
             dependencies: Vec::new(),
             touches_world: wasm.is_some(),
+            resources: Default::default(),
         },
         origin: petramond_world::assets::PackOrigin::Shipped,
         wasm: wasm.map(PathBuf::from),
@@ -398,69 +399,135 @@ fn host_call_spinning_dispatch_is_disabled_by_the_call_cap() {
     );
 }
 
+const SPIN_1000: &str = "(local $i i32)\n    \
+    (loop $l (local.set $i (i32.add (local.get $i) (i32.const 1)))\n    \
+    (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))\n    \
+    (i64.const 2199023255553)";
+
 #[test]
-fn dispatch_continues_past_its_fuel_warning_threshold() {
-    let mut instance = hostile_guest_with_id(
-        "fuelled",
-        "(drop (call $hd (i32.const 0) (i32.const 6)))\n    \
-         (drop (call $hd (i32.const 0) (i32.const 6)))\n    \
-         (i64.const 2199023255553)",
-    );
-    instance.set_fuel_budget(super::FuelBudget {
-        per_dispatch: 1,
-        per_tick: 1,
+fn an_overspending_mod_is_throttled_then_resumes_and_is_never_disabled() {
+    use super::watchdog::{Budgets, Context, ContextBudget};
+
+    let tick = mod_api::GuestCall::TickSystem { id: 7 };
+    let click = mod_api::GuestCall::GuiClick {
+        kind_key: "throttle:panel".into(),
+        widget_id: "go".into(),
+        at: None,
+    };
+    let mut probe = hostile_guest_with_id("throttle-probe", SPIN_1000);
+    probe.call_init_detached();
+    assert!(probe.call_guest_detached(&tick).is_some());
+    let one = probe.last_dispatch_fuel();
+    assert!(one > 0, "a dispatch costs fuel");
+
+    let mut greedy = hostile_guest_with_id("throttle-greedy", SPIN_1000);
+    greedy.set_budgets_for_test(Budgets::for_needs(&Default::default()).with_context(
+        Context::Tick,
+        ContextBudget {
+            in_flight_epochs: 5,
+            per_period: Some(one),
+            burst_periods: 2,
+        },
+    ));
+    greedy.call_init_detached();
+    super::ai::with_detached_tick(10, || {
+        assert!(greedy.call_guest_detached(&tick).is_some());
+        assert!(greedy.call_guest_detached(&tick).is_some());
+        assert!(
+            greedy.call_guest_detached(&tick).is_none(),
+            "a third tick system in one tick overspends the saved-up share and waits"
+        );
+        assert!(greedy.call_guest_detached(&click).is_some());
+        assert!(
+            greedy.call_guest_detached(&click).is_some(),
+            "a click is not deferrable: it runs even while the mod is throttled"
+        );
     });
-    instance.call_init_detached();
-    assert!(!instance.disabled());
-    assert!(instance
-        .call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 })
-        .is_some());
-    assert!(!instance.disabled());
+    assert!(greedy.throttled(Context::Tick));
+    super::ai::with_detached_tick(11, || {
+        assert!(
+            greedy.call_guest_detached(&tick).is_none(),
+            "one tick's share does not cover the debt"
+        );
+    });
+    super::ai::with_detached_tick(13, || {
+        assert!(
+            greedy.call_guest_detached(&tick).is_some(),
+            "caught up, the tick systems run again"
+        );
+    });
+    assert!(!greedy.disabled(), "throttling never disables a mod");
 }
 
 #[test]
-fn many_cheap_dispatches_in_one_tick_continue_past_the_threshold() {
-    let body = "(local $i i32)\n    \
-                (loop $l (local.set $i (i32.add (local.get $i) (i32.const 1)))\n    \
-                (br_if $l (i32.lt_u (local.get $i) (i32.const 1000))))\n    \
-                (i64.const 2199023255553)";
+fn a_single_memory_spike_is_granted_but_growing_again_at_once_is_a_runaway() {
     let call = mod_api::GuestCall::TickSystem { id: 7 };
-    let mut probe = hostile_guest_with_id("probe", body);
-    probe.call_init_detached();
-    let one = super::ai::with_detached_tick(1, || {
-        assert!(probe.call_guest_detached(&call).is_some());
-        probe.fuel_used_this_tick()
-    });
-    assert!(one > 0, "a dispatch in a tick is charged to it");
-
-    let budget = super::FuelBudget {
-        per_dispatch: u64::MAX,
-        per_tick: one * 2 + one / 2,
-    };
-    let mut spread = hostile_guest_with_id("spread", body);
-    spread.set_fuel_budget(budget);
-    spread.call_init_detached();
-    for tick in 10..20 {
-        super::ai::with_detached_tick(tick, || {
-            assert!(spread.call_guest_detached(&call).is_some());
-            assert!(spread.call_guest_detached(&call).is_some());
-        });
-    }
+    let mut spike = hostile_guest_with_id(
+        "mem-spike",
+        "(drop (memory.grow (i32.const 4096)))\n    (i64.const 2199023255553)",
+    );
+    spike.call_init_detached();
+    assert!(spike.call_guest_detached(&call).is_some());
     assert!(
-        !spread.disabled(),
-        "two dispatches per tick fit the tick budget"
+        !spike.disabled(),
+        "one jump to twice the starting memory is a raise the watchdog grants"
     );
 
-    let mut crowded = hostile_guest_with_id("crowded", body);
-    crowded.set_fuel_budget(budget);
-    crowded.call_init_detached();
-    super::ai::with_detached_tick(30, || {
-        assert!(crowded.call_guest_detached(&call).is_some());
-        assert!(crowded.call_guest_detached(&call).is_some());
-        assert!(crowded.call_guest_detached(&call).is_some());
-    });
-    assert!(!crowded.disabled());
-    assert!(crowded.fuel_used_this_tick() > budget.per_tick);
+    let mut leak = hostile_guest_with_id(
+        "mem-leak",
+        "(drop (memory.grow (i32.const 4096)))\n    \
+         (drop (memory.grow (i32.const 8192)))\n    \
+         (i64.const 2199023255553)",
+    );
+    leak.call_init_detached();
+    assert!(leak.call_guest_detached(&call).is_none());
+    assert!(
+        leak.disabled(),
+        "needing more again right after a raise is a runaway, and it is killed"
+    );
+}
+
+#[test]
+fn a_mod_that_declares_extreme_memory_can_take_it_up_front() {
+    use petramond_world::pack_manifest::{ResourceNeeds, Tier};
+
+    let mut big = hostile_guest_with_id(
+        "mem-declared",
+        "(drop (memory.grow (i32.const 16384)))\n    (i64.const 2199023255553)",
+    );
+    big.set_budgets_for_test(super::watchdog::Budgets::for_needs(&ResourceNeeds {
+        memory: Tier::Extreme,
+        ..Default::default()
+    }));
+    big.call_init_detached();
+    assert!(big
+        .call_guest_detached(&mod_api::GuestCall::TickSystem { id: 7 })
+        .is_some());
+    assert!(!big.disabled());
+}
+
+/// A call that runs long once gets more time; running long again at once is a runaway. Runs in
+/// a child process because it advances the process-wide engine epoch.
+#[test]
+fn a_long_call_is_extended_once_then_stopped() {
+    run_isolated("modding::tests::a_long_call_is_extended_once_then_stopped_inner");
+}
+
+#[test]
+#[ignore]
+fn a_long_call_is_extended_once_then_stopped_inner() {
+    let mut data = super::host::ModStoreData::new("long-call", 0);
+    let allowance = data.begin_dispatch(super::watchdog::Context::Tick);
+    super::host::test_advance_epochs(allowance);
+    let left = data
+        .charge_guest_time()
+        .expect("the first overrun is granted more time");
+    assert!(left > 0);
+    super::host::test_advance_epochs(left);
+    let why = data
+        .charge_guest_time()
+        .expect_err("a second overrun within the cooldown is a runaway");
+    assert!(why.contains("runaway"), "{why}");
 }
 
 /// Contract: the dispatch watchdog charges GUEST compute only. A host call
@@ -477,7 +544,7 @@ fn watchdog_charges_guest_compute_only() {
 #[ignore]
 fn watchdog_charges_guest_compute_only_inner() {
     fn stall() {
-        super::host::test_advance_epochs(super::host::DISPATCH_DEADLINE_EPOCHS * 3);
+        super::host::test_advance_epochs(1_000);
     }
     *super::host::HOST_CALL_TEST_HOOK.lock().unwrap() = Some(("stally".into(), stall));
     let mut instance = hostile_guest_with_id(

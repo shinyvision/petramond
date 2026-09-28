@@ -358,7 +358,7 @@ fn run_connect(
             return ConnectOutcome::Failed(format!("Couldn't load your player identity: {e}"))
         }
     };
-    let join = match client_handshake(
+    let (join, channel) = match client_handshake(
         &mut stream,
         &identity,
         |offer| credential_for(offer, name),
@@ -378,7 +378,7 @@ fn run_connect(
         return ConnectOutcome::Failed("Cancelled".to_owned());
     }
     let remap = petramond::net::remap::IdRemap::build(&join.join.tables);
-    let conn = match petramond::net::connection::TcpClientConn::spawn(stream, remap) {
+    let conn = match petramond::net::connection::TcpClientConn::spawn(stream, remap, channel) {
         Ok(conn) => conn,
         Err(e) => return ConnectOutcome::Failed(format!("Connection error: {e}")),
     };

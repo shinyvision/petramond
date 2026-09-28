@@ -14,7 +14,6 @@ use crate::world::ReplicaWorld;
 
 use super::state::{ClientCommand, ClientImageData};
 use crate::modding::health::ModHealth;
-use crate::modding::host::budget::FuelBudget;
 use crate::modding::instance::ModInstance;
 
 mod buckets;
@@ -583,6 +582,7 @@ impl ClientModRuntime {
         self.presented.lock().view = Some(view);
         super::scope::enter_inventory(inventory, || {
             for loaded in &mut self.mods {
+                loaded.instance.begin_client_frame();
                 let mut mine = actor.clone();
                 mine.holds_use = loaded.instance.client_data().is_some_and(|d| d.holds_use);
                 super::scope::enter_actor(mine, || {
@@ -595,6 +595,7 @@ impl ClientModRuntime {
     pub fn frame_detached(&mut self, frame: ClientFrameData) {
         let call = GuestCall::ClientFrame { frame };
         for loaded in &mut self.mods {
+            loaded.instance.begin_client_frame();
             dispatch_unit(&mut loaded.instance, None, &call, "client frame");
         }
     }
@@ -1072,8 +1073,7 @@ pub fn bake_installed_custom_item_geometry() {
             0,
             RuntimeSide::Client,
             None,
-            ModHealth::standalone(&id),
-            FuelBudget::DEFAULT,
+            ModHealth::for_pack(&id),
         ) else {
             continue;
         };
@@ -1139,8 +1139,7 @@ fn instantiate(
         world_seed,
         RuntimeSide::Client,
         Some(buckets),
-        ModHealth::standalone(id),
-        FuelBudget::DEFAULT,
+        ModHealth::for_pack(id),
     ) {
         Ok(instance) => instance,
         Err(e) => {
@@ -1277,6 +1276,7 @@ mod tests {
                     icon: None,
                     dependencies: Vec::new(),
                     touches_world: false,
+                    resources: Default::default(),
                 },
                 origin: petramond_world::assets::PackOrigin::Shipped,
                 wasm: None,

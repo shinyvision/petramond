@@ -3,17 +3,50 @@ use std::io::{self, Read, Write};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use super::secure::{FrameOpener, FrameSealer, TAG_LEN};
+
 pub const MAX_FRAME: usize = 8 * 1024 * 1024;
 
 const COMPRESS_MIN: usize = 1024;
 
 const FLAG_ZLIB: u8 = 1;
 
+const FLAG_SEALED: u8 = 2;
+
 fn invalid<E: Into<Box<dyn std::error::Error + Send + Sync>>>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
 pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
+    let (flags, body) = plain_body(msg)?;
+    let mut frame = Vec::with_capacity(HEADER_LEN + body.len());
+    frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    frame.push(flags);
+    frame.extend_from_slice(&body);
+    Ok(frame)
+}
+
+/// A frame for a keyed connection: the body is encrypted and the header is authenticated.
+pub fn encode_sealed<T: Serialize>(msg: &T, sealer: &mut FrameSealer) -> io::Result<Vec<u8>> {
+    let (flags, body) = plain_body(msg)?;
+    let mut frame = Vec::with_capacity(HEADER_LEN + body.len() + TAG_LEN);
+    frame.extend_from_slice(&((body.len() + TAG_LEN) as u32).to_le_bytes());
+    frame.push(flags | FLAG_SEALED);
+    let mut sealed = body;
+    sealer.seal(&frame[..HEADER_LEN], &mut sealed)?;
+    frame.extend_from_slice(&sealed);
+    Ok(frame)
+}
+
+pub fn write_sealed<T: Serialize, W: Write>(
+    w: &mut W,
+    msg: &T,
+    sealer: &mut FrameSealer,
+) -> io::Result<()> {
+    w.write_all(&encode_sealed(msg, sealer)?)
+}
+
+fn plain_body<T: Serialize>(msg: &T) -> io::Result<(u8, Vec<u8>)> {
     let body = postcard::to_allocvec(msg).map_err(invalid)?;
     if body.len() > MAX_FRAME {
         return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
@@ -30,11 +63,7 @@ pub fn encode_frame<T: Serialize>(msg: &T) -> io::Result<Vec<u8>> {
     } else {
         (0, body)
     };
-    let mut frame = Vec::with_capacity(HEADER_LEN + body.len());
-    frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
-    frame.push(flags);
-    frame.extend_from_slice(&body);
-    Ok(frame)
+    Ok((flags, body))
 }
 
 pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
@@ -43,12 +72,33 @@ pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
 
 const HEADER_LEN: usize = 5;
 
-fn parse_header(header: &[u8], max_body: usize) -> io::Result<(usize, u8)> {
+fn parse_header(header: &[u8], max_body: usize, sealed: bool) -> io::Result<(usize, u8)> {
     let len = u32::from_le_bytes(header[0..4].try_into().expect("4 bytes")) as usize;
-    if len > max_body {
+    let flags = header[4];
+    if (flags & FLAG_SEALED != 0) != sealed {
+        return Err(invalid(if sealed {
+            "unsealed frame on a keyed connection"
+        } else {
+            "sealed frame before key agreement"
+        }));
+    }
+    let max_len = if sealed { max_body + TAG_LEN } else { max_body };
+    if len > max_len || (sealed && len < TAG_LEN) {
         return Err(invalid(format!("oversize frame ({len} bytes)")));
     }
-    Ok((len, header[4]))
+    Ok((len, flags & !FLAG_SEALED))
+}
+
+fn open_body(
+    header: &[u8],
+    mut body: Vec<u8>,
+    opener: Option<&mut FrameOpener>,
+) -> io::Result<Vec<u8>> {
+    if let Some(opener) = opener {
+        let len = opener.open(header, &mut body)?;
+        body.truncate(len);
+    }
+    Ok(body)
 }
 
 fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> io::Result<T> {
@@ -72,12 +122,30 @@ pub fn read_msg_bounded<T: DeserializeOwned, R: Read>(
     r: &mut R,
     max_body: usize,
 ) -> io::Result<(T, usize)> {
+    read_frame(r, max_body, None)
+}
+
+/// Reads the next frame of a keyed connection; it must be sealed and must open.
+pub fn read_opened<T: DeserializeOwned, R: Read>(
+    r: &mut R,
+    max_body: usize,
+    opener: &mut FrameOpener,
+) -> io::Result<(T, usize)> {
+    read_frame(r, max_body, Some(opener))
+}
+
+fn read_frame<T: DeserializeOwned, R: Read>(
+    r: &mut R,
+    max_body: usize,
+    opener: Option<&mut FrameOpener>,
+) -> io::Result<(T, usize)> {
     let max_body = max_body.min(MAX_FRAME);
     let mut header = [0u8; HEADER_LEN];
     r.read_exact(&mut header)?;
-    let (len, flags) = parse_header(&header, max_body)?;
+    let (len, flags) = parse_header(&header, max_body, opener.is_some())?;
     let mut body = vec![0u8; len];
     r.read_exact(&mut body)?;
+    let body = open_body(&header, body, opener)?;
     Ok((decode_body(flags, &body, max_body)?, HEADER_LEN + len))
 }
 
@@ -85,16 +153,34 @@ pub fn decode_frame<T: DeserializeOwned>(
     buf: &[u8],
     max_body: usize,
 ) -> io::Result<Option<(T, usize)>> {
+    take_frame(buf, max_body, None)
+}
+
+/// [`decode_frame`] for a keyed connection. The opener only advances once a whole frame is in.
+pub fn decode_opened<T: DeserializeOwned>(
+    buf: &[u8],
+    max_body: usize,
+    opener: &mut FrameOpener,
+) -> io::Result<Option<(T, usize)>> {
+    take_frame(buf, max_body, Some(opener))
+}
+
+fn take_frame<T: DeserializeOwned>(
+    buf: &[u8],
+    max_body: usize,
+    opener: Option<&mut FrameOpener>,
+) -> io::Result<Option<(T, usize)>> {
     if buf.len() < HEADER_LEN {
         return Ok(None);
     }
     let max_body = max_body.min(MAX_FRAME);
-    let (len, flags) = parse_header(&buf[..HEADER_LEN], max_body)?;
+    let (len, flags) = parse_header(&buf[..HEADER_LEN], max_body, opener.is_some())?;
     let end = HEADER_LEN + len;
     if buf.len() < end {
         return Ok(None);
     }
-    let msg = decode_body(flags, &buf[HEADER_LEN..end], max_body)?;
+    let body = open_body(&buf[..HEADER_LEN], buf[HEADER_LEN..end].to_vec(), opener)?;
+    let msg = decode_body(flags, &body, max_body)?;
     Ok(Some((msg, end)))
 }
 
@@ -199,6 +285,45 @@ mod tests {
         let mut header = 65u32.to_le_bytes().to_vec();
         header.push(0);
         let err = decode_frame::<ClientToServer>(&header, 64).expect_err("capped");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn sealed_frames_roundtrip_and_refuse_to_mix_with_plain_ones() {
+        let (mut client, mut server) = crate::net::secure::channels_for_test();
+        let big = ClientToServer::ChatSend {
+            text: "z".repeat(4096),
+        };
+        let mut stream = Vec::new();
+        for msg in [&ClientToServer::KeepAlive, &big] {
+            write_sealed(&mut stream, msg, &mut client.sealer).expect("seals");
+        }
+        assert_eq!(stream[4] & FLAG_SEALED, FLAG_SEALED);
+        let mut r = &stream[..];
+        let (a, _) =
+            read_opened::<ClientToServer, _>(&mut r, 64 * 1024, &mut server.opener).expect("opens");
+        let (b, _) = decode_opened::<ClientToServer>(r, 64 * 1024, &mut server.opener)
+            .expect("opens")
+            .expect("complete");
+        assert_eq!((a, b), (ClientToServer::KeepAlive, big));
+
+        let sealed = encode_sealed(&ClientToServer::KeepAlive, &mut client.sealer).unwrap();
+        let err = read_msg::<ClientToServer, _>(&mut &sealed[..]).expect_err("plain reader");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let plain = encode_frame(&ClientToServer::KeepAlive).unwrap();
+        let err = read_opened::<ClientToServer, _>(&mut &plain[..], 1024, &mut server.opener)
+            .expect_err("keyed reader");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_forged_sealed_frame_is_refused() {
+        let (mut client, mut server) = crate::net::secure::channels_for_test();
+        let mut frame = encode_sealed(&ClientToServer::KeepAlive, &mut client.sealer).unwrap();
+        let last = frame.len() - 1;
+        frame[last] ^= 0x80;
+        let err = read_opened::<ClientToServer, _>(&mut &frame[..], 1024, &mut server.opener)
+            .expect_err("tampered");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 }

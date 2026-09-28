@@ -5,10 +5,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::framing::{read_msg, read_msg_bounded, write_msg};
+use super::framing::{read_opened, write_sealed, MAX_FRAME};
 use super::protocol::{ClientToServer, ServerToClient};
 use super::rate::TokenBucket;
 use super::remap::IdRemap;
+use super::secure::{Channel, FrameSealer};
 
 const KEEPALIVE_AFTER: Duration = Duration::from_secs(2);
 
@@ -81,6 +82,7 @@ fn configure(stream: &TcpStream) -> io::Result<()> {
 
 fn write_loop<T: serde::Serialize>(
     w: &mut impl Write,
+    sealer: &mut FrameSealer,
     rx: &Receiver<T>,
     keepalive: T,
     farewell: Option<T>,
@@ -90,12 +92,12 @@ fn write_loop<T: serde::Serialize>(
         match rx.recv_timeout(KEEPALIVE_AFTER) {
             Ok(mut msg) => {
                 map(&mut msg);
-                if write_msg(w, &msg).is_err() {
+                if write_sealed(w, &msg, sealer).is_err() {
                     return;
                 }
                 while let Ok(mut msg) = rx.try_recv() {
                     map(&mut msg);
-                    if write_msg(w, &msg).is_err() {
+                    if write_sealed(w, &msg, sealer).is_err() {
                         return;
                     }
                 }
@@ -104,13 +106,13 @@ fn write_loop<T: serde::Serialize>(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                if write_msg(w, &keepalive).is_err() || w.flush().is_err() {
+                if write_sealed(w, &keepalive, sealer).is_err() || w.flush().is_err() {
                     return;
                 }
             }
             Err(RecvTimeoutError::Disconnected) => {
                 if let Some(msg) = farewell {
-                    let _ = write_msg(w, &msg);
+                    let _ = write_sealed(w, &msg, sealer);
                 }
                 let _ = w.flush();
                 return;
@@ -182,14 +184,21 @@ pub struct TcpServerConn {
 }
 
 impl TcpServerConn {
-    pub fn spawn(stream: TcpStream) -> io::Result<TcpServerConn> {
-        Self::spawn_with_limits(stream, InboundLimits::default())
+    /// `channel` is the server side of the keys agreed during the handshake; every frame from
+    /// here on is sealed and opened with it.
+    pub fn spawn(stream: TcpStream, channel: Channel) -> io::Result<TcpServerConn> {
+        Self::spawn_with_limits(stream, channel, InboundLimits::default())
     }
 
     pub fn spawn_with_limits(
         stream: TcpStream,
+        channel: Channel,
         limits: InboundLimits,
     ) -> io::Result<TcpServerConn> {
+        let Channel {
+            mut sealer,
+            mut opener,
+        } = channel;
         configure(&stream)?;
         let peer = stream
             .peer_addr()
@@ -210,7 +219,7 @@ impl TcpServerConn {
                 let mut r = BufReader::new(reader);
                 let mut meter = InboundMeter::new(&limits, std::time::Instant::now());
                 while let Ok((msg, bytes)) =
-                    read_msg_bounded::<ClientToServer, _>(&mut r, limits.max_frame)
+                    read_opened::<ClientToServer, _>(&mut r, limits.max_frame, &mut opener)
                 {
                     let verdict = meter
                         .admit(bytes, std::time::Instant::now())
@@ -235,9 +244,16 @@ impl TcpServerConn {
         let depth = Arc::clone(&queued);
         spawn_writer(&stream, move || {
             let mut w = BufWriter::new(writer);
-            write_loop(&mut w, &out_rx, ServerToClient::KeepAlive, None, |_| {
-                depth.fetch_sub(1, Ordering::Relaxed);
-            });
+            write_loop(
+                &mut w,
+                &mut sealer,
+                &out_rx,
+                ServerToClient::KeepAlive,
+                None,
+                |_| {
+                    depth.fetch_sub(1, Ordering::Relaxed);
+                },
+            );
             flag.store(true, Ordering::SeqCst);
         })?;
 
@@ -307,8 +323,12 @@ pub struct TcpClientConn {
 }
 
 impl TcpClientConn {
-    pub fn spawn(stream: TcpStream, remap: IdRemap) -> io::Result<TcpClientConn> {
+    pub fn spawn(stream: TcpStream, remap: IdRemap, channel: Channel) -> io::Result<TcpClientConn> {
         configure(&stream)?;
+        let Channel {
+            mut sealer,
+            mut opener,
+        } = channel;
         let remap = Arc::new(remap);
         let lost = Arc::new(AtomicBool::new(false));
         let (to_server, out_rx) = mpsc::channel::<ClientToServer>();
@@ -321,7 +341,9 @@ impl TcpClientConn {
             .name("petramond-conn-read".to_string())
             .spawn(move || {
                 let mut r = BufReader::new(reader);
-                while let Ok(mut msg) = read_msg::<ServerToClient, _>(&mut r) {
+                while let Ok((mut msg, _)) =
+                    read_opened::<ServerToClient, _>(&mut r, MAX_FRAME, &mut opener)
+                {
                     map.remap_to_client(&mut msg);
                     if in_tx.send(msg).is_err() {
                         break;
@@ -336,6 +358,7 @@ impl TcpClientConn {
             let mut w = BufWriter::new(writer);
             write_loop(
                 &mut w,
+                &mut sealer,
                 &out_rx,
                 ClientToServer::KeepAlive,
                 Some(ClientToServer::Disconnect),
@@ -374,6 +397,7 @@ impl Drop for TcpClientConn {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::secure::channels_for_test;
     use std::net::TcpListener;
     use std::time::Instant;
 
@@ -407,9 +431,11 @@ mod tests {
             msg_burst: 8.0,
             ..InboundLimits::default()
         };
-        let conn = TcpServerConn::spawn_with_limits(accepted, limits).expect("conn threads");
+        let (mut keys, server_keys) = channels_for_test();
+        let conn =
+            TcpServerConn::spawn_with_limits(accepted, server_keys, limits).expect("conn threads");
         for _ in 0..64 {
-            if write_msg(&mut client, &ClientToServer::KeepAlive).is_err() {
+            if write_sealed(&mut client, &ClientToServer::KeepAlive, &mut keys.sealer).is_err() {
                 break;
             }
         }
@@ -435,7 +461,7 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         let _client = TcpStream::connect(addr).expect("connect");
         let (accepted, _) = listener.accept().expect("accept");
-        let conn = TcpServerConn::spawn(accepted).expect("conn threads");
+        let conn = TcpServerConn::spawn(accepted, channels_for_test().1).expect("conn threads");
 
         assert_eq!(
             conn.queue_headroom(),
@@ -453,5 +479,21 @@ mod tests {
             assert!(Instant::now() < deadline, "writer never drained the burst");
             std::thread::yield_now();
         }
+    }
+
+    #[test]
+    fn an_unsealed_frame_on_a_joined_connection_drops_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let mut client = TcpStream::connect(addr).expect("connect");
+        let (accepted, _) = listener.accept().expect("accept");
+        let conn = TcpServerConn::spawn(accepted, channels_for_test().1).expect("conn threads");
+        crate::net::framing::write_msg(&mut client, &ClientToServer::Pause(true)).expect("send");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !conn.is_dead() {
+            assert!(Instant::now() < deadline, "the injected frame was accepted");
+            std::thread::yield_now();
+        }
+        assert_eq!(conn.try_recv(), None, "nothing unauthenticated got through");
     }
 }

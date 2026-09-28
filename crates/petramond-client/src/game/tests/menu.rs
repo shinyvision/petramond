@@ -166,6 +166,7 @@ fn widget_clicks_latch_then_dispatch_to_the_owning_mod_on_the_tick() {
         "opening a mod GUI clears the session state map"
     );
 
+    petramond::menu::slots::declare_widget_for_test("bump");
     let dispatches = |game: &super::common::TestGame| game.mods_for_test().probe(0).1;
     let before = dispatches(&game);
 

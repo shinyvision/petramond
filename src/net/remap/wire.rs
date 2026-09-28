@@ -61,6 +61,7 @@ pub(super) fn remap_to_server(map: &IdRemap, msg: &mut ClientToServer) {
             | PlayerAction::CloseMenu => {}
         },
         ClientToServer::Hello { .. }
+        | ClientToServer::KeyExchange { .. }
         | ClientToServer::ModQuery
         | ClientToServer::Join { .. }
         | ClientToServer::SetViewDistance { .. }

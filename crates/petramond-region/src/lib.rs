@@ -21,7 +21,9 @@
 
 mod container;
 
-pub use container::{merge_region, read_region_indices, sync, MergePolicy, RegionReader};
+pub use container::{
+    merge_region, read_region_indices, salvage_region, sync, MergePolicy, RegionReader,
+};
 
 use std::path::{Path, PathBuf};
 

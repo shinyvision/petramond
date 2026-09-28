@@ -142,6 +142,37 @@ fn replay_never_empties_a_region_it_cannot_read() {
 }
 
 #[test]
+fn replay_into_a_damaged_region_keeps_the_sections_it_can_salvage() {
+    let dir = temp_dir("salvage");
+    let region_file = region::region_path(&dir.join("region"), 0, -1);
+    std::fs::create_dir_all(region_file.parent().unwrap()).unwrap();
+    region::merge_region(
+        &region_file,
+        [(3, vec![7; 40]), (17, vec![5; 22])],
+        region::MergePolicy::Durable,
+    )
+    .unwrap();
+    let mut bytes = std::fs::read(&region_file).unwrap();
+    bytes[8..72].fill(0);
+    std::fs::write(&region_file, bytes).unwrap();
+
+    write(&dir, &batch(2)).unwrap();
+    let mut reader = region::RegionReader::open(&region_file).unwrap();
+    assert_eq!(
+        reader.read_record(3).unwrap(),
+        Some(vec![2; 40]),
+        "the batch wins"
+    );
+    assert_eq!(reader.read_record(9).unwrap(), Some(vec![3; 12]));
+    assert_eq!(
+        reader.read_record(17).unwrap(),
+        Some(vec![5; 22]),
+        "an edit the batch never touched survives the damage"
+    );
+    assert!(region_file.with_extension("dat.unreadable").exists());
+}
+
+#[test]
 fn a_journal_cannot_name_a_file_outside_the_world() {
     for path in ["../level.dat", "/etc/level.dat", "players/../../x", ""] {
         let entries = [Entry::File {

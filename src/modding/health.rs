@@ -1,38 +1,45 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use petramond_world::pack_manifest::ResourceNeeds;
+
+use super::watchdog::{declared_needs, Watchdog};
+
+/// One mod's standing for the session, shared by every instance of it: whether it has been
+/// disabled, and the watchdog that decides how much it may use.
 pub(crate) struct ModHealth {
     id: String,
     disabled: AtomicBool,
-    fuel_warned: AtomicBool,
+    watchdog: Watchdog,
     log: Arc<Mutex<Vec<String>>>,
 }
 
 impl ModHealth {
+    /// A health of its own with standard allowances, for fixtures that have no pack.
     pub(crate) fn standalone(id: &str) -> Arc<Self> {
-        Arc::new(Self::new(id, Arc::default()))
+        Arc::new(Self::new(id, &ResourceNeeds::default(), Arc::default()))
     }
 
-    fn new(id: &str, log: Arc<Mutex<Vec<String>>>) -> Self {
+    /// A health of its own with the allowances the mod's installed pack declares.
+    pub(crate) fn for_pack(id: &str) -> Arc<Self> {
+        Arc::new(Self::new(id, &declared_needs(id), Arc::default()))
+    }
+
+    fn new(id: &str, needs: &ResourceNeeds, log: Arc<Mutex<Vec<String>>>) -> Self {
         Self {
             id: id.to_owned(),
             disabled: AtomicBool::new(false),
-            fuel_warned: AtomicBool::new(false),
+            watchdog: Watchdog::new(needs),
             log,
         }
     }
 
-    pub(crate) fn is_disabled(&self) -> bool {
-        self.disabled.load(Ordering::Acquire)
+    pub(crate) fn watchdog(&self) -> &Watchdog {
+        &self.watchdog
     }
 
-    pub(crate) fn warn_fuel_once(&self, why: &str) -> bool {
-        if !self.fuel_warned.swap(true, Ordering::AcqRel) {
-            log::warn!("mod '{}': {why}; continuing", self.id);
-            true
-        } else {
-            false
-        }
+    pub(crate) fn is_disabled(&self) -> bool {
+        self.disabled.load(Ordering::Acquire)
     }
 
     pub(crate) fn disable(&self, why: &str) -> bool {
@@ -57,7 +64,11 @@ impl ModHealthBoard {
         if let Some(health) = mods.iter().find(|h| h.id == id) {
             return Arc::clone(health);
         }
-        let health = Arc::new(ModHealth::new(id, Arc::clone(&self.log)));
+        let health = Arc::new(ModHealth::new(
+            id,
+            &declared_needs(id),
+            Arc::clone(&self.log),
+        ));
         mods.push(Arc::clone(&health));
         health
     }
@@ -118,15 +129,17 @@ mod tests {
     }
 
     #[test]
-    fn fuel_warning_is_shared_across_instances_for_one_session() {
+    fn one_mod_shares_one_watchdog_across_its_instances() {
         let board = ModHealthBoard::default();
-        assert!(board
-            .health("alpha")
-            .warn_fuel_once("first costly dispatch"));
-        assert!(!board
-            .health("alpha")
-            .warn_fuel_once("another costly dispatch"));
-        assert!(board.health("beta").warn_fuel_once("independent mod"));
-        assert!(!board.health("alpha").is_disabled());
+        board.health("alpha").watchdog().grow_memory(1).unwrap();
+        board.health("alpha").watchdog().release_memory(1);
+        assert!(std::ptr::eq(
+            board.health("alpha").watchdog(),
+            board.health("alpha").watchdog()
+        ));
+        assert!(!std::ptr::eq(
+            board.health("alpha").watchdog(),
+            board.health("beta").watchdog()
+        ));
     }
 }

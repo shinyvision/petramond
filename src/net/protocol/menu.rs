@@ -23,15 +23,17 @@ impl MenuSlotWire {
         }
     }
 
-    pub fn to_menu_slot(&self) -> petramond_world::gui_state::MenuSlot {
+    /// `None` for a widget id no loaded document declares: the id arrives from
+    /// the network, and interning it would leak memory per distinct string.
+    pub fn to_menu_slot(&self) -> Option<petramond_world::gui_state::MenuSlot> {
         use petramond_world::gui_state::MenuSlot;
-        match self {
+        Some(match self {
             Self::Inventory(i) => MenuSlot::Inventory(*i as usize),
             Self::OffHand => MenuSlot::OffHand,
             Self::CraftResult => MenuSlot::CraftResult,
             Self::Container(i) => MenuSlot::Container(*i as usize),
-            Self::Widget(id) => MenuSlot::Widget(petramond_world::gui_state::intern_str(id)),
-        }
+            Self::Widget(id) => MenuSlot::Widget(crate::menu::slots::declared_widget(id)?),
+        })
     }
 }
 
@@ -93,4 +95,26 @@ pub enum MenuTargetWire {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MenuSyncMsg {
     pub target: MenuTargetWire,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MenuSlotWire;
+    use petramond_world::gui_state::MenuSlot;
+
+    #[test]
+    fn a_widget_id_no_document_declares_is_refused_without_interning() {
+        let wire = MenuSlotWire::Widget("never-declared:flood-0001".to_string());
+        assert_eq!(wire.to_menu_slot(), None);
+    }
+
+    #[test]
+    fn a_declared_widget_id_and_plain_slots_convert() {
+        let wire = MenuSlotWire::Widget("ok".to_string());
+        assert_eq!(wire.to_menu_slot(), Some(MenuSlot::Widget("ok")));
+        assert_eq!(
+            MenuSlotWire::Container(3).to_menu_slot(),
+            Some(MenuSlot::Container(3))
+        );
+    }
 }

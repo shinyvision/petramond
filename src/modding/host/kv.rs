@@ -1,8 +1,12 @@
+use std::ops::Bound;
+
 use mod_api::{ErrorCode, HostRet, KvCall};
 
 use petramond_math::math::IVec3;
 
-use super::guards::{batch_guard, kv_write_guard, sim_call, sim_query, sim_read, CELL_KV_MAX_KEYS};
+use crate::modding::health::ModHealth;
+
+use super::guards::{batch_guard, kv_write_guard, sim_query, sim_read, CELL_KV_MAX_KEYS};
 
 fn guarded_write(
     mod_id: &str,
@@ -16,7 +20,31 @@ fn guarded_write(
     }
 }
 
-pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
+/// The namespace a world KV write lands in, with the bytes (keys plus values) the namespace holds
+/// before it and would hold after it. World KV is saved with the level, so this is what the
+/// mod's watchdog lets grow gradually.
+fn namespace_usage<'k>(
+    kv: &std::collections::BTreeMap<String, Vec<u8>>,
+    key: &'k str,
+    value_len: usize,
+) -> Option<(&'k str, u64, u64)> {
+    let prefix = &key[..=key.find(':')?];
+    let (mut before, mut replaced) = (0u64, 0u64);
+    for (k, v) in kv
+        .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
+        .take_while(|(k, _)| k.starts_with(prefix))
+    {
+        let size = (k.len() + v.len()) as u64;
+        before += size;
+        if k == key {
+            replaced = size;
+        }
+    }
+    let after = before - replaced + (key.len() + value_len) as u64;
+    Some((&prefix[..prefix.len() - 1], before, after))
+}
+
+pub(super) fn handle_kv_call(mod_id: &str, health: &ModHealth, call: KvCall) -> HostRet {
     match call {
         KvCall::SectionKvFind { section, key } => sim_read(|ctx| {
             use petramond_world::chunk::SectionPos;
@@ -62,7 +90,17 @@ pub(super) fn handle_kv_call(mod_id: &str, call: KvCall) -> HostRet {
             sim_read(|ctx| HostRet::Bytes(ctx.world.data().world_kv_get(&key).map(<[u8]>::to_vec)))
         }
         KvCall::WorldKvSet { key, value } => guarded_write(mod_id, key, value.len(), |key| {
-            sim_call(|ctx| ctx.world.world_kv_set(key, value))
+            sim_query(|ctx| {
+                let usage = namespace_usage(ctx.world.data().world_kv(), &key, value.len());
+                if let Some((namespace, before, after)) = usage {
+                    if let Err(why) = health.watchdog().grow_storage(namespace, before, after) {
+                        health.disable(&why);
+                        return HostRet::error(ErrorCode::LimitExceeded, why);
+                    }
+                }
+                ctx.world.world_kv_set(key, value);
+                HostRet::Unit
+            })
         }),
         KvCall::WorldKvDelete { key } => guarded_write(mod_id, key, 0, |key| {
             sim_query(|ctx| HostRet::Bool(ctx.world.world_kv_remove(&key)))

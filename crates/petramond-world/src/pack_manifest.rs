@@ -8,6 +8,38 @@ pub struct PackMeta {
     pub after: Vec<String>,
 }
 
+/// How much of one resource a mod expects to need, from its `pack.json` `resources` section.
+/// A tier only sets where the mod starts: the engine's watchdog lets any mod grow past it as long
+/// as the growth is gradual.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tier {
+    #[default]
+    Standard,
+    Heavy,
+    Extreme,
+}
+
+/// A mod's declared needs, per kind of work and per resource. Every field is optional in
+/// `pack.json`; an unknown field or tier refuses the pack, so a typo never silently falls back.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ResourceNeeds {
+    /// `mod_init`: one-off work at load.
+    pub init: Tier,
+    /// Tick systems, event handlers and block hooks on the server tick.
+    pub tick: Tier,
+    /// Mob AI decisions.
+    pub ai: Tier,
+    /// Client frames, UI and canvas callbacks.
+    pub client: Tier,
+    /// Worldgen features and stage replacements.
+    pub worldgen: Tier,
+    pub memory: Tier,
+    /// World KV the mod keeps in the save.
+    pub storage: Tier,
+}
+
 pub fn valid_mod_id(id: &str) -> bool {
     !id.is_empty()
         && id != crate::registry::ENGINE_NAMESPACE

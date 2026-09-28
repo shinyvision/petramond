@@ -198,6 +198,9 @@ wasmtime = { workspace = true }
 # native-tls, no cookies, no proxy support. Calls run on their own worker
 # threads; nothing on the tick path or the render path speaks HTTP.
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+# LAN/online connection keys: an X25519 exchange in the join handshake, then
+# ChaCha20-Poly1305 on every frame (`net::secure`). Already linked through rustls.
+ring = "0.17"
 
 [dev-dependencies]
 petramond-world = { workspace = true, features = ["test-support"] }

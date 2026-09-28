@@ -3515,6 +3515,7 @@ dependencies = [
  "petramond-worldgen",
  "postcard",
  "rayon",
+ "ring",
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",

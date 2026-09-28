@@ -443,6 +443,53 @@ fn compact(
     })
 }
 
+/// Recovers what it can from a file [`RegionReader::open`] rejects as corrupt.
+///
+/// Every append leaves a complete index behind its record bodies, so a file whose header slots
+/// are both damaged (or that lost its tail) usually still holds an older intact index. This scans
+/// backwards from the end for the latest block that parses as one: a sane count, every entry in
+/// bounds before the block, no duplicate slots and no overlapping bodies. Random bytes pass those
+/// checks with negligible probability. Returns the records that index names, or nothing when no
+/// index survives.
+pub fn salvage_region(path: &Path) -> io::Result<Vec<(u16, Vec<u8>)>> {
+    let bytes = std::fs::read(path)?;
+    let Some(records) = latest_intact_index(&bytes) else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<(u16, Vec<u8>)> = records
+        .into_iter()
+        .map(|(lidx, loc)| {
+            let start = loc.offset as usize;
+            (lidx, bytes[start..start + loc.len as usize].to_vec())
+        })
+        .collect();
+    out.sort_unstable_by_key(|&(lidx, _)| lidx);
+    Ok(out)
+}
+
+fn latest_intact_index(bytes: &[u8]) -> Option<FxHashMap<u16, RecordLocation>> {
+    let len = bytes.len() as u64;
+    if len < DATA_START + 4 + INDEX_ENTRY_BYTES as u64 {
+        return None;
+    }
+    let first = DATA_START as usize;
+    let last = bytes.len() - 4 - INDEX_ENTRY_BYTES;
+    (first..=last).rev().find_map(|at| {
+        let count = u32::from_le_bytes(bytes[at..at + 4].try_into().ok()?) as usize;
+        if count == 0 || count > usize::from(u16::MAX) + 1 {
+            return None;
+        }
+        let end = at.checked_add(4 + count.checked_mul(INDEX_ENTRY_BYTES)?)?;
+        let records = parse_index(bytes.get(at..end)?, at as u64)?;
+        let mut spans: Vec<RecordLocation> = records.values().copied().collect();
+        spans.sort_unstable_by_key(|loc| loc.offset);
+        let disjoint = spans
+            .windows(2)
+            .all(|w| w[0].offset + u64::from(w[0].len) <= w[1].offset);
+        disjoint.then_some(records)
+    })
+}
+
 pub fn sync(path: &Path) -> io::Result<()> {
     OpenOptions::new().write(true).open(path)?.sync_all()
 }
