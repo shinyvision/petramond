@@ -12,7 +12,14 @@ use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, PhysicalKey};
-use winit::window::{CursorGrabMode, CursorIcon as WinitCursorIcon, Window, WindowId};
+use winit::window::{CursorGrabMode, CursorIcon as WinitCursorIcon, Icon, Window, WindowId};
+
+fn window_icon() -> Option<Icon> {
+    let png = include_bytes!("../../../packaging/icons/petramond-64.png");
+    let rgba = image::load_from_memory(png).ok()?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Icon::from_rgba(rgba.into_raw(), width, height).ok()
+}
 
 fn frame_period(fps: u32) -> Duration {
     Duration::from_nanos(1_000_000_000 / fps.clamp(10, 240) as u64)
@@ -252,7 +259,22 @@ impl ApplicationHandler for NativeHost {
         }
         let attrs = Window::default_attributes()
             .with_title("Petramond")
+            .with_window_icon(window_icon())
             .with_inner_size(PhysicalSize::new(1280, 720));
+        // Wayland and X11 docks match the window to `petramond.desktop` by this name to find its
+        // icon; a window icon alone is ignored there.
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "dragonfly",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        ))]
+        let attrs = winit::platform::wayland::WindowAttributesExtWayland::with_name(
+            attrs,
+            "petramond",
+            "petramond",
+        );
         let window = Arc::new(event_loop.create_window(attrs).unwrap());
         let size = window.inner_size();
         let mut renderer = match pollster::block_on(new_renderer_from_target(

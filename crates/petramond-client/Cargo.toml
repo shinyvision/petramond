@@ -56,6 +56,10 @@ smallvec = "1"
 mimalloc = { workspace = true }
 image = { workspace = true }
 
+[build-dependencies]
+# Embeds the desktop icon into the Windows executable.
+winresource = { version = "0.1", default-features = false }
+
 [dev-dependencies]
 petramond-anim = { workspace = true, features = ["test-support"] }
 petramond-util = { workspace = true, features = ["test-support"] }

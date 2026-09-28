@@ -10,7 +10,16 @@ name: Release
 # Each bundle is the native binary plus the `assets/` and `mods/` folders next
 # to it; the game resolves both relative to the executable (see the `assets`
 # module in the petramond-world crate), so a player just unzips and
-# double-clicks.
+# double-clicks. Beyond that, each platform gets its desktop integration:
+#
+#   - macOS: the bundle is `Petramond.app` (assets and mods in
+#     Contents/Resources), ad-hoc signed. There is no Apple developer account,
+#     so it is not notarized; petramond.com/install-mac.sh installs it from
+#     the terminal, which skips the Gatekeeper prompt a browser download gets.
+#   - Windows: the zip, plus an Inno Setup installer (`-setup.exe`) that adds
+#     Start menu and desktop shortcuts. The .exe carries its icon either way.
+#   - Linux: the tarball carries `install.sh`, which adds a menu entry and
+#     icon for the current user on any freedesktop desktop.
 #
 # Nothing is built until the full CI workflow (every gate, Linux tests plus the
 # Windows and macOS portability tests) has passed for this exact commit. Every
@@ -158,17 +167,59 @@ jobs:
           EXT=""
           [ "${{ runner.os }}" = "Windows" ] && EXT=".exe"
 
+          # Programs go in BIN, game data in DATA. They are the same folder
+          # everywhere except inside a macOS app bundle.
           DEST="stage/$PKG"
-          mkdir -p "$DEST/mods"
-          cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$DEST/petramond${EXT}"
-          cp "target/${{ matrix.target }}/release/gui-builder${EXT}" "$DEST/gui-builder${EXT}"
+          case "${{ matrix.id }}" in
+            macos-*)
+              APP="$DEST/Petramond.app"
+              BIN="$APP/Contents/MacOS"
+              DATA="$APP/Contents/Resources"
+              ;;
+            *)
+              BIN="$DEST"
+              DATA="$DEST"
+              ;;
+          esac
+          mkdir -p "$BIN" "$DATA/mods"
+          cp "target/${{ matrix.target }}/release/petramond_native${EXT}" "$BIN/petramond${EXT}"
+          cp "target/${{ matrix.target }}/release/gui-builder${EXT}" "$BIN/gui-builder${EXT}"
           if [ "${{ matrix.server }}" = "true" ]; then
             cp "target/${{ matrix.target }}/release/petramond_server${EXT}" \
-               "$DEST/petramond-server${EXT}"
+               "$BIN/petramond-server${EXT}"
           fi
-          cp -r assets "$DEST/assets"
+          cp -r assets "$DATA/assets"
           # Every staged pack ships; the list lives in the mods job, not here.
-          cp -r staged-mods/. "$DEST/mods/"
+          cp -r staged-mods/. "$DATA/mods/"
+
+          case "${{ matrix.id }}" in
+            macos-*)
+              # CFBundleShortVersionString must be plain numbers: v0.5.0-rc1 -> 0.5.0.
+              if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+                BUNDLE_VERSION="${VERSION#v}"
+                BUNDLE_VERSION="${BUNDLE_VERSION%%-*}"
+              else
+                BUNDLE_VERSION="0.0.0"
+              fi
+              sed "s/@VERSION@/$BUNDLE_VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+              cp packaging/icons/petramond.icns "$DATA/petramond.icns"
+              # Stray extended attributes break the signature seal. An ad-hoc
+              # signature needs no Apple account; it turns "damaged" into the
+              # ordinary unidentified-developer prompt on a browser download.
+              xattr -cr "$APP"
+              codesign --force --sign - "$BIN/gui-builder"
+              codesign --force --sign - "$APP"
+              codesign --verify --deep --strict "$APP"
+              ;;
+            linux-*)
+              cp packaging/linux/install.sh "$DEST/install.sh"
+              chmod +x "$DEST/install.sh"
+              mkdir -p "$DEST/icons"
+              for size in 16 32 48 64 128 256 512; do
+                cp "packaging/icons/petramond-$size.png" "$DEST/icons/"
+              done
+              ;;
+          esac
 
           BUNDLED=""
           for d in staged-mods/*/; do
@@ -192,25 +243,40 @@ jobs:
               {
                 echo "  Double-click petramond.exe."
                 echo
+                echo "  Prefer Start menu and desktop shortcuts? Download the"
+                echo "  petramond-...-setup.exe installer from the same release instead."
+                echo
                 echo "  Windows may show a blue \"Windows protected your PC\" box because"
                 echo "  this build is not code-signed. Click \"More info\", then \"Run anyway\"."
               } >> "$README"
               ;;
             macos-*)
               {
-                echo "  Double-click petramond. Because this build is not signed by an"
-                echo "  identified developer, macOS may block the first launch."
-                echo "  Right-click (or Control-click) petramond, choose Open, then Open again."
+                echo "  The easiest way: open Terminal and paste this line. It installs"
+                echo "  the newest version into Applications without any security prompt:"
+                echo "    curl -fsSL https://petramond.com/install-mac.sh | sh"
+                echo "  Run the same line again later to update."
                 echo
-                echo "  If that still fails, open Terminal in this folder and run:"
-                echo "    xattr -dr com.apple.quarantine ./petramond"
-                echo "    ./petramond"
+                echo "  Installing from this download instead:"
+                echo "    1. Drag Petramond.app into your Applications folder."
+                echo "    2. Double-click it. macOS says it can't verify the app, because"
+                echo "       this build isn't signed with an Apple developer account."
+                echo "       Click Done."
+                echo "    3. Open System Settings > Privacy & Security, scroll down, and"
+                echo "       click \"Open Anyway\" next to the message about Petramond."
+                echo "       Confirm with your password. You only do this once."
+                echo
+                echo "  Needs a Mac with Apple silicon (M1 or newer)."
               } >> "$README"
               ;;
             linux-*)
               {
-                echo "  Run ./petramond from a terminal in this folder, or mark it"
-                echo "  executable in your file manager and launch it."
+                echo "  Run ./install.sh from a terminal in this folder. It adds"
+                echo "  Petramond to your applications menu (just for you, no root"
+                echo "  needed). Run it again from a newer download to update, or run"
+                echo "  ~/.local/share/petramond-game/install.sh --uninstall to remove it."
+                echo
+                echo "  You can also skip installing and run ./petramond from this folder."
                 echo
                 echo "  Needs a Vulkan-capable GPU and driver."
               } >> "$README"
@@ -248,21 +314,33 @@ jobs:
             echo
             echo "GUI BUILDER"
             echo "  gui-builder edits and previews the game's GUI documents with the"
-            echo "  game's own renderer. It reads the \"assets\" folder next to it;"
+            echo "  game's own renderer. It reads the game's \"assets\" folder;"
             echo "  to preview a mod's documents, open a project saved inside the"
             echo "  mod's pack folder or pass --pack <pack folder>. See --help."
+            case "${{ matrix.id }}" in
+              macos-*)
+                echo "  On macOS it lives inside the app. Run it from Terminal:"
+                echo "    /Applications/Petramond.app/Contents/MacOS/gui-builder"
+                ;;
+            esac
           } >> "$README"
 
           {
             echo
-            echo "IMPORTANT"
-            echo "  Keep the \"assets\" and \"mods\" folders next to the program you"
-            echo "  run. Both are loaded from here, and a server must have the same"
-            echo "  mods as the players joining it."
-            echo
+            case "${{ matrix.id }}" in
+              macos-*) ;;
+              *)
+                echo "IMPORTANT"
+                echo "  Keep the \"assets\" and \"mods\" folders next to the program you"
+                echo "  run. Both are loaded from there."
+                echo
+                ;;
+            esac
             echo "MODS"
             echo "  Bundled: ${BUNDLED}."
-            echo "  To add more, drop a mod folder into the \"mods\" folder."
+            echo "  Mods you install from the in-game content library go to your user"
+            echo "  data folder. A server must have the same mods as the players"
+            echo "  joining it."
             echo
             echo "SAVES"
             echo "  Worlds and settings are stored in your user data folder, not"
@@ -276,12 +354,14 @@ jobs:
             echo "  Esc close/pause."
           } >> "$README"
 
+      # COPYFILE_DISABLE keeps macOS tar from adding `._*` metadata files,
+      # which would land inside the signed app bundle and break its seal.
       - name: Archive (tar.gz)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           set -euo pipefail
-          tar -C stage -czf "${PKG}.tar.gz" "$PKG"
+          COPYFILE_DISABLE=1 tar -C stage -czf "${PKG}.tar.gz" "$PKG"
           echo "ASSET=${PKG}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Archive (zip)
@@ -291,11 +371,34 @@ jobs:
           Compress-Archive -Path "stage/$env:PKG" -DestinationPath "$env:PKG.zip"
           "ASSET=$env:PKG.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
+      # The installer ships next to the zip. The website's download button
+      # offers `<pkg>-setup.exe` over the zip, so keep that name.
+      - name: Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            Invoke-WebRequest "https://jrsoftware.org/download.php/is.exe" -OutFile "$env:RUNNER_TEMP\is.exe"
+            Start-Process "$env:RUNNER_TEMP\is.exe" -Wait -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=$env:RUNNER_TEMP\inno"
+            $iscc = "$env:RUNNER_TEMP\inno\ISCC.exe"
+          }
+          $arch = if ("${{ matrix.id }}" -eq "windows-arm64") { "arm64" } else { "x64compatible" }
+          $version = if ($env:GITHUB_REF_TYPE -eq "tag") { $env:GITHUB_REF_NAME.TrimStart("v") } else { "0.0.0" }
+          $source = (Resolve-Path "stage/$env:PKG").Path
+          $output = "$env:PKG-setup"
+          & $iscc "/DAppVersion=$version" "/DSourceDir=$source" "/DOutputBase=$output" "/DArch=$arch" "/O$PWD" packaging\windows\petramond.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "INSTALLER=$output.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Upload bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ matrix.id }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.INSTALLER }}
           if-no-files-found: error
 
   release:

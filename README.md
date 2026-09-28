@@ -15,6 +15,44 @@ grow through mods.
 
 ![Petramond world screenshot](assets/textures/gui/screenshot.png)
 
+## Install
+
+Grab the file for your computer from the
+[latest release](https://github.com/shinyvision/petramond/releases/latest), or
+let [petramond.com/download](https://petramond.com/download) pick it for you.
+Your worlds and settings live in your user data folder, so installing,
+updating or removing the game never touches them.
+
+**Windows.** Run `petramond-…-windows-amd64-setup.exe`. It installs Petramond
+for your account (no administrator prompt) and adds it to the Start menu, with
+a desktop shortcut if you want one. Windows may say "Windows protected your
+PC" because the game isn't code-signed: click **More info**, then
+**Run anyway**. Prefer a portable folder? Take the `.zip` instead and run
+`petramond.exe` from it.
+
+**macOS** (Apple silicon, M1 or newer). Open Terminal and paste:
+
+```sh
+curl -fsSL https://petramond.com/install-mac.sh | sh
+```
+
+That puts the newest Petramond in Applications, and it opens without a
+security warning. Run the same line again to update; move the app to the Trash
+to remove it.
+
+Petramond isn't signed with an Apple developer account, so if you download the
+`.tar.gz` from your browser instead, macOS blocks the first launch. Drag
+`Petramond.app` into Applications and double-click it, click **Done** on the
+warning, then open **System Settings → Privacy & Security**, scroll down and
+click **Open Anyway**. You only do this once.
+
+**Linux.** Extract the `.tar.gz` and run `./install.sh` from that folder. It
+adds Petramond to your applications menu, just for you, on any distribution.
+Run it again from a newer download to update, or run
+`~/.local/share/petramond-game/install.sh --uninstall` to remove the game. You
+can also skip installing and just run `./petramond` from the extracted folder.
+Needs a Vulkan-capable GPU and driver.
+
 Petramond starts with the best part of a block world: stepping over a ridge and
 seeing somewhere you want to go. Its worlds are built for long views and varied
 journeys, with mountains, oceans, rivers, caves, forests, wetlands, snowy peaks,

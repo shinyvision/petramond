@@ -2,7 +2,7 @@
 //!
 //! Asset roots in priority order: the `PETRAMOND_ASSETS` env override, `assets/` under the
 //! working directory (dev tree), then `assets/` (or the bare file) next to the executable
-//! (shipped install).
+//! (shipped install) or in a macOS app bundle's `Contents/Resources`.
 //!
 //! # Mod packs
 //!
@@ -118,11 +118,9 @@ fn env_asset_roots() -> Vec<PathBuf> {
     }
     roots.push(PathBuf::from("assets"));
     roots.push(workspace_root().join("assets"));
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            roots.push(dir.join("assets"));
-            roots.push(dir.to_path_buf());
-        }
+    for dir in install_dirs() {
+        roots.push(dir.join("assets"));
+        roots.push(dir);
     }
     roots
 }
@@ -136,12 +134,28 @@ fn env_mod_roots() -> (Vec<PathBuf>, Option<PathBuf>) {
     if workspace.join("Cargo.toml").is_file() {
         shipped.push(workspace.join("mods"));
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            shipped.push(dir.join("mods"));
-        }
+    for dir in install_dirs() {
+        shipped.push(dir.join("mods"));
     }
     (shipped, Some(petramond_util::paths::installed_mods_dir()))
+}
+
+/// Where a shipped install keeps `assets/` and `mods/`: beside the executable, or in the app
+/// bundle's `Contents/Resources` when the executable sits in `Contents/MacOS`.
+fn install_dirs() -> Vec<PathBuf> {
+    let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    else {
+        return Vec::new();
+    };
+    let mut dirs = vec![dir.clone()];
+    if dir.ends_with("Contents/MacOS") {
+        if let Some(contents) = dir.parent() {
+            dirs.push(contents.join("Resources"));
+        }
+    }
+    dirs
 }
 
 fn workspace_root() -> PathBuf {

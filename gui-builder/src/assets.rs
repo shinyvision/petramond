@@ -88,7 +88,7 @@ fn discover_base() -> Option<PathBuf> {
     [cwd, exe_dir].into_iter().flatten().find_map(|start| {
         start
             .ancestors()
-            .map(|dir| dir.join("assets"))
+            .flat_map(|dir| [dir.join("assets"), dir.join("Resources/assets")])
             .find(|assets| assets.join("ui").is_dir())
     })
 }

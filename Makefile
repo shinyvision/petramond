@@ -55,7 +55,7 @@ TEST_GROUPS ?=
 # Cargo profile for the wasm guests `make mods` / `make mod` build.
 MOD_PROFILE ?= wasm-dev
 
-.PHONY: run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod addons content-pack-ids test test-worldgen fmt fmt-check clippy deny source-audit validate-assets genparity profile smoke check
+.PHONY: app-icons run run-native run-release run-server dev build build-native clean sweep gui-builder gui-builder-dev mods mod addons content-pack-ids test test-worldgen fmt fmt-check clippy deny source-audit validate-assets genparity profile smoke check
 
 # `run` uses the `playtest` profile: release opt-level but incremental with
 # parallel codegen units and no LTO, so the edit→playtest loop rebuilds in
@@ -85,6 +85,11 @@ dev:
 build: build-native
 build-native:
 	$(CARGO) build --release -p petramond-client --bin petramond_native
+
+# Regenerate packaging/icons/ from the pixel-art master packaging/icon.png
+# (needs Python with Pillow). Commit the output; builds read it directly.
+app-icons:
+	python3 scripts/make-app-icons.py
 
 clean:
 	$(CARGO) clean
