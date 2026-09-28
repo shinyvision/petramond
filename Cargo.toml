@@ -43,7 +43,7 @@ exclude = ["mods-src"]
 resolver = "2"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.7.0"
 edition = "2021"
 # The toolchain rust-toolchain.toml pins; raise the two together.
 rust-version = "1.97"
