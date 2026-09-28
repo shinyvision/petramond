@@ -67,7 +67,9 @@ const TERRAIN_POS_SCALE_INV: f32 = 1.0 / 64.0;
 
 struct VsOut {
     @builtin(position) clip: vec4<f32>,
-    @location(0) uv: vec2<f32>,
+    // A covered MSAA pixel can have its centre outside a cutout plane. Keep its
+    // UV inside the plane so REPEAT cannot wrap a crop's opaque bottom row to its top.
+    @location(0) @interpolate(perspective, centroid) uv: vec2<f32>,
     // Per-channel light: the sky term is tinted by the sim's sky colour, the
     // block term is not, so the two can differ per channel at night.
     @location(1) light: vec3<f32>,
