@@ -1,5 +1,5 @@
 use glam::IVec3;
-use petramond_world::block::{Block, BlockFlags, CellView, ShapeState};
+use petramond_world::block::{Aabb, Block, BlockFlags, CellView, ShapeState};
 use petramond_world::block_state::SlabState;
 use petramond_world::chunk::{section_idx, SECTION_SIZE, SKY_FULL, WORLD_MAX_Y, WORLD_MIN_Y};
 use petramond_world::light::LightRgb;
@@ -8,7 +8,9 @@ use petramond_world::tile::Tile;
 
 use super::super::boxset::cell_seals_face;
 use super::super::face::Face;
-use super::cell_class::{MeshRegistry, PAD_OPAQUE_FLUID};
+use super::cell_class::{
+    MeshRegistry, FAST_CUBE, PAD_OPAQUE, PAD_OPAQUE_FLUID, PAD_SEALS, PAD_SLAB, SKIP,
+};
 use super::pad::{mesh_pad_idx, SectionMeshPad, SECTION_PAD};
 use super::scratch::NeighbourScratch;
 
@@ -18,6 +20,145 @@ pub(super) struct Neighbourhood<'a> {
     origin: IVec3,
     registry: &'a MeshRegistry,
     scratch: &'a NeighbourScratch,
+    ring: &'a [u32],
+}
+
+/// Skylight bits of a packed ring word.
+pub(super) const RING_SKY_MASK: u32 = 0x1F;
+pub(super) const RING_BLOCK_SHIFT: u32 = 5;
+pub(super) const RING_BLOCK_MASK: u32 = 0x7FFF;
+pub(super) const RING_CLASS_SHIFT: u32 = 20;
+
+/// Per-row cell bitsets the exposure-mask builder needs, gathered in the ring pack's one pass
+/// over the pad instead of two more passes of their own.
+pub(super) struct RowBits {
+    /// Per pad `(py, pz)` row: the cells that seal a cube face against them — opaque cubes,
+    /// full slab stacks, filling opaque fluid.
+    pub(super) opaque: [u32; SECTION_PAD * SECTION_PAD],
+    /// Per pad row: the non-sealing cells whose own geometry may seal the boundary beneath
+    /// them (`PAD_SEALS`), resolved per cell by the mask builder.
+    pub(super) seals: [u32; SECTION_PAD * SECTION_PAD],
+    /// Per interior `(ly, lz)` row: the cells the scan visits at all (not `SKIP`).
+    pub(super) work: [u32; SECTION_SIZE * SECTION_SIZE],
+    /// Per interior row: the cube fast-path candidates (cube-drawn rows and uniform full slab
+    /// stacks), whose faces the exposure masks cull.
+    pub(super) candidate: [u32; SECTION_SIZE * SECTION_SIZE],
+}
+
+impl Default for RowBits {
+    fn default() -> Self {
+        Self {
+            opaque: [0; SECTION_PAD * SECTION_PAD],
+            seals: [0; SECTION_PAD * SECTION_PAD],
+            work: [0; SECTION_SIZE * SECTION_SIZE],
+            candidate: [0; SECTION_SIZE * SECTION_SIZE],
+        }
+    }
+}
+
+/// Pack every pad cell into one word — skylight (5 bits), block light (15) and the ring class
+/// (`MeshRegistry::ring_class`) — so the per-face gathers read one load per ring cell instead of
+/// the block id, its flags row and two light cells. The same pass gathers the [`RowBits`].
+pub(super) fn pack_ring(
+    ring: &mut Vec<u32>,
+    rows: &mut RowBits,
+    pad: &SectionMeshPad<'_>,
+    registry: &MeshRegistry,
+) {
+    let n = pad.blocks.len();
+    debug_assert_eq!(n, SECTION_PAD * SECTION_PAD * SECTION_PAD);
+    ring.clear();
+    ring.reserve(n);
+    let mut i = 0;
+    for py in 0..SECTION_PAD {
+        for pz in 0..SECTION_PAD {
+            let (mut opaque_row, mut seals_row, mut work_row, mut cand_row) =
+                (0u32, 0u32, 0u32, 0u32);
+            let interior_y = (1..SECTION_PAD - 1).contains(&py);
+            let interior_z = (1..SECTION_PAD - 1).contains(&pz);
+            for px in 0..SECTION_PAD {
+                debug_assert_eq!(i, mesh_pad_idx(px, py, pz));
+                let id = pad.blocks[i];
+                let cls = registry.ring_class(id);
+                ring.push(
+                    u32::from(pad.skylight[i])
+                        | (u32::from(pad.blocklight[i].bits()) << RING_BLOCK_SHIFT)
+                        | ((cls as u32) << RING_CLASS_SHIFT),
+                );
+                let bit = 1u32 << px;
+                if cls & PAD_OPAQUE != 0
+                    || (cls & PAD_SLAB != 0 && SlabState::from_cell(pad.cell_states[i]).is_full())
+                    || (cls & PAD_OPAQUE_FLUID != 0
+                        && pad.fluid_fills_local(
+                            px as i32 - 1,
+                            py as i32 - 1,
+                            pz as i32 - 1,
+                            pad.table.block(id),
+                        ))
+                {
+                    opaque_row |= bit;
+                } else if cls & PAD_SEALS != 0 {
+                    seals_row |= bit;
+                }
+                if interior_y && interior_z && (1..SECTION_PAD - 1).contains(&px) {
+                    let cell = registry.cell_class(id);
+                    let lbit = 1u32 << (px - 1);
+                    if cell & SKIP == 0 {
+                        work_row |= lbit;
+                    }
+                    if cell & FAST_CUBE != 0
+                        || (registry.pad_class(id) & PAD_SLAB != 0
+                            && petramond_world::slab::is_uniform_full_stack(SlabState::from_cell(
+                                pad.cell_states[i],
+                            )))
+                    {
+                        cand_row |= lbit;
+                    }
+                }
+                i += 1;
+            }
+            let row = py * SECTION_PAD + pz;
+            rows.opaque[row] = opaque_row;
+            rows.seals[row] = seals_row;
+            if interior_y && interior_z {
+                let lrow = (py - 1) * SECTION_SIZE + (pz - 1);
+                rows.work[lrow] = work_row;
+                rows.candidate[lrow] = cand_row;
+            }
+        }
+    }
+}
+
+/// The shade boxes of every box-shape cell a build has probed so far, by pad index: the AO
+/// pockets ask the same few neighbour cells hundreds of times per section, and each ask used to
+/// re-resolve the neighbour's box set through its family. Generation-stamped, so a new build
+/// costs no clear.
+#[derive(Default)]
+pub(super) struct ShadeCache {
+    gen: u32,
+    index: Vec<ShadeEntry>,
+    boxes: Vec<Aabb>,
+    scratch: Vec<Aabb>,
+}
+
+#[derive(Copy, Clone, Default)]
+struct ShadeEntry {
+    gen: u32,
+    start: u32,
+    len: u16,
+    listable: bool,
+}
+
+impl ShadeCache {
+    fn begin(&mut self, cells: usize) {
+        self.gen = self.gen.wrapping_add(1);
+        if self.gen == 0 {
+            self.index.clear();
+            self.gen = 1;
+        }
+        self.index.resize(cells, ShadeEntry::default());
+        self.boxes.clear();
+    }
 }
 
 impl<'a> Neighbourhood<'a> {
@@ -27,14 +168,29 @@ impl<'a> Neighbourhood<'a> {
         origin: IVec3,
         registry: &'a MeshRegistry,
         scratch: &'a NeighbourScratch,
+        ring: &'a [u32],
     ) -> Self {
+        debug_assert_eq!(ring.len(), pad.blocks.len());
+        scratch.shade.borrow_mut().begin(pad.blocks.len());
+        scratch.vertex_light.borrow_mut().begin();
         Self {
             pad,
             section,
             origin,
             registry,
             scratch,
+            ring,
         }
+    }
+
+    #[inline]
+    pub(super) fn ring(&self) -> &'a [u32] {
+        self.ring
+    }
+
+    #[inline]
+    pub(super) fn vertex_light(&self) -> &'a std::cell::RefCell<super::lighting::VertexLightCache> {
+        &self.scratch.vertex_light
     }
 
     #[inline]
@@ -201,11 +357,50 @@ impl<'a> Neighbourhood<'a> {
 
     pub(super) fn matter(&self, p: IVec3, lo: [f32; 3], hi: [f32; 3]) -> bool {
         let b = self.block(p);
-        if self.pad.table.flags(b.id()).occludes_ao() {
+        let flags = self.pad.table.flags(b.id());
+        if flags.occludes_ao() {
             return true;
         }
+        // Only a box-shape family answers `shades_pocket` with anything but the `false`
+        // default; the dense flag spares air (the usual ring cell) a registry row load and a
+        // virtual call per probe.
+        if !flags.has_box_shape() {
+            return false;
+        }
         let k = b.shape_kind_def();
-        k.sim.shades_pocket(&k.params, self, p, b, lo, hi)
+        let Some(pi) = self.pad_index(p) else {
+            return k.sim.shades_pocket(&k.params, self, p, b, lo, hi);
+        };
+        let mut cache = self.scratch.shade.borrow_mut();
+        let ShadeCache {
+            gen,
+            index,
+            boxes,
+            scratch,
+        } = &mut *cache;
+        let mut entry = index[pi];
+        if entry.gen != *gen {
+            scratch.clear();
+            let listable = k.sim.shade_boxes(&k.params, self, p, b, scratch);
+            entry = ShadeEntry {
+                gen: *gen,
+                start: boxes.len() as u32,
+                len: if listable { scratch.len() as u16 } else { 0 },
+                listable,
+            };
+            if listable {
+                boxes.extend_from_slice(scratch);
+            }
+            index[pi] = entry;
+        }
+        if !entry.listable {
+            drop(cache);
+            return k.sim.shades_pocket(&k.params, self, p, b, lo, hi);
+        }
+        let (start, len) = (entry.start as usize, entry.len as usize);
+        boxes[start..start + len]
+            .iter()
+            .any(|bx| (0..3).all(|a| lo[a] < bx.max[a] && hi[a] > bx.min[a]))
     }
 }
 

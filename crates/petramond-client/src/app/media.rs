@@ -382,7 +382,7 @@ impl App {
 
     fn drive_media_files(&mut self, desk: &MediaDesk) {
         let files = desk.media();
-        let parallel = std::thread::available_parallelism().map_or(1, usize::from);
+        let parallel = encoder_parallelism();
         let mut running = self.media.encoders.values().filter(|e| !e.done()).count();
         for (id, media) in &files {
             if media.input.phase() == ClientMediaPhase::Queued
@@ -578,4 +578,11 @@ impl App {
         let captured = renderer.take_captured();
         self.route_captures(captured);
     }
+}
+
+/// `available_parallelism` re-reads cgroup files on every call, far too slow for a per-frame
+/// question whose answer does not change.
+fn encoder_parallelism() -> usize {
+    static PARALLEL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PARALLEL.get_or_init(|| std::thread::available_parallelism().map_or(1, usize::from))
 }

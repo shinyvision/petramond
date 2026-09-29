@@ -107,9 +107,10 @@ impl SectionMesher<'_> {
             );
         }
         let block = cell.block;
-        let tile = block.tiles()[0];
+        let registry = self.nb.registry();
+        let tile = registry.cube_row(block.id()).tiles[0];
         let (sky6, blight) = cell_light(&self.nb, cell.world);
-        let tint = self.tints.tile(tile.world_tint(), cell.column);
+        let tint = self.tints.tile(registry.world_tint(tile), cell.column);
         let dims = block.shape_kind_def().params.dimensions();
         let (inset, drop) = match layout {
             PlantPlanes::Crop => (

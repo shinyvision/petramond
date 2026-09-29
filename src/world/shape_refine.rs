@@ -16,6 +16,8 @@
 //! stairs' REFINED corners; a stair's corner reads only neighbour stairs'
 //! PLACED bits, which no refinement ever changes. So a cascade is at most two
 //! layers deep; the budget below is a runaway backstop, not a tuning knob.
+//! The same acyclicity makes the fixpoint unique, so the order cells are
+//! visited in cannot change what they settle to.
 //!
 //! Determinism: `refine_state` is a pure function of the neighbourhood and
 //! runs identically on the server and on the client replica's predicted
@@ -24,71 +26,142 @@
 //! plus the cascade's own delta capture cover every changed cell.
 
 use crate::world::{World, WorldSide};
+use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
 
 use petramond_math::math::{IVec3, FACE_NEIGHBORS};
-use petramond_world::block::{Block, ShapeNeighborhood};
+use petramond_world::block::{BlockTable, ShapeNeighborhood};
 use petramond_world::chunk::{section_idx, section_local, SectionPos, SECTION_SIZE};
 
 const REFINE_BUDGET: usize = 4096;
 
+/// The ids the load scan looks for: refining shapes and custom bakes.
+static LOAD_SCAN_IDS: petramond_world::content::Slot<petramond_world::section::IdSet> =
+    petramond_world::content::Slot::new(
+        "load scan ids",
+        &[petramond_world::content::stage::BLOCK_VIEWS],
+        |_| {
+            Ok(petramond_world::section::IdSet::from_ids(
+                petramond_world::block::Block::all()
+                    .iter()
+                    .filter(|b| b.is_custom_shape() || b.shape_refines())
+                    .map(|b| b.id()),
+            ))
+        },
+    );
+
 impl<S: WorldSide> World<S> {
     pub fn refine_shape_states_around(&mut self, wx: i32, wy: i32, wz: i32) {
-        let seed = IVec3::new(wx, wy, wz);
-        let mut queue: VecDeque<IVec3> = VecDeque::with_capacity(8);
-        queue.push_back(seed);
-        for d in FACE_NEIGHBORS {
-            queue.push_back(seed + d);
+        self.refine_cells(std::iter::once(IVec3::new(wx, wy, wz)));
+    }
+
+    /// One cascade for a whole batch of seeds: every seed and its six face
+    /// neighbours re-resolve, and a cell whose stored state changed re-queues
+    /// its own neighbours. A cell sits in the queue once at a time, so a
+    /// landing section with hundreds of refining cells (a dripstone run, a
+    /// camp's stairs) visits each affected cell once rather than once per
+    /// seed that touches it, and the reads go through a section cursor that
+    /// holds the last section instead of hashing every cell.
+    fn refine_cells(&mut self, seeds: impl IntoIterator<Item = IVec3>) {
+        let mut queue: VecDeque<IVec3> = VecDeque::new();
+        let mut queued: FxHashSet<IVec3> = FxHashSet::default();
+        fn push(queue: &mut VecDeque<IVec3>, queued: &mut FxHashSet<IVec3>, p: IVec3) {
+            if queued.insert(p) {
+                queue.push_back(p);
+            }
         }
-        let mut budget = REFINE_BUDGET;
-        while let Some(p) = queue.pop_front() {
-            if budget == 0 {
-                debug_assert!(false, "shape refine cascade overran its budget at {p:?}");
-                break;
+        for seed in seeds {
+            push(&mut queue, &mut queued, seed);
+            for d in FACE_NEIGHBORS {
+                push(&mut queue, &mut queued, seed + d);
             }
-            budget -= 1;
-            let block = Block::from_id(self.data.chunk_block(p.x, p.y, p.z));
-            if !block.shape_refines() {
-                continue;
-            }
-            let k = block.shape_kind_def();
-            let Some((c, lx, ly, lz)) = self.data.chunk_at_world(p.x, p.y, p.z) else {
-                continue;
+        }
+        if queue.is_empty() {
+            return;
+        }
+        let table = BlockTable::current();
+        let on_server = self.side.server().is_some();
+        let mut budget = queue.len() + REFINE_BUDGET;
+        loop {
+            let changed = {
+                let cursor = self.data.cursor();
+                let nb: &dyn ShapeNeighborhood = &cursor;
+                loop {
+                    let Some(p) = queue.pop_front() else {
+                        return;
+                    };
+                    queued.remove(&p);
+                    if budget == 0 {
+                        debug_assert!(false, "shape refine cascade overran its budget at {p:?}");
+                        return;
+                    }
+                    budget -= 1;
+                    let id = cursor.chunk_block(p);
+                    if !table.refines_shape(id) {
+                        continue;
+                    }
+                    let block = table.block(id);
+                    let k = block.shape_kind_def();
+                    let cur = nb.shape_state(p);
+                    let next = k.sim.refine_state(&k.params, nb, p, block, cur);
+                    if next != cur {
+                        break (p, block, next);
+                    }
+                }
             };
-            let cur = c.cell_state(lx, ly, lz);
-            let next = k.sim.refine_state(
-                &k.params,
-                &self.data as &dyn ShapeNeighborhood,
-                p,
-                block,
-                cur,
-            );
-            if next == cur {
-                continue;
-            }
+            let (p, block, next) = changed;
             if let Some((c, lx, ly, lz)) = self.data.chunk_at_world_mut(p.x, p.y, p.z) {
                 c.set_cell_state(lx, ly, lz, next);
             }
             self.queue_dirty_meshes_sampling_cell(p.x, p.y, p.z);
             self.record_block_delta(p.x, p.y, p.z);
-            if self.side.server().is_some()
+            if on_server
                 && petramond_world::world::light::incremental::light_depends_on_state(block)
             {
                 self.relight_cell(p.x, p.y, p.z, Self::LIGHT_REACH);
             }
             for d in FACE_NEIGHBORS {
-                queue.push_back(p + d);
+                push(&mut queue, &mut queued, p + d);
             }
         }
     }
 
-    pub(in crate::world) fn refine_section_shapes(&mut self, pos: SectionPos) {
-        if self.side.server().is_none() {
+    /// The one pass over a landed section's cells: every custom-shape cell goes to the bake
+    /// pump (both sides), and on the authoritative side every refining cell — plus the single
+    /// facing layer of each already-loaded neighbour, the only cells of theirs that can have
+    /// resolved against this section's absence — seeds one refinement cascade. Every section
+    /// install pays this, so the per-cell tests are the dense LUTs, never a `def()` load.
+    pub(in crate::world) fn scan_loaded_section(&mut self, pos: SectionPos) {
+        let Some(section) = self.data.sections.get(&pos) else {
+            return;
+        };
+        if section.is_empty_air() || !section.may_contain(LOAD_SCAN_IDS.current()) {
             return;
         }
-        let mut seeds: Vec<IVec3> = Vec::new();
-        self.collect_refining_cells(pos, None, &mut seeds);
+        let on_server = self.side.server().is_some();
+        let table = BlockTable::current();
+        let blocks = section.blocks();
         let (ox, oy, oz) = pos.origin_world();
+        let mut seeds: Vec<IVec3> = Vec::new();
+        let mut custom: Vec<IVec3> = Vec::new();
+        blocks.cells_where(
+            |id| table.custom_shape(id) || (on_server && table.refines_shape(id)),
+            |idx| {
+                let id = blocks.get(idx);
+                let (lx, ly, lz) = section_local(idx);
+                let p = IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32);
+                if table.custom_shape(id) {
+                    custom.push(p);
+                }
+                if on_server && table.refines_shape(id) {
+                    seeds.push(p);
+                }
+            },
+        );
+        self.data.mark_custom_bakes_dirty(custom);
+        if !on_server {
+            return;
+        }
         for d in FACE_NEIGHBORS {
             let n = SectionPos::from_world(
                 ox + d.x * SECTION_SIZE as i32,
@@ -96,24 +169,19 @@ impl<S: WorldSide> World<S> {
                 oz + d.z * SECTION_SIZE as i32,
             );
             if let Some(n) = n {
-                self.collect_refining_cells(n, Some(d), &mut seeds);
+                self.collect_facing_layer(n, d, table, &mut seeds);
             }
         }
-        for p in seeds {
-            self.refine_shape_states_around(p.x, p.y, p.z);
-        }
+        self.refine_cells(seeds);
     }
 
-    /// Push the world positions of `pos`'s cells whose block refines.
-    ///
-    /// `facing = None` walks the whole section — the freshly-loaded one, every
-    /// cell of which arrived in bulk. `facing = Some(d)` walks ONLY the single
-    /// 16×16 layer of an already-loaded NEIGHBOUR that touches the section at
-    /// `d`: no other cell of it can have resolved against that section's
-    /// absence, so the other 3,840 must not be visited. Every section install
-    /// on the authoritative side pays this, so the per-cell test is the dense
-    /// [`Block::id_refines_shape`] LUT, never a `def()` load.
-    fn collect_refining_cells(&self, pos: SectionPos, facing: Option<IVec3>, out: &mut Vec<IVec3>) {
+    fn collect_facing_layer(
+        &self,
+        pos: SectionPos,
+        d: IVec3,
+        table: BlockTable,
+        out: &mut Vec<IVec3>,
+    ) {
         let Some(section) = self.data.sections.get(&pos) else {
             return;
         };
@@ -122,22 +190,6 @@ impl<S: WorldSide> World<S> {
         }
         let blocks = section.blocks();
         let (ox, oy, oz) = pos.origin_world();
-        let table = petramond_world::block::BlockTable::current();
-        let mut push = |lx: usize, ly: usize, lz: usize, id: u16| {
-            if table.refines_shape(id) {
-                out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
-            }
-        };
-        let Some(d) = facing else {
-            blocks.cells_where(
-                |id| table.refines_shape(id),
-                |idx| {
-                    let (lx, ly, lz) = section_local(idx);
-                    out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
-                },
-            );
-            return;
-        };
         let fixed = if d.x + d.y + d.z > 0 {
             0
         } else {
@@ -152,7 +204,9 @@ impl<S: WorldSide> World<S> {
                 } else {
                     (a, b, fixed)
                 };
-                push(lx, ly, lz, blocks.get(section_idx(lx, ly, lz)));
+                if table.refines_shape(blocks.get(section_idx(lx, ly, lz))) {
+                    out.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
+                }
             }
         }
     }

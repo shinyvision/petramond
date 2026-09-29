@@ -1,7 +1,7 @@
 use std::sync::LazyLock;
 
 use petramond_world::block::{Block, MeshEmitter};
-use petramond_world::chunk::{section_idx, SECTION_SIZE, SECTION_VOLUME};
+use petramond_world::chunk::{SECTION_SIZE, SECTION_VOLUME};
 use petramond_world::section::Section;
 
 use crate::face::Face;
@@ -10,6 +10,9 @@ use crate::face::Face;
 pub struct SectionVisibility(u64);
 
 const ALL_BITS: u64 = (1 << 36) - 1;
+
+const ROWS: usize = SECTION_SIZE * SECTION_SIZE;
+const _: () = assert!(SECTION_SIZE == 16, "rows are u16 bitsets along X");
 
 impl SectionVisibility {
     pub const ALL: Self = Self(ALL_BITS);
@@ -38,22 +41,23 @@ impl SectionVisibility {
     }
 
     pub fn of_section(section: &Section) -> Self {
-        if section.is_empty_air() {
+        if section.is_empty_air() || !section.has_opaque_blocks() {
             return Self::ALL;
         }
         if section.all_opaque() {
             return Self::NONE;
         }
         let occluders = occluders();
-        let mut open = [0u64; SECTION_VOLUME / 64];
+        let mut open = [0u16; ROWS];
         let mut any_closed = false;
-        for (i, word) in open.iter_mut().enumerate() {
-            for bit in 0..64 {
-                let id = section.block_at_idx(i * 64 + bit);
+        for (row, word) in open.iter_mut().enumerate() {
+            let base = row * SECTION_SIZE;
+            for x in 0..SECTION_SIZE {
+                let id = section.block_at_idx(base + x);
                 if occluders.get(id as usize).copied().unwrap_or(false) {
                     any_closed = true;
                 } else {
-                    *word |= 1 << bit;
+                    *word |= 1 << x;
                 }
             }
         }
@@ -85,82 +89,98 @@ fn occluders() -> &'static [bool] {
     &OCCLUDERS
 }
 
-#[inline]
-fn coords(i: usize) -> (usize, usize, usize) {
-    (
-        i % SECTION_SIZE,
-        i / (SECTION_SIZE * SECTION_SIZE),
-        (i / SECTION_SIZE) % SECTION_SIZE,
-    )
-}
+const _: () = assert!(ROWS * SECTION_SIZE == SECTION_VOLUME);
 
-fn touched(x: usize, y: usize, z: usize) -> u8 {
+/// Which boundary faces a run of open cells in row `(y, z)` with X bits `bits` touches.
+#[inline]
+fn touched(y: usize, z: usize, bits: u16) -> u8 {
     let last = SECTION_SIZE - 1;
     let mut faces = 0u8;
-    for (on, face) in [
-        (x == last, Face::PosX),
-        (x == 0, Face::NegX),
-        (y == last, Face::PosY),
-        (y == 0, Face::NegY),
-        (z == last, Face::PosZ),
-        (z == 0, Face::NegZ),
-    ] {
-        if on {
-            faces |= 1 << face as u8;
-        }
+    if bits & (1 << last) != 0 {
+        faces |= 1 << Face::PosX as u8;
+    }
+    if bits & 1 != 0 {
+        faces |= 1 << Face::NegX as u8;
+    }
+    if y == last {
+        faces |= 1 << Face::PosY as u8;
+    }
+    if y == 0 {
+        faces |= 1 << Face::NegY as u8;
+    }
+    if z == last {
+        faces |= 1 << Face::PosZ as u8;
+    }
+    if z == 0 {
+        faces |= 1 << Face::NegZ as u8;
     }
     faces
 }
 
-fn flood(mut open: [u64; SECTION_VOLUME / 64]) -> SectionVisibility {
+/// Open cells reachable within one row from `bits` through `open`: a run grows one cell each
+/// way per step, so it settles in as many steps as the longest run.
+#[inline]
+fn spread(mut bits: u16, open: u16) -> u16 {
+    loop {
+        let grown = (bits | (bits << 1) | (bits >> 1)) & open;
+        if grown == bits {
+            return bits;
+        }
+        bits = grown;
+    }
+}
+
+/// Flood every open component that touches the boundary, a 16-cell row at a time: rows are
+/// `u16` bitsets along X, a component spreads inside a row with shifts and crosses to the four
+/// neighbouring rows by masking, so a cave section costs a few hundred word operations instead
+/// of a per-cell stack walk.
+fn flood(mut open: [u16; ROWS]) -> SectionVisibility {
+    let last = SECTION_SIZE - 1;
     let mut visibility = SectionVisibility::NONE;
-    let mut stack: Vec<usize> = Vec::with_capacity(SECTION_VOLUME);
-    let take = |open: &mut [u64; SECTION_VOLUME / 64], i: usize| -> bool {
-        let (word, bit) = (i / 64, 1u64 << (i % 64));
-        let was = open[word] & bit != 0;
-        open[word] &= !bit;
-        was
-    };
-    for seed in 0..SECTION_VOLUME {
-        let (x, y, z) = coords(seed);
-        if touched(x, y, z) == 0 || !take(&mut open, seed) {
-            continue;
-        }
-        let mut faces = 0u8;
-        stack.push(seed);
-        while let Some(i) = stack.pop() {
-            let (x, y, z) = coords(i);
-            faces |= touched(x, y, z);
-            let last = SECTION_SIZE - 1;
-            let mut visit = |nx: usize, ny: usize, nz: usize| {
-                let n = section_idx(nx, ny, nz);
-                if take(&mut open, n) {
-                    stack.push(n);
-                }
+    let mut stack: Vec<(usize, u16)> = Vec::with_capacity(64);
+    for seed_row in 0..ROWS {
+        let (y, z) = (seed_row / SECTION_SIZE, seed_row % SECTION_SIZE);
+        let boundary_row = y == 0 || y == last || z == 0 || z == last;
+        loop {
+            let row = open[seed_row];
+            let seeds = if boundary_row {
+                row
+            } else {
+                row & ((1 << last) | 1)
             };
-            if x < last {
-                visit(x + 1, y, z);
+            if seeds == 0 {
+                break;
             }
-            if x > 0 {
-                visit(x - 1, y, z);
+            let seed = seeds & seeds.wrapping_neg();
+            let mut faces = 0u8;
+            stack.push((seed_row, seed));
+            while let Some((r, bits)) = stack.pop() {
+                let bits = bits & open[r];
+                if bits == 0 {
+                    continue;
+                }
+                let run = spread(bits, open[r]);
+                open[r] &= !run;
+                let (ry, rz) = (r / SECTION_SIZE, r % SECTION_SIZE);
+                faces |= touched(ry, rz, run);
+                if ry > 0 {
+                    stack.push((r - SECTION_SIZE, run));
+                }
+                if ry < last {
+                    stack.push((r + SECTION_SIZE, run));
+                }
+                if rz > 0 {
+                    stack.push((r - 1, run));
+                }
+                if rz < last {
+                    stack.push((r + 1, run));
+                }
             }
-            if y < last {
-                visit(x, y + 1, z);
-            }
-            if y > 0 {
-                visit(x, y - 1, z);
-            }
-            if z < last {
-                visit(x, y, z + 1);
-            }
-            if z > 0 {
-                visit(x, y, z - 1);
-            }
-        }
-        for a in Face::ALL {
-            for b in Face::ALL {
-                if faces & (1 << a as u8) != 0 && faces & (1 << b as u8) != 0 {
-                    visibility.connect(a, b);
+            for a in Face::ALL {
+                for b in Face::ALL {
+                    if faces & (1 << a as u8) != 0 && faces & (1 << b as u8) != 0 {
+                        visibility.connect(a, b);
+                    }
                 }
             }
         }

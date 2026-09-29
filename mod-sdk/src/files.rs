@@ -2,10 +2,10 @@ use core::ops::Deref;
 
 use mod_api::{
     ClientFileAnswer, ClientFileEntry, ClientFileInfo, ClientFolderInfo, ClientStorageScope,
-    HostCall, HostError, HostRet,
+    HostError, HostRet,
 };
 
-use crate::__rt::{host_call_reply, host_fn, recoverable, try_host_fn, Answer, Reply};
+use crate::__rt::{call, host_fn, recoverable_value, try_host_fn, Reply};
 
 pub struct Bytes(Repr);
 
@@ -95,23 +95,20 @@ fn read_span(reply: &[u8]) -> Option<(usize, usize)> {
 }
 
 pub fn client_file_poll(ticket: u64) -> Option<Result<FileAnswer, HostError>> {
-    let ret = match host_call_reply(&HostCall::from(mod_api::calls::ClientFilePoll { ticket })) {
-        Answer::Native(ret) => ret,
-        Answer::Guest(reply) => match read_span(reply.bytes()) {
-            Some((start, len)) => {
-                return Some(Ok(FileAnswer::Read(Bytes(Repr::Reply {
-                    reply,
-                    start,
-                    len,
-                }))))
-            }
-            None => reply.decode(),
-        },
-    };
-    match recoverable("ClientFilePoll", ret) {
-        Ok(HostRet::ClientFilePolled(answer)) => answer.map(|answer| Ok(answer.into())),
+    let reply = call(&mod_api::calls::ClientFilePoll { ticket });
+    if let Some((start, len)) = read_span(reply.bytes()) {
+        return Some(Ok(FileAnswer::Read(Bytes(Repr::Reply {
+            reply,
+            start,
+            len,
+        }))));
+    }
+    match recoverable_value(
+        "ClientFilePoll",
+        reply.decode_as(mod_api::ret_decode::ClientFilePolled),
+    ) {
+        Ok(answer) => answer.map(|answer| Ok(answer.into())),
         Err(failed) => Some(Err(failed)),
-        Ok(other) => panic!("ClientFilePoll returned {other:?}"),
     }
 }
 

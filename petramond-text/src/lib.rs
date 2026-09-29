@@ -49,6 +49,11 @@ fn blend_rgba_pixel(rgba: &mut [u8], width: usize, height: usize, x: i32, y: i32
         return;
     }
     let i = (y as usize * width + x as usize) * 4;
+    // Opaque ink replaces the pixel outright; the float blend below reduces to exactly this.
+    if color[3] == 255 {
+        rgba[i..i + 4].copy_from_slice(&color);
+        return;
+    }
     let src_a = color[3] as f32 / 255.0;
     let dst_a = rgba[i + 3] as f32 / 255.0;
     let out_a = src_a + dst_a * (1.0 - src_a);

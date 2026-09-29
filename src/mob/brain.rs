@@ -90,6 +90,8 @@ pub struct AiCtx<'a> {
     pub mob_index: Option<usize>,
     pub mobs: &'a super::spatial::MobSnapshot,
     pub tags: &'a Arc<BTreeMap<String, super::MobTagValue>>,
+    /// [`Instance::tags_rev`](super::Instance::tags_rev) of `tags`.
+    pub tags_rev: u64,
     pub confined_region: Option<&'a super::confined::ConfinedRegion>,
     pub scripted: ScriptedReplies<'a>,
     pub rng: &'a mut MobRng,

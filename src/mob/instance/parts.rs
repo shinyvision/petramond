@@ -5,7 +5,7 @@ use petramond_math::world_pos::WorldPos;
 
 use super::super::anim::{AnimKind, AnimLayer};
 use super::super::brain::{AttackIntent, BehaviorOutput, Brain, HeadLook};
-use super::super::confined::{self, ConfinedRegion, RegionCache};
+use super::super::confined::{self, ConfinedRegion, ReadBox, RegionCache, Verdict};
 use super::super::damage::DeathState;
 use super::super::kinematics::{DriveIntent, KinematicPose};
 use super::super::nav::{Navigator, Unstick};
@@ -157,15 +157,23 @@ pub(in crate::mob) struct Confinement {
     cooldown: u8,
     region: Option<Arc<ConfinedRegion>>,
     checked_at: IVec3,
-    checked_rev: u64,
+    proof: Option<FreeProof>,
     free_age: u16,
+}
+
+/// What a free verdict read: a nav change inside `reads` drops it, and so does streaming when
+/// the proof touched unstreamed world (`terrain_rev` is the streaming revision it saw).
+#[derive(Clone, Copy)]
+struct FreeProof {
+    reads: ReadBox,
+    terrain_rev: Option<u64>,
 }
 
 pub(in crate::mob) struct ConfinementProbe {
     pub cell: IVec3,
     pub think: bool,
     pub judgeable: bool,
-    pub nav_rev: u64,
+    pub terrain_rev: u64,
 }
 
 impl Confinement {
@@ -174,7 +182,7 @@ impl Confinement {
             cooldown: ((seed % confined::CHECK_INTERVAL as u64) as u8).max(1),
             region: None,
             checked_at: IVec3::ZERO,
-            checked_rev: u64::MAX,
+            proof: None,
             free_age: 0,
         }
     }
@@ -187,22 +195,19 @@ impl Confinement {
         &mut self,
         probe: ConfinementProbe,
         regions: &mut RegionCache,
-        flood: impl FnOnce() -> Option<ConfinedRegion>,
+        flood: impl FnOnce() -> Verdict,
     ) -> Option<bool> {
         self.cooldown = self.cooldown.saturating_sub(1);
         let region_dropped = self.region.as_ref().is_some_and(|r| !regions.is_live(r));
         if region_dropped {
             self.region = None;
         }
+        let proof_live = self
+            .proof
+            .is_some_and(|p| p.terrain_rev.is_none_or(|rev| rev == probe.terrain_rev));
         let verdict_stale = region_dropped
             || self.region.is_some()
-            || confined::free_verdict_stale(
-                probe.cell,
-                self.checked_at,
-                probe.nav_rev,
-                self.checked_rev,
-                self.free_age,
-            );
+            || confined::free_verdict_stale(probe.cell, self.checked_at, proof_live, self.free_age);
         let due = probe.think && (self.cooldown == 0 || region_dropped);
         if due && !verdict_stale {
             self.cooldown = confined::CHECK_INTERVAL;
@@ -214,13 +219,39 @@ impl Confinement {
             return None;
         }
         self.checked_at = probe.cell;
-        self.checked_rev = probe.nav_rev;
         self.free_age = 0;
-        self.region = regions
-            .region_at(probe.cell)
-            .or_else(|| flood().map(|r| regions.insert(r)));
+        self.proof = None;
+        self.region = match regions.region_at(probe.cell) {
+            Some(region) => Some(region),
+            None => match flood() {
+                Verdict::Confined(region) => Some(regions.insert(region)),
+                Verdict::Free {
+                    reads,
+                    hit_unloaded,
+                } => {
+                    self.proof = Some(FreeProof {
+                        reads,
+                        terrain_rev: hit_unloaded.then_some(probe.terrain_rev),
+                    });
+                    None
+                }
+            },
+        };
         self.cooldown = confined::CHECK_INTERVAL;
         Some(self.region.is_some())
+    }
+
+    /// Drops a free proof that read any of `changed` (`within` bounds them all).
+    pub fn invalidate_proof(&mut self, changed: &[IVec3], within: &ReadBox) {
+        if let Some(proof) = self.proof {
+            if proof.reads.overlaps(within) && changed.iter().any(|&c| proof.reads.contains(c)) {
+                self.proof = None;
+            }
+        }
+    }
+
+    pub fn drop_proof(&mut self) {
+        self.proof = None;
     }
 }
 

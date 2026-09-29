@@ -93,7 +93,10 @@ pub(crate) fn resolve_specs() -> Vec<WildCropSpec> {
 pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
     let specs = &content.wild_patches;
     let mut writes = Vec::new();
-    let oy = ctx.origin_world()[1];
+    let origin = ctx.origin_world();
+    let oy = origin[1];
+    // Each spec's patch coverage over this section, settled once for every column that asks.
+    let mut coverage: Vec<Option<Coverage>> = vec![None; specs.len()];
     ctx.for_each_origin(0, |wx, wz| {
         let Some(surface) = ctx.surface_y(wx, wz) else {
             return;
@@ -108,15 +111,22 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
         let Some(biome) = ctx.biome(wx, wz) else {
             return;
         };
-        let Some(spec) = specs.iter().find(|spec| {
+        let Some(spec) = specs.iter().enumerate().find(|(i, spec)| {
             spec.chances
                 .iter()
                 .find(|(id, _)| *id == biome)
                 .map(|(_, chance)| *chance)
-                .is_some_and(|chance| in_patch(ctx.seed(), spec.salt, chance, spec.patch, wx, wz))
+                .is_some_and(|chance| {
+                    coverage[*i]
+                        .get_or_insert_with(|| {
+                            Coverage::of(ctx.seed(), spec.salt, chance, spec.patch, origin)
+                        })
+                        .has(wx - origin[0], wz - origin[2])
+                })
         }) else {
             return;
         };
+        let spec = spec.1;
         if ctx.block([wx, surface, wz]) != Some(content.grass) {
             return;
         }
@@ -130,37 +140,55 @@ pub fn wild_patches(content: &Content, ctx: &GenCtx) -> Vec<GenWrite> {
     writes
 }
 
-fn in_patch(seed: u32, salt: u64, chance: f32, (min, max): (i32, i32), wx: i32, wz: i32) -> bool {
-    for az in (wz - PATCH_REACH)..=(wz + PATCH_REACH) {
-        for ax in (wx - PATCH_REACH)..=(wx + PATCH_REACH) {
-            let mut rng = GenRng::positional(seed, salt, ax, 0, az);
-            if !rng.chance(chance) {
-                continue;
+/// The columns of one section a spec's patches cover: every anchor within reach of the
+/// section rolls once and its walk is marked, instead of every column re-rolling the 25
+/// anchors around it. A column is covered exactly when one of those anchors' walks reaches
+/// it, which is what the per-column test asked.
+#[derive(Clone, Copy)]
+struct Coverage([u16; 16]);
+
+impl Coverage {
+    fn of(seed: u32, salt: u64, chance: f32, (min, max): (i32, i32), origin: [i32; 3]) -> Coverage {
+        let (ox, oz) = (origin[0], origin[2]);
+        let mut rows = [0u16; 16];
+        let mut mark = |x: i32, z: i32| {
+            let (lx, lz) = (x - ox, z - oz);
+            if (0..16).contains(&lx) && (0..16).contains(&lz) {
+                rows[lz as usize] |= 1 << lx;
             }
-            if (ax, az) == (wx, wz) {
-                return true;
-            }
-            let steps = rng.next_i32(min, max);
-            let (mut cx, mut cz) = (ax, az);
-            for _ in 1..steps {
-                let (dx, dz) = match rng.next_u64() % 4 {
-                    0 => (1, 0),
-                    1 => (-1, 0),
-                    2 => (0, 1),
-                    _ => (0, -1),
-                };
-                let (nx, nz) = (cx + dx, cz + dz);
-                if (nx - ax).abs() > PATCH_REACH || (nz - az).abs() > PATCH_REACH {
+        };
+        for az in (oz - PATCH_REACH)..(oz + 16 + PATCH_REACH) {
+            for ax in (ox - PATCH_REACH)..(ox + 16 + PATCH_REACH) {
+                let mut rng = GenRng::positional(seed, salt, ax, 0, az);
+                if !rng.chance(chance) {
                     continue;
                 }
-                (cx, cz) = (nx, nz);
-                if (cx, cz) == (wx, wz) {
-                    return true;
+                mark(ax, az);
+                let steps = rng.next_i32(min, max);
+                let (mut cx, mut cz) = (ax, az);
+                for _ in 1..steps {
+                    let (dx, dz) = match rng.next_u64() % 4 {
+                        0 => (1, 0),
+                        1 => (-1, 0),
+                        2 => (0, 1),
+                        _ => (0, -1),
+                    };
+                    let (nx, nz) = (cx + dx, cz + dz);
+                    if (nx - ax).abs() > PATCH_REACH || (nz - az).abs() > PATCH_REACH {
+                        continue;
+                    }
+                    (cx, cz) = (nx, nz);
+                    mark(cx, cz);
                 }
             }
         }
+        Coverage(rows)
     }
-    false
+
+    #[inline]
+    fn has(&self, lx: i32, lz: i32) -> bool {
+        self.0[lz as usize] >> lx & 1 != 0
+    }
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ use super::super::{Aabb, Block, ShapeRenderBox};
 
 pub const SHAPE_STATE_MAX: usize = 8;
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ShapeState {
     len: u8,
     /// Bit `i` set means `bytes[i..i + 2]` is a little-endian block-id reference. Only the save

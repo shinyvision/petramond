@@ -117,6 +117,18 @@ pub use sounds::SoundCall;
 pub use tags::TagCall;
 pub use worldgen::WorldgenCall;
 
+/// Each domain's arm index in [`HostCall`]: the first varint of a call on the wire, so a
+/// guest can send `[domain][call][fields]` without ever building the outer enum.
+macro_rules! wire_domains {
+    ($n:expr;) => {};
+    ($n:expr; $domain:ident $($rest:ident)*) => {
+        impl $crate::WireDomain for $domain {
+            const INDEX: u32 = $n;
+        }
+        wire_domains!($n + 1; $($rest)*);
+    };
+}
+
 macro_rules! host_calls {
     (
         $(#[$meta:meta])*
@@ -160,6 +172,8 @@ macro_rules! host_calls {
                 }
             }
         )*
+
+        wire_domains!(0u32; $($domain)*);
 
         pub mod calls {
             $(pub use super::$domain::*;)*
@@ -276,8 +290,67 @@ pub enum MemoClaim {
     Pending,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub enum HostRet {
+/// The reply enum, plus per variant its wire index (`ret_index`) and a decoder of exactly
+/// that variant (`ret_decode`): a guest expecting one reply shape decodes only that shape.
+macro_rules! host_rets {
+    (
+        $(#[$meta:meta])*
+        pub enum HostRet {
+            $( $(#[$vmeta:meta])* $name:ident $( ( $($f:tt)* ) )? ),* $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+        pub enum HostRet {
+            $( $(#[$vmeta])* $name $( ( $($f)* ) )?, )*
+        }
+
+        /// Every reply variant's wire index: the first varint of a reply.
+        #[allow(non_upper_case_globals)]
+        pub mod ret_index {
+            ret_items!(@index 0u32; $( [ $name ; $( $($f)* )? ] )*);
+        }
+
+        /// One decoder per reply variant: the payload when the reply is that variant, else
+        /// what it was instead ([`ReplyMismatch`](crate::ReplyMismatch)).
+        #[allow(non_snake_case)]
+        pub mod ret_decode {
+            #[allow(unused_imports)]
+            use super::*;
+            ret_items!(@decode 0u32; $( [ $name ; $( $($f)* )? ] )*);
+        }
+    };
+}
+
+macro_rules! ret_items {
+    (@index $n:expr;) => {};
+    (@index $n:expr; [ $name:ident ; $($f:tt)* ] $($rest:tt)*) => {
+        pub const $name: u32 = $n;
+        ret_items!(@index $n + 1; $($rest)*);
+    };
+    (@decode $n:expr;) => {};
+    (@decode $n:expr; [ $name:ident ; ] $($rest:tt)*) => {
+        pub fn $name(bytes: &[u8]) -> Result<(), $crate::ReplyMismatch> {
+            $crate::decode_unit_reply(bytes, $n)
+        }
+        ret_items!(@decode $n + 1; $($rest)*);
+    };
+    (@decode $n:expr; [ $name:ident ; #[serde(with = "serde_bytes")] $t:ty ] $($rest:tt)*) => {
+        pub fn $name(bytes: &[u8]) -> Result<$t, $crate::ReplyMismatch> {
+            $crate::decode_bytes_reply::<$t>(bytes, $n)
+        }
+        ret_items!(@decode $n + 1; $($rest)*);
+    };
+    (@decode $n:expr; [ $name:ident ; $t:ty ] $($rest:tt)*) => {
+        pub fn $name(bytes: &[u8]) -> Result<$t, $crate::ReplyMismatch> {
+            $crate::decode_reply::<$t>(bytes, $n)
+        }
+        ret_items!(@decode $n + 1; $($rest)*);
+    };
+}
+
+host_rets! {
+    pub enum HostRet {
     Unit,
     U64(u64),
     Err(HostError),
@@ -384,6 +457,8 @@ pub enum HostRet {
     ClientFolder(Option<crate::ClientFolderInfo>),
     /// Heights as little-endian `i32`s, row by row: answers `TerrainHeightsIn`.
     TerrainHeightGrid(#[serde(with = "serde_bytes")] Vec<u8>),
+    LeafMask(crate::LeafMask),
+    }
 }
 
 impl HostRet {

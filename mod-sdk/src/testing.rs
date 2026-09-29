@@ -214,6 +214,9 @@ impl MockState {
             }
             HostCall::Core(CoreCall::RuntimeSide) => HostRet::RuntimeSide(RuntimeSide::Server),
             HostCall::Core(CoreCall::CurrentTick) => HostRet::U64(self.tick),
+            HostCall::Worldgen(mod_api::WorldgenCall::UndergroundBiomeLeaves { .. }) => {
+                HostRet::LeafMask(mod_api::LeafMask::everywhere())
+            }
             HostCall::Core(CoreCall::RngU64 { stream_key }) => {
                 HostRet::U64(self.rng_next(stream_key))
             }

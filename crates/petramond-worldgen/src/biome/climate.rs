@@ -77,6 +77,14 @@ impl SurfaceClimate {
         }
     }
 
+    /// The surface axes from a column's channel values (see
+    /// [`crate::density::columns::ColumnClimate`]).
+    pub(crate) fn from_column(column: &[f64; 6]) -> Self {
+        Self {
+            axes: std::array::from_fn(|axis| column[axis] as f32),
+        }
+    }
+
     pub fn from_graph(graph: &ScalarGraph, point: SamplePoint) -> Option<Self> {
         let nodes = [
             graph.channel_node(channels::TEMPERATURE)?,
@@ -147,6 +155,20 @@ impl ClimateRect {
     #[cfg(test)]
     pub fn axis_range(self, axis: ClimateAxis) -> Option<AxisRange> {
         Some(self.axes[axis.index()])
+    }
+
+    /// [`Self::distance_squared`], or `None` once the running sum passes
+    /// `limit` (terms are non-negative, so the total could only be larger).
+    #[inline]
+    fn distance_squared_within(self, climate: SurfaceClimate, limit: f64) -> Option<f64> {
+        let mut sum = -0.0;
+        for (range, value) in self.axes.iter().zip(climate.axes) {
+            sum += range.distance_squared(value);
+            if sum > limit {
+                return None;
+            }
+        }
+        Some(sum + f64::from(self.offset) * f64::from(self.offset))
     }
 
     pub fn distance_squared(self, climate: SurfaceClimate) -> f64 {
@@ -268,9 +290,14 @@ impl BiomeClimateIndex {
                 return Some(self.rects[i as usize].biome);
             }
         }
+        // The query's bin usually holds the nearest rect; with it as the bar,
+        // most rows stop after an axis or two.
         let mut best = Candidate::none();
-        for rect in &self.rects {
-            best.consider(rect, rect.rect.distance_squared(climate));
+        for i in bin.iter().copied().chain(0..self.rects.len() as u32) {
+            let rect = &self.rects[i as usize];
+            if let Some(distance) = rect.rect.distance_squared_within(climate, best.distance) {
+                best.consider(rect, distance);
+            }
         }
         best.biome
     }

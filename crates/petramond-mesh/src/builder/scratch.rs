@@ -60,6 +60,8 @@ pub(super) struct BoxBuffers {
 pub(super) struct NeighbourScratch {
     pub(super) occupancy: RefCell<Vec<ShapeBox>>,
     pub(super) seal: RefCell<(Vec<ShapeBox>, BoxSetScratch)>,
+    pub(super) shade: RefCell<super::neighbourhood::ShadeCache>,
+    pub(super) vertex_light: RefCell<super::lighting::VertexLightCache>,
 }
 
 #[derive(Default)]
@@ -68,10 +70,41 @@ pub(super) struct MeshScratch {
     pub(super) boxes: BoxBuffers,
     pub(super) neighbour: NeighbourScratch,
     pub(super) out: Streams,
+    /// One packed word per pad cell (`neighbourhood::pack_ring`), filled per build.
+    pub(super) ring: Vec<u32>,
+    /// The per-row cell bitsets the same pass gathers for the exposure masks.
+    pub(super) rows: Box<super::neighbourhood::RowBits>,
 }
 
 thread_local! {
     static SCRATCH: Cell<Option<Box<MeshScratch>>> = const { Cell::new(None) };
+}
+
+/// Runs `f` with this thread's builds sharing (or not) corner light through the vertex cache.
+#[cfg(test)]
+pub(crate) fn with_vertex_light_sharing<T>(shared: bool, f: impl FnOnce() -> T) -> T {
+    let set = |disabled: bool| {
+        let lease = ScratchLease::take();
+        lease
+            .neighbour
+            .vertex_light
+            .borrow_mut()
+            .set_disabled(disabled);
+    };
+    set(!shared);
+    let out = f();
+    set(false);
+    out
+}
+
+/// Vertices the last build on this thread stored in the vertex light cache.
+#[cfg(test)]
+pub(crate) fn vertex_lights_stored() -> usize {
+    ScratchLease::take()
+        .neighbour
+        .vertex_light
+        .borrow()
+        .stored()
 }
 
 pub(super) struct ScratchLease(Option<Box<MeshScratch>>);

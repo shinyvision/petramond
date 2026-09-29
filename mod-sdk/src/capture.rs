@@ -1,6 +1,6 @@
 pub use mod_api::capture::*;
 
-use mod_api::{ClientFileRange, ClientFileRanges, ClientStorageScope, HostRet};
+use mod_api::{ClientFileRange, ClientFileRanges, ClientStorageScope};
 
 use crate::__rt::{host_fn, try_host_fn};
 
@@ -77,10 +77,12 @@ host_fn! {
         => ClientPresentationViewer { pose, flying } => Bool
 }
 
-host_fn! {
-    pub fn client_presentation_state() -> ClientPresentationStateData
-        => ClientPresentationState
-        => HostRet::ClientPresentationState(state) => *state
+pub fn client_presentation_state() -> ClientPresentationStateData {
+    *crate::__rt::expect_value(
+        "ClientPresentationState",
+        crate::__rt::call(&crate::calls::ClientPresentationState)
+            .decode_as(mod_api::ret_decode::ClientPresentationState),
+    )
 }
 
 host_fn! {

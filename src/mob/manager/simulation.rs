@@ -134,12 +134,19 @@ impl Mobs {
         anchors: &[PlayerAnchor],
         freeze_unloaded: bool,
     ) -> MobTickEvents {
+        let mut grounded = std::mem::take(&mut self.grounded_scratch);
+        grounded.clear();
+        grounded.extend(
+            self.list
+                .iter()
+                .map(|m| !freeze_unloaded || terrain_under_mob_is_final(world, m)),
+        );
         let mut ai_mobs = std::mem::take(&mut self.ai_snapshot);
-        ai_mobs.rebuild(self.list.iter().map(|m| AiMob {
+        ai_mobs.rebuild(self.list.iter().zip(&grounded).map(|(m, &grounded)| AiMob {
             id: m.id(),
             kind: m.kind,
             pos: m.pos,
-            active: !m.is_dead() && (!freeze_unloaded || terrain_under_mob_is_final(world, m)),
+            active: !m.is_dead() && grounded,
             tags: m.tags_shared(),
         }));
         let solid = self.solid_obstacles();
@@ -168,7 +175,7 @@ impl Mobs {
         );
 
         for (i, mob) in self.list.iter_mut().enumerate() {
-            if freeze_unloaded && !terrain_under_mob_is_final(world, mob) {
+            if !grounded[i] {
                 mob.clear_drive();
                 continue;
             }
@@ -318,6 +325,7 @@ impl Mobs {
         self.solid.supports = supports;
         self.confined_regions = confined_regions;
         self.step_scratch = steps;
+        self.grounded_scratch = grounded;
         self.turns = turns;
         self.solve_solids(world, solid);
         let turns = std::mem::take(&mut self.turns);

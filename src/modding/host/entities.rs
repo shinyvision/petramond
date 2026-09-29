@@ -288,6 +288,29 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                 HostRet::Mobs(out)
             }),
         },
+        EntityCall::MobsInRadiusOf { pos, radius, kinds } => {
+            match finite_pos(pos, "MobsInRadiusOf.pos") {
+                Err(e) => e,
+                Ok(pos) => sim_query(|ctx| {
+                    if !radius.is_finite() {
+                        return HostRet::invalid("MobsInRadiusOf: non-finite radius".into());
+                    }
+                    let r2 = radius * radius;
+                    let out = ctx
+                        .world
+                        .mobs()
+                        .instances()
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, m)| !m.is_dead())
+                        .filter(|(_, m)| kinds.contains(&mod_api::MobId(m.kind.0)))
+                        .filter(|(_, m)| (m.pos - pos).length_squared() <= r2)
+                        .map(|(i, m)| mob_snapshot(i, m))
+                        .collect();
+                    HostRet::Mobs(out)
+                }),
+            }
+        }
         EntityCall::DamageMob {
             mob_id,
             amount,

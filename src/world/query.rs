@@ -7,6 +7,17 @@ impl ServerWorld {
             || !self.side.gen.awaited_overlays.is_empty()
             || !self.side.gen.pending_overlays.is_empty()
     }
+
+    pub fn has_pending_light_bakes(&self) -> bool {
+        self.light_bakes.has_pending()
+            || !self.data.relight_demand.is_empty()
+            || !self.data.deferred_rechecks.is_empty()
+    }
+
+    /// Light bakes (requested, landed) since the world was created.
+    pub fn light_bake_stats(&self) -> (u64, u64) {
+        self.light_bakes.stats()
+    }
 }
 
 impl ReplicaWorld {

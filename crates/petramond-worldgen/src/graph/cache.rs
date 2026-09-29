@@ -53,6 +53,16 @@ impl GraphEvaluationCache {
         }
     }
 
+    /// Supplies a y-invariant node's value for the current column, as if it
+    /// had been evaluated there. The caller must pass exactly the value the
+    /// graph computes for `node` at this column.
+    pub fn preset_y_invariant(&mut self, node: NodeId, value: f64) {
+        if self.y_invariant_scope_active {
+            self.y_invariant_values[node.index] = value;
+            self.y_invariant_stamps[node.index] = self.y_invariant_generation;
+        }
+    }
+
     pub(super) fn get(&self, node: NodeId, y_invariant: bool) -> Option<f64> {
         if self.use_y_invariant_scope(y_invariant) {
             (self.y_invariant_stamps[node.index] == self.y_invariant_generation)

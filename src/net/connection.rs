@@ -10,6 +10,7 @@ use super::protocol::{ClientToServer, ServerToClient};
 use super::rate::TokenBucket;
 use super::remap::IdRemap;
 use super::secure::{Channel, FrameSealer};
+use super::tick_delta::TickDelta;
 
 const KEEPALIVE_AFTER: Duration = Duration::from_secs(2);
 
@@ -86,7 +87,7 @@ fn write_loop<T: serde::Serialize>(
     rx: &Receiver<T>,
     keepalive: T,
     farewell: Option<T>,
-    map: impl Fn(&mut T),
+    mut map: impl FnMut(&mut T),
 ) {
     loop {
         match rx.recv_timeout(KEEPALIVE_AFTER) {
@@ -244,14 +245,18 @@ impl TcpServerConn {
         let depth = Arc::clone(&queued);
         spawn_writer(&stream, move || {
             let mut w = BufWriter::new(writer);
+            let mut delta = TickDelta::default();
             write_loop(
                 &mut w,
                 &mut sealer,
                 &out_rx,
                 ServerToClient::KeepAlive,
                 None,
-                |_| {
+                |msg| {
                     depth.fetch_sub(1, Ordering::Relaxed);
+                    if let ServerToClient::Tick(update) = msg {
+                        delta.pack(update);
+                    }
                 },
             );
             flag.store(true, Ordering::SeqCst);
@@ -341,9 +346,18 @@ impl TcpClientConn {
             .name("petramond-conn-read".to_string())
             .spawn(move || {
                 let mut r = BufReader::new(reader);
+                let mut delta = TickDelta::default();
                 while let Ok((mut msg, _)) =
                     read_opened::<ServerToClient, _>(&mut r, MAX_FRAME, &mut opener)
                 {
+                    if let ServerToClient::Tick(update) = &mut msg {
+                        if let Err(e) = delta.unpack(update) {
+                            log::warn!(
+                                "server sent entity changes this connection cannot apply: {e}"
+                            );
+                            break;
+                        }
+                    }
                     map.remap_to_client(&mut msg);
                     if in_tx.send(msg).is_err() {
                         break;

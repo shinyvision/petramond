@@ -1,6 +1,6 @@
 use mod_api::{
-    ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData, MobKinematicData,
-    MobRidersData, MobSnapshot, PlayerId,
+    ConditionOp, EntityRef, Facing, MobAnimOp, MobAnimStateData, MobDriveData, MobId,
+    MobKinematicData, MobRidersData, MobSnapshot, PlayerId,
 };
 
 use crate::__rt::host_fn;
@@ -84,6 +84,12 @@ host_fn! {
 host_fn! {
     pub fn mobs_in_radius(pos: [f64; 3], radius: f32) -> Vec<MobSnapshot>
         => MobsInRadius { pos, radius } => Mobs
+}
+
+host_fn! {
+    /// [`mobs_in_radius`] for the species `kinds` only: the host snapshots nothing else.
+    pub fn mobs_in_radius_of(pos: [f64; 3], radius: f32, kinds: Vec<MobId>) -> Vec<MobSnapshot>
+        => MobsInRadiusOf { pos, radius, kinds } => Mobs
 }
 
 host_fn! {

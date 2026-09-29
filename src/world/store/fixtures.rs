@@ -94,6 +94,24 @@ impl ServerWorld {
         self.side.gen.awaited_overlays.insert(pos);
         self.note_stream_nonfinal(pos);
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn settle_overlay_for_test(&mut self, pos: SectionPos) {
+        self.side.gen.awaited_overlays.remove(&pos);
+        self.settle_stream_nonfinal(pos);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn evict_section_for_test(&mut self, pos: SectionPos) {
+        self.remove_section(pos);
+        self.bump_terrain_revision();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn evict_column_for_test(&mut self, pos: ChunkPos) {
+        self.remove_column(pos);
+        self.bump_terrain_revision();
+    }
 }
 
 impl ReplicaWorld {

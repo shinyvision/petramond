@@ -168,7 +168,6 @@ fn unload_bursts_clip_to_the_allowance_and_all_arrive() {
     for sp in awaiting.iter().copied() {
         server.sessions[s].transport.terrain.sent.insert(sp);
     }
-    server.sessions[s].transport.terrain.backlog = true;
 
     let room = STREAM_QUEUE_RESERVE + 100;
     let deadline = Instant::now() + TEST_HARD_DEADLINE;
@@ -273,4 +272,167 @@ fn light_refreshes_defer_for_starved_sessions_and_ship_later() {
             .any(|m| matches!(m, ServerToClient::LightData(p) if p.pos == lit));
         inbox = acks(&out);
     }
+}
+
+fn xorshift(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+fn pick(loaded: &[SectionPos], r: u64) -> Option<SectionPos> {
+    (!loaded.is_empty()).then(|| loaded[r as usize % loaded.len()])
+}
+
+/// The live plan is kept current from send events. This drives every producer through a
+/// deterministic random walk — loads (lit and unlit), section and column unloads, light
+/// bakes through the real pump, edits through the real edit path, finality flips, anchor
+/// moves, world clears, client cache misses and paced emission — with the full-recompute
+/// oracle (always on in tests) checking the plan after every sync.
+#[test]
+fn incremental_send_plan_matches_the_full_plan_under_random_streaming() {
+    use crate::world::{SendEvents, ServerWorld};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{SECTION_MIN_CY, SECTION_VOLUME};
+    use petramond_world::section::Section;
+    use std::sync::Arc;
+
+    let mut world = ServerWorld::new(3, 4);
+    let mut sync = TerrainSync::default();
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    let mut anchor = LoadAnchor {
+        cx: 0,
+        cy: SECTION_MIN_CY + 4,
+        cz: 0,
+        radius: 3,
+    };
+    let mut loaded: Vec<SectionPos> = Vec::new();
+    let mut msgs = Vec::new();
+    let (mut shipped, mut unloaded) = (0usize, 0usize);
+    for _ in 0..1500 {
+        match xorshift(&mut rng) % 16 {
+            0..=4 => {
+                let cx = (xorshift(&mut rng) % 13) as i32 - 6;
+                let cz = (xorshift(&mut rng) % 13) as i32 - 6;
+                let cy = SECTION_MIN_CY + (xorshift(&mut rng) % 8) as i32;
+                let sp = SectionPos::new(cx, cy, cz);
+                let mut section = Section::new(cx, cy, cz);
+                if xorshift(&mut rng).is_multiple_of(2) {
+                    section.set_block(3, 3, 3, Block::Stone);
+                }
+                if xorshift(&mut rng).is_multiple_of(2) {
+                    section.set_skylight(Arc::from(vec![15u8; SECTION_VOLUME].into_boxed_slice()));
+                }
+                world.insert_section_for_test(sp, section);
+                if !loaded.contains(&sp) {
+                    loaded.push(sp);
+                }
+            }
+            5 => {
+                if let Some(sp) = pick(&loaded, xorshift(&mut rng)) {
+                    world.evict_section_for_test(sp);
+                    loaded.retain(|p| *p != sp);
+                }
+            }
+            6 => {
+                if let Some(sp) = pick(&loaded, xorshift(&mut rng)) {
+                    let cp = sp.chunk_pos();
+                    world.evict_column_for_test(cp);
+                    loaded.retain(|p| p.chunk_pos() != cp);
+                }
+            }
+            7 => world.pump_light_bakes(),
+            8 => {
+                if let Some(sp) = pick(&loaded, xorshift(&mut rng)) {
+                    let (ox, oy, oz) = sp.origin_world();
+                    let block = if xorshift(&mut rng).is_multiple_of(2) {
+                        Block::Stone
+                    } else {
+                        Block::Air
+                    };
+                    world.set_block_world(
+                        ox + (xorshift(&mut rng) % 16) as i32,
+                        oy + (xorshift(&mut rng) % 16) as i32,
+                        oz + (xorshift(&mut rng) % 16) as i32,
+                        block,
+                    );
+                }
+            }
+            9 => {
+                if let Some(sp) = pick(&loaded, xorshift(&mut rng)) {
+                    if xorshift(&mut rng).is_multiple_of(2) {
+                        world.mark_overlay_in_flight_for_test(sp);
+                    } else {
+                        world.settle_overlay_for_test(sp);
+                    }
+                }
+            }
+            10 => {
+                anchor.cx += (xorshift(&mut rng) % 3) as i32 - 1;
+                anchor.cz += (xorshift(&mut rng) % 3) as i32 - 1;
+                anchor.cy = (anchor.cy + (xorshift(&mut rng) % 3) as i32 - 1)
+                    .clamp(SECTION_MIN_CY, SECTION_MIN_CY + 8);
+            }
+            11 => {
+                if let Some(sp) = pick(&loaded, xorshift(&mut rng)) {
+                    sync.handle_cache_miss(sp);
+                }
+            }
+            12 if xorshift(&mut rng).is_multiple_of(40) => {
+                world.clear_world();
+                loaded.clear();
+            }
+            _ => {}
+        }
+        let events = world.take_send_events();
+        sync.sync_plan(&world, anchor, &events);
+        let mut allowance = (xorshift(&mut rng) % 24) as usize;
+        sync.emit_terrain(&world, &mut allowance, &mut msgs);
+        for m in msgs.drain(..) {
+            match m {
+                ServerToClient::SectionData(_) | ServerToClient::SectionCached { .. } => {
+                    shipped += 1
+                }
+                ServerToClient::SectionUnload { .. } | ServerToClient::ColumnUnload { .. } => {
+                    unloaded += 1
+                }
+                _ => {}
+            }
+        }
+        // Emission moved the sent sets without any world event: the plan must still agree.
+        sync.sync_plan(&world, anchor, &SendEvents::default());
+    }
+    assert!(
+        shipped > 50 && unloaded > 20,
+        "the walk must exercise both directions (shipped {shipped}, unloaded {unloaded})"
+    );
+}
+
+#[test]
+#[should_panic(expected = "diverged from the full plan")]
+fn the_send_plan_oracle_fires_on_a_stale_plan() {
+    use crate::world::{SendEvents, ServerWorld};
+    use petramond_world::block::Block;
+    use petramond_world::chunk::{SECTION_MIN_CY, SECTION_VOLUME};
+    use petramond_world::section::Section;
+    use std::sync::Arc;
+
+    let mut world = ServerWorld::new(3, 4);
+    let mut sync = TerrainSync::default();
+    let anchor = LoadAnchor {
+        cx: 0,
+        cy: SECTION_MIN_CY + 4,
+        cz: 0,
+        radius: 3,
+    };
+    sync.sync_plan(&world, anchor, &SendEvents::default());
+    let sp = SectionPos::new(0, anchor.cy, 0);
+    let mut section = Section::new(sp.cx, sp.cy, sp.cz);
+    section.set_block(3, 3, 3, Block::Stone);
+    section.set_skylight(Arc::from(vec![15u8; SECTION_VOLUME].into_boxed_slice()));
+    world.insert_section_for_test(sp, section);
+    // The load's event is dropped on the floor: the live plan is now stale.
+    let _ = world.take_send_events();
+    sync.sync_plan(&world, anchor, &SendEvents::default());
 }

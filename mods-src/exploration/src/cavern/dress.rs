@@ -93,27 +93,51 @@ pub(super) struct Resolved {
 }
 
 impl Dressing {
+    #[cfg(test)]
     pub(super) fn gather(content: &Content, ctx: &GenCtx, seed: u32) -> Dressing {
+        Dressing::gather_within(content, ctx, seed, &LeafMask::everywhere())
+    }
+
+    /// The candidate dress points, rolled only inside the leaves `leaves` admits the biome in:
+    /// a point outside it is dropped by [`resolve`](Dressing::resolve) anyway.
+    pub(super) fn gather_within(
+        content: &Content,
+        ctx: &GenCtx,
+        seed: u32,
+        leaves: &LeafMask,
+    ) -> Dressing {
         let origin = ctx.origin_world();
         let mut d = Dressing::default();
         for lz in 0..16 {
             for lx in 0..16 {
                 let (x, z) = (origin[0] + lx, origin[2] + lz);
-                d.gather_column(content, ctx, seed, x, z);
+                let column = leaves.column(x, z);
+                if !column.any() {
+                    continue;
+                }
+                d.gather_column(content, ctx, seed, x, z, column);
                 if is_open(ctx, [x, origin[1] + 15, z]) {
-                    d.gather_margin(seed, [x, origin[1] + 16, z]);
+                    d.gather_margin(seed, [x, origin[1] + 16, z], column);
                 }
             }
         }
         d
     }
 
-    fn gather_column(&mut self, content: &Content, ctx: &GenCtx, seed: u32, x: i32, z: i32) {
+    fn gather_column(
+        &mut self,
+        content: &Content,
+        ctx: &GenCtx,
+        seed: u32,
+        x: i32,
+        z: i32,
+        column: ColumnLeaves,
+    ) {
         let origin = ctx.origin_world();
         let patch_density = patch_at(seed, x, z).0;
         for ly in 0..16 {
             let p = [x, origin[1] + ly, z];
-            if !is_open(ctx, p) {
+            if !is_open(ctx, p) || !column.may_hold(p[1]) {
                 continue;
             }
             let below = neighbour_rock(content, ctx, p, -1);
@@ -130,11 +154,14 @@ impl Dressing {
         }
     }
 
-    fn gather_margin(&mut self, seed: u32, base: [i32; 3]) {
+    fn gather_margin(&mut self, seed: u32, base: [i32; 3], column: ColumnLeaves) {
         let [x, y0, z] = base;
         let mut col: Option<usize> = None;
         for k in 0..CEILING_MARGIN {
             let p = [x, y0 + k, z];
+            if !column.may_hold(p[1]) {
+                continue;
+            }
             let mut rng = GenRng::positional(seed, SALT_CEILING, p[0], p[1], p[2]);
             if rng.next_i32(0, 999) >= VINE_PER_MILLE {
                 continue;

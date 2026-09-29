@@ -47,7 +47,7 @@ impl SentSections {
         out
     }
 
-    pub(in crate::world) fn column_bits(&self, cp: ChunkPos) -> u32 {
+    pub(crate) fn column_bits(&self, cp: ChunkPos) -> u32 {
         self.by_column.get(&cp).copied().unwrap_or(0)
     }
 

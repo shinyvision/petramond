@@ -3,20 +3,20 @@ use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SEA_LEVEL, SECTION_SIZE, WORLD_MAX_Y};
 use petramond_world::section::Section;
 
+use super::columns::Columns;
 use super::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
+use super::terrain::channels;
 #[cfg(test)]
 use super::terrain::reference::FloorDensitySpec;
-use super::terrain::{channels, TerrainDensityGraph};
 
 use crate::biome::climate::{
-    BiomeClimateIndex, ClimateAxis, ClimateSampleCell, ClimateSampler, CLIMATE_SAMPLE_CELL_X,
-    CLIMATE_SAMPLE_CELL_Z,
+    BiomeClimateIndex, ClimateAxis, ClimateSampleCell, CLIMATE_SAMPLE_CELL_X, CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::biome::spec;
 use crate::region::RegionCells;
 use crate::rng::patch_field;
-use crate::surface::rule::SurfaceCtx;
-use crate::surface::SurfaceSystem;
+use crate::surface::rule::{SurfaceCtx, SurfaceRule};
+use crate::surface::{ColumnSkin, SurfaceSystem};
 
 mod climate_cache;
 #[cfg(test)]
@@ -42,7 +42,7 @@ const SEA_ICE_EDGE_PERIOD: f32 = 24.0;
 #[derive(Clone, Debug)]
 pub struct SurfaceDensitySystem {
     seed: u32,
-    density: std::sync::Arc<TerrainDensityGraph>,
+    columns: Columns,
     climate: &'static BiomeClimateIndex,
     surface: SurfaceSystem,
 }
@@ -51,10 +51,18 @@ impl SurfaceDensitySystem {
     pub fn new(seed: u32) -> Self {
         Self {
             seed,
-            density: crate::noise::sources::SeedSources::for_seed(seed).terrain,
+            columns: Columns::new(
+                crate::noise::sources::SeedSources::for_seed(seed).terrain,
+                crate::cache::installed(),
+            ),
             climate: BiomeClimateIndex::default_surface(),
             surface: SurfaceSystem,
         }
+    }
+
+    pub(crate) fn with_caches(mut self, caches: std::sync::Arc<crate::cache::GenCaches>) -> Self {
+        self.columns = self.columns.with_caches(caches);
+        self
     }
 
     pub fn biome_at(&self, wx: i32, wz: i32) -> Biome {
@@ -82,7 +90,7 @@ impl SurfaceDensitySystem {
     }
 
     pub fn surface_heights(&self, x0: i32, z0: i32, w: usize, h: usize) -> Vec<i32> {
-        surface_heights(&self.density, x0, z0, w, h)
+        surface_heights(&self.columns, x0, z0, w, h)
     }
 
     pub fn fill_section(&self, section: &mut Section, biomes: &[u8], surf: &[i32]) {
@@ -91,13 +99,21 @@ impl SurfaceDensitySystem {
         let seed = self.seed;
         let mut cells: Option<ClimateCellCache<'_>> = None;
         let holds_waterline = oy <= SEA_LEVEL && SEA_LEVEL <= section_top;
+        let mut last: Option<(u8, &SurfaceRule, Option<u32>)> = None;
         section.edit_ids_bulk(|blocks| {
             for z in 0..SECTION_SIZE {
                 for x in 0..SECTION_SIZE {
                     let i = z * SECTION_SIZE + x;
                     let s = surf[i];
-                    let biome = Biome::from_id(biomes[i]);
-                    let rule = spec(biome).surface;
+                    let (rule, band) = match last {
+                        Some((id, rule, band)) if id == biomes[i] => (rule, band),
+                        _ => {
+                            let rule = spec(Biome::from_id(biomes[i])).surface;
+                            let band = rule.deepest_band();
+                            last = Some((biomes[i], rule, band));
+                            (rule, band)
+                        }
+                    };
                     let wx = ox + x as i32;
                     let wz = oz + z as i32;
                     let waterline =
@@ -129,6 +145,7 @@ impl SurfaceDensitySystem {
                         continue;
                     }
 
+                    let mut skin = ColumnSkin::new(rule, band);
                     for ly in 0..SECTION_SIZE {
                         let wy = oy + ly as i32;
                         let id = if wy <= s {
@@ -140,7 +157,7 @@ impl SurfaceDensitySystem {
                                 surf_y: s,
                                 depth_from_top: (s - wy) as u32,
                             };
-                            self.surface.skin_block(&ctx, rule).id()
+                            skin.block(&ctx).id()
                         } else if wy == SEA_LEVEL {
                             waterline.id()
                         } else if wy < SEA_LEVEL {
@@ -156,11 +173,7 @@ impl SurfaceDensitySystem {
     }
 
     fn climate_cells(&self) -> ClimateCellCache<'_> {
-        ClimateCellCache::new(
-            ClimateSampler::new(self.density.graph()),
-            self.climate,
-            self.seed,
-        )
+        ClimateCellCache::new(&self.columns, self.climate, self.seed)
     }
 
     fn waterline_block(
@@ -265,33 +278,22 @@ pub(crate) const SURFACE_SEARCH_Y: std::ops::Range<i32> = 0..WORLD_MAX_Y;
 
 pub(crate) const SURFACE_FLOOR_Y: i32 = SURFACE_SEARCH_Y.start - 1;
 
-pub(crate) fn surface_heights(
-    density: &TerrainDensityGraph,
-    x0: i32,
-    z0: i32,
-    w: usize,
-    h: usize,
-) -> Vec<i32> {
+pub(crate) fn surface_heights(columns: &Columns, x0: i32, z0: i32, w: usize, h: usize) -> Vec<i32> {
     let (bottom, height) = (SURFACE_SEARCH_Y.start, SURFACE_SEARCH_Y.len());
     let bounds = DensityLatticeBounds::new(x0, bottom, z0, w, height, h);
-    master_density_lattice(density, bounds)
-        .top_solid_surfaces()
-        .into_iter()
-        .map(|surf| surf.unwrap_or(SURFACE_FLOOR_Y))
-        .collect()
-}
-
-fn master_density_lattice(
-    density: &TerrainDensityGraph,
-    bounds: DensityLatticeBounds,
-) -> DensityLattice {
-    DensityLattice::sample_channel(
-        density.graph(),
+    let base_height = columns.base_height_node();
+    DensityLattice::sample_channel_with(
+        columns.graph().graph(),
         channels::MASTER_DENSITY,
         bounds,
         DensityLatticeCellSize::default(),
+        |x, z, cache| cache.preset_y_invariant(base_height, columns.at(x, z)[5]),
     )
     .expect("surface density graph must expose master_density")
+    .top_solid_surfaces()
+    .into_iter()
+    .map(|surf| surf.unwrap_or(SURFACE_FLOOR_Y))
+    .collect()
 }
 
 fn is_ocean_biome(biome: Biome) -> bool {

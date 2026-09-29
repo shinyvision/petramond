@@ -99,7 +99,8 @@ impl Mod for Monsters {
         };
         let field = self.weather_field();
         let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
-        let near = mobs_near_any(&anchors, SUNBURN_RADIUS);
+        let kinds: Vec<MobId> = self.species.zombie.into_iter().collect();
+        let near = mobs_near_any_of(&anchors, SUNBURN_RADIUS, &kinds);
         self.tick_fire(daylight, field.as_ref(), &near);
     }
 

@@ -78,7 +78,7 @@ fn a_custom_aperture_gates_light_identically_in_both_bakes() {
         );
         section.set_custom_light_aperture(section_idx(stair.0, stair.1, stair.2) as u16, opaque);
 
-        let mut sections: FxHashMap<SectionPos, Arc<Section>> = FxHashMap::default();
+        let mut sections = crate::world::section_map::SectionMap::default();
         sections.insert(pos, Arc::new(section));
         let mut columns: FxHashMap<ChunkPos, Arc<Column>> = FxHashMap::default();
         for cz in -1..=1 {

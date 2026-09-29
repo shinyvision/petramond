@@ -359,3 +359,109 @@ fn custom_dimension_families_validate() {
     assert!(resolve_json(r#"{"custom":{"family":"pyramid"}}"#).is_err());
     assert!(resolve_json(r#"{"custom":{"family":"crop","post_thickness":4}}"#).is_err());
 }
+
+/// `shade_boxes` and `shades_pocket` are two spellings of one predicate; the mesher trusts the
+/// box list, so every family that lists boxes must agree with its own pocket test.
+#[test]
+fn shade_boxes_agree_with_shades_pocket() {
+    use crate::block::{Aabb, CellCodec, ShapeNeighborhood, ShapeState};
+    use crate::block_state::{EntityFront, SlabSplit, SlabState, StairHalf, StairState};
+    use crate::facing::Facing;
+
+    struct OneCell(Block, ShapeState);
+    impl ShapeNeighborhood for OneCell {
+        fn block(&self, _pos: IVec3) -> Block {
+            self.0
+        }
+        fn shape_state(&self, _pos: IVec3) -> ShapeState {
+            self.1
+        }
+    }
+    let mut rng = 0x1357_9bdf_2468_ace0u64;
+    let mut next = move || {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        rng
+    };
+    let mut cases: Vec<(Block, ShapeState)> = Vec::new();
+    for &block in Block::all() {
+        match block.shape_family() {
+            ShapeFamily::Stair => {
+                for facing in [Facing::North, Facing::East, Facing::South, Facing::West] {
+                    for half in [StairHalf::Bottom, StairHalf::Top] {
+                        let placed = StairState::new(facing, half).encode();
+                        for corner in 0..16u8 {
+                            cases.push((block, ShapeState::new(&[placed, corner])));
+                        }
+                    }
+                }
+            }
+            ShapeFamily::Slab => {
+                for split in [SlabSplit::X, SlabSplit::Y, SlabSplit::Z] {
+                    cases.push((block, SlabState::single(split, 0, block).to_cell()));
+                    cases.push((block, SlabState::single(split, 1, block).to_cell()));
+                    cases.push((
+                        block,
+                        SlabState {
+                            split,
+                            layers: [block, block],
+                        }
+                        .to_cell(),
+                    ));
+                }
+                cases.push((block, ShapeState::NONE));
+            }
+            ShapeFamily::BoxSet => {
+                for facing in [Facing::North, Facing::East, Facing::South, Facing::West] {
+                    let turn = EntityFront(facing).to_cell().byte(0);
+                    for form in 0..5u8 {
+                        cases.push((block, ShapeState::new(&[turn, form])));
+                    }
+                }
+            }
+            ShapeFamily::Fence | ShapeFamily::Pane => cases.push((block, ShapeState::NONE)),
+            _ => {}
+        }
+    }
+    assert!(
+        cases.len() > 50,
+        "the registry must offer shaped rows to test"
+    );
+    let mut boxes: Vec<Aabb> = Vec::new();
+    let mut listed = 0usize;
+    for (block, state) in cases {
+        let k = block.shape_kind_def();
+        let nb = OneCell(block, state);
+        boxes.clear();
+        if !k
+            .sim
+            .shade_boxes(&k.params, &nb, IVec3::ZERO, block, &mut boxes)
+        {
+            continue;
+        }
+        listed += 1;
+        for _ in 0..64 {
+            let mut lo = [0.0f32; 3];
+            let mut hi = [0.0f32; 3];
+            for a in 0..3 {
+                let x = (next() % 1000) as f32 / 1000.0;
+                let w = (next() % 200) as f32 / 1000.0 + 0.005;
+                lo[a] = x;
+                hi[a] = (x + w).min(1.0);
+            }
+            let via_boxes = boxes
+                .iter()
+                .any(|bx| (0..3).all(|a| lo[a] < bx.max[a] && hi[a] > bx.min[a]));
+            let via_pocket = k
+                .sim
+                .shades_pocket(&k.params, &nb, IVec3::ZERO, block, lo, hi);
+            assert_eq!(
+                via_boxes, via_pocket,
+                "{} state {:?} pocket {lo:?}..{hi:?}: boxes {boxes:?}",
+                k.key, state
+            );
+        }
+    }
+    assert!(listed > 50, "most shaped rows list their shade boxes");
+}

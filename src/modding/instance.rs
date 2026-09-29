@@ -51,6 +51,7 @@ pub(super) struct ModInstance {
     request_buf: Vec<u8>,
     reply_buf: Vec<u8>,
     declined: Vec<std::mem::Discriminant<GuestCall>>,
+    sent_tags: super::ai::SentTags,
 }
 
 impl ModInstance {
@@ -131,6 +132,7 @@ impl ModInstance {
             request_buf: Vec::new(),
             reply_buf: Vec::new(),
             declined: Vec::new(),
+            sent_tags: Default::default(),
             health,
             armed_fuel: u64::MAX,
             last_fuel: 0,
@@ -140,6 +142,10 @@ impl ModInstance {
 
     pub(super) fn disabled(&self) -> bool {
         self.health.is_disabled()
+    }
+
+    pub(super) fn sent_tags(&mut self) -> &mut super::ai::SentTags {
+        &mut self.sent_tags
     }
 
     /// Client frames are the beat a client instance is throttled on.

@@ -1,13 +1,13 @@
 use mod_api::{
     BlockId, ClientCanvasElement, ClientContext, ClientEngineFactsData, ClientKeyContexts,
     ClientKeyMods, ClientOverlayAnchor, ClientPackInfo, ClientStorageScope, ClientSurfaceColumn,
-    ClientSurfaceQuery, ClientTextRun, ClientWallTime, ClientWorldMark, GuiValue, HostRet,
+    ClientSurfaceQuery, ClientTextRun, ClientWallTime, ClientWorldMark, GuiValue,
 };
 
 #[allow(unused_imports)]
 use crate::Mod;
 
-use crate::__rt::{host_fn, recoverable, try_host_fn};
+use crate::__rt::{host_fn, try_host_fn};
 
 host_fn! {
     pub fn client_register_overlay(
@@ -130,13 +130,18 @@ host_fn! {
         => ClientCanvasViewSet { canvas_key: canvas_key.into(), offset }
 }
 
-host_fn! {
-    pub fn client_storage_get_many(scope: ClientStorageScope, keys: Vec<String>) -> Vec<Option<Vec<u8>>>
-        => ClientStorageGetMany { scope, keys }
-        => HostRet::ClientStorageValues(values) => values
-            .into_iter()
-            .map(|value| value.map(mod_api::ByteBuf::into_vec))
-            .collect()
+pub fn client_storage_get_many(
+    scope: ClientStorageScope,
+    keys: Vec<String>,
+) -> Vec<Option<Vec<u8>>> {
+    crate::__rt::expect_value(
+        "ClientStorageGetMany",
+        crate::__rt::call(&mod_api::calls::ClientStorageGetMany { scope, keys })
+            .decode_as(mod_api::ret_decode::ClientStorageValues),
+    )
+    .into_iter()
+    .map(|value| value.map(mod_api::ByteBuf::into_vec))
+    .collect()
 }
 
 try_host_fn! {
@@ -157,13 +162,14 @@ pub fn client_storage_write_poll(
     scope: ClientStorageScope,
     ticket: u64,
 ) -> Option<Result<(), mod_api::HostError>> {
-    let ret = crate::__rt::host_call(&mod_api::HostCall::from(
-        mod_api::calls::ClientStorageWritePoll { scope, ticket },
-    ));
-    match recoverable("ClientStorageWritePoll", ret) {
-        Ok(mod_api::HostRet::ClientStorageWritten(landed)) => landed.then_some(Ok(())),
+    let landed = crate::__rt::recoverable_value(
+        "ClientStorageWritePoll",
+        crate::__rt::call(&mod_api::calls::ClientStorageWritePoll { scope, ticket })
+            .decode_as(mod_api::ret_decode::ClientStorageWritten),
+    );
+    match landed {
+        Ok(landed) => landed.then_some(Ok(())),
         Err(refused) => Some(Err(refused)),
-        Ok(other) => panic!("ClientStorageWritePoll returned {other:?}"),
     }
 }
 
@@ -172,15 +178,21 @@ host_fn! {
         => ClientStorageReadBegin { scope, keys } => U64
 }
 
-host_fn! {
-    pub fn client_storage_read_poll(scope: ClientStorageScope, ticket: u64) -> Option<Vec<Option<Vec<u8>>>>
-        => ClientStorageReadPoll { scope, ticket }
-        => HostRet::ClientStorageRead(values) => values.map(|values| {
-            values
-                .into_iter()
-                .map(|value| value.map(mod_api::ByteBuf::into_vec))
-                .collect()
-        })
+pub fn client_storage_read_poll(
+    scope: ClientStorageScope,
+    ticket: u64,
+) -> Option<Vec<Option<Vec<u8>>>> {
+    crate::__rt::expect_value(
+        "ClientStorageReadPoll",
+        crate::__rt::call(&mod_api::calls::ClientStorageReadPoll { scope, ticket })
+            .decode_as(mod_api::ret_decode::ClientStorageRead),
+    )
+    .map(|values| {
+        values
+            .into_iter()
+            .map(|value| value.map(mod_api::ByteBuf::into_vec))
+            .collect()
+    })
 }
 
 host_fn! {

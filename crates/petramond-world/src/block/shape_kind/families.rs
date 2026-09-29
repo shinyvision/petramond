@@ -71,6 +71,33 @@ fn overlaps(lo: [f32; 3], hi: [f32; 3], mn: [f32; 3], mx: [f32; 3]) -> bool {
     (0..3).all(|a| lo[a] < mx[a] && hi[a] > mn[a])
 }
 
+/// Far enough that a pocket anywhere near a cell counts as inside: the box form of a half-cell
+/// test that only looks at one side of the 0.5 plane.
+const OPEN_ENDED: f32 = 1.0e9;
+
+/// The occupied half-cell octants as boxes open toward their outer side, so an overlap test
+/// reproduces `any_octant` exactly (`lo < 0.5` for the low half, `hi > 0.5` for the high half).
+fn push_octants(out: &mut Vec<Aabb>, occ: impl Fn(usize, usize, usize) -> bool) {
+    for o in 0..8 {
+        let (ix, iy, iz) = (o & 1, (o >> 1) & 1, (o >> 2) & 1);
+        if !occ(ix, iy, iz) {
+            continue;
+        }
+        let mut min = [0.0f32; 3];
+        let mut max = [0.0f32; 3];
+        for (a, half) in [ix, iy, iz].into_iter().enumerate() {
+            if half == 0 {
+                min[a] = -OPEN_ENDED;
+                max[a] = 0.5;
+            } else {
+                min[a] = 0.5;
+                max[a] = OPEN_ENDED;
+            }
+        }
+        out.push(Aabb { min, max });
+    }
+}
+
 pub fn resolve_connection_mask(
     nb: &dyn ShapeNeighborhood,
     pos: IVec3,

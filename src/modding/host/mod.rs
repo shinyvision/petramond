@@ -66,13 +66,35 @@ pub(in crate::modding) static HOST_CALL_TEST_HOOK: Mutex<Option<HostCallHook>> =
 #[cfg(test)]
 type HostCallHook = (String, fn());
 
+/// The engine configuration every module is compiled and run with. Precompiled artifacts
+/// ([`crate::modding::precompile_module`]) must be produced from this same configuration.
+pub(in crate::modding) fn engine_config() -> Config {
+    let mut config = Config::new();
+    config.cranelift_nan_canonicalization(true);
+    config.wasm_relaxed_simd(false);
+    config.epoch_interruption(true);
+    config.consume_fuel(true);
+    config
+}
+
+/// Compiles for `target` with the features every machine of that target has (no host
+/// detection), so an artifact deserializes on any of them: x86-64 gets SSE4.1 (2008+, and what
+/// core SIMD needs), everything else its baseline.
+pub(in crate::modding) fn retarget(config: &mut Config, target: &str) -> Result<(), String> {
+    config
+        .target(target)
+        .map_err(|e| format!("target {target}: {e:#}"))?;
+    if target.starts_with("x86_64") {
+        for flag in ["has_sse3", "has_ssse3", "has_sse41"] {
+            unsafe { config.cranelift_flag_enable(flag) };
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::modding) fn engine() -> &'static Engine {
     static ENGINE: LazyLock<Engine> = LazyLock::new(|| {
-        let mut config = Config::new();
-        config.cranelift_nan_canonicalization(true);
-        config.wasm_relaxed_simd(false);
-        config.epoch_interruption(true);
-        config.consume_fuel(true);
+        let config = engine_config();
         let engine = Engine::new(&config).expect("wasmtime engine config");
         let weak = engine.weak();
         std::thread::Builder::new()
@@ -173,6 +195,8 @@ pub(in crate::modding) struct ModStoreData {
     dispatch_host_calls: u32,
     pub(in crate::modding) dispatch_host_wall: std::time::Duration,
     last_host_call: Option<(Vec<u8>, bool)>,
+    /// The encoded reply of the host call in progress: one buffer per instance, reused.
+    reply_buf: Vec<u8>,
     pub(in crate::modding) throttle: Throttle,
     pub(in crate::modding) client_period: u64,
     pub(in crate::modding) limiter: MemoryGuard,
@@ -222,6 +246,7 @@ impl ModStoreData {
             dispatch_host_calls: 0,
             dispatch_host_wall: std::time::Duration::ZERO,
             last_host_call: None,
+            reply_buf: Vec::new(),
         }
     }
 
@@ -463,7 +488,14 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                 if len as usize > memory.data_size(&caller) {
                     return Err(wasmtime::Error::msg("host call exceeds guest memory"));
                 }
-                let mut buf = vec![0u8; len as usize];
+                // The previous call's request buffer is reused for this one.
+                let mut buf = caller
+                    .data_mut()
+                    .last_host_call
+                    .take()
+                    .map_or_else(Vec::new, |(buf, _)| buf);
+                buf.clear();
+                buf.resize(len as usize, 0);
                 memory.read(&caller, ptr as usize, &mut buf)?;
                 let call = match mod_api::decode_host_call(&buf) {
                     Ok(Decoded::Known(call)) => Some(call),
@@ -498,9 +530,14 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     None => HostRet::Unsupported,
                 };
                 caller.data_mut().dispatch_host_wall += host_started.elapsed();
-                let bytes = mod_api::encode(&ret)
-                    .map_err(|e| wasmtime::Error::msg(format!("encode host reply: {e}")))?;
-                let cost = budget::host_call_fuel(caller.data().side, request_len, bytes.len());
+                let mut bytes = std::mem::take(&mut caller.data_mut().reply_buf);
+                let reply_len = match mod_api::encode_into(&ret, &mut bytes) {
+                    Ok(len) => len,
+                    Err(e) => {
+                        return Err(wasmtime::Error::msg(format!("encode host reply: {e}")));
+                    }
+                };
+                let cost = budget::host_call_fuel(caller.data().side, request_len, reply_len);
                 let fuel = caller.get_fuel()?;
                 caller.set_fuel(fuel.saturating_sub(cost))?;
                 let alloc =
@@ -515,9 +552,10 @@ pub(in crate::modding) fn linker() -> Result<Linker<ModStoreData>, String> {
                     data.rearm()
                 };
                 caller.as_context_mut().set_epoch_deadline(budget);
-                let reply_ptr = alloc.call(&mut caller, bytes.len() as u32)?;
-                memory.write(&mut caller, reply_ptr as usize, &bytes)?;
-                Ok(mod_api::pack_ptr_len(reply_ptr, bytes.len() as u32))
+                let reply_ptr = alloc.call(&mut caller, reply_len as u32)?;
+                memory.write(&mut caller, reply_ptr as usize, &bytes[..reply_len])?;
+                caller.data_mut().reply_buf = bytes;
+                Ok(mod_api::pack_ptr_len(reply_ptr, reply_len as u32))
             },
         )
         .map_err(|e| format!("define host_dispatch: {e:#}"))?;

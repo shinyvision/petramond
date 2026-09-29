@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::data::MobTagValue;
+
 pub use super::host::HostCall;
 use crate::client::{ClientCanvasEvent, ClientFrameData, ClientUiEvent};
 use crate::data::{AiNodeCtx, AiNodeDecision, BlockHookKind, HostileSpawnCandidate};
@@ -382,22 +384,32 @@ pub enum GuestCall {
         payload: EventPayload,
     },
 
+    /// `blocks` is the section's 4096 ids as little-endian `u16` pairs in section order (or
+    /// empty), `surface_heights` its 256 column heights as little-endian `i32`s (or empty),
+    /// `biomes` its 256 column biome ids (or empty): raw bytes, memcpy'd on both sides.
     GenFeature {
         feature_id: u32,
         section_pos: [i32; 3],
         seed: u32,
-        blocks: Vec<u16>,
-        surface_heights: Vec<i32>,
+        #[serde(with = "serde_bytes")]
+        blocks: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        surface_heights: Vec<u8>,
+        #[serde(with = "serde_bytes")]
         biomes: Vec<u8>,
         sea_level: i32,
     },
+    /// The same section inputs as [`GuestCall::GenFeature`].
     GenStage {
         callback_id: u32,
         stage: WorldgenStage,
         section_pos: [i32; 3],
         seed: u32,
-        blocks: Vec<u16>,
-        surface_heights: Vec<i32>,
+        #[serde(with = "serde_bytes")]
+        blocks: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        surface_heights: Vec<u8>,
+        #[serde(with = "serde_bytes")]
         biomes: Vec<u8>,
         sea_level: i32,
     },
@@ -471,9 +483,14 @@ pub enum GuestCall {
         inputs: PlaceInputsView,
     },
 
+    /// A batch of decisions. Each context's own `tags` rides empty; `tags` parallels `ctxs`
+    /// and carries a mob's tags only when they changed since the last batch this instance saw
+    /// the mob in (`None` = as last sent). Both sides keep exactly the mobs of the latest
+    /// batch, so a mob absent from one batch is sent whole when it is next seen.
     AiNodeBatch {
         callback_id: u32,
         ctxs: Vec<AiNodeCtx>,
+        tags: Vec<Option<Vec<(String, MobTagValue)>>>,
     },
 
     /// Every claim touching the columns `min..=max`, from a feature registered

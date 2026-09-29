@@ -144,6 +144,10 @@ path = "src/bin/server.rs"
 name = "petramond_content"
 path = "src/bin/content.rs"
 
+[[bin]]
+name = "petramond_modcompile"
+path = "src/bin/modcompile.rs"
+
 [dependencies]
 # Renderer-agnostic GUI runtime (documents, layout, theme, widgets, paint) —
 # shared with the gui-builder so its preview is pixel-exactly the game's UI.

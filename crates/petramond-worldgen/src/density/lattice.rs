@@ -11,7 +11,7 @@
 #[cfg(test)]
 use petramond_world::chunk::{CHUNK_SX, CHUNK_SY, CHUNK_SZ};
 
-use super::super::graph::{SamplePoint, ScalarGraph};
+use super::super::graph::{GraphEvaluationCache, SamplePoint, ScalarGraph};
 
 pub const DEFAULT_LATTICE_CELL_XZ: usize = 4;
 pub const DEFAULT_LATTICE_CELL_Y: usize = 8;
@@ -184,6 +184,19 @@ impl DensityLattice {
         bounds: DensityLatticeBounds,
         cell: DensityLatticeCellSize,
     ) -> Option<Self> {
+        Self::sample_channel_with(graph, channel, bounds, cell, |_, _, _| {})
+    }
+
+    /// [`Self::sample_channel`], with `preset(x, z, cache)` called as each
+    /// lattice column begins so it can supply y-invariant node values
+    /// ([`GraphEvaluationCache::preset_y_invariant`]).
+    pub fn sample_channel_with(
+        graph: &ScalarGraph,
+        channel: impl AsRef<str>,
+        bounds: DensityLatticeBounds,
+        cell: DensityLatticeCellSize,
+        mut preset: impl FnMut(i32, i32, &mut GraphEvaluationCache),
+    ) -> Option<Self> {
         let channel = channel.as_ref();
         let root = graph.channel_node(channel)?;
 
@@ -194,10 +207,12 @@ impl DensityLattice {
         let mut cache = graph.evaluation_cache();
 
         for sz in 0..sample_z.count {
-            let wz = sample_z.sample_coord(sz) as f64;
+            let wz = sample_z.sample_coord(sz);
             for sx in 0..sample_x.count {
-                let wx = sample_x.sample_coord(sx) as f64;
+                let wx = sample_x.sample_coord(sx);
                 cache.begin_y_invariant_column(graph);
+                preset(wx, wz, &mut cache);
+                let (wx, wz) = (f64::from(wx), f64::from(wz));
                 for sy in 0..sample_y.count {
                     let wy = sample_y.sample_coord(sy) as f64;
                     samples[(sy * sample_z.count + sz) * sample_x.count + sx] =

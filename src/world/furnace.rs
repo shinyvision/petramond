@@ -21,6 +21,7 @@ impl<S: WorldSide> World<S> {
                 continue;
             }
             let section = std::sync::Arc::make_mut(section);
+            self.data.persist_candidates.insert(cpos);
             for (lx, ly, lz, desired) in section.tick_furnaces(|it| recipes.smelt(it)) {
                 reskin.push((local_to_world(cpos, lx, ly, lz), desired));
             }

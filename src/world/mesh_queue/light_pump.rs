@@ -200,6 +200,7 @@ impl<S: WorldSide> World<S> {
         s.dirty = true;
         s.mesh_revision = s.mesh_revision.wrapping_add(1);
         self.data.bump_lighting_revision();
+        self.note_send_event(pos);
         if persisting {
             self.data.relit_since_persist.insert(pos);
             self.data.light_edited_since_persist.remove(&pos);
@@ -246,16 +247,18 @@ impl ReplicaWorld {
         }
     }
 
-    pub(super) fn request_light_dependencies(&mut self, pos: SectionPos) -> bool {
+    pub(super) fn request_light_dependencies(
+        &mut self,
+        pos: SectionPos,
+        nbhd: &super::mesh_jobs::MeshNbhd,
+    ) -> bool {
         let mut waiting = false;
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {
                     let p = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
-                    if self
-                        .data
-                        .sections
-                        .get(&p)
+                    if nbhd[crate::world::mesh_pool::nbhd_idx27(dx, dy, dz)]
+                        .as_ref()
                         .is_some_and(|s| s.light_dirty && !s.all_opaque())
                         && !self.section_sealed_by_loaded_neighbors(p)
                     {

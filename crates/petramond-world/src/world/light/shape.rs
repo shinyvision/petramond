@@ -1,4 +1,9 @@
-use crate::block::{Block, BlockLightShape};
+use std::cell::RefCell;
+
+use rustc_hash::FxHashMap;
+
+use crate::block::{Block, ShapeNeighborhood, ShapeState, LIGHT_CELL_SHAPED};
+use crate::mathh::IVec3;
 
 /// Collect every per-cell aperture OVERRIDE a section holds, in the sparse
 /// currency the floods read: each `Shaped`-light cell with stored state has its
@@ -11,23 +16,36 @@ use crate::block::{Block, BlockLightShape};
 /// This is the ONE producer of light overrides: the per-section and batched
 /// span gathers and the incremental relight all read a section through it, so
 /// no light path can drop a kind of override the others honour.
+///
+/// A family's apertures are a function of the cell's own block and stored
+/// state (refinement already folded every neighbour into that state), so the
+/// answer is memoized per `(block, state)`: a section of dripstone or stairs
+/// pays one table read per stateful cell instead of re-resolving its box set
+/// for each of the 24 aperture probes.
 pub fn collect_light_overrides(
     section: &crate::section::Section,
     mut idx: impl FnMut(usize, usize, usize) -> usize,
     states: &mut Vec<SparseCellState>,
 ) {
-    let nb = SectionCells(section);
-    for &key in section.cell_states().keys() {
-        let (lx, ly, lz) = crate::chunk::section_local(key as usize);
-        let block = section.block(lx, ly, lz);
-        if block.light_shape() != BlockLightShape::Shaped {
-            continue;
-        }
-        let k = block.shape_kind_def();
-        let pos = crate::mathh::IVec3::new(lx as i32, ly as i32, lz as i32);
-        states.push(SparseCellState {
-            idx: idx(lx, ly, lz),
-            masks: k.sim.light_apertures(&k.params, &nb, pos, block),
+    let map = section.cell_states();
+    if !map.is_empty() {
+        let cells = crate::block::light_cells();
+        let blocks = section.blocks();
+        APERTURES.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            let memo = memo.current();
+            for (&key, &state) in map {
+                let id = blocks.get(key as usize);
+                let word = cells.get(id as usize).copied().unwrap_or(cells[0]);
+                if word & LIGHT_CELL_SHAPED == 0 {
+                    continue;
+                }
+                let (lx, ly, lz) = crate::chunk::section_local(key as usize);
+                states.push(SparseCellState {
+                    idx: idx(lx, ly, lz),
+                    masks: memo.apertures(id, state),
+                });
+            }
         });
     }
     if let Some(aps) = section.custom_light_apertures() {
@@ -45,31 +63,59 @@ pub fn collect_light_overrides(
     }
 }
 
-struct SectionCells<'a>(&'a crate::section::Section);
+struct ApertureMemo {
+    serial: u64,
+    table: FxHashMap<(u16, ShapeState), u32>,
+}
 
-impl crate::block::ShapeNeighborhood for SectionCells<'_> {
-    fn block(&self, pos: crate::mathh::IVec3) -> Block {
-        match local(pos) {
-            Some((x, y, z)) => self.0.block(x, y, z),
-            None => Block::Air,
+thread_local! {
+    static APERTURES: RefCell<ApertureMemo> = RefCell::new(ApertureMemo {
+        serial: 0,
+        table: FxHashMap::default(),
+    });
+}
+
+impl ApertureMemo {
+    fn current(&mut self) -> &mut Self {
+        let serial = crate::content::current().serial();
+        if serial != self.serial {
+            self.serial = serial;
+            self.table.clear();
         }
+        self
     }
 
-    fn shape_state(&self, pos: crate::mathh::IVec3) -> crate::block::ShapeState {
-        match local(pos) {
-            Some((x, y, z)) => self.0.cell_state(x, y, z),
-            None => crate::block::ShapeState::NONE,
-        }
+    fn apertures(&mut self, id: u16, state: ShapeState) -> u32 {
+        *self.table.entry((id, state)).or_insert_with(|| {
+            let block = Block::from_id(id);
+            let k = block.shape_kind_def();
+            k.sim
+                .light_apertures(&k.params, &SoloCell { block, state }, IVec3::ZERO, block)
+        })
     }
 }
 
-fn local(pos: crate::mathh::IVec3) -> Option<(usize, usize, usize)> {
-    let n = crate::chunk::SECTION_SIZE as i32;
-    ((0..n).contains(&pos.x) && (0..n).contains(&pos.y) && (0..n).contains(&pos.z)).then_some((
-        pos.x as usize,
-        pos.y as usize,
-        pos.z as usize,
-    ))
+struct SoloCell {
+    block: Block,
+    state: ShapeState,
+}
+
+impl ShapeNeighborhood for SoloCell {
+    fn block(&self, pos: IVec3) -> Block {
+        if pos == IVec3::ZERO {
+            self.block
+        } else {
+            Block::Air
+        }
+    }
+
+    fn shape_state(&self, pos: IVec3) -> ShapeState {
+        if pos == IVec3::ZERO {
+            self.state
+        } else {
+            ShapeState::NONE
+        }
+    }
 }
 
 pub struct SparseCellState {
@@ -77,53 +123,121 @@ pub struct SparseCellState {
     pub masks: u32,
 }
 
-const NO_ENTRY: u32 = u32::MAX;
-
+/// The per-cell aperture overrides of one flood cube, kept on the worker between bakes: each
+/// entry carries the generation it was written in, so a bake that has overrides stamps only its
+/// own cells instead of allocating and clearing a 48³ (or 64³) table.
 #[derive(Default)]
-pub struct ShapeStateSnapshot {
-    apertures: Option<Box<[u32]>>,
+pub struct ApertureScratch {
+    gen: u32,
+    cells: Vec<u64>,
+    any: bool,
 }
 
-impl ShapeStateSnapshot {
-    pub fn from_sparse(states: &[SparseCellState], volume: usize) -> Self {
-        let mut apertures: Option<Box<[u32]>> = None;
-        for state in states {
-            if state.idx >= volume {
-                continue;
-            }
-            let cells = apertures.get_or_insert_with(|| vec![NO_ENTRY; volume].into_boxed_slice());
-            cells[state.idx] = state.masks;
+impl ApertureScratch {
+    pub fn fill(&mut self, states: &[SparseCellState], volume: usize) {
+        self.any = !states.is_empty();
+        if !self.any {
+            return;
         }
-        Self { apertures }
+        if self.cells.len() < volume {
+            self.cells.resize(volume, 0);
+        }
+        self.gen = self.gen.wrapping_add(1);
+        if self.gen == 0 {
+            self.cells.fill(0);
+            self.gen = 1;
+        }
+        let tag = u64::from(self.gen) << 32;
+        for state in states {
+            if state.idx < volume {
+                self.cells[state.idx] = tag | u64::from(state.masks);
+            }
+        }
     }
 
-    fn apertures(&self) -> Option<&[u32]> {
-        self.apertures.as_deref()
+    fn view(&self, volume: usize) -> Option<(&[u64], u32)> {
+        self.any.then(|| (&self.cells[..volume], self.gen))
+    }
+}
+
+/// The block ids of a flood cube, at whichever width the sections came in.
+pub trait BlockIds: Copy {
+    fn id(self, i: usize) -> u16;
+    fn count(self) -> usize;
+}
+
+impl BlockIds for &[u8] {
+    #[inline]
+    fn id(self, i: usize) -> u16 {
+        u16::from(self[i])
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.len()
+    }
+}
+
+impl BlockIds for &[u16] {
+    #[inline]
+    fn id(self, i: usize) -> u16 {
+        self[i]
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.len()
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct LightCells<'a> {
-    blocks: &'a [u16],
-    apertures: Option<&'a [u32]>,
+pub enum Ids<'a> {
+    Narrow(&'a [u8]),
+    Wide(&'a [u16]),
+}
+
+/// Run `$body` with `$cells` bound to the [`LightCells`] over `$ids` at either width.
+macro_rules! with_light_cells {
+    ($ids:expr, $apertures:expr, $dim:expr, |$cells:ident| $body:expr) => {
+        match $ids {
+            $crate::world::light::shape::Ids::Narrow(b) => {
+                let $cells = $crate::world::light::shape::LightCells::new(b, $apertures, $dim);
+                $body
+            }
+            $crate::world::light::shape::Ids::Wide(b) => {
+                let $cells = $crate::world::light::shape::LightCells::new(b, $apertures, $dim);
+                $body
+            }
+        }
+    };
+}
+pub(super) use with_light_cells;
+
+#[derive(Copy, Clone)]
+pub struct LightCells<'a, B: BlockIds> {
+    blocks: B,
+    apertures: Option<(&'a [u64], u32)>,
     cells: &'static [u32],
 }
 
-impl<'a> LightCells<'a> {
-    pub fn new(blocks: &'a [u16], states: &'a ShapeStateSnapshot, dim: usize) -> Self {
-        debug_assert_eq!(blocks.len(), dim * dim * dim);
+impl<'a, B: BlockIds> LightCells<'a, B> {
+    pub fn new(blocks: B, states: &'a ApertureScratch, dim: usize) -> Self {
+        debug_assert_eq!(blocks.count(), dim * dim * dim);
         Self {
             blocks,
-            apertures: states.apertures(),
+            apertures: states.view(dim * dim * dim),
             cells: crate::block::light_cells(),
         }
     }
 
     #[inline]
     pub fn word(self, idx: usize) -> u32 {
-        resolve_word(self.cells, self.blocks[idx], || match self.apertures {
-            Some(a) if a[idx] != NO_ENTRY => Some(a[idx]),
-            _ => None,
+        resolve_word(self.cells, self.blocks.id(idx), || match self.apertures {
+            Some((a, gen)) => {
+                let v = a[idx];
+                ((v >> 32) as u32 == gen).then_some(v as u32)
+            }
+            None => None,
         })
     }
 }

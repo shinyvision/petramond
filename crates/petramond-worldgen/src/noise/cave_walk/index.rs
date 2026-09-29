@@ -46,27 +46,6 @@ impl Index {
         self.0[index].end = self.0.len();
     }
 
-    pub(super) fn at(&self, cuts: &[Cut], p: [f64; 3]) -> f64 {
-        let mut value = 1.0_f64;
-        let mut i = 0;
-        while let Some(node) = self.0.get(i) {
-            if (0..3).any(|a| p[a] < node.bounds[0][a] as f64 || p[a] > node.bounds[1][a] as f64) {
-                i = node.end;
-                continue;
-            }
-            for cut in &cuts[node.cuts.clone()] {
-                value = value.min(cut.density(p));
-            }
-            i += 1;
-        }
-        value
-    }
-
-    pub(super) fn intersects(&self, cuts: &[Cut], [lo, hi]: [[i32; 3]; 2]) -> bool {
-        self.visit(cuts, [lo, hi], |_| ControlFlow::Break(()))
-            .is_break()
-    }
-
     pub(super) fn visit(
         &self,
         cuts: &[Cut],

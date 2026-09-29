@@ -53,8 +53,8 @@ fn cell_near(a: i64, b: i64) -> bool {
 pub fn on_tick(content: &Content) {
     let tick = current_tick() as i64;
     let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
-    for snap in mobs_near_any(&anchors, RANGE) {
-        if snap.kind != content.rabbit || !snap.on_ground || !snap.moving {
+    for snap in mobs_near_any_of(&anchors, RANGE, &[content.rabbit]) {
+        if !snap.on_ground || !snap.moving {
             continue;
         }
         let Some(tags) = mob_tags_get(snap.id) else {

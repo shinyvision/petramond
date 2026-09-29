@@ -1,15 +1,18 @@
 use std::cell::Cell;
 
 use crate::block::{Aabb, Block, ShapeNeighborhood, ShapeRenderBox, ShapeState};
-use crate::chunk::{section_idx, SectionPos};
+use crate::chunk::{section_idx, ChunkPos};
 use crate::mathh::IVec3;
 use crate::section::Section;
 
 use super::data::WorldData;
+use super::section_map::ColumnSlots;
 
+/// Reads through the world with the last-touched COLUMN cached: a neighbour above or below
+/// is a slot index away, a neighbour beside is one column probe.
 pub struct SectionCursor<'w> {
     data: &'w WorldData,
-    last: Cell<Option<(SectionPos, &'w Section)>>,
+    last: Cell<Option<(ChunkPos, &'w ColumnSlots)>>,
 }
 
 impl WorldData {
@@ -31,14 +34,17 @@ impl<'w> SectionCursor<'w> {
     #[inline]
     pub fn section_at(&self, c: IVec3) -> Option<(&'w Section, usize, usize, usize)> {
         let (sp, lx, ly, lz) = WorldData::split_world(c.x, c.y, c.z)?;
-        if let Some((last_pos, section)) = self.last.get() {
-            if last_pos == sp {
-                return Some((section, lx, ly, lz));
+        let cp = sp.chunk_pos();
+        let column = match self.last.get() {
+            Some((last, column)) if last == cp => column,
+            _ => {
+                let column = self.data.sections.column(cp)?;
+                self.last.set(Some((cp, column)));
+                column
             }
-        }
-        let section = self.data.section_ref(sp)?;
-        self.last.set(Some((sp, section)));
-        Some((section, lx, ly, lz))
+        };
+        let section = column.at(sp.cy)?;
+        Some((&**section, lx, ly, lz))
     }
 
     #[inline]
@@ -129,7 +135,7 @@ impl ShapeNeighborhood for SectionCursor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunk::SECTION_SIZE;
+    use crate::chunk::{SectionPos, SECTION_SIZE};
 
     fn world_with_two_sections() -> WorldData {
         let mut data = WorldData::new(0, 4);

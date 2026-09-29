@@ -28,8 +28,8 @@ fn loaded_table_places_the_same_veins_as_the_compiled_table() {
             for cy in [-4, -2, -1, 0, 1, 3, 6, 8, 9] {
                 let mut data = stone_section(cx, cy, cz);
                 let mut code = stone_section(cx, cy, cz);
-                place_underground_section(&mut data, seed);
-                place_table_section(&compiled, &mut code, seed);
+                place_underground_section(&mut data, seed, &crate::cache::installed());
+                place_table_section(&compiled, &mut code, seed, &crate::cache::installed());
                 let (data, code) = (cells(&data), cells(&code));
                 assert_eq!(data, code, "seed {seed} section ({cx},{cy},{cz})");
                 ores_seen += data.iter().filter(|&&id| id != Block::Stone.id()).count();
@@ -61,7 +61,7 @@ fn veins_overwrite_only_their_hosts() {
             }
         }
     }
-    place_table_section(&table, &mut section, 7);
+    place_table_section(&table, &mut section, 7, &crate::cache::installed());
     let mut gold = 0;
     for y in 0..SECTION_SIZE {
         for z in 0..SECTION_SIZE {

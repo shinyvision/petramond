@@ -91,3 +91,9 @@ opt-level = 1
 opt-level = 1
 debug-assertions = true
 overflow-checks = true
+
+# Shipping build with the wasm name section kept, for host-side profilers that
+# symbolicate JIT frames (perf map); never installed.
+[profile.release-syms]
+inherits = "release"
+strip = false

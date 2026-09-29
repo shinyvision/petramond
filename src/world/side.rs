@@ -247,6 +247,15 @@ pub(in crate::world) struct ReplicationLog {
     pub(in crate::world) block_draw_log: FxHashSet<IVec3>,
     pub(in crate::world) light_ship_log: FxHashSet<SectionPos>,
     pub(in crate::world) terrain_revision: u64,
+    /// Sections whose sendability may have changed since the last streaming pump — loaded,
+    /// unloaded, light installed, stream finality flipped, light marked dirty. Every
+    /// connection's send plan re-evaluates exactly these instead of rescanning the world.
+    pub(in crate::world) send_events: Vec<SectionPos>,
+    /// Columns removed since the last streaming pump.
+    pub(in crate::world) column_events: Vec<ChunkPos>,
+    /// Bumped when the event stream cannot describe a change (the world was cleared), so
+    /// every connection rebuilds its plan from scratch.
+    pub(in crate::world) plan_epoch: u64,
 }
 
 impl ReplicationLog {

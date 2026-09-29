@@ -40,11 +40,12 @@ pub(super) fn emit_fluid_cell(
         .expect("a fluid-class block carries its fluid row");
     let medium = &def.medium;
     let lane_index = medium_index(fluid).expect("every fluid row has a medium index");
+    let table = nb.pad().table;
     let fills = |p: IVec3| {
         if resident {
             nb.fluid_fills(p, fluid)
         } else {
-            nb.block(p + IVec3::Y).fluid() == Some(fluid)
+            table.fluid(nb.block(p + IVec3::Y).id()) == Some(fluid)
         }
     };
     let full = fills(pos);
@@ -100,7 +101,7 @@ pub(super) fn emit_fluid_cell(
             continue;
         }
         let mut exposed_step = false;
-        if front_block.fluid() == Some(fluid) {
+        if table.fluid(front_block.id()) == Some(fluid) {
             match side_vs_fluid(full, is_side, fills(front)) {
                 SideVsFluid::ExposedStep => exposed_step = true,
                 SideVsFluid::Cull => continue,
@@ -117,7 +118,7 @@ pub(super) fn emit_fluid_cell(
             };
             (tile, flow_strip, tint_of(still.world_tint()))
         } else {
-            let tile = cube_face_tile(fluid, face, fluid.tiles(), None, LogAxis::Y);
+            let tile = cube_face_tile(fluid.is_log(), face, fluid.tiles(), None, LogAxis::Y);
             (tile, false, tint::NO_TINT)
         };
         let tint = match cell_tint {

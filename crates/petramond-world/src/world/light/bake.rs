@@ -1,3 +1,4 @@
+use crate::world::section_map::SectionMap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -5,9 +6,8 @@ use crate::chunk::{ChunkPos, SectionPos, SKY_FULL};
 use crate::column::Column;
 use crate::light::LightRgb;
 use crate::mathh::IVec3;
-use crate::section::Section;
 
-use super::shape::LightCells;
+use super::shape::{with_light_cells, ApertureScratch, Ids};
 use super::skylight::{self, SkyPlan};
 use super::{flood, neighborhood, NBHD, NBHD_VOLUME};
 
@@ -29,7 +29,7 @@ pub struct SectionBakeJob {
 impl SectionBakeJob {
     pub fn snapshot(
         pos: SectionPos,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        sections: &SectionMap,
         columns: &FxHashMap<ChunkPos, Arc<Column>>,
     ) -> Option<Self> {
         if !sections.get(&pos)?.light_dirty {
@@ -40,7 +40,7 @@ impl SectionBakeJob {
 
     pub fn snapshot_unchecked(
         pos: SectionPos,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        sections: &SectionMap,
         columns: &FxHashMap<ChunkPos, Arc<Column>>,
     ) -> Option<Self> {
         let section = sections.get(&pos)?;
@@ -66,12 +66,16 @@ impl SectionBakeJob {
 
 struct BakeScratch {
     blocks: Box<[u16]>,
+    narrow: Box<[u8]>,
+    apertures: ApertureScratch,
     flood: flood::FloodScratch,
 }
 
 thread_local! {
     static BAKE_SCRATCH: std::cell::RefCell<BakeScratch> = std::cell::RefCell::new(BakeScratch {
         blocks: vec![0u16; NBHD_VOLUME].into_boxed_slice(),
+        narrow: vec![0u8; NBHD_VOLUME].into_boxed_slice(),
+        apertures: ApertureScratch::default(),
         flood: flood::FloodScratch::new(),
     });
 }
@@ -87,37 +91,49 @@ pub fn bake_section(job: SectionBakeJob) -> LightBakeOutput {
 
     BAKE_SCRATCH.with(|scratch| {
         let mut scratch = scratch.borrow_mut();
-        let BakeScratch { blocks, flood } = &mut *scratch;
+        let BakeScratch {
+            blocks,
+            narrow,
+            apertures,
+            flood,
+        } = &mut *scratch;
 
-        let blocks: Option<&[u16]> = nbhd.as_ref().map(|n| {
-            n.assemble_blocks(blocks);
-            &blocks[..]
+        // Byte ids stay bytes: the sections' own storage is narrow for every ordinary world, and
+        // a byte cube halves the flood's working set.
+        let ids: Option<Ids<'_>> = nbhd.as_ref().map(|n| {
+            n.fill_apertures(apertures);
+            if n.all_narrow() {
+                n.assemble_narrow(narrow);
+                Ids::Narrow(&narrow[..])
+            } else {
+                n.assemble_blocks(blocks);
+                Ids::Wide(&blocks[..])
+            }
         });
-        let states = nbhd
-            .as_ref()
-            .map(neighborhood::Snapshot::shape_states)
-            .unwrap_or_default();
+        let apertures = &*apertures;
 
         let skylight = match sky {
             SkyPlan::Full => crate::section::uniform_cube(SKY_FULL),
             SkyPlan::Dark => crate::section::uniform_cube(0),
             SkyPlan::Flood { surface } => {
-                let blocks =
-                    blocks.expect("a flooding skylight bake carries its neighbourhood blocks");
-                flood::skylight(pos, LightCells::new(blocks, &states, NBHD), &surface, flood)
+                let ids = ids
+                    .as_ref()
+                    .expect("a flooding skylight bake carries its neighbourhood blocks");
+                with_light_cells!(*ids, apertures, NBHD, |cells| flood::skylight(
+                    pos, cells, &surface, flood
+                ))
             }
         };
 
         let blocklight = if emitters.is_empty() {
             crate::light::dark_cube()
         } else {
-            let blocks = blocks.expect("a block-light bake carries its neighbourhood blocks");
-            flood::block_light(
-                pos,
-                LightCells::new(blocks, &states, NBHD),
-                &emitters,
-                flood,
-            )
+            let ids = ids
+                .as_ref()
+                .expect("a block-light bake carries its neighbourhood blocks");
+            with_light_cells!(*ids, apertures, NBHD, |cells| flood::block_light(
+                pos, cells, &emitters, flood
+            ))
         };
 
         LightBakeOutput {

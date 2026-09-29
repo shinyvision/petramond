@@ -73,6 +73,86 @@ impl CaveField {
         out
     }
 
+    /// [`underground_biome_ids_in_box`](Self::underground_biome_ids_in_box) for one id, a bit per
+    /// leaf of the box (the excavation claims over the box admit every leaf, as there).
+    pub fn underground_biome_leaf_mask(
+        &self,
+        lo: [i32; 3],
+        hi: [i32; 3],
+        id: u8,
+    ) -> mod_api::LeafMask {
+        let mut claimed = IdSet::default();
+        super::volumes::claims::include(self, lo, hi, &mut claimed);
+        let mut mask = mod_api::LeafMask::over(BLOCK, lo, hi);
+        let (min, size) = (mask.min, mask.size);
+        let max = [0, 1, 2].map(|a| min[a] + size[a] - 1);
+        let bit = |l: [i32; 3]| {
+            (((l[1] - min[1]) * size[2] + (l[2] - min[2])) * size[0] + (l[0] - min[0])) as usize
+        };
+        if claimed.contains(id) {
+            for l1 in min[1]..=max[1] {
+                for l2 in min[2]..=max[2] {
+                    for l0 in min[0]..=max[0] {
+                        mask.set(bit([l0, l1, l2]));
+                    }
+                }
+            }
+            return mask;
+        }
+        for gy in min[1].div_euclid(GRID)..=max[1].div_euclid(GRID) {
+            for gz in min[2].div_euclid(GRID)..=max[2].div_euclid(GRID) {
+                for gx in min[0].div_euclid(GRID)..=max[0].div_euclid(GRID) {
+                    let grid = self.grid([gx, gy, gz]);
+                    if !grid.all.contains(id) {
+                        continue;
+                    }
+                    let origin = [gx * GRID, gy * GRID, gz * GRID];
+                    for ly in (origin[1].max(min[1]))..=(origin[1] + GRID - 1).min(max[1]) {
+                        for lz in (origin[2].max(min[2]))..=(origin[2] + GRID - 1).min(max[2]) {
+                            for lx in (origin[0].max(min[0]))..=(origin[0] + GRID - 1).min(max[0]) {
+                                let leaf = (((ly - origin[1]) * GRID + (lz - origin[2])) * GRID
+                                    + (lx - origin[0]))
+                                    as usize;
+                                if grid.leaves[leaf].contains(id) {
+                                    mask.set(bit([lx, ly, lz]));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        mask
+    }
+
+    /// Per lattice cell (`origin` and `dims` in lattice steps, cells indexed
+    /// `(y * dims_z + z) * dims_x + x`): whether no climate row can win there.
+    /// A cell lies inside one leaf, and a leaf's set is conservative for every
+    /// point of it, the same guarantee [`Self::underground_biome_ids_in_box`] gives.
+    pub(super) fn ordinary_cells(&self, origin: [i32; 3], dims: [usize; 3]) -> Vec<bool> {
+        const CELLS_PER_LEAF: i32 = BLOCK / LATTICE_STEP;
+        let mut out = Vec::with_capacity(dims.iter().product());
+        let mut last: Option<([i32; 3], Arc<Grid>)> = None;
+        for cy in 0..dims[1] as i32 {
+            for cz in 0..dims[2] as i32 {
+                for cx in 0..dims[0] as i32 {
+                    let leaf = [origin[0] + cx, origin[1] + cy, origin[2] + cz]
+                        .map(|v| v.div_euclid(CELLS_PER_LEAF));
+                    let gp = leaf.map(|v| v.div_euclid(GRID));
+                    let grid = match &last {
+                        Some((at, grid)) if *at == gp => grid,
+                        _ => &last.insert((gp, self.grid(gp))).1,
+                    };
+                    let [lx, ly, lz] = leaf.map(|v| v.rem_euclid(GRID));
+                    out.push(
+                        grid.leaves[((ly * GRID + lz) * GRID + lx) as usize].is_ordinary_only(),
+                    );
+                }
+            }
+        }
+        out
+    }
+
     fn grid(&self, gp: [i32; 3]) -> Arc<Grid> {
         let key = Key {
             context: self.context().without_excavations(),

@@ -153,7 +153,9 @@ impl ServerWorld {
 
     #[inline]
     pub(super) fn note_stream_nonfinal(&mut self, sp: SectionPos) {
-        self.data.stream_nonfinal.insert(sp);
+        if self.data.stream_nonfinal.insert(sp) {
+            self.side.replication.send_events.push(sp);
+        }
     }
 
     #[inline]
@@ -162,8 +164,9 @@ impl ServerWorld {
         if !gen.pending_sections.contains(&sp)
             && !gen.awaited_overlays.contains(&sp)
             && !gen.pending_overlays.contains_key(&sp)
+            && self.data.stream_nonfinal.remove(&sp)
         {
-            self.data.stream_nonfinal.remove(&sp);
+            self.side.replication.send_events.push(sp);
         }
     }
 
@@ -177,6 +180,7 @@ impl ServerWorld {
             .collect();
         self.data.column_summaries.insert(pos, summaries);
         self.side.gen.column_gen.insert(pos, col);
+        self.side.replication.column_events.push(pos);
     }
 
     #[cfg(test)]

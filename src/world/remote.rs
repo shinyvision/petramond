@@ -38,6 +38,7 @@ pub(crate) use payload::{detached_column_payload, detached_section_payload};
 pub(in crate::world) use provenance::Provenance;
 pub use provenance::{Cached, PieceRange, Resident, SectionContent};
 pub use restate::decode_section_payload;
+pub use send_plan::{SendEvents, TerrainSendPlan};
 pub use sent::SentSections;
 
 #[cfg(test)]

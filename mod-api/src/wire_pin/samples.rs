@@ -281,6 +281,12 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::UndergroundBiomesInBox", &HostCall::from(calls::UndergroundBiomesInBox {
         lo: [1, -2, 3], hi: [4, 5, -6],
     }));
+    s.pin("HostCall::UndergroundBiomeLeaves", &HostCall::from(calls::UndergroundBiomeLeaves {
+        lo: [1, -2, 3], hi: [4, 5, -6], biome: 7,
+    }));
+    s.pin("HostRet::LeafMask", &HostRet::LeafMask(LeafMask {
+        leaf: 8, min: [0, -1, 0], size: [1, 2, 1], bits: vec![0b10],
+    }));
     s.pin("HostCall::UnlockRecipe", &HostCall::from(calls::UnlockRecipe {
         player: PlayerId(1), recipe: "m:r".into(),
     }));
@@ -1116,6 +1122,7 @@ pub(super) fn samples() -> Samples {
             player_held: Some(ItemId(7)), player_foothold: Some([4, 5, 6]),
             tags: vec![("m:k".into(), MobTagValue::I64(-3))],
         }],
+        tags: vec![Some(vec![("m:k".into(), MobTagValue::I64(-3))]), None],
     });
     s.pin("GuestRet::AiDecisions", &GuestRet::AiDecisions(vec![
         Some(AiNodeDecision {

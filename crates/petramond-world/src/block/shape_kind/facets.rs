@@ -389,6 +389,23 @@ pub trait ShapeSim: Send + Sync + 'static {
         self.occupies_pocket(params, nb, pos, block, lo, hi)
     }
 
+    /// The matter this cell shades with, as cell-local boxes: a pocket overlaps one of them
+    /// exactly when [`shades_pocket`](Self::shades_pocket) says so, so a caller that probes
+    /// one cell many times (the mesher's AO pockets) resolves the shape once and tests boxes.
+    /// `false` = the shape has matter no axis-aligned box can express (a posed box); the
+    /// caller then asks `shades_pocket` per pocket. The default lists nothing, matching the
+    /// `false` default of `occupies_pocket`.
+    fn shade_boxes(
+        &self,
+        _params: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _block: Block,
+        _out: &mut Vec<Aabb>,
+    ) -> bool {
+        true
+    }
+
     fn light_apertures(
         &self,
         params: &ShapeParams,

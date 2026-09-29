@@ -46,24 +46,65 @@ pub fn write_sealed<T: Serialize, W: Write>(
     w.write_all(&encode_sealed(msg, sealer)?)
 }
 
-fn plain_body<T: Serialize>(msg: &T) -> io::Result<(u8, Vec<u8>)> {
-    let body = postcard::to_allocvec(msg).map_err(invalid)?;
-    if body.len() > MAX_FRAME {
-        return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
-    }
-    let (flags, body) = if body.len() > COMPRESS_MIN {
-        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-        enc.write_all(&body)?;
-        let compressed = enc.finish()?;
-        if compressed.len() < body.len() {
-            (FLAG_ZLIB, compressed)
-        } else {
-            (0, body)
-        }
-    } else {
-        (0, body)
+/// Per-thread codec state. A deflate or inflate state is a few hundred KiB of tables, so it is
+/// reset between frames, never rebuilt, and the buffers keep their (initialized) capacity.
+struct FrameCodec {
+    body: Vec<u8>,
+    packed: Vec<u8>,
+    inflated: Vec<u8>,
+    deflate: Option<flate2::Compress>,
+    inflate: Option<flate2::Decompress>,
+}
+
+thread_local! {
+    static CODEC: std::cell::RefCell<FrameCodec> = const {
+        std::cell::RefCell::new(FrameCodec {
+            body: Vec::new(),
+            packed: Vec::new(),
+            inflated: Vec::new(),
+            deflate: None,
+            inflate: None,
+        })
     };
-    Ok((flags, body))
+}
+
+fn plain_body<T: Serialize>(msg: &T) -> io::Result<(u8, Vec<u8>)> {
+    CODEC.with(|codec| {
+        let mut codec = codec.borrow_mut();
+        let FrameCodec {
+            body,
+            packed,
+            deflate,
+            ..
+        } = &mut *codec;
+        body.clear();
+        *body = postcard::to_extend(msg, std::mem::take(body)).map_err(invalid)?;
+        if body.len() > MAX_FRAME {
+            return Err(invalid(format!("oversize frame ({} bytes)", body.len())));
+        }
+        if body.len() > COMPRESS_MIN {
+            let deflate = deflate
+                .get_or_insert_with(|| flate2::Compress::new(flate2::Compression::fast(), true));
+            deflate.reset();
+            // Only a strictly smaller result ships compressed, so the output never needs more
+            // room than the input.
+            if packed.len() < body.len() {
+                packed.resize(body.len(), 0);
+            }
+            let status = deflate
+                .compress(
+                    body,
+                    &mut packed[..body.len()],
+                    flate2::FlushCompress::Finish,
+                )
+                .map_err(invalid)?;
+            let written = deflate.total_out() as usize;
+            if status == flate2::Status::StreamEnd && written < body.len() {
+                return Ok((FLAG_ZLIB, packed[..written].to_vec()));
+            }
+        }
+        Ok((0, body.clone()))
+    })
 }
 
 pub fn write_msg<T: Serialize, W: Write>(w: &mut W, msg: &T) -> io::Result<()> {
@@ -105,13 +146,44 @@ fn decode_body<T: DeserializeOwned>(flags: u8, body: &[u8], max_body: usize) -> 
     if flags & FLAG_ZLIB == 0 {
         return postcard::from_bytes(body).map_err(invalid);
     }
-    let mut dec = flate2::read::ZlibDecoder::new(body).take(max_body as u64 + 1);
-    let mut out = Vec::new();
-    dec.read_to_end(&mut out)?;
-    if out.len() > max_body {
-        return Err(invalid("oversize decompressed frame"));
-    }
-    postcard::from_bytes(&out).map_err(invalid)
+    CODEC.with(|codec| {
+        let mut codec = codec.borrow_mut();
+        let FrameCodec {
+            inflated, inflate, ..
+        } = &mut *codec;
+        let inflate = inflate.get_or_insert_with(|| flate2::Decompress::new(true));
+        inflate.reset(true);
+        let limit = max_body + 1;
+        if inflated.len() < limit.min(body.len().saturating_mul(4).max(64 * 1024)) {
+            inflated.resize(limit.min(body.len().saturating_mul(4).max(64 * 1024)), 0);
+        }
+        loop {
+            let consumed = inflate.total_in() as usize;
+            let produced = inflate.total_out() as usize;
+            let status = inflate
+                .decompress(
+                    &body[consumed..],
+                    &mut inflated[produced..],
+                    flate2::FlushDecompress::Finish,
+                )
+                .map_err(invalid)?;
+            let produced_now = inflate.total_out() as usize;
+            if produced_now > max_body {
+                return Err(invalid("oversize decompressed frame"));
+            }
+            if status == flate2::Status::StreamEnd {
+                return postcard::from_bytes(&inflated[..produced_now]).map_err(invalid);
+            }
+            if produced_now == inflated.len() {
+                if inflated.len() >= limit {
+                    return Err(invalid("oversize decompressed frame"));
+                }
+                inflated.resize((inflated.len() * 2).min(limit), 0);
+            } else if inflate.total_in() as usize == consumed && produced_now == produced {
+                return Err(invalid("truncated compressed frame"));
+            }
+        }
+    })
 }
 
 pub fn read_msg<T: DeserializeOwned, R: Read>(r: &mut R) -> io::Result<T> {

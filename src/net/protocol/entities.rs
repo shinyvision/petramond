@@ -51,9 +51,13 @@ impl EntityRow for PlayerStateRow {
     }
 }
 
+/// Rows picked from a shared table. On the TCP transport a set can instead carry `packed`
+/// per-field changes (`net::tick_delta`), which the receiving connection turns back into rows
+/// before the message goes anywhere else.
 pub struct RowSet<R> {
     table: Arc<[R]>,
     picks: Vec<u32>,
+    packed: Vec<u8>,
 }
 
 impl<R> RowSet<R> {
@@ -62,7 +66,23 @@ impl<R> RowSet<R> {
             picks.iter().all(|&i| (i as usize) < table.len()),
             "row pick out of range"
         );
-        RowSet { table, picks }
+        RowSet {
+            table,
+            picks,
+            packed: Vec::new(),
+        }
+    }
+
+    pub(crate) fn packed(bytes: Vec<u8>) -> Self {
+        RowSet {
+            table: Arc::from(Vec::new()),
+            picks: Vec::new(),
+            packed: bytes,
+        }
+    }
+
+    pub(crate) fn take_packed(&mut self) -> Option<Vec<u8>> {
+        (!self.packed.is_empty()).then(|| std::mem::take(&mut self.packed))
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &R> + '_ {
@@ -108,6 +128,7 @@ impl<R> From<Vec<R>> for RowSet<R> {
         RowSet {
             table: rows.into(),
             picks,
+            packed: Vec::new(),
         }
     }
 }
@@ -123,6 +144,7 @@ impl<R> Clone for RowSet<R> {
         RowSet {
             table: Arc::clone(&self.table),
             picks: self.picks.clone(),
+            packed: self.packed.clone(),
         }
     }
 }
@@ -135,19 +157,30 @@ impl<R: std::fmt::Debug> std::fmt::Debug for RowSet<R> {
 
 impl<R: PartialEq> PartialEq for RowSet<R> {
     fn eq(&self, other: &Self) -> bool {
-        self.iter().eq(other.iter())
+        self.iter().eq(other.iter()) && self.packed == other.packed
+    }
+}
+
+struct Rows<'a, R>(&'a RowSet<R>);
+
+impl<R: Serialize> Serialize for Rows<'_, R> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.0.iter())
     }
 }
 
 impl<R: Serialize> Serialize for RowSet<R> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(self.iter())
+        (Rows(self), &self.packed).serialize(serializer)
     }
 }
 
 impl<'de, R: Deserialize<'de>> Deserialize<'de> for RowSet<R> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Vec::<R>::deserialize(deserializer).map(Into::into)
+        let (rows, packed) = <(Vec<R>, Vec<u8>)>::deserialize(deserializer)?;
+        let mut set: RowSet<R> = rows.into();
+        set.packed = packed;
+        Ok(set)
     }
 }
 

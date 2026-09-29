@@ -26,12 +26,22 @@ impl<S: WorldSide> World<S> {
             .entry(pos.chunk_pos())
             .or_insert(0) |= column_cy_bit(pos.cy);
         self.data.random_tick_dirty.insert(pos);
-        self.data.scan_section_custom_bakes(pos);
-        self.refine_section_shapes(pos);
+        self.note_send_event(pos);
+        self.scan_loaded_section(pos);
+    }
+
+    /// A section's sendability to connections may have changed: every server send plan
+    /// re-evaluates it on the next streaming pump.
+    #[inline]
+    pub(in crate::world) fn note_send_event(&mut self, pos: SectionPos) {
+        if let Some(server) = self.side.server_mut() {
+            server.replication.send_events.push(pos);
+        }
     }
 
     #[inline]
     pub(in crate::world) fn note_section_unloaded(&mut self, pos: SectionPos) {
+        self.note_send_event(pos);
         let column = pos.chunk_pos();
         let Some(bits) = self.data.section_column_cys.get_mut(&column) else {
             return;
@@ -47,18 +57,12 @@ impl<S: WorldSide> World<S> {
     #[inline]
     pub(in crate::world) fn clear_section_column_index(&mut self, pos: ChunkPos) {
         self.data.section_column_cys.remove(&pos);
-        self.data.section_column_rt.remove(&pos);
+        self.data.random_tick_index.columns.remove(&pos);
     }
 
     #[inline]
     fn clear_random_tick_bit(&mut self, pos: SectionPos) {
-        let column = pos.chunk_pos();
-        if let Some(bits) = self.data.section_column_rt.get_mut(&column) {
-            *bits &= !column_cy_bit(pos.cy);
-            if *bits == 0 {
-                self.data.section_column_rt.remove(&column);
-            }
-        }
+        self.data.random_tick_index.note(pos, None);
     }
 
     pub(in crate::world) fn repair_random_tick_index(&mut self) {
@@ -67,20 +71,9 @@ impl<S: WorldSide> World<S> {
         }
         let dirty = std::mem::take(&mut self.data.random_tick_dirty);
         for pos in &dirty {
-            let tickable = self
-                .data
-                .sections
-                .get(pos)
-                .is_some_and(|s| s.has_random_tickable());
-            if tickable {
-                *self
-                    .data
-                    .section_column_rt
-                    .entry(pos.chunk_pos())
-                    .or_insert(0) |= column_cy_bit(pos.cy);
-            } else {
-                self.clear_random_tick_bit(*pos);
-            }
+            let section = self.data.sections.get(pos).map(|s| &**s);
+            self.data.random_tick_index.note(*pos, section);
+            self.data.persist_candidates.insert(*pos);
         }
         let mut dirty = dirty;
         dirty.clear();

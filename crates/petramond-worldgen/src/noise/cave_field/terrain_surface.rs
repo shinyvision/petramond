@@ -15,7 +15,7 @@ impl CaveField {
             .density_surfaces
             .get_or_insert((self.context(), chunk), || {
                 crate::density::surface::surface_heights(
-                    &self.terrain,
+                    &self.columns,
                     chunk[0] * sec,
                     chunk[1] * sec,
                     SECTION_SIZE,

@@ -588,6 +588,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     roundtrip(GuestCall::AiNodeBatch {
         callback_id: 4,
         ctxs: Vec::new(),
+        tags: vec![],
     });
     roundtrip(GuestRet::AiDecisions(vec![
         None,

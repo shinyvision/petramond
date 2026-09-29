@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn spatial_pruning_preserves_density_and_box_intersections() {
+fn spatial_pruning_visits_every_intersecting_cut() {
     let mut cuts = Vec::new();
     for z in -1..=1 {
         for x in -1..=1 {
@@ -16,17 +16,7 @@ fn spatial_pruning_preserves_density_and_box_intersections() {
             rng.next_i32(-60, 100),
             rng.next_i32(-100, 150),
         ];
-        let point = p.map(f64::from);
-        let direct = cuts
-            .iter()
-            .map(|cut| cut.density(point))
-            .fold(1.0, f64::min);
-        assert_eq!(index.at(&cuts, point), direct);
         let bounds = [p.map(|v| v - 4), p.map(|v| v + 4)];
-        assert_eq!(
-            index.intersects(&cuts, bounds),
-            cuts.iter().any(|cut| cut.intersects(bounds))
-        );
         let mut collected = 0;
         assert!(index
             .visit(&cuts, bounds, |_| {
@@ -67,6 +57,9 @@ fn walks_are_bounded_and_independent_of_the_gather_window() {
         context,
         [center.map(|v| v - 8), center.map(|v| v + 8)],
     );
+    let at = |cuts: &[Cut], p: [f64; 3]| cuts.iter().fold(1.0_f64, |v, c| v.min(c.density(p)));
+    let origin = center.map(|v| v - 8);
+    let cells = WalkCells::gather(&memos, context, origin, [4, 4, 4], 4);
     let mut open = 0;
     for x in -8..=8 {
         for y in -8..=8 {
@@ -75,8 +68,17 @@ fn walks_are_bounded_and_independent_of_the_gather_window() {
                 (center[1] + y) as f64,
                 center[2] as f64,
             ];
-            assert_eq!(small.at(p).min(0.4), large.at(p).min(0.4));
-            open += usize::from(small.at(p) < 0.0);
+            assert_eq!(at(&small, p).min(0.4), at(&large, p).min(0.4));
+            open += usize::from(at(&small, p) < 0.0);
+            if x < 8 && y < 8 {
+                let cell = (((y + 8) / 4 * 4 + 2) * 4 + (x + 8) / 4) as usize;
+                let listed = if cells.any(cell) {
+                    cells.at(cell, p)
+                } else {
+                    1.0
+                };
+                assert_eq!(listed, at(&large, p));
+            }
         }
     }
     assert!(open > 0);

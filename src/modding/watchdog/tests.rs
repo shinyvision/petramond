@@ -68,7 +68,8 @@ fn only_calls_that_can_wait_are_deferrable() {
     assert_eq!(
         CallClass::of(&GuestCall::AiNodeBatch {
             callback_id: 1,
-            ctxs: Vec::new()
+            ctxs: Vec::new(),
+            tags: Vec::new(),
         }),
         CallClass::Ai
     );

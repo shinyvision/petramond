@@ -65,5 +65,13 @@ host_domain! {
             min: [i32; 2],
             max: [i32; 2],
         } => legal(SERVER_WORLDGEN, Any, Read),
+        /// [`WorldgenCall::UndergroundBiomesInBox`] for one biome, answered per leaf of the
+        /// engine's territory grid: a feature rolls candidates only inside the leaves that can
+        /// hold its biome. → [`HostRet::LeafMask`](crate::HostRet::LeafMask).
+        UndergroundBiomeLeaves {
+            lo: [i32; 3],
+            hi: [i32; 3],
+            biome: u8,
+        } => legal(BESIDE_WORLD, Any, Read),
     }
 }

@@ -115,12 +115,14 @@ impl<K> LaneSelection<K> {
 
 pub struct InterestSet<K> {
     tracked: FxHashSet<K>,
+    spare: FxHashSet<K>,
 }
 
 impl<K> Default for InterestSet<K> {
     fn default() -> Self {
         InterestSet {
             tracked: FxHashSet::default(),
+            spare: FxHashSet::default(),
         }
     }
 }
@@ -134,7 +136,8 @@ impl<K: Copy + Eq + Hash + Ord> InterestSet<K> {
     ) -> LaneSelection<K> {
         let enter_sq = view.radius * view.radius;
         let stay_sq = (view.radius + HYSTERESIS_BLOCKS).powi(2);
-        let mut next = FxHashSet::default();
+        let mut next = std::mem::take(&mut self.spare);
+        next.clear();
         let mut sel = LaneSelection {
             spawned: Vec::new(),
             updated: Vec::new(),
@@ -162,7 +165,7 @@ impl<K: Copy + Eq + Hash + Ord> InterestSet<K> {
         sel.spawned.sort_unstable();
         sel.updated.sort_unstable();
         sel.despawned.sort_unstable();
-        self.tracked = next;
+        self.spare = std::mem::replace(&mut self.tracked, next);
         sel
     }
 

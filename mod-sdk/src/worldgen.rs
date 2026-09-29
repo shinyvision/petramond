@@ -51,6 +51,15 @@ host_fn! {
 }
 
 host_fn! {
+    /// [`underground_biomes_in_box`] for one biome, per leaf of the box: roll candidates only
+    /// where [`LeafMask::may_hold`](crate::LeafMask::may_hold) admits them. A cleared leaf
+    /// provably holds no cell of the biome, so skipping it changes nothing a per-cell biome check
+    /// would have kept.
+    pub fn underground_biome_leaves(lo: [i32; 3], hi: [i32; 3], biome: u8) -> crate::LeafMask
+        => UndergroundBiomeLeaves { lo, hi, biome } => LeafMask
+}
+
+host_fn! {
     /// Whether generated TERRAIN is solid at each position, parallel to `positions` (max
     /// [`crate::SIM_BATCH_MAX`] per call). `false` means air or water.
     ///
@@ -97,30 +106,32 @@ host_fn! {
 }
 
 pub fn terrain_section_at(section: [i32; 3]) -> Vec<BlockId> {
-    match crate::__rt::host_call(&crate::HostCall::from(calls::TerrainSectionAt { section })) {
-        crate::HostRet::SectionBlocks(bytes) => bytes
-            .chunks_exact(2)
-            .map(|pair| BlockId(u16::from_le_bytes([pair[0], pair[1]])))
-            .collect(),
-        other => panic!("TerrainSectionAt returned {other:?}"),
-    }
+    let bytes = crate::__rt::expect_value(
+        "TerrainSectionAt",
+        crate::__rt::call(&calls::TerrainSectionAt { section })
+            .decode_as(crate::ret_decode::SectionBlocks),
+    );
+    bytes
+        .chunks_exact(2)
+        .map(|pair| BlockId(u16::from_le_bytes([pair[0], pair[1]])))
+        .collect()
 }
 
 /// [`terrain_heights_at`] over the inclusive column rectangle `min..=max`, row by row along x;
 /// `None` when the host refuses it (empty, or over [`TERRAIN_HEIGHTS_IN_MAX`](crate::TERRAIN_HEIGHTS_IN_MAX)
 /// columns).
 pub fn terrain_heights_in(min: [i32; 2], max: [i32; 2]) -> Option<Vec<i32>> {
-    match crate::__rt::host_call(&crate::HostCall::from(calls::TerrainHeightsIn { min, max })) {
-        crate::HostRet::TerrainHeightGrid(bytes) => Some(
-            bytes
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .map(|&b| i32::from_le_bytes(b))
-                .collect(),
-        ),
-        _ => None,
-    }
+    let bytes = crate::__rt::call(&calls::TerrainHeightsIn { min, max })
+        .decode_as(crate::ret_decode::TerrainHeightGrid)
+        .ok()?;
+    Some(
+        bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&b| i32::from_le_bytes(b))
+            .collect(),
+    )
 }
 
 /// What a [`GuestCall::GenClaims`](crate::GuestCall::GenClaims) asks about: the columns
@@ -168,7 +179,8 @@ pub struct ClaimsCtx {
 pub struct GenCtx {
     pub(crate) section_pos: [i32; 3],
     pub(crate) seed: u32,
-    pub(crate) blocks: Vec<u16>,
+    /// The section's ids as little-endian `u16` pairs, as they came over the wire.
+    pub(crate) blocks: Vec<u8>,
     pub(crate) surface_heights: Vec<i32>,
     pub(crate) biomes: Vec<u8>,
     pub(crate) sea_level: i32,
@@ -186,8 +198,32 @@ impl GenCtx {
         GenCtx {
             section_pos,
             seed,
-            blocks,
+            blocks: blocks.iter().flat_map(|id| id.to_le_bytes()).collect(),
             surface_heights,
+            biomes,
+            sea_level,
+        }
+    }
+
+    /// The inputs as a dispatch carries them ([`GuestCall::GenFeature`](crate::GuestCall)).
+    pub(crate) fn from_wire(
+        section_pos: [i32; 3],
+        seed: u32,
+        blocks: Vec<u8>,
+        surface_heights: Vec<u8>,
+        biomes: Vec<u8>,
+        sea_level: i32,
+    ) -> GenCtx {
+        GenCtx {
+            section_pos,
+            seed,
+            blocks,
+            surface_heights: surface_heights
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&b| i32::from_le_bytes(b))
+                .collect(),
             biomes,
             sea_level,
         }
@@ -233,9 +269,10 @@ impl GenCtx {
     }
 
     pub fn has_block_snapshot(&self) -> bool {
-        self.blocks.len() == 4096
+        self.blocks.len() == 2 * 4096
     }
 
+    #[inline]
     pub fn block(&self, p: [i32; 3]) -> Option<BlockId> {
         if !self.has_block_snapshot() {
             return None;
@@ -245,9 +282,11 @@ impl GenCtx {
         if !(0..16).contains(&lx) || !(0..16).contains(&ly) || !(0..16).contains(&lz) {
             return None;
         }
-        Some(BlockId(
-            self.blocks[(ly as usize) * 256 + (lz as usize) * 16 + lx as usize],
-        ))
+        let i = 2 * ((ly as usize) * 256 + (lz as usize) * 16 + lx as usize);
+        Some(BlockId(u16::from_le_bytes([
+            self.blocks[i],
+            self.blocks[i + 1],
+        ])))
     }
 
     pub fn for_each_origin(&self, margin: i32, mut f: impl FnMut(i32, i32)) {

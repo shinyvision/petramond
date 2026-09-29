@@ -42,14 +42,6 @@ fn fake_terrain(positions: Vec<[i32; 3]>) -> Vec<TerrainSpace> {
     out
 }
 
-fn fake_biomes_in_box(_lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
-    if hi[0] >= 100 {
-        vec![1, 7]
-    } else {
-        vec![1]
-    }
-}
-
 fn fake_claim(key: &[u8]) -> MemoClaim {
     if let Some(c) = CLAIM.with(|c| c.borrow().clone()) {
         return c;
@@ -136,24 +128,6 @@ fn a_refused_batch_leaves_every_cell_unknown() {
 }
 
 #[test]
-fn only_cells_outside_the_section_are_probed() {
-    reset();
-    let ctx = GenCtx::for_test(
-        [0, 0, 0],
-        1,
-        vec![0u16; 4096],
-        vec![64; 256],
-        vec![0; 256],
-        62,
-    );
-    let mut reads = TerrainReads::with_query(fake_terrain);
-    assert!(reads.ask_unseen(&ctx, [[3, 3, 3], [3, -1, 3], [3, 16, 3]]));
-    assert_eq!(calls(), vec![2], "the owned cell cost a probe");
-    assert_eq!(reads.space([3, 3, 3]), None);
-    assert!(reads.rock([3, -1, 3]) && reads.free([3, 16, 3]));
-}
-
-#[test]
 fn a_pad_spans_the_section_plus_its_reach() {
     let pad = Pad {
         xz: 2,
@@ -161,26 +135,6 @@ fn a_pad_spans_the_section_plus_its_reach() {
         up: 7,
     };
     assert_eq!(pad.around([16, -32, 0]), ([14, -37, -2], [33, -10, 17]));
-    assert!(in_reach(
-        7,
-        [80, 0, 0],
-        Pad {
-            xz: 5,
-            down: 0,
-            up: 0
-        },
-        fake_biomes_in_box
-    ));
-    assert!(!in_reach(
-        7,
-        [80, 0, 0],
-        Pad {
-            xz: 0,
-            down: 0,
-            up: 0
-        },
-        fake_biomes_in_box
-    ));
 }
 
 #[test]

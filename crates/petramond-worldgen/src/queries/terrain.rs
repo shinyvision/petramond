@@ -1,5 +1,4 @@
 use petramond_world::chunk::{section_idx, SectionPos};
-use petramond_world::section::BlockCube;
 use std::collections::BTreeMap;
 
 /// The top solid block's y of every column, read from the same memoized surface tiles column
@@ -101,45 +100,51 @@ pub fn section_blocks(seed: u32, section: [i32; 3]) -> Vec<u16> {
     }
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
-    crate::section_memo::terrain_cube(
+    terrain_ids(
         surface,
         caves,
         SectionPos::new(section[0], section[1], section[2]),
     )
-    .iter()
-    .collect()
+}
+
+/// The section's terrain ids as generation fills them: the fill, the carve and the generated
+/// falls, so a block read and a space read (`terrain_space_at`) classify a cell the same way.
+fn terrain_ids(
+    surface: &crate::density::surface::SurfaceDensitySystem,
+    caves: &crate::noise::cave_field::CaveField,
+    sp: SectionPos,
+) -> Vec<u16> {
+    let mut ids: Vec<u16> = crate::section_memo::terrain_cube(surface, caves, sp)
+        .iter()
+        .collect();
+    crate::section_memo::section_falls(caves, sp, |cell, fall| {
+        if fall.admits(crate::section_memo::space_of(ids[cell])) {
+            ids[cell] = fall.fluid;
+        }
+    });
+    ids
 }
 
 pub fn blocks_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u16> {
     let generator = crate::driver::ChunkGenerator::shared(seed);
     let (surface, caves) = generator.sources();
     if let Some(cell) = whole_section(positions) {
-        return crate::section_memo::terrain_cube(
-            surface,
-            caves,
-            SectionPos::new(cell[0], cell[1], cell[2]),
-        )
-        .iter()
-        .collect();
+        return terrain_ids(surface, caves, SectionPos::new(cell[0], cell[1], cell[2]));
     }
-    let mut cubes: BTreeMap<[i32; 3], BlockCube> = BTreeMap::new();
+    let mut cubes: BTreeMap<[i32; 3], Vec<u16>> = BTreeMap::new();
     positions
         .iter()
         .map(|&pos| {
             let [x, y, z] = super::clamp_query(pos);
             let cell = [x, y, z].map(|v| v.div_euclid(16));
             let cube = cubes.entry(cell).or_insert_with(|| {
-                crate::section_memo::terrain_cube(
-                    surface,
-                    caves,
-                    SectionPos::new(cell[0], cell[1], cell[2]),
-                )
+                terrain_ids(surface, caves, SectionPos::new(cell[0], cell[1], cell[2]))
             });
-            cube.get(section_idx(
+            cube[section_idx(
                 x.rem_euclid(16) as usize,
                 y.rem_euclid(16) as usize,
                 z.rem_euclid(16) as usize,
-            ))
+            )]
         })
         .collect()
 }

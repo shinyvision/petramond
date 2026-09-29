@@ -21,7 +21,7 @@ mod model_block;
 mod neighbourhood;
 mod pad;
 mod plant;
-mod scratch;
+pub(crate) mod scratch;
 mod transition;
 
 pub use cell_class::MeshRegistry;

@@ -9,11 +9,13 @@ use crate::furnace::Furnace;
 use crate::light::LightRgb;
 
 pub use cube::BlockCube;
+pub use ids::IdSet;
 pub(crate) use metrics::METRICS;
 
 mod block_entities;
 mod cell_states;
 mod cube;
+mod ids;
 mod metrics;
 mod restore;
 
@@ -103,6 +105,7 @@ pub struct Section {
     light_emitter_count: u32,
     shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
     light_apertures: Option<Arc<CellMap<bool>>>,
+    present: IdSet,
 }
 
 #[derive(Clone, Default, PartialEq)]
@@ -133,8 +136,9 @@ pub fn uniform_cube(value: u8) -> Arc<[u8]> {
 
 fn compact_uniform_cube(cube: Arc<[u8]>) -> Arc<[u8]> {
     let first = cube[0];
-    if cube.iter().all(|&v| v == first) {
-        uniform_cube(first)
+    let shared = uniform_cube(first);
+    if Arc::ptr_eq(&cube, &shared) || cube.iter().all(|&v| v == first) {
+        shared
     } else {
         cube
     }
@@ -170,7 +174,14 @@ impl Section {
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,
+            present: IdSet::EMPTY,
         }
+    }
+
+    /// Whether any block of `ids` may be in this section — a true negative skips a cell scan.
+    #[inline]
+    pub fn may_contain(&self, ids: &IdSet) -> bool {
+        self.present.intersects(ids)
     }
 
     #[inline]
@@ -244,6 +255,7 @@ impl Section {
         let i = section_idx(x, y, z);
         let old = self.blocks.get(i);
         self.blocks.set(i, id);
+        self.present.insert(id);
         self.adjust_metrics(x, y, z, old, id);
         self.states.clear_on_block_change(i);
         self.dirty = true;
@@ -275,6 +287,7 @@ impl Section {
         let new_bits = class(id);
         let mut tally = metrics::MetricTally::default();
         let mut changed = false;
+        self.present.insert(id);
         let mut cells = self.blocks.cells_mut(id);
         for y in y0..=hi[1] {
             for z in if y == y0 { z0 } else { lo[2] }..=hi[2] {
@@ -326,6 +339,7 @@ impl Section {
                 let i = section_idx(x, y, z);
                 let old = cells.get(i);
                 cells.set(i, id);
+                self.present.insert(id);
                 tally.note(i, class(old), class(id));
                 if !bare {
                     self.states.clear_on_block_change(i);
@@ -343,7 +357,10 @@ impl Section {
         }
     }
 
+    /// The raw buffer: writes through it are untracked, so the id set widens to "anything"
+    /// until the next recount.
     pub fn blocks_mut(&mut self) -> &mut BlockCube {
+        self.present = IdSet::ANY;
         &mut self.blocks
     }
 
@@ -356,6 +373,7 @@ impl Section {
         ids.extend(self.blocks.iter());
         f(&mut ids);
         self.blocks = BlockCube::from_ids(&ids);
+        self.present = IdSet::from_ids(ids.iter().copied());
         SCRATCH.with(|c| c.set(ids));
     }
 
@@ -399,6 +417,7 @@ impl Section {
         let id = b.id();
         let old = self.blocks.get(i);
         self.blocks.set(i, id);
+        self.present.insert(id);
         self.adjust_metrics(x, y, z, old, id);
         let meta = if b.is_fluid() { meta } else { 0 };
         self.states.store_fluid_meta(i, meta);
@@ -436,7 +455,7 @@ impl Section {
     }
 
     pub fn set_blocklight(&mut self, cube: Arc<[LightRgb]>) {
-        if cube.iter().all(|v| v.is_dark()) {
+        if Arc::ptr_eq(&cube, &crate::light::dark_cube()) || cube.iter().all(|v| v.is_dark()) {
             self.blocklight = None;
         } else {
             self.blocklight = Some(cube);

@@ -1,7 +1,7 @@
 use mod_api::{
     ClientAudioInto, ClientAudioTapData, ClientCaptureInto, ClientCaptureSource,
     ClientCaptureStatus, ClientCaptureWhen, ClientMediaAudio, ClientMediaCapabilities,
-    ClientMediaStateData, ClientMediaVideo, ClientStep, ClientStorageScope, HostRet,
+    ClientMediaStateData, ClientMediaVideo, ClientStep, ClientStorageScope,
 };
 
 use crate::__rt::{host_fn, try_host_fn};
@@ -89,8 +89,11 @@ host_fn! {
     pub fn client_media_abort(media: u64) => ClientMediaAbort { media }
 }
 
-host_fn! {
-    pub fn client_media_state(media: u64) -> Option<ClientMediaStateData>
-        => ClientMediaState { media }
-        => HostRet::ClientMediaState(state) => state.map(|state| *state)
+pub fn client_media_state(media: u64) -> Option<ClientMediaStateData> {
+    crate::__rt::expect_value(
+        "ClientMediaState",
+        crate::__rt::call(&crate::calls::ClientMediaState { media })
+            .decode_as(mod_api::ret_decode::ClientMediaState),
+    )
+    .map(|state| *state)
 }

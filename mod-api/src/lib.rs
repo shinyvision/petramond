@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! The petramond mod ABI: shared types crossing the engine↔WASM boundary.
 //!
 //! Both sides speak postcard-serialized enums over two raw entry points

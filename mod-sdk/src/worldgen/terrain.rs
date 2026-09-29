@@ -5,7 +5,8 @@ pub struct TerrainCache {
     capacity: usize,
     slots: HashMap<[i32; 3], usize>,
     tiles: Vec<Option<Box<[BlockId]>>>,
-    ids: Vec<Vec<BlockId>>,
+    /// Each resident tile's distinct ids, sorted; built on the first `section_has_any`.
+    ids: Vec<Option<Vec<BlockId>>>,
     free: Vec<usize>,
     order: VecDeque<[i32; 3]>,
     last: Option<([i32; 3], usize)>,
@@ -52,14 +53,20 @@ impl TerrainCache {
             Some(&slot) => slot,
             None => self.fetch(cell, query)?,
         };
-        let present = &self.ids[slot];
+        let present = self.ids[slot].get_or_insert_with(|| {
+            let mut ids = self.tiles[slot].as_ref().expect("resident tile").to_vec();
+            ids.sort_unstable_by_key(|b| b.0);
+            ids.dedup();
+            ids
+        });
         Some(
             ids.iter()
                 .any(|id| present.binary_search_by_key(&id.0, |b| b.0).is_ok()),
         )
     }
 
-    fn block_with(
+    /// [`block`](TerrainCache::block) fetching missing sections with `query` (a test host).
+    pub fn block_with(
         &mut self,
         pos: [i32; 3],
         query: impl FnOnce([i32; 3]) -> Vec<BlockId>,
@@ -99,18 +106,15 @@ impl TerrainCache {
                 self.last = None;
             }
         }
-        let mut ids = blocks.clone();
-        ids.sort_unstable_by_key(|b| b.0);
-        ids.dedup();
         let slot = match self.free.pop() {
             Some(slot) => {
                 self.tiles[slot] = Some(blocks.into_boxed_slice());
-                self.ids[slot] = ids;
+                self.ids[slot] = None;
                 slot
             }
             None => {
                 self.tiles.push(Some(blocks.into_boxed_slice()));
-                self.ids.push(ids);
+                self.ids.push(None);
                 self.tiles.len() - 1
             }
         };

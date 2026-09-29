@@ -58,6 +58,7 @@ pub struct Mobs {
     rng: MobRng,
     sim_distance: SimDistance,
     step_scratch: Vec<lod::SimStep>,
+    grounded_scratch: Vec<bool>,
     turns: Vec<simulation::Turn>,
     push: PushScratch,
     solid: SolidScratch,
@@ -93,6 +94,7 @@ impl Mobs {
             rng: MobRng::new(seed ^ SPAWN_RNG_SALT),
             sim_distance: SimDistance::UNLIMITED,
             step_scratch: Vec::new(),
+            grounded_scratch: Vec::new(),
             turns: Vec::new(),
             push: PushScratch::default(),
             solid: SolidScratch::default(),
@@ -140,6 +142,15 @@ impl Mobs {
     ) {
         self.change_seq = next;
         self.confined_regions.invalidate(changed, all);
+        if all {
+            for mob in &mut self.list {
+                mob.confinement_mut().drop_proof();
+            }
+        } else if let Some(within) = super::confined::ReadBox::around(changed) {
+            for mob in &mut self.list {
+                mob.confinement_mut().invalidate_proof(changed, &within);
+            }
+        }
     }
 
     pub fn push_noise(&mut self, noise: Noise) {

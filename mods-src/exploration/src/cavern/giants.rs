@@ -107,13 +107,42 @@ pub(super) fn roll_giant(seed: u32, lx: i32, ly: i32, lz: i32) -> Option<Candida
     })
 }
 
-fn giant_rolls_over(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<Candidate> {
+/// The anchor cells that can stand a giant crossing `lo..=hi`, and the world box they span.
+fn roll_box(lo: [i32; 3], hi: [i32; 3]) -> ([i32; 3], [i32; 3]) {
     let l = ANCHOR_LATTICE;
-    let cells = |a: i32, b: i32| (a - (l - 1)).div_euclid(l)..=b.div_euclid(l);
+    let first = |v: i32| (v - (l - 1)).div_euclid(l) * l;
+    let last = |v: i32| v.div_euclid(l) * l + l - 1;
+    (
+        [
+            first(lo[0] - MAX_REACH),
+            first(lo[1] - MAX_RISE),
+            first(lo[2] - MAX_REACH),
+        ],
+        [
+            last(hi[0] + MAX_REACH),
+            last(hi[1]),
+            last(hi[2] + MAX_REACH),
+        ],
+    )
+}
+
+/// Every candidate rolled in the anchor cells `roll_box` spans, skipping the cells `leaves`
+/// proves hold none of the biome: a candidate is gated on its own cell's biome before it can
+/// stand or compete, so those never mattered, and the rolls are positional.
+fn giant_rolls_over(seed: u32, lo: [i32; 3], hi: [i32; 3], leaves: &LeafMask) -> Vec<Candidate> {
+    let l = ANCHOR_LATTICE;
+    let (box_lo, box_hi) = roll_box(lo, hi);
     let mut out = Vec::new();
-    for lz in cells(lo[2] - MAX_REACH, hi[2] + MAX_REACH) {
-        for lx in cells(lo[0] - MAX_REACH, hi[0] + MAX_REACH) {
-            for ly in cells(lo[1] - MAX_RISE, hi[1]) {
+    for lz in box_lo[2] / l..=box_hi[2] / l {
+        for lx in box_lo[0] / l..=box_hi[0] / l {
+            let column = leaves.column(lx * l, lz * l);
+            if !column.any() {
+                continue;
+            }
+            for ly in box_lo[1] / l..=box_hi[1] / l {
+                if !column.may_hold(ly * l) {
+                    continue;
+                }
                 if let Some(c) = roll_giant(seed, lx, ly, lz) {
                     out.push(c);
                 }
@@ -133,14 +162,25 @@ pub(super) fn could_reach_box(c: &Candidate, lo: [i32; 3], hi: [i32; 3]) -> bool
         && c.cell_top_y() + c.giant.rise() >= lo[1]
 }
 
+/// A candidate's cap centre and radius, as [`could_beat`] reads them.
+type Footprint = (i32, i32, i32);
+
+fn footprint(c: &Candidate) -> Footprint {
+    let (ax, az, ar) = c.giant.cap_footprint();
+    (c.x + ax, c.z + az, ar)
+}
+
+#[cfg(test)]
 pub(super) fn could_beat(a: &Candidate, b: &Candidate) -> bool {
-    if a.lat >= b.lat {
+    could_beat_with(a.lat, footprint(a), b.lat, footprint(b))
+}
+
+fn could_beat_with(a_lat: [i32; 3], a: Footprint, b_lat: [i32; 3], b: Footprint) -> bool {
+    if a_lat >= b_lat {
         return false;
     }
-    let (ax, az, ar) = a.giant.cap_footprint();
-    let (bx, bz, br) = b.giant.cap_footprint();
-    let (dx, dz) = (a.x + ax - b.x - bx, a.z + az - b.z - bz);
-    let r = ar + br;
+    let (dx, dz) = (a.0 - b.0, a.1 - b.1);
+    let r = a.2 + b.2;
     dx * dx + dz * dz < r * r
 }
 
@@ -179,11 +219,13 @@ pub(super) fn standing_giants_over(
     lo: [i32; 3],
     hi: [i32; 3],
 ) -> Vec<(Candidate, [i32; 3])> {
-    let rolled = giant_rolls_over(
-        seed,
+    let (roll_lo, roll_hi) = (
         [lo[0] - COMPETE_PAD, lo[1] - MAX_RISE, lo[2] - COMPETE_PAD],
         [hi[0] + COMPETE_PAD, hi[1] + MAX_RISE, hi[2] + COMPETE_PAD],
     );
+    let (box_lo, box_hi) = roll_box(roll_lo, roll_hi);
+    let leaves = underground_biome_leaves(box_lo, box_hi, ours);
+    let rolled = giant_rolls_over(seed, roll_lo, roll_hi, &leaves);
     let primary: Vec<_> = rolled
         .iter()
         .enumerate()
@@ -192,12 +234,20 @@ pub(super) fn standing_giants_over(
     if primary.is_empty() {
         return Vec::new();
     }
+    let feet: Vec<Footprint> = rolled.iter().map(footprint).collect();
+    let mut is_primary = vec![false; rolled.len()];
+    for &i in &primary {
+        is_primary[i] = true;
+    }
     let cands: Vec<_> = rolled
         .iter()
         .enumerate()
         .filter_map(|(i, c)| {
-            (primary.contains(&i) || primary.iter().any(|&j| could_beat(c, &rolled[j])))
-                .then_some(c.clone())
+            (is_primary[i]
+                || primary
+                    .iter()
+                    .any(|&j| could_beat_with(c.lat, feet[i], rolled[j].lat, feet[j])))
+            .then_some(c.clone())
         })
         .collect();
     let Some(viable) = viable_roots(seed, ours, &cands) else {

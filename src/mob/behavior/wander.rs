@@ -751,10 +751,14 @@ mod tests {
         let fluid = crate::mob::nav::nav_fluid_fn(&cursor);
         let step = crate::mob::nav::navigation_step_gate(&cursor, params, 1.4);
         let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
-        crate::mob::confined::confined_region(
+        match crate::mob::confined::confinement_verdict(
             start, params, &solid, &support, &fluid, &step, &loaded,
-        )
-        .expect("test area should read as confined")
+        ) {
+            crate::mob::confined::Verdict::Confined(region) => region,
+            crate::mob::confined::Verdict::Free { .. } => {
+                panic!("test area should read as confined")
+            }
+        }
     }
 
     fn wander_tuning(radius: i32) -> WanderTuning {

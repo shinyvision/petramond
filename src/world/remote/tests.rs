@@ -620,14 +620,10 @@ fn terrain_send_plan_gates_finality_and_unloads_the_keep_shape_exit() {
     sent_columns.insert(sp.chunk_pos());
     sent.insert(sp);
 
-    let k = w.terrain_send_key(anchor(0));
-    assert_eq!(k, w.terrain_send_key(anchor(0)));
-    assert_ne!(k, w.terrain_send_key(anchor(1)), "a chunk move re-keys");
     let mut other = Section::new(1, 4, 0);
     other.set_block(0, 0, 0, Block::Stone);
     other.set_skylight(sky());
     w.insert_section_for_test(SectionPos::new(1, 4, 0), other);
-    assert_ne!(k, w.terrain_send_key(anchor(0)), "new content re-keys");
 
     w.side.gen.awaited_overlays.insert(SectionPos::new(1, 4, 0));
     w.note_stream_nonfinal(SectionPos::new(1, 4, 0));

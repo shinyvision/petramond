@@ -243,8 +243,9 @@ pub fn on_tick(content: &Content) {
         return;
     }
     let anchors: Vec<[f64; 3]> = players().iter().map(|p| p.state.pos).collect();
+    let kinds: Vec<MobId> = content.husbandry.iter().map(|d| d.kind).collect();
     let mut animals: Vec<Animal> = Vec::new();
-    for snap in mobs_near_any(&anchors, RANGE) {
+    for snap in mobs_near_any_of(&anchors, RANGE, &kinds) {
         let Some(def) = content.husbandry.iter().position(|d| d.kind == snap.kind) else {
             continue;
         };

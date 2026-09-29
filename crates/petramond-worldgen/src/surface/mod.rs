@@ -12,12 +12,47 @@ pub struct SurfaceSystem;
 impl SurfaceSystem {
     #[inline]
     pub fn skin_block(&self, c: &SurfaceCtx, rule: &SurfaceRule) -> Block {
-        let block = rule.resolve(c).unwrap_or(Block::Stone);
-        if c.y < SEA_LEVEL && block == Block::Grass {
-            Block::Dirt
-        } else {
-            block
+        finish(c, rule.resolve(c).unwrap_or(Block::Stone))
+    }
+}
+
+#[inline]
+fn finish(c: &SurfaceCtx, block: Block) -> Block {
+    if c.y < SEA_LEVEL && block == Block::Grass {
+        Block::Dirt
+    } else {
+        block
+    }
+}
+
+/// [`SurfaceSystem::skin_block`] down one column: only depth conditions vary
+/// along it, so below the rule's deepest band it resolves once.
+pub(crate) struct ColumnSkin<'r> {
+    rule: &'r SurfaceRule,
+    band: Option<u32>,
+    below: Option<Block>,
+}
+
+impl<'r> ColumnSkin<'r> {
+    pub(crate) fn new(rule: &'r SurfaceRule, band: Option<u32>) -> Self {
+        Self {
+            rule,
+            band,
+            below: None,
         }
+    }
+
+    /// `c` must stay in this column (same position, surface and seed).
+    #[inline]
+    pub(crate) fn block(&mut self, c: &SurfaceCtx) -> Block {
+        let raw = if self.band.is_none_or(|band| c.depth_from_top > band) {
+            *self
+                .below
+                .get_or_insert_with(|| self.rule.resolve(c).unwrap_or(Block::Stone))
+        } else {
+            self.rule.resolve(c).unwrap_or(Block::Stone)
+        };
+        finish(c, raw)
     }
 }
 

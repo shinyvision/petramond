@@ -3,17 +3,13 @@ use std::sync::Arc;
 use super::fluid_falls::ChunkFalls;
 use super::CaveLattice;
 use crate::cache::{inline, memo_group, pointee, slice, CacheBudget, GenContext, MemoStats};
-use crate::data::underground::ClimatePoint;
-use crate::noise::cave_density::Sample;
 use crate::noise::cave_walk::WalkMemos;
 use crate::noise::chamber::{CandidateCache, ChamberField};
 
 memo_group! {
     pub(crate) struct CaveMemos {
-        source: super::source::Key => Sample =
-            ("cave.source", 262_144, Frontier, inline),
-        climate_columns: (GenContext, [i32; 2]) => ClimatePoint =
-            ("cave.climate_columns", 32_768, Frontier, inline),
+        source: super::source::Key => Arc<super::source::Block> =
+            ("cave.source", 8192, Frontier, pointee),
         carved: super::query_cache::Key<Box<[super::query_cache::Query]>> => Vec<bool> =
             ("cave.carved_queries", 512, Fixed, |v: &Vec<bool>| v.capacity()),
         filled: super::query_cache::Key<Box<[super::query_cache::Query]>> => Vec<Option<u16>> =

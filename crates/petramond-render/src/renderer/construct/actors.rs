@@ -7,11 +7,23 @@ pub(super) fn build_mob_gpu(
     queue: &wgpu::Queue,
     atlas_bgl: &wgpu::BindGroupLayout,
 ) -> Vec<MobGpu> {
+    use rayon::prelude::*;
+    // The rig's self-AO bake is the whole cost of this function and each mob's is independent.
+    let rigs: Vec<_> = petramond::mob::defs()
+        .par_iter()
+        .map(|d| {
+            let model = petramond::mob::model(d.mob);
+            let rig = crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
+                .with_self_ao(model, d.scale, d.self_ao);
+            let mesh = rig.mesh(model, d.scale);
+            (rig, mesh)
+        })
+        .collect();
     petramond::mob::defs()
         .iter()
-        .map(|d| {
-            let kind = d.mob;
-            let model = petramond::mob::model(kind);
+        .zip(rigs)
+        .map(|(d, (rig, mesh))| {
+            let model = petramond::mob::model(d.mob);
             let (_texture, view, sampler) =
                 create_model_texture(device, queue, &model.texture_rgba, model.tex_w, model.tex_h);
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -33,9 +45,7 @@ pub(super) fn build_mob_gpu(
                 .into_iter()
                 .flat_map(|x| [bmin.z, bmax.z].map(|z| (x * x + z * z).sqrt()))
                 .fold(0.0f32, f32::max);
-            let rig = crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
-                .with_self_ao(model, d.scale, d.self_ao);
-            let mesh = SkinnedModel::new(device, &rig.mesh(model, d.scale), "mob");
+            let mesh = SkinnedModel::new(device, &mesh, "mob");
             MobGpu {
                 model,
                 scale: d.scale,

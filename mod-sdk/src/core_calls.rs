@@ -1,5 +1,5 @@
 use mod_api::calls;
-use mod_api::{AttachSide, EventFilter, EventKind, HostCall, RuntimeSide, Stage};
+use mod_api::{AttachSide, EventFilter, EventKind, RuntimeSide, Stage};
 
 #[allow(unused_imports)]
 use crate::Mod;
@@ -9,7 +9,7 @@ use crate::__rt::host_fn;
 use crate::__rt::try_host_fn;
 
 pub fn log(msg: &str) {
-    __rt::host_call(&HostCall::from(calls::Log { msg: msg.into() }));
+    let _ = __rt::call(&calls::Log { msg: msg.into() });
 }
 
 host_fn! {
@@ -39,14 +39,15 @@ pub fn register_event_handler_filtered(
     handler_id: u32,
     filter: EventFilter,
 ) {
-    __rt::expect_unit(
+    __rt::expect_value(
         "RegisterEventHandler",
-        __rt::host_call(&HostCall::from(calls::RegisterEventHandler {
+        __rt::call(&calls::RegisterEventHandler {
             event,
             priority,
             handler_id,
             filter,
-        })),
+        })
+        .decode_as(mod_api::ret_decode::Unit),
     );
 }
 

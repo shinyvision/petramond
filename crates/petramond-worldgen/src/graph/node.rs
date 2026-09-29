@@ -401,7 +401,7 @@ impl ScalarGraph {
     }
 }
 
-fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
+pub(super) fn vertical_ramp(y: f64, y_min: f64, y_max: f64) -> f64 {
     if (y_max - y_min).abs() <= f64::EPSILON {
         if y >= y_max {
             1.0
@@ -425,7 +425,7 @@ pub fn ridge_fold_value(variance: f64) -> f64 {
     1.0 - ((3.0 * variance.abs()) - 2.0).abs()
 }
 
-fn floor_clamp_value(
+pub(super) fn floor_clamp_value(
     input: f64,
     y: f64,
     floor_y: f64,

@@ -17,6 +17,32 @@ pub fn underground_biomes_at(seed: u32, positions: &[[i32; 3]]) -> Vec<u8> {
 pub(crate) type UndergroundBoxKey = (cache::GenContext, [i32; 3], [i32; 3]);
 
 pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u8> {
+    underground_box_ids(seed, lo, hi).to_vec()
+}
+
+/// Whether an underground biome in `bits` (a bit per id) can own a cell in the box `lo..=hi`.
+pub fn underground_box_admits(seed: u32, lo: [i32; 3], hi: [i32; 3], bits: &[u64; 4]) -> bool {
+    underground_box_ids(seed, lo, hi)
+        .iter()
+        .any(|&id| bits[usize::from(id) >> 6] & (1 << (id & 63)) != 0)
+}
+
+/// Whether `biome` can own a cell in each territory leaf of the box `lo..=hi`.
+pub fn underground_biome_leaves(
+    seed: u32,
+    lo: [i32; 3],
+    hi: [i32; 3],
+    biome: u8,
+) -> mod_api::LeafMask {
+    let (lo, hi) = (clamp_query(lo), clamp_query(hi));
+    let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
+    let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
+    let generator = driver::ChunkGenerator::shared(seed);
+    let (_, field) = generator.sources();
+    field.underground_biome_leaf_mask(box_lo, box_hi, biome)
+}
+
+fn underground_box_ids(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> std::sync::Arc<[u8]> {
     let (lo, hi) = (clamp_query(lo), clamp_query(hi));
     let box_lo = std::array::from_fn(|a| lo[a].min(hi[a]));
     let box_hi = std::array::from_fn(|a| lo[a].max(hi[a]));
@@ -33,7 +59,6 @@ pub fn underground_biomes_in_box(seed: u32, lo: [i32; 3], hi: [i32; 3]) -> Vec<u
                 .ids()
                 .into()
         })
-        .to_vec()
 }
 
 pub fn terrain_solid_at(seed: u32, positions: &[[i32; 3]]) -> Vec<bool> {
@@ -64,7 +89,9 @@ fn terrain_samples_in(
     use petramond_world::chunk::{SectionPos, SECTION_SIZE};
     const TILE: i32 = petramond_world::chunk::CHUNK_SX as i32;
     const SECTION_MASK_MIN: usize = 128;
-    let mut tile: Option<(i32, i32, Vec<i32>)> = None;
+    // The memoized tiles the positions fall in, most recent first: a batch walks a few tiles
+    // interleaved, so keep them all instead of re-fetching on every switch.
+    let mut tiles: Vec<([i32; 2], std::sync::Arc<feature::RegionTile>)> = Vec::new();
     let mut queries: Vec<([i32; 3], i32)> = Vec::with_capacity(positions.len());
     let mut no_carve = vec![false; positions.len()];
     let mut groups: Vec<([i32; 3], Vec<u32>)> = Vec::new();
@@ -72,19 +99,17 @@ fn terrain_samples_in(
     for (i, p) in positions.iter().enumerate() {
         let [x, y, z] = clamp_query(*p);
         let (tcx, tcz) = (x.div_euclid(TILE), z.div_euclid(TILE));
-        if !matches!(&tile, Some((cx, cz, _)) if *cx == tcx && *cz == tcz) {
-            let (_, raw) = feature::cached_feature_region(
-                surface,
-                caves,
-                tcx * TILE,
-                tcz * TILE,
-                TILE as usize,
-                TILE as usize,
-            );
-            tile = Some((tcx, tcz, raw));
-        }
-        let raw = &tile.as_ref().expect("tile just filled").2;
-        let surf_y = raw[((z - tcz * TILE) * TILE + (x - tcx * TILE)) as usize];
+        let at = match tiles.iter().position(|(c, _)| *c == [tcx, tcz]) {
+            Some(at) => at,
+            None => {
+                if tiles.len() == 16 {
+                    tiles.remove(0);
+                }
+                tiles.push(([tcx, tcz], feature::cached_tile(surface, caves, tcx, tcz)));
+                tiles.len() - 1
+            }
+        };
+        let surf_y = tiles[at].1.raw()[((z - tcz * TILE) * TILE + (x - tcx * TILE)) as usize];
         no_carve[i] = y > surf_y || (y < noise::settings::CAVE_MIN_Y && !caves.field_at_height(y));
         queries.push(([x, y, z], surf_y));
         let section = [tcx, y.div_euclid(SECTION_SIZE as i32), tcz];

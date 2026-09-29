@@ -100,13 +100,15 @@ pub(super) struct WalkField {
 }
 
 impl WalkField {
-    pub(super) fn gather(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Self {
+    /// Every cut that can reach `bounds`.
+    fn gather(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Vec<Cut> {
         let [lo, hi] = bounds;
         let cell = [lo[0].div_euclid(CELL), lo[2].div_euclid(CELL)];
         let fits = |axis: usize, c: i32| hi[axis] <= c * CELL + CELL - 1 + FIELD_PAD;
+        let mut out = Vec::new();
         if fits(0, cell[0]) && fits(2, cell[1]) {
             let field = memos.fields.get_or_insert((context, cell), || {
-                Arc::new(Self::gather_direct(
+                let cuts = Self::gather_direct(
                     memos,
                     context,
                     [
@@ -121,23 +123,19 @@ impl WalkField {
                             cell[1] * CELL + CELL - 1 + FIELD_PAD,
                         ],
                     ],
-                ))
+                );
+                Arc::new(Self::from_cuts(cuts))
             });
-            return field.restrict(bounds);
+            let _ = field.index.visit(&field.cuts, bounds, |cut| {
+                out.push(cut);
+                ControlFlow::Continue(())
+            });
+            return out;
         }
         Self::gather_direct(memos, context, bounds)
     }
 
-    fn restrict(&self, bounds: [[i32; 3]; 2]) -> Self {
-        let mut out = Vec::new();
-        let _ = self.index.visit(&self.cuts, bounds, |cut| {
-            out.push(cut);
-            ControlFlow::Continue(())
-        });
-        Self::from_cuts(out)
-    }
-
-    fn gather_direct(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Self {
+    fn gather_direct(memos: &WalkMemos, context: GenContext, bounds: [[i32; 3]; 2]) -> Vec<Cut> {
         let [lo, hi] = bounds;
         let mut out = Vec::new();
         for z in (lo[2] - REACH).div_euclid(CELL)..=(hi[2] + REACH).div_euclid(CELL) {
@@ -151,20 +149,94 @@ impl WalkField {
                 });
             }
         }
-        Self::from_cuts(out)
+        out
     }
 
     fn from_cuts(mut cuts: Vec<Cut>) -> Self {
         let index = Index::build(&mut cuts);
         Self { cuts, index }
     }
+}
 
-    pub(super) fn intersects(&self, bounds: [[i32; 3]; 2]) -> bool {
-        self.index.intersects(&self.cuts, bounds)
+/// The cuts of a lattice's box, listed per lattice cell: a cell's list holds
+/// every cut whose extent meets the cell, so the minimum over it is the
+/// minimum over all cuts (a cut outside its extent reads exactly 1.0).
+#[derive(Default)]
+pub(super) struct WalkCells {
+    cuts: Vec<Cut>,
+    starts: Vec<u32>,
+    refs: Vec<u32>,
+}
+
+impl WalkCells {
+    /// `origin` is the lattice's first corner in world blocks, `cells` its
+    /// cell counts along x, y, z, and cells are `step` blocks wide, indexed
+    /// `(y * cells_z + z) * cells_x + x`.
+    pub(super) fn gather(
+        memos: &WalkMemos,
+        context: GenContext,
+        origin: [i32; 3],
+        cells: [usize; 3],
+        step: i32,
+    ) -> Self {
+        let hi: [i32; 3] = std::array::from_fn(|a| origin[a] + cells[a] as i32 * step);
+        let cuts = WalkField::gather(memos, context, [origin, hi]);
+        let [mx, my, mz] = cells;
+        let cell_box = |c: [usize; 3]| {
+            let lo: [i32; 3] = std::array::from_fn(|a| origin[a] + c[a] as i32 * step);
+            [lo, lo.map(|v| v + step - 1)]
+        };
+        let range = |cut: &Cut, a: usize, n: usize| {
+            let lo = ((cut.center[a] - cut.extent[a] - f64::from(origin[a])) / f64::from(step))
+                .floor() as i64
+                - 1;
+            let hi = ((cut.center[a] + cut.extent[a] - f64::from(origin[a])) / f64::from(step))
+                .floor() as i64
+                + 1;
+            (lo.max(0) as usize)..((hi + 1).clamp(0, n as i64) as usize)
+        };
+        let mut counts = vec![0u32; mx * my * mz + 1];
+        let mut hits = Vec::new();
+        for (k, cut) in cuts.iter().enumerate() {
+            for cy in range(cut, 1, my) {
+                for cz in range(cut, 2, mz) {
+                    for cx in range(cut, 0, mx) {
+                        if cut.intersects(cell_box([cx, cy, cz])) {
+                            let cell = (cy * mz + cz) * mx + cx;
+                            counts[cell + 1] += 1;
+                            hits.push((cell as u32, k as u32));
+                        }
+                    }
+                }
+            }
+        }
+        for i in 1..counts.len() {
+            counts[i] += counts[i - 1];
+        }
+        let mut fill = counts.clone();
+        let mut refs = vec![0u32; hits.len()];
+        for (cell, k) in hits {
+            refs[fill[cell as usize] as usize] = k;
+            fill[cell as usize] += 1;
+        }
+        Self {
+            cuts,
+            starts: counts,
+            refs,
+        }
     }
 
-    pub(super) fn at(&self, p: [f64; 3]) -> f64 {
-        self.index.at(&self.cuts, p)
+    #[inline]
+    pub(super) fn any(&self, cell: usize) -> bool {
+        !self.starts.is_empty() && self.starts[cell] != self.starts[cell + 1]
+    }
+
+    #[inline]
+    pub(super) fn at(&self, cell: usize, p: [f64; 3]) -> f64 {
+        let refs = &self.refs[self.starts[cell] as usize..self.starts[cell + 1] as usize];
+        refs.iter().fold(1.0_f64, |value, &k| {
+            value.min(self.cuts[k as usize].density(p))
+        })
     }
 }
 

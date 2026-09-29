@@ -7,7 +7,7 @@ const CHAMBER_PAD: i32 = 32;
 pub(super) type ChamberKey = (crate::cache::GenContext, [i32; 2]);
 
 impl CaveField {
-    fn chamber_field_for(
+    pub(super) fn chamber_field_for(
         &self,
         bounds: [[i32; 3]; 2],
         y_span: (i32, i32),
@@ -120,23 +120,27 @@ impl CaveField {
             nx,
             ny,
             nz,
-            entrance: Vec::with_capacity(cap(fields.carve)),
-            density: Vec::with_capacity(cap(fields.carve)),
-            noodle_a: Vec::with_capacity(cap(fields.carve)),
-            noodle_b: Vec::with_capacity(cap(fields.carve)),
-            noodle_toggle: Vec::with_capacity(cap(fields.carve)),
-            noodle_width: Vec::with_capacity(cap(fields.carve)),
-            climate: std::array::from_fn(|_| Vec::with_capacity(cap(fields.biome))),
+            lanes: std::array::from_fn(|k| {
+                Vec::with_capacity(if k >= lane::CLIMATE {
+                    cap(fields.biome)
+                } else {
+                    0
+                })
+            }),
             no_aquifer,
             unlined,
             plain,
             geology,
             regions: regions::Columns::gather(self, [x0, z0], [x1, z1]),
-            walk_cells: Vec::new(),
+            ordinary: if fields.biome {
+                self.ordinary_cells([lx0, ly0, lz0], [nx - 1, ny - 1, nz - 1])
+            } else {
+                Vec::new()
+            },
             #[cfg(test)]
             chamber_live: false,
             fields,
-            walks: None,
+            walks: WalkCells::default(),
             claims: if fields.biome && fields.excavations && fields.positioned {
                 super::volumes::claims::Columns::gather(self, [x0, z0], [x1, z1])
             } else {
@@ -154,99 +158,39 @@ impl CaveField {
             },
         };
 
-        let rooms = self
-            .chamber_y_span
-            .filter(|_| fields.interior && fields.excavations)
-            .and_then(|(lo, hi)| {
-                let clo = [lx0 * LATTICE_STEP, ly0 * LATTICE_STEP, lz0 * LATTICE_STEP];
-                let chi = [
-                    clo[0] + (nx as i32 - 1) * LATTICE_STEP,
-                    clo[1] + (ny as i32 - 1) * LATTICE_STEP,
-                    clo[2] + (nz as i32 - 1) * LATTICE_STEP,
-                ];
-                if chi[1] < lo || clo[1] > hi {
-                    return None;
-                }
-                let rooms = self.chamber_field_for([clo, chi], (lo, hi));
-                (!rooms.is_empty()).then_some(rooms)
-            });
-
-        let climates: Vec<_> = (0..nz)
-            .flat_map(|z| {
-                (0..nx).map(move |x| {
-                    self.climate_column(
-                        (lx0 + x as i32) * LATTICE_STEP,
-                        (lz0 + z as i32) * LATTICE_STEP,
-                    )
-                })
-            })
-            .collect();
-        lat.walks = fields.carve.then(|| {
-            WalkField::gather(
+        if fields.carve {
+            lat.walks = WalkCells::gather(
                 &self.caches.caves.walks,
                 self.context(),
-                [
-                    [lx0 * LATTICE_STEP, ly0 * LATTICE_STEP, lz0 * LATTICE_STEP],
-                    [
-                        (lx0 + nx as i32 - 1) * LATTICE_STEP,
-                        (ly0 + ny as i32 - 1) * LATTICE_STEP,
-                        (lz0 + nz as i32 - 1) * LATTICE_STEP,
-                    ],
-                ],
-            )
-        });
-        for ly in 0..ny {
-            let wy = (ly0 + ly as i32) * LATTICE_STEP;
-            for lz in 0..nz {
-                let wz = (lz0 + lz as i32) * LATTICE_STEP;
-                for lx in 0..nx {
-                    let wx = (lx0 + lx as i32) * LATTICE_STEP;
-                    let p = [wx as f64, wy as f64, wz as f64];
-                    if fields.carve {
-                        let sample = self.source_sample(
-                            [wx, wy, wz],
-                            (climates[lz * nx + lx][5] - p[1]) / 128.0,
-                            fields,
-                            || {
-                                rooms
-                                    .as_ref()
-                                    .map_or((0.0, 0.0), |r| r.at(wx, wy, wz, self.natural.knead(p)))
-                            },
-                        );
-                        lat.entrance.push(sample.entrance);
-                        lat.density.push(sample.interior);
-                        lat.noodle_a.push(sample.noodle[0]);
-                        lat.noodle_b.push(sample.noodle[1]);
-                        lat.noodle_toggle.push(sample.noodle[2]);
-                        lat.noodle_width.push(sample.noodle[3]);
-                        #[cfg(test)]
-                        {
-                            lat.chamber_live |= sample.chamber_live;
-                        }
-                    }
-                    if fields.biome {
-                        let mut climate = climates[lz * nx + lx];
-                        climate[5] = (climate[5] - p[1]) / 128.0;
-                        for (lane, value) in lat.climate.iter_mut().zip(climate) {
-                            lane.push(value);
-                        }
+                [lx0, ly0, lz0].map(|v| v * LATTICE_STEP),
+                [nx - 1, ny - 1, nz - 1],
+                LATTICE_STEP,
+            );
+        }
+        if fields.carve {
+            self.fill_source(&mut lat, fields);
+        }
+        if fields.biome {
+            let climates: Vec<_> = (0..nz)
+                .flat_map(|z| {
+                    (0..nx).map(move |x| {
+                        self.climate_column(
+                            (lx0 + x as i32) * LATTICE_STEP,
+                            (lz0 + z as i32) * LATTICE_STEP,
+                        )
+                    })
+                })
+                .collect();
+            for ly in 0..ny {
+                let wy = f64::from((ly0 + ly as i32) * LATTICE_STEP);
+                for climate in &climates {
+                    let mut climate = *climate;
+                    climate[5] = (climate[5] - wy) / 128.0;
+                    for (lane, value) in lat.lanes[lane::CLIMATE..].iter_mut().zip(climate) {
+                        lane.push(value);
                     }
                 }
             }
-        }
-        if let Some(walks) = &lat.walks {
-            let (mx, my, mz) = (nx - 1, ny - 1, nz - 1);
-            lat.walk_cells = (0..mx * my * mz)
-                .map(|i| {
-                    let (cx, cz, cy) = (i % mx, (i / mx) % mz, i / (mx * mz));
-                    let lo = [
-                        (lx0 + cx as i32) * LATTICE_STEP,
-                        (ly0 + cy as i32) * LATTICE_STEP,
-                        (lz0 + cz as i32) * LATTICE_STEP,
-                    ];
-                    walks.intersects([lo, lo.map(|v| v + LATTICE_STEP - 1)])
-                })
-                .collect();
         }
         lat
     }

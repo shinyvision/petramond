@@ -109,6 +109,7 @@ impl Section {
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,
+            present: super::IdSet::EMPTY,
         };
         if let Some(metrics) = metrics {
             s.install_metrics(metrics);
@@ -118,6 +119,7 @@ impl Section {
                 s.blocks
                     .fill(SectionSummary::FullWater.virtual_block().id());
             }
+            s.present = super::IdSet::of_cube(&s.blocks);
         } else {
             s.recompute_opaque_count();
         }
@@ -153,6 +155,7 @@ impl Section {
             light_emitter_count,
             shape_render: _,
             light_apertures: _,
+            present: _,
         } = self;
         (*cx, *cy, *cz) == (other.cx, other.cy, other.cz)
             && *random_tick_count == other.random_tick_count

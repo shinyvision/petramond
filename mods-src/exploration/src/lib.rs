@@ -44,7 +44,7 @@ impl Mod for Exploration {
         match Content::resolve(fluids.clone()) {
             Some(content) => {
                 self.content = Some(content);
-                register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN, cavern::GEN_FILTER);
+                register_worldgen_feature(WorldgenStage::Trees, GEN_CAVERN, cavern::gen_filter());
             }
             None => {
                 log("exploration: mushroom content failed to resolve; mushroom decoration disabled")
@@ -52,12 +52,9 @@ impl Mod for Exploration {
         }
         match Dripstone::resolve(fluids) {
             Some(dripstone) => {
+                let filter = dripstone::gen::gen_filter(dripstone.biome);
                 self.dripstone = Some(dripstone);
-                register_worldgen_feature(
-                    WorldgenStage::Trees,
-                    GEN_DRIPSTONE,
-                    dripstone::gen::GEN_FILTER,
-                );
+                register_worldgen_feature(WorldgenStage::Trees, GEN_DRIPSTONE, filter);
                 register_block_behavior(keys::POINTED_DRIPSTONE_HOOK, HOOK_DRIPSTONE);
                 register_event_handler(EventKind::ProjectileHit, 0, HANDLER_PROJECTILE);
                 register_event_handler(EventKind::PlayerDamagePre, 0, HANDLER_PLAYER_DAMAGE);

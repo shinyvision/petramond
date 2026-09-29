@@ -12,6 +12,9 @@ use super::super::face::{quad_for, Face, FaceShading, FACES};
 use super::super::face_emit::{push_cube_face, FaceSpec};
 use super::super::greedy::FlatFace;
 use super::super::vertex::{transition::Transition, BlockLightVertexExt};
+use super::cell_class::{
+    CubeRow, ROW_CANOPY, ROW_LEAVES, ROW_LOG, ROW_MERGES_SELF, ROW_OPAQUE, ROW_TRANSLUCENT,
+};
 use super::cube_face::{
     cube_face_tile, cube_face_uv_turn, face_axes, face_index, facing_face, log_side_cell_uvs,
     log_side_uvs_apply,
@@ -24,7 +27,7 @@ use super::transition;
 
 struct CubeCell {
     cell: Cell,
-    tiles: [Tile; 3],
+    row: CubeRow,
     side_style: Option<(Tile, Option<Tile>, [f32; 3])>,
     log_axis: LogAxis,
     front: Option<(Face, Tile)>,
@@ -39,7 +42,8 @@ impl CubeCell {
             0
         } else {
             cube_face_uv_turn(
-                self.cell.block,
+                self.row.uv_turns,
+                self.row.has(ROW_LOG),
                 face,
                 self.front.map(|(f, _)| f),
                 self.log_axis,
@@ -92,7 +96,7 @@ impl SectionMesher<'_> {
                 // canopy.
                 None => {
                     !self.nb.covers_face(front, face)
-                        && !(cell.block.merges_with_self() && front_block == cell.block)
+                        && !(cube.row.has(ROW_MERGES_SELF) && front_block == cell.block)
                 }
             };
             if visible {
@@ -102,7 +106,8 @@ impl SectionMesher<'_> {
     }
 
     fn cube_cell(&self, cell: &Cell, whole_stack: bool) -> CubeCell {
-        let block = cell.block;
+        let registry = self.nb.registry();
+        let row = registry.cube_row(cell.block.id());
         // Row-declared side treatments, resolved once per cell — the mesher
         // reads row fields, never concrete block ids. A `covered_side` row
         // (grass) swaps its sides to that tile while a snow-cover block sits
@@ -110,25 +115,29 @@ impl SectionMesher<'_> {
         // it heals itself the moment the cover is placed or dug. Otherwise a
         // `side_overlay` row composites its base under the biome-tinted
         // overlay (dirt + grass overlay).
-        let side_style = match block
-            .covered_side()
+        let side_style = match row
+            .covered_side
             .filter(|_| cell_wears_snow(&self.nb, cell.world + IVec3::Y))
         {
-            Some(t) => Some((t, None, self.tints.tile(t.world_tint(), cell.column))),
-            None => block.side_overlay().map(|so| {
+            Some(t) => Some((
+                t,
+                None,
+                self.tints.tile(registry.world_tint(t), cell.column),
+            )),
+            None => row.side_overlay.map(|(base, overlay)| {
                 (
-                    so.base,
-                    Some(so.overlay),
-                    self.tints.tile(so.overlay.world_tint(), cell.column),
+                    base,
+                    Some(overlay),
+                    self.tints.tile(registry.world_tint(overlay), cell.column),
                 )
             }),
         };
-        let log_axis = if block.is_log() {
+        let log_axis = if row.has(ROW_LOG) {
             self.section.log_axis(cell.lx, cell.ly, cell.lz)
         } else {
             LogAxis::Y
         };
-        let front = block.front_tile().map(|front| {
+        let front = row.front.map(|front| {
             (
                 facing_face(self.section.entity_facing(cell.lx, cell.ly, cell.lz)),
                 front,
@@ -136,17 +145,20 @@ impl SectionMesher<'_> {
         });
         CubeCell {
             cell: *cell,
-            tiles: block.tiles(),
+            row,
             side_style,
             log_axis,
             front,
             base: (cell.world - self.anchor).as_vec3(),
-            mergeable: block.is_opaque() || whole_stack,
+            mergeable: row.has(ROW_OPAQUE) || whole_stack,
             crown: OnceCell::new(),
         }
     }
 
     fn plan_transition(&self, pos: IVec3, face: Face, block: u16) -> Option<Transition> {
+        if !self.transition_possible(pos, face, block) {
+            return None;
+        }
         let nb = &self.nb;
         transition::Context {
             rules: self.rules,
@@ -158,18 +170,55 @@ impl SectionMesher<'_> {
         .plan(pos, face, block)
     }
 
+    /// The planner's first rejection — no in-plane neighbour is a DIFFERENT material — read
+    /// straight off the pad by stride, so the common face (a material cell among its own kind)
+    /// never builds the closure context or asks the eight neighbours through it.
+    #[inline]
+    fn transition_possible(&self, pos: IVec3, face: Face, block: u16) -> bool {
+        let rules = self.rules;
+        if rules.memberships(block).is_empty() {
+            return false;
+        }
+        let pad = self.nb.pad();
+        let Some(ci) = self.nb.pad_index(pos) else {
+            return true;
+        };
+        let (u, v) = transition::axes(face);
+        let (us, vs) = (
+            super::lighting::pad_stride(u),
+            super::lighting::pad_stride(v),
+        );
+        transition::NEIGHBOURS.iter().any(|&(dx, dy)| {
+            let i = (ci as isize + dx as isize * us + dy as isize * vs) as usize;
+            let b = pad.table.block(pad.blocks[i]).id();
+            b != block && rules.is_material(b)
+        })
+    }
+
     fn emit_cube_face(&mut self, cube: &CubeCell, face: Face, front: IVec3, front_block: Block) {
         let cell = &cube.cell;
         let block = cell.block;
+        let registry = self.nb.registry();
         let (base_tile, overlay_tile, tint) = match cube.side_style {
             Some(style) if is_side(face) => style,
             _ => {
-                let t = cube_face_tile(block, face, cube.tiles, cube.front, cube.log_axis);
-                (t, None, self.tints.tile(t.world_tint(), cell.column))
+                let t = cube_face_tile(
+                    cube.row.has(ROW_LOG),
+                    face,
+                    cube.row.tiles,
+                    cube.front,
+                    cube.log_axis,
+                );
+                (
+                    t,
+                    None,
+                    self.tints.tile(registry.world_tint(t), cell.column),
+                )
             }
         };
         let tint = self.tints.cube(cell.idx, tint);
-        let base_tile = base_tile.face_variation(cell.world.to_array(), face.normal_code());
+        let base_tile =
+            registry.face_variation(base_tile, cell.world.to_array(), face.normal_code());
         let (ao, light6, block6) = face_lighting(&self.nb, face, front, boundary_plane(face), true);
         let transition = self.plan_transition(cell.world, face, block.id());
         let dyed = self.tints.tinted(cell.idx);
@@ -200,9 +249,9 @@ impl SectionMesher<'_> {
             Some(o) => (o.index() as u32, true),
             None => (0, false),
         };
-        let vbuf = if block.is_translucent() {
+        let vbuf = if cube.row.has(ROW_TRANSLUCENT) {
             &mut self.out.translucent
-        } else if block.is_leaves() && front_block == block {
+        } else if cube.row.has(ROW_LEAVES) && front_block == block {
             &mut self.out.leaf_interior
         } else {
             &mut self.out.opaque
@@ -229,7 +278,7 @@ impl SectionMesher<'_> {
                 self.tints.tile(set.tint, cell.column),
             );
         }
-        if block.is_canopy() {
+        if cube.row.has(ROW_CANOPY) {
             let nb = &self.nb;
             let crown = cube.crown.get_or_init(|| {
                 CrownCorners::new(

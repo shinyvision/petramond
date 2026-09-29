@@ -23,6 +23,24 @@ impl<S: WorldSide> World<S> {
 }
 
 impl ReplicaWorld {
+    /// [`section_sealed_by_loaded_neighbors`](Self::section_sealed_by_loaded_neighbors) read off
+    /// an already gathered neighbourhood.
+    pub(in crate::world) fn sealed_by_loaded_neighbors_in(
+        &self,
+        pos: SectionPos,
+        nbhd: &super::mesh_jobs::MeshNbhd,
+    ) -> bool {
+        if self.data.last_load_target.is_some() && self.near_load_center(pos) {
+            return false;
+        }
+        petramond_math::math::FACE_NEIGHBORS.into_iter().all(|d| {
+            nbhd[crate::world::mesh_pool::nbhd_idx27(d.x, d.y, d.z)]
+                .as_ref()
+                .is_some_and(|s| s.face_plane_fully_opaque(-d.x, -d.y, -d.z))
+        })
+    }
+
+    #[cfg(test)]
     pub(in crate::world) fn clear_mesh_if_section_produces_no_mesh(
         &mut self,
         pos: SectionPos,
@@ -30,6 +48,12 @@ impl ReplicaWorld {
         if !self.section_produces_no_mesh(pos) {
             return false;
         }
+        self.settle_no_mesh_output(pos);
+        true
+    }
+
+    /// An all-air section settles to no mesh: drop any installed geometry and every queue entry.
+    pub(in crate::world) fn settle_no_mesh_output(&mut self, pos: SectionPos) {
         if self.side.terrain.remove_mesh(pos) {
             self.side
                 .terrain
@@ -47,6 +71,5 @@ impl ReplicaWorld {
             // result so it cannot reinstall geometry after we settle to no output.
             s.mesh_revision = s.mesh_revision.wrapping_add(1);
         }
-        true
     }
 }

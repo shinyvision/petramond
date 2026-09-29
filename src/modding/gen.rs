@@ -56,6 +56,7 @@ use super::instance::ModInstance;
 
 mod ahead;
 mod claims;
+mod gate;
 mod quiet;
 
 const STAGE_COUNT: usize = 5;
@@ -93,6 +94,7 @@ struct FeatureHook {
     quiet: quiet::Quiet,
     claims: claims::ClaimTiles,
     ahead: ahead::Ahead,
+    gate: gate::GateVerdicts,
 }
 
 struct StageHook {
@@ -137,30 +139,29 @@ impl GenHooks {
         {
             return FeatureOutcome::Skipped;
         }
+        if !hook.filter.admits_columns(inputs.biomes) {
+            return FeatureOutcome::Skipped;
+        }
         if hook.quiet.contains(inputs.section_pos) {
             return FeatureOutcome::Skipped;
         }
         if let Some(plan) = hook.ahead.take(inputs.section_pos) {
             return FeatureOutcome::Plan(plan);
         }
+        if let Some(gate) = &hook.filter.underground {
+            if !hook.gate.admits(gate, self.seed, inputs.section_pos) {
+                return FeatureOutcome::Skipped;
+            }
+        }
+        let (blocks, surface_heights, biomes) =
+            wire_inputs(inputs, hook.filter.needs_blocks, hook.filter.needs_columns);
         let call = GuestCall::GenFeature {
             feature_id: hook.feature_id,
             section_pos: inputs.section_pos,
             seed: inputs.seed,
-            blocks: inputs
-                .blocks
-                .filter(|_| hook.filter.needs_blocks)
-                .map_or_else(Vec::new, |c| c.iter().collect()),
-            surface_heights: if hook.filter.needs_columns {
-                inputs.surface_heights.to_vec()
-            } else {
-                Vec::new()
-            },
-            biomes: if hook.filter.needs_columns {
-                inputs.biomes.to_vec()
-            } else {
-                Vec::new()
-            },
+            blocks,
+            surface_heights,
+            biomes,
             sea_level: SEA_LEVEL,
         };
         self.dispatch(hook.mod_idx, &call, |ret| match ret {
@@ -335,14 +336,15 @@ impl GenHooks {
     }
 
     fn stage_call(&self, hook: &StageHook, stage: WorldgenStage, inputs: &GenInputs) -> GuestCall {
+        let (blocks, surface_heights, biomes) = wire_inputs(inputs, true, true);
         GuestCall::GenStage {
             callback_id: hook.callback_id,
             stage,
             section_pos: inputs.section_pos,
             seed: inputs.seed,
-            blocks: inputs.blocks.map_or_else(Vec::new, |c| c.iter().collect()),
-            surface_heights: inputs.surface_heights.to_vec(),
-            biomes: inputs.biomes.to_vec(),
+            blocks,
+            surface_heights,
+            biomes,
             sea_level: SEA_LEVEL,
         }
     }
@@ -428,6 +430,34 @@ impl GenHooks {
         }
         Some(inst)
     }
+}
+
+/// The section inputs as the wire carries them: ids as little-endian pairs, heights as
+/// little-endian `i32`s, biome ids as they are; each empty when the feature declined it.
+fn wire_inputs(inputs: &GenInputs, blocks: bool, columns: bool) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    let blocks = match inputs.blocks.filter(|_| blocks) {
+        Some(cube) => {
+            let mut out = Vec::new();
+            cube.write_le_bytes(&mut out);
+            out
+        }
+        None => Vec::new(),
+    };
+    let heights = if columns {
+        inputs
+            .surface_heights
+            .iter()
+            .flat_map(|y| y.to_le_bytes())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let biomes = if columns {
+        inputs.biomes.to_vec()
+    } else {
+        Vec::new()
+    };
+    (blocks, heights, biomes)
 }
 
 fn reply_shape(call: &str, expected: &str, got: &GuestRet) -> String {
@@ -721,6 +751,7 @@ impl GenHooksBuilder {
             quiet: Default::default(),
             claims: Default::default(),
             ahead: Default::default(),
+            gate: Default::default(),
         });
     }
 

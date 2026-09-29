@@ -82,7 +82,7 @@ fn test_system(field: impl SampledScalarField + 'static) -> SurfaceDensitySystem
         .set_channel(Channel::new(channels::MASTER_DENSITY), node);
     SurfaceDensitySystem {
         seed,
-        density: density.into(),
+        columns: Columns::new(density.into(), crate::cache::installed()),
         climate: Box::leak(Box::new(plains_index())),
         surface: SurfaceSystem,
     }
@@ -116,7 +116,7 @@ fn coast_system() -> SurfaceDensitySystem {
         .set_channel(Channel::new(channels::VARIANCE), zero);
     SurfaceDensitySystem {
         seed,
-        density: density.into(),
+        columns: Columns::new(density.into(), crate::cache::installed()),
         climate: Box::leak(Box::new(coast_index())),
         surface: SurfaceSystem,
     }
@@ -157,7 +157,13 @@ fn section_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &Region
 }
 
 fn lattice_fill(system: &SurfaceDensitySystem, cx: i32, cz: i32, region: &RegionCells) -> Chunk {
-    let lattice = master_density_lattice(&system.density, DensityLatticeBounds::chunk(cx, cz));
+    let lattice = DensityLattice::sample_channel(
+        system.columns.graph().graph(),
+        channels::MASTER_DENSITY,
+        DensityLatticeBounds::chunk(cx, cz),
+        DensityLatticeCellSize::default(),
+    )
+    .expect("master density");
     let mut chunk = Chunk::new(cx, cz);
     let (ox, oz) = chunk.chunk_origin_world();
     let mut cells = system.climate_cells();
@@ -362,7 +368,7 @@ fn surfaces_are_searched_from_the_density_floor_to_the_world_top() {
     );
     assert_eq!(SURFACE_FLOOR_Y, SURFACE_SEARCH_Y.start - 1);
     let system = SurfaceDensitySystem::new(0x5EA_0013);
-    let heights = surface_heights(&system.density, -40, 25, 24, 24);
+    let heights = surface_heights(&system.columns, -40, 25, 24, 24);
     assert_eq!(heights.len(), 24 * 24);
     assert!(heights.iter().all(|h| SURFACE_SEARCH_Y.contains(h)));
 }

@@ -1,3 +1,4 @@
+mod batch;
 mod builders;
 mod cache;
 mod node;
@@ -95,6 +96,13 @@ pub enum Axis {
 pub trait SampledScalarField: Debug + Send + Sync {
     fn sample(&self, point: SamplePoint) -> f64;
 
+    /// `out[i] = self.sample(points[i])`, bit for bit.
+    fn sample_batch(&self, points: &[SamplePoint], out: &mut [f64]) {
+        for (point, out) in points.iter().zip(out) {
+            *out = self.sample(*point);
+        }
+    }
+
     fn depends_on_y(&self) -> bool {
         true
     }
@@ -106,6 +114,14 @@ pub struct ScalarGraph {
     nodes: Vec<Node>,
     y_dependencies: Vec<bool>,
     outputs: BTreeMap<String, NodeId>,
+}
+
+impl ScalarGraph {
+    /// Unique per graph instance (clones included): a key for values derived
+    /// from this graph.
+    pub fn id(&self) -> u64 {
+        self.graph_id.0
+    }
 }
 
 impl Default for ScalarGraph {

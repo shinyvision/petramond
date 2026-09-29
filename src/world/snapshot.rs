@@ -62,14 +62,33 @@ impl ServerWorld {
         }
     }
 
+    /// Persists every loaded section whose saved form is out of date. Only sections touched
+    /// since the last flush, relit or light-edited since their last persist, holding (or with a
+    /// record holding) entities can be, so those are the only ones examined.
     pub fn flush_modified_chunks(&mut self) {
         if self.side.save.is_none() {
             return;
         }
         self.apply_light_edits();
+        self.repair_random_tick_index();
         let mut by_section = self.side.entities.dropped_items.items_by_section();
         let mut mobs_by_section = self.side.entities.mobs.saved_by_section();
-        let positions: Vec<SectionPos> = self.data.sections.keys().copied().collect();
+        let mut positions: Vec<SectionPos> = std::mem::take(&mut self.data.persist_candidates)
+            .into_iter()
+            .chain(by_section.keys().copied())
+            .chain(mobs_by_section.keys().copied())
+            .chain(self.data.relit_since_persist.iter().copied())
+            .chain(self.data.light_edited_since_persist.iter().copied())
+            .chain(
+                self.side
+                    .save
+                    .iter()
+                    .flat_map(|save| save.sections_holding_entities()),
+            )
+            .filter(|pos| self.data.sections.contains_key(pos))
+            .collect();
+        positions.sort_unstable_by_key(|p| (p.cx, p.cz, p.cy));
+        positions.dedup();
         let mut snaps = Vec::new();
         let mut persisted = Vec::new();
         for pos in positions {
@@ -88,8 +107,8 @@ impl ServerWorld {
             }
         }
         for pos in persisted {
-            if let Some(s) = self.data.section_mut(pos) {
-                s.modified = false;
+            if let Some(section) = self.data.sections.get_mut(&pos) {
+                std::sync::Arc::make_mut(section).modified = false;
             }
             self.data.relit_since_persist.remove(&pos);
             self.data.light_edited_since_persist.remove(&pos);

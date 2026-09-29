@@ -53,11 +53,11 @@ fn particles_stay_inside_the_volume_and_above_the_ground() {
     let world = petramond::world::testutil::flat_replica_world();
     let spec = rain_spec(AmbientHit::Die);
     let mut out = Vec::new();
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     for step in 0..40 {
         let time = step as f32 * 0.05;
         out.clear();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             &spec,
             None,
@@ -113,10 +113,10 @@ fn covered_camera_derives_nothing_below_the_roof() {
     }
     let spec = rain_spec(AmbientHit::Die);
     let mut out = Vec::new();
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     for step in 0..40 {
         out.clear();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             &spec,
             None,
@@ -152,10 +152,10 @@ fn splashes_appear_at_the_kill_height_shortly_after_hits() {
     let splash = splash_spec();
     let mut splashes_seen = 0;
     let mut out = Vec::new();
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     for step in 0..200 {
         out.clear();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             &spec,
             Some(&splash),
@@ -210,7 +210,7 @@ fn jumping_does_not_restart_or_move_ground_splashes() {
                 cam,
                 time: 3.25,
             },
-            &mut FxHashMap::default(),
+            &mut DeriveCache::default(),
             &mut out,
         );
         out.into_iter()
@@ -283,7 +283,7 @@ fn windy_advection_keeps_invariants_and_splash_anchors_static() {
     };
     let diameter = spec.radius * 2.0;
     let mut adv = [0.0f32, 0.0];
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     let mut prev: Vec<(i32, i32)> = Vec::new();
     let mut prev_falling: Vec<(f32, f32)> = Vec::new();
     let mut crown_frames = 0;
@@ -299,7 +299,7 @@ fn windy_advection_keeps_invariants_and_splash_anchors_static() {
         adv[0] = (adv[0] + wind[0] * dt).rem_euclid(diameter);
         adv[1] = (adv[1] + wind[1] * dt).rem_euclid(diameter);
         let mut out = Vec::new();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             &spec,
             Some(&splash),
@@ -416,7 +416,7 @@ fn an_interior_volume_derives_where_precipitation_cannot() {
     let cam = WorldPos::new(8.0, 70.0, 8.0);
     let mut spec = rain_spec(AmbientHit::Die);
     spec.height = [6.0, 6.0];
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     let mut counts = [0usize; 2];
     for (i, kill) in [AmbientKill::Ceiling, AmbientKill::Interior]
         .into_iter()
@@ -425,7 +425,7 @@ fn an_interior_volume_derives_where_precipitation_cannot() {
         spec.kill = kill;
         for step in 0..20 {
             let mut out = Vec::new();
-            ceilings.clear();
+            ceilings.begin_frame();
             derive_volume(
                 &spec,
                 None,
@@ -454,7 +454,7 @@ fn an_interior_volume_derives_where_precipitation_cannot() {
         counts[1]
     );
     let mut out = Vec::new();
-    ceilings.clear();
+    ceilings.begin_frame();
     derive_volume(
         &spec,
         None,
@@ -508,7 +508,7 @@ fn world_lit_motes_take_the_cells_own_light() {
     spec.kill = AmbientKill::Interior;
     let sample = |spec: &AmbientSpec| {
         let mut out = Vec::new();
-        let mut ceilings = FxHashMap::default();
+        let mut ceilings = DeriveCache::default();
         derive_volume(
             spec,
             None,
@@ -574,7 +574,7 @@ fn ambient_particles_stay_world_anchored_when_the_camera_moves() {
     let time = 37.0;
     let sample = |spec: &AmbientSpec, cam: WorldPos| {
         let mut out = Vec::new();
-        let mut ceilings = FxHashMap::default();
+        let mut ceilings = DeriveCache::default();
         derive_volume(
             spec,
             None,
@@ -650,10 +650,10 @@ fn a_teleported_camera_still_stands_in_a_full_volume() {
     spec.height = [8.0, 10.0];
     spec.kill = AmbientKill::Interior;
     spec.light = AmbientLight::World;
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     for cam_y in [120.0f32, 200.0, 90.0] {
         let mut out = Vec::new();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             &spec,
             None,
@@ -705,7 +705,7 @@ fn biome_density_thins_a_driven_fall_per_particle() {
                 cam: CAM,
                 time: 1.0,
             },
-            &mut FxHashMap::default(),
+            &mut DeriveCache::default(),
             &mut out,
         );
         out
@@ -737,10 +737,10 @@ fn biome_filter_gates_columns() {
     let mut denied = rain_spec(AmbientHit::Die);
     allowed.biome_allow = Some([1u64, 0, 0, 0]);
     denied.biome_allow = Some([!1u64, u64::MAX, u64::MAX, u64::MAX]);
-    let mut ceilings = FxHashMap::default();
+    let mut ceilings = DeriveCache::default();
     for (spec, expect_some) in [(&allowed, true), (&denied, false)] {
         let mut out = Vec::new();
-        ceilings.clear();
+        ceilings.begin_frame();
         derive_volume(
             spec,
             None,

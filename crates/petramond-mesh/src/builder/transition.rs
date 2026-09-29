@@ -33,11 +33,16 @@ pub(super) fn needs_tint(section: &Section, rules: &Rules) -> bool {
 }
 
 pub(super) fn axes(face: Face) -> (IVec3, IVec3) {
-    let q = face.quad_box([0.0; 3], [1.0; 3]).map(Vec3::from_array);
-    ((q[2] - q[3]).as_ivec3(), (q[0] - q[3]).as_ivec3())
+    static AXES: std::sync::LazyLock<[(IVec3, IVec3); 6]> = std::sync::LazyLock::new(|| {
+        Face::ALL.map(|face| {
+            let q = face.quad_box([0.0; 3], [1.0; 3]).map(Vec3::from_array);
+            ((q[2] - q[3]).as_ivec3(), (q[0] - q[3]).as_ivec3())
+        })
+    });
+    AXES[face as usize]
 }
 
-const NEIGHBOURS: [(i32, i32); 8] = [
+pub(super) const NEIGHBOURS: [(i32, i32); 8] = [
     (-1, -1),
     (0, -1),
     (1, -1),

@@ -210,7 +210,7 @@ impl ChunkGenerator {
     ) -> Self {
         Self {
             seed,
-            surface_density: SurfaceDensitySystem::new(seed),
+            surface_density: SurfaceDensitySystem::new(seed).with_caches(Arc::clone(&caches)),
             caves: CaveField::new(seed).with_caches(caches),
             hooks,
         }
@@ -380,9 +380,13 @@ impl ChunkGenerator {
     }
 
     fn finish_feature_windows(&self, ox: i32, oz: i32, candidates: RegionCells) -> FeatureWindows {
-        let needs_support = candidates.biomes.iter().any(|b| {
-            super::biome::trees::profile(*b).support
-                == super::biome::trees::TreeSupport::RedwoodBase
+        let mut last = None;
+        let needs_support = candidates.biomes.iter().any(|&b| {
+            last != Some(b) && {
+                last = Some(b);
+                super::biome::trees::profile(b).support
+                    == super::biome::trees::TreeSupport::RedwoodBase
+            }
         });
 
         let support = needs_support.then(|| {
@@ -477,7 +481,7 @@ impl ChunkGenerator {
                     let has_stone = sec_lo <= col.core.surf_max;
                     let (scatter_lo, scatter_hi) = scatter::y_span();
                     if has_stone && ranges_overlap(sec_lo, sec_hi, scatter_lo, scatter_hi) {
-                        scatter::place_underground_section(section, self.seed);
+                        scatter::place_underground_section(section, self.seed, self.caves.caches());
                     }
                 }
             }

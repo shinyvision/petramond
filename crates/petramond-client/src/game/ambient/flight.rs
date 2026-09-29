@@ -20,7 +20,9 @@ use petramond::world::ReplicaWorld;
 use petramond_world::particle_emitters::{AmbientLight, AmbientSpec, FlightSpec};
 
 use super::super::presentation::{ParticleAtlas, ParticlePresentation};
-use super::{colour, lerp_range, Activation, View, SKY_OPEN_LIGHT};
+use super::{
+    colour, column_facts, floor_i32, lerp_range, Activation, ColumnInfoCache, View, SKY_OPEN_LIGHT,
+};
 
 const HOVER_BOB_RATE: f32 = 2.3;
 const ORBIT_Z_RATE: f32 = 0.73;
@@ -47,11 +49,13 @@ pub(super) fn orbit(flight: &FlightSpec, seed: u64, time: f32) -> (Vec3, Vec3) {
     (offset, heading.normalize_or(Vec3::Z))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn orbit_ground(
     spec: &AmbientSpec,
     flight: &FlightSpec,
     act: &Activation,
     world: &ReplicaWorld,
+    columns: &mut ColumnInfoCache,
     x: f64,
     z: f64,
     roll: f32,
@@ -60,16 +64,17 @@ pub(super) fn orbit_ground(
     let (rx, rz) = (flight.orbit[0] + reach, flight.orbit[1] + reach);
     let mut highest = f32::NEG_INFINITY;
     let (rx, rz) = (f64::from(rx), f64::from(rz));
-    for wz in (z - rz).floor() as i32..=(z + rz).floor() as i32 {
-        for wx in (x - rx).floor() as i32..=(x + rx).floor() as i32 {
-            let biome = world.data().biome_at_world(wx, wz)?;
+    for wz in floor_i32(z - rz)..=floor_i32(z + rz) {
+        for wx in floor_i32(x - rx)..=floor_i32(x + rx) {
+            let facts = column_facts(world, columns, wx, wz)?;
+            let biome = facts.biome;
             if !petramond_world::particle_emitters::biome_allowed(&spec.biome_allow, biome)
                 || !act.admits(roll, biome)
             {
                 return None;
             }
-            let ground = world.data().precipitation_ceiling_y(wx, wz)?;
-            let support = world.data().block_if_loaded(wx, ground, wz)?;
+            let ground = facts.ceiling?;
+            let support = facts.support?;
             if !flight.ground.is_empty() && !flight.ground.iter().any(|&t| support.has_tag(t)) {
                 return None;
             }
@@ -100,6 +105,7 @@ pub(super) fn derive_flight(
     flight: &FlightSpec,
     act: &Activation,
     view: &View,
+    columns: &mut ColumnInfoCache,
     out: &mut Vec<ParticlePresentation>,
 ) {
     if act.intensity <= 0.0 {
@@ -125,7 +131,7 @@ pub(super) fn derive_flight(
             if roll >= 1.0 {
                 continue;
             }
-            let Some(ground) = orbit_ground(spec, flight, act, world, x, z, roll) else {
+            let Some(ground) = orbit_ground(spec, flight, act, world, columns, x, z, roll) else {
                 continue;
             };
             let pos =

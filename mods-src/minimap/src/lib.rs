@@ -47,6 +47,7 @@ struct Minimap {
     arrow_yaw_bits: Option<u32>,
     explored_revision: u64,
     hud_stamp: Option<HudStamp>,
+    hud: HudRaster,
     full_layouts: Option<(u64, i8, Vec<FullWaypointLayout>)>,
     text_sizes: HashMap<String, [u16; 2]>,
 }
@@ -193,6 +194,7 @@ impl Minimap {
         self.last_sample = None;
         self.explored_revision = self.explored_revision.wrapping_add(1);
         self.hud_stamp = None;
+        self.hud = HudRaster::default();
         self.full_tile_slots = FullTileSlots::default();
         self.full_scene_stamp = None;
         self.full_view_bits = None;

@@ -105,6 +105,27 @@ impl ShapeSim for BoxSetFamily {
             })
     }
 
+    fn shade_boxes(
+        &self,
+        p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
+        out: &mut Vec<Aabb>,
+    ) -> bool {
+        for d in box_set(p)
+            .boxes(box_set_turns(nb, pos, b), box_set_form(p, nb, pos))
+            .iter()
+            .filter(|d| d.occludes && d.casts_ao)
+        {
+            if d.pose.is_some() {
+                return false;
+            }
+            out.push(d.aabb);
+        }
+        true
+    }
+
     fn light_shape(&self, _p: &ShapeParams, _b: Block) -> crate::block::BlockLightShape {
         crate::block::BlockLightShape::Shaped
     }

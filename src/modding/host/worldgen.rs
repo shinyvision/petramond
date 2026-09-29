@@ -20,6 +20,9 @@ pub(super) fn handle_worldgen_call(data: &mut ModStoreData, call: WorldgenCall) 
         WorldgenCall::UndergroundBiomesInBox { lo, hi } => HostRet::UndergroundBiomes(
             petramond_worldgen::underground_biomes_in_box(data.world_seed(), lo, hi),
         ),
+        WorldgenCall::UndergroundBiomeLeaves { lo, hi, biome } => HostRet::LeafMask(
+            petramond_worldgen::underground_biome_leaves(data.world_seed(), lo, hi, biome),
+        ),
         WorldgenCall::TerrainBlocksAt { positions } => {
             match batch_guard("TerrainBlocksAt position", positions.len()) {
                 Some(err) => err,

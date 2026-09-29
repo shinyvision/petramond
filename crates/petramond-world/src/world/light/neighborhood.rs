@@ -1,12 +1,11 @@
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use crate::world::section_map::SectionMap;
 
 use crate::chunk::{section_idx, SectionPos, SECTION_SIZE};
 use crate::light::LightRgb;
 use crate::mathh::IVec3;
 use crate::section::{BlockCube, Section};
 
-use super::shape::{ShapeStateSnapshot, SparseCellState};
+use super::shape::{ApertureScratch, SparseCellState};
 
 #[inline]
 pub fn cube_idx(dim: usize, x: usize, y: usize, z: usize) -> usize {
@@ -30,18 +29,17 @@ fn window_pos(low: SectionPos, dx: usize, dy: usize, dz: usize) -> SectionPos {
 }
 
 impl Snapshot {
-    pub fn gather(
-        low: SectionPos,
-        span: usize,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
-    ) -> Self {
+    pub fn gather(low: SectionPos, span: usize, sections: &SectionMap) -> Self {
         let dim = span * SECTION_SIZE;
         let mut blocks = vec![None; span * span * span];
         let mut states = Vec::new();
-        for dy in 0..span {
-            for dz in 0..span {
-                for dx in 0..span {
-                    let Some(section) = sections.get(&window_pos(low, dx, dy, dz)) else {
+        for dz in 0..span {
+            for dx in 0..span {
+                let Some(column) = sections.column(window_pos(low, dx, 0, dz).chunk_pos()) else {
+                    continue;
+                };
+                for dy in 0..span {
+                    let Some(section) = column.at(low.cy + dy as i32) else {
                         continue;
                     };
                     blocks[span_idx(span, dx, dy, dz)] = Some(section.block_cube());
@@ -76,8 +74,39 @@ impl Snapshot {
         &self.states
     }
 
-    pub fn shape_states(&self) -> ShapeStateSnapshot {
-        ShapeStateSnapshot::from_sparse(&self.states, self.volume())
+    pub fn fill_apertures(&self, scratch: &mut ApertureScratch) {
+        scratch.fill(&self.states, self.volume());
+    }
+
+    /// Whether every gathered section stores byte ids, so the cube can be assembled as bytes.
+    pub fn all_narrow(&self) -> bool {
+        self.blocks.iter().flatten().all(BlockCube::is_narrow)
+    }
+
+    pub fn assemble_narrow(&self, out: &mut [u8]) {
+        debug_assert_eq!(out.len(), self.volume());
+        let (span, dim) = (self.span, self.dim());
+        out.fill(0);
+        for dy in 0..span {
+            for dz in 0..span {
+                for dx in 0..span {
+                    let Some(src) = &self.blocks[span_idx(span, dx, dy, dz)] else {
+                        continue;
+                    };
+                    let (bx, by, bz) = (dx * SECTION_SIZE, dy * SECTION_SIZE, dz * SECTION_SIZE);
+                    for ly in 0..SECTION_SIZE {
+                        for lz in 0..SECTION_SIZE {
+                            let d = cube_idx(dim, bx, by + ly, bz + lz);
+                            let s = section_idx(0, ly, lz);
+                            let row = src
+                                .narrow_row(s, SECTION_SIZE)
+                                .expect("assemble_narrow needs narrow cubes");
+                            out[d..d + SECTION_SIZE].copy_from_slice(row);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn assemble_blocks(&self, out: &mut [u16]) {
@@ -107,14 +136,17 @@ impl Snapshot {
 pub fn collect_emitters(
     low: SectionPos,
     span: usize,
-    sections: &FxHashMap<SectionPos, Arc<Section>>,
+    sections: &SectionMap,
 ) -> Vec<(IVec3, LightRgb)> {
     let mut emitters = Vec::new();
-    for dy in 0..span {
-        for dz in 0..span {
-            for dx in 0..span {
+    for dz in 0..span {
+        for dx in 0..span {
+            let Some(column) = sections.column(window_pos(low, dx, 0, dz).chunk_pos()) else {
+                continue;
+            };
+            for dy in 0..span {
                 let npos = window_pos(low, dx, dy, dz);
-                if let Some(section) = sections.get(&npos) {
+                if let Some(section) = column.at(npos.cy) {
                     collect_section_emitters(npos, section, &mut emitters);
                 }
             }
@@ -131,18 +163,20 @@ pub fn collect_section_emitters(
     if !section.has_light_emitters() {
         return;
     }
+    let table = crate::block::BlockTable::current();
     let (ox, oy, oz) = pos.origin_world();
-    for (idx, id) in section.blocks_iter().enumerate() {
-        let block = crate::block::Block::from_id(id);
-        if block.light_emission() > 0 {
-            let [r, g, b] = block.light_emission_rgb();
+    let blocks = section.blocks();
+    blocks.cells_where(
+        |id| table.emission(id) > 0,
+        |idx| {
+            let [r, g, b] = table.emission_rgb(blocks.get(idx));
             let (lx, ly, lz) = crate::chunk::section_local(idx);
             out.push((
                 IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32),
                 LightRgb::new(r, g, b),
             ));
-        }
-    }
+        },
+    );
 }
 
 #[cfg(test)]

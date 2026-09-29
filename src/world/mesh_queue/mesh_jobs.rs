@@ -2,6 +2,7 @@ use crate::world::ReplicaWorld;
 use std::sync::Arc;
 
 use petramond_world::chunk::{self, ChunkPos, SectionPos};
+use petramond_world::section::Section;
 
 use super::{RESULT_DRAIN_MIN, RESULT_DRAIN_TIME_BUDGET};
 
@@ -58,26 +59,57 @@ impl ReplicaWorld {
         }
     }
 
+    /// The 3x3x3 section handles around `pos` (centre at `nbhd_idx27(0, 0, 0)`): one column
+    /// probe per XZ column and a slot read per section, shared by every scheduling test and the
+    /// job snapshot of one candidate instead of each walking the map on its own.
+    pub(in crate::world) fn gather_mesh_neighbourhood(&self, pos: SectionPos) -> MeshNbhd {
+        use crate::world::mesh_pool::nbhd_idx27;
+        let mut out: MeshNbhd = std::array::from_fn(|_| None);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let Some(column) = self
+                    .data
+                    .sections
+                    .column(ChunkPos::new(pos.cx + dx, pos.cz + dz))
+                else {
+                    continue;
+                };
+                for dy in -1..=1 {
+                    out[nbhd_idx27(dx, dy, dz)] = column.at(pos.cy + dy).cloned();
+                }
+            }
+        }
+        out
+    }
+
     pub(in crate::world) fn build_mesh_job(
         &self,
         pos: SectionPos,
+    ) -> Option<crate::world::mesh_pool::MeshJob> {
+        let nbhd = self.gather_mesh_neighbourhood(pos);
+        self.build_mesh_job_from(pos, &nbhd)
+    }
+
+    pub(in crate::world) fn build_mesh_job_from(
+        &self,
+        pos: SectionPos,
+        sections: &MeshNbhd,
     ) -> Option<crate::world::mesh_pool::MeshJob> {
         use crate::world::mesh_pool::{
             biome_pad_idx, empty_biome, nbhd_idx27, MeshJob, NeighborSnap, BIOME_PAD,
             BIOME_PAD_RADIUS,
         };
 
-        let center = (**self.data.sections.get(&pos)?).clone();
+        let center = Arc::clone(sections[nbhd_idx27(0, 0, 0)].as_ref()?);
         let revision = center.mesh_revision;
 
+        let blanket_ids = crate::world::mesh_pool::BLANKET_IDS.current();
         let mut nbhd: [Option<NeighborSnap>; 27] = std::array::from_fn(|_| None);
         for dy in -1..=1 {
             for dz in -1..=1 {
                 for dx in -1..=1 {
-                    nbhd[nbhd_idx27(dx, dy, dz)] = self
-                        .data
-                        .sections
-                        .get(&SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz))
+                    nbhd[nbhd_idx27(dx, dy, dz)] = sections[nbhd_idx27(dx, dy, dz)]
+                        .as_ref()
                         .map(|s| NeighborSnap {
                             blocks: s.block_cube(),
                             fluid: s.fluid_arc(),
@@ -89,6 +121,7 @@ impl ReplicaWorld {
                                 .into_keys()
                                 .map(|key| (key, true))
                                 .collect(),
+                            blanket: s.may_contain(blanket_ids),
                         })
                         .or_else(|| {
                             let n = SectionPos::new(pos.cx + dx, pos.cy + dy, pos.cz + dz);
@@ -102,6 +135,7 @@ impl ReplicaWorld {
                                     blocklight: None,
                                     cell_states: None,
                                     transition_tints: Box::new([]),
+                                    blanket: false,
                                 })
                         });
                 }
@@ -142,6 +176,9 @@ impl ReplicaWorld {
         })
     }
 }
+
+/// The 27 section handles a mesh candidate's checks and snapshot share.
+pub(in crate::world) type MeshNbhd = [Option<Arc<Section>>; 27];
 
 fn sparse_state_snapshot<T: Copy>(
     map: &petramond_world::section::CellMap<T>,

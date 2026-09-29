@@ -139,10 +139,29 @@ impl ServerWorld {
             (pos.z + SIM_READ_REACH).div_euclid(s),
         );
         let mut waiting = false;
-        for cy in y0..=y1 {
-            for cz in z0..=z1 {
-                for cx in x0..=x1 {
-                    match self.section_stream_state(SectionPos::new(cx, cy, cz), quiet) {
+        let writable_everywhere = self.data.stream_nonfinal.is_empty();
+        for cz in z0..=z1 {
+            for cx in x0..=x1 {
+                let loaded = self
+                    .data
+                    .section_column_cys
+                    .get(&petramond_world::chunk::ChunkPos::new(cx, cz))
+                    .copied()
+                    .unwrap_or(0);
+                for cy in y0..=y1 {
+                    let sp = SectionPos::new(cx, cy, cz);
+                    let state = if SectionPos::cy_in_range(cy)
+                        && loaded & crate::world::store::column_cy_bit(cy) != 0
+                    {
+                        if quiet || writable_everywhere || self.data.stream_writable(sp) {
+                            StreamState::Final
+                        } else {
+                            StreamState::InFlight
+                        }
+                    } else {
+                        self.section_stream_state(sp, quiet)
+                    };
+                    match state {
                         StreamState::Final => {}
                         StreamState::InFlight => waiting = true,
                         StreamState::Unresolved => return SimReadiness::Drop,

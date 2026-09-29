@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -8,7 +7,7 @@ use crate::light::{LightRgb, DECAY};
 use crate::mathh::IVec3;
 
 use super::neighborhood::cube_idx;
-use super::shape::LightCells;
+use super::shape::{BlockIds, LightCells};
 use super::{NBHD, NBHD_VOLUME};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -17,7 +16,57 @@ pub const EMITTER_LIGHT: u8 = 28;
 pub struct FloodScratch {
     sky: Vec<u8>,
     block: Vec<LightRgb>,
-    queue: VecDeque<Cursor>,
+    queue: Fifo,
+}
+
+/// The flood's FIFO: a power-of-two ring over a `Vec` with the push and pop inline (the
+/// standard deque's out-of-line calls were a tenth of the flood). Grows by doubling when full,
+/// so a cell pushed several times as its level climbs never wraps onto an unpopped entry.
+#[derive(Default)]
+pub struct Fifo {
+    buf: Vec<Cursor>,
+    head: usize,
+    len: usize,
+}
+
+impl Fifo {
+    #[inline]
+    fn clear(&mut self) {
+        self.head = 0;
+        self.len = 0;
+    }
+
+    #[inline]
+    fn push_back(&mut self, c: Cursor) {
+        if self.len == self.buf.len() {
+            self.grow();
+        }
+        let cap = self.buf.len();
+        self.buf[(self.head + self.len) & (cap - 1)] = c;
+        self.len += 1;
+    }
+
+    #[inline]
+    fn pop_front(&mut self) -> Option<Cursor> {
+        if self.len == 0 {
+            return None;
+        }
+        let c = self.buf[self.head];
+        self.head = (self.head + 1) & (self.buf.len() - 1);
+        self.len -= 1;
+        Some(c)
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let cap = (self.buf.len() * 2).max(1 << 12);
+        let mut next = vec![0 as Cursor; cap];
+        for (i, slot) in next.iter_mut().enumerate().take(self.len) {
+            *slot = self.buf[(self.head + i) & (self.buf.len() - 1)];
+        }
+        self.buf = next;
+        self.head = 0;
+    }
 }
 
 impl Default for FloodScratch {
@@ -31,11 +80,11 @@ impl FloodScratch {
         Self {
             sky: vec![0u8; NBHD_VOLUME],
             block: Vec::new(),
-            queue: VecDeque::new(),
+            queue: Fifo::default(),
         }
     }
 
-    fn reset_sky(&mut self, volume: usize) -> (&mut [u8], &mut VecDeque<Cursor>) {
+    fn reset_sky(&mut self, volume: usize) -> (&mut [u8], &mut Fifo) {
         if self.sky.len() < volume {
             self.sky.resize(volume, 0);
         }
@@ -43,7 +92,7 @@ impl FloodScratch {
         (&mut self.sky[..volume], &mut self.queue)
     }
 
-    fn reset_block(&mut self, volume: usize) -> (&mut [LightRgb], &mut VecDeque<Cursor>) {
+    fn reset_block(&mut self, volume: usize) -> (&mut [LightRgb], &mut Fifo) {
         if self.block.len() < volume {
             self.block.resize(volume, LightRgb::ZERO);
         }
@@ -54,22 +103,51 @@ impl FloodScratch {
     }
 }
 
-pub fn skylight(
+pub fn skylight<B: BlockIds>(
     pos: SectionPos,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     surface: &[i32],
     scratch: &mut FloodScratch,
 ) -> Arc<[u8]> {
     let noy = pos.origin_world().1 - SECTION_SIZE as i32;
     let keep = Keep::new(SECTION_SIZE, SECTION_SIZE * 2);
     let light = skylight_cube(noy, NBHD, cells, keep, surface, scratch);
-    clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
+    clip_sky_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
 }
 
-pub fn skylight_cube<'s>(
+/// A section's skylight clipped out of a flood cube, already compacted to the
+/// shared per-value buffer when uniform: the worker has the cells hot, so the
+/// install on the sim thread never rescans them.
+pub fn clip_sky_cube(light: &[u8], dim: usize, off: (usize, usize, usize)) -> Arc<[u8]> {
+    let cube = clip_cube(light, dim, off);
+    let first = cube[0];
+    if cube.iter().all(|&v| v == first) {
+        crate::section::uniform_cube(first)
+    } else {
+        cube
+    }
+}
+
+/// A section's block light clipped out of a flood cube, the shared dark cube
+/// when nothing reached it (the usual case: the emitters that forced the flood
+/// sit in a neighbour).
+pub fn clip_block_cube(
+    light: &[LightRgb],
+    dim: usize,
+    off: (usize, usize, usize),
+) -> Arc<[LightRgb]> {
+    let cube = clip_cube(light, dim, off);
+    if cube.iter().all(|c| c.is_dark()) {
+        crate::light::dark_cube()
+    } else {
+        cube
+    }
+}
+
+pub fn skylight_cube<'s, B: BlockIds>(
     cube_oy: i32,
     dim: usize,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     keep: Keep,
     surface: &[i32],
     scratch: &'s mut FloodScratch,
@@ -141,9 +219,9 @@ pub fn skylight_cube<'s>(
     light
 }
 
-pub fn block_light(
+pub fn block_light<B: BlockIds>(
     pos: SectionPos,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     emitters: &[(IVec3, LightRgb)],
     scratch: &mut FloodScratch,
 ) -> Arc<[LightRgb]> {
@@ -155,13 +233,13 @@ pub fn block_light(
     );
     let keep = Keep::new(SECTION_SIZE, SECTION_SIZE * 2);
     let light = block_light_cube(origin, NBHD, cells, keep, emitters, scratch);
-    clip_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
+    clip_block_cube(light, NBHD, (SECTION_SIZE, SECTION_SIZE, SECTION_SIZE))
 }
 
-pub fn block_light_cube<'s>(
+pub fn block_light_cube<'s, B: BlockIds>(
     origin: (i32, i32, i32),
     dim: usize,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     keep: Keep,
     emitters: &[(IVec3, LightRgb)],
     scratch: &'s mut FloodScratch,
@@ -225,18 +303,38 @@ const CURSOR_STEP: [u32; 6] = [
 
 pub(super) const DOWN: usize = 3;
 
+/// The largest flood cube edge the per-axis loss tables cover (the 2x2x2 batch's 64).
+const KEEP_TABLE: usize = 64;
+
 #[derive(Copy, Clone)]
 pub struct Keep {
     lo: [u32; 3],
     hi: [u32; 3],
+    /// Per coordinate, the lossy steps a cell pays for lying outside the kept box along that
+    /// axis: `flat` for x and z (both sides), and y split into the side below the box (paid by
+    /// every level) and the side above it (paid only once the level has started decaying).
+    flat: [u8; KEEP_TABLE],
+    y_below: [u8; KEEP_TABLE],
+    y_above: [u8; KEEP_TABLE],
 }
 
 impl Keep {
     pub fn new(lo: usize, hi: usize) -> Self {
-        Self {
-            lo: [lo as u32; 3],
-            hi: [hi as u32; 3],
+        let (lo32, hi32) = (lo as u32, hi as u32);
+        let mut keep = Self {
+            lo: [lo32; 3],
+            hi: [hi32; 3],
+            flat: [0; KEEP_TABLE],
+            y_below: [0; KEEP_TABLE],
+            y_above: [0; KEEP_TABLE],
+        };
+        for v in 0..KEEP_TABLE as u32 {
+            let (below, above) = Self::axis(v, lo32, hi32);
+            keep.flat[v as usize] = (below + above).min(u8::MAX as u32) as u8;
+            keep.y_below[v as usize] = below.min(u8::MAX as u32) as u8;
+            keep.y_above[v as usize] = above.min(u8::MAX as u32) as u8;
         }
+        keep
     }
 
     #[inline]
@@ -260,15 +358,17 @@ impl Keep {
     }
 
     #[inline]
-    fn lossy_steps(self, x: u32, y: u32, z: u32, at_full: bool) -> u32 {
-        let (dx_lo, dx_hi) = Self::axis(x, self.lo[0], self.hi[0]);
-        let (dz_lo, dz_hi) = Self::axis(z, self.lo[2], self.hi[2]);
-        let (up, down) = Self::axis(y, self.lo[1], self.hi[1]);
-        let flat = dx_lo + dx_hi + dz_lo + dz_hi + up;
+    fn lossy_steps(&self, x: u32, y: u32, z: u32, at_full: bool) -> u32 {
+        debug_assert!(
+            (x as usize) < KEEP_TABLE && (y as usize) < KEEP_TABLE && (z as usize) < KEEP_TABLE
+        );
+        let flat = u32::from(self.flat[x as usize])
+            + u32::from(self.flat[z as usize])
+            + u32::from(self.y_below[y as usize]);
         if at_full {
             flat
         } else {
-            flat + down
+            flat + u32::from(self.y_above[y as usize])
         }
     }
 }
@@ -290,12 +390,12 @@ pub(super) fn face_mask(word: u32, face: usize) -> u32 {
     (word >> (face * 4)) & 0xF
 }
 
-fn propagate_sky(
+fn propagate_sky<B: BlockIds>(
     dim: usize,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     keep: Keep,
     light: &mut [u8],
-    queue: &mut VecDeque<Cursor>,
+    queue: &mut Fifo,
 ) {
     let d = dim as u32;
     let area = (dim * dim) as isize;
@@ -340,12 +440,12 @@ fn propagate_sky(
     }
 }
 
-fn propagate_block(
+fn propagate_block<B: BlockIds>(
     dim: usize,
-    cells: LightCells<'_>,
+    cells: LightCells<'_, B>,
     keep: Keep,
     light: &mut [LightRgb],
-    queue: &mut VecDeque<Cursor>,
+    queue: &mut Fifo,
 ) {
     let d = dim as u32;
     let area = (dim * dim) as isize;
@@ -403,14 +503,14 @@ mod tests {
     use crate::block_state::{StairHalf, StairState};
     use crate::facing::Facing;
 
-    use super::super::shape::{ShapeStateSnapshot, SparseCellState};
+    use super::super::shape::{ApertureScratch, SparseCellState};
     use super::super::{nbhd_idx, NBHD_AREA};
 
-    fn default_states() -> ShapeStateSnapshot {
-        ShapeStateSnapshot::default()
+    fn default_states() -> ApertureScratch {
+        ApertureScratch::default()
     }
 
-    fn cells<'a>(blocks: &'a [u16], states: &'a ShapeStateSnapshot) -> LightCells<'a> {
+    fn cells<'a>(blocks: &'a [u16], states: &'a ApertureScratch) -> LightCells<'a, &'a [u16]> {
         LightCells::new(blocks, states, NBHD)
     }
 
@@ -418,10 +518,14 @@ mod tests {
         LightRgb::grey(level)
     }
 
-    fn full_seed_skylight(pos: SectionPos, cells: LightCells<'_>, surface: &[i32]) -> Arc<[u8]> {
+    fn full_seed_skylight<B: BlockIds>(
+        pos: SectionPos,
+        cells: LightCells<'_, B>,
+        surface: &[i32],
+    ) -> Arc<[u8]> {
         let noy = pos.origin_world().1 - SECTION_SIZE as i32;
         let mut light = vec![0u8; NBHD_VOLUME].into_boxed_slice();
-        let mut queue: VecDeque<Cursor> = VecDeque::new();
+        let mut queue = Fifo::default();
         for y in 0..NBHD {
             let wy = noy + y as i32;
             for z in 0..NBHD {
@@ -449,7 +553,7 @@ mod tests {
         }
     }
 
-    fn stair_states(entries: &[(usize, Facing)]) -> ShapeStateSnapshot {
+    fn stair_states(entries: &[(usize, Facing)]) -> ApertureScratch {
         let k = Block::OakStairs.shape_kind().def();
         let states = entries
             .iter()
@@ -469,7 +573,9 @@ mod tests {
                 }
             })
             .collect::<Vec<_>>();
-        ShapeStateSnapshot::from_sparse(&states, NBHD_VOLUME)
+        let mut scratch = ApertureScratch::default();
+        scratch.fill(&states, NBHD_VOLUME);
+        scratch
     }
 
     #[test]

@@ -58,8 +58,13 @@ pub(super) fn mesh_section(
         boxes,
         neighbour,
         out,
+        ring,
+        rows,
     } = &mut *lease;
     let greedy_gen = greedy.begin();
+    super::neighbourhood::pack_ring(ring, rows, pad, ctx.registry);
+    let ring: &[u32] = ring;
+    let rows: &super::neighbourhood::RowBits = rows;
     let mut mesher = SectionMesher {
         section,
         nb: Neighbourhood::new(
@@ -68,6 +73,7 @@ pub(super) fn mesh_section(
             IVec3::new(ox, oy, oz),
             ctx.registry,
             neighbour,
+            ring,
         ),
         rules: ctx.rules,
         tints: CellTinting::new(section, biome),
@@ -77,7 +83,7 @@ pub(super) fn mesh_section(
         greedy,
         greedy_gen,
     };
-    let masks = exposure_masks.then(|| build_exposed_masks(&mesher.nb));
+    let masks = exposure_masks.then(|| build_exposed_masks(&mesher.nb, rows));
     if !mesher.scan(masks.as_ref(), cancelled) {
         return None;
     }
@@ -89,6 +95,7 @@ impl SectionMesher<'_> {
     fn scan(&mut self, masks: Option<&ExposedMasks>, cancelled: &dyn Fn() -> bool) -> bool {
         let visit = masks.map_or(&VISIT_ALL, ExposedMasks::visit_rows);
         let registry = self.nb.registry();
+        let table = self.nb.pad().table;
         let origin = self.nb.origin();
         for ly in 0..SECTION_SIZE {
             if cancelled() {
@@ -99,8 +106,10 @@ impl SectionMesher<'_> {
                 while row != 0 {
                     let lx = row.trailing_zeros() as usize;
                     row &= row - 1;
-                    let resident = Block::from_id(self.section.block_raw(lx, ly, lz));
-                    for block in std::iter::once(resident).chain(resident.contained_fluid()) {
+                    let resident = table.block(self.section.block_raw(lx, ly, lz));
+                    for block in
+                        std::iter::once(resident).chain(registry.contained_fluid(resident.id()))
+                    {
                         let class = registry.cell_class(block.id());
                         if class & SKIP != 0 {
                             continue;

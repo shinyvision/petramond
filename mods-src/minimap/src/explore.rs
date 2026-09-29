@@ -118,6 +118,9 @@ type Undecoded = ((i32, i32), RegionKind, bool, Option<Vec<u8>>);
 pub(crate) struct TileStore {
     pub(crate) ephemeral: bool,
     pub(crate) tiles: HashMap<(i32, i32), CachedTile>,
+    /// Moves whenever the resident base cells change: a region arrives, materializes or evicts,
+    /// or sampling rewrites cells.
+    pub(crate) base_revision: u64,
     pub(crate) mips: HashMap<(i32, i32), CachedTile>,
     base_regions: HashMap<(i32, i32), u64>,
     mip_regions: HashMap<(i32, i32), u64>,
@@ -235,6 +238,9 @@ impl TileStore {
             RegionKind::Mip => (&mut self.mip_regions, &mut self.mips),
         };
         if regions.insert(coord, frame).is_none() {
+            if kind == RegionKind::Base {
+                self.base_revision = self.base_revision.wrapping_add(1);
+            }
             for tz in 0..codec::REGION_TILES {
                 for tx in 0..codec::REGION_TILES {
                     tiles.insert(
@@ -262,6 +268,9 @@ impl TileStore {
         };
         if regions.insert(coord, frame).is_some() {
             return;
+        }
+        if kind == RegionKind::Base {
+            self.base_revision = self.base_revision.wrapping_add(1);
         }
         for (i, tile) in decoded.into_iter().enumerate() {
             let (tx, tz) = (
@@ -580,6 +589,9 @@ impl TileStore {
                 for coord in members {
                     tiles.remove(&coord);
                 }
+                if kind == RegionKind::Base {
+                    self.base_revision = self.base_revision.wrapping_add(1);
+                }
             }
         }
     }
@@ -680,6 +692,7 @@ impl Minimap {
         }
         if any_changed {
             self.explored_revision = self.explored_revision.wrapping_add(1);
+            self.store.base_revision = self.store.base_revision.wrapping_add(1);
         }
         for rect in dirty_rects {
             self.mark_full_tiles_dirty(rect);
@@ -761,12 +774,14 @@ fn plan_issue_batch(
     pick(&[LoadTier::Prefetch], LOAD_KEYS_PER_TICKET)
 }
 
+#[cfg(test)]
 pub(crate) struct CellReader<'a> {
     tiles: &'a HashMap<(i32, i32), CachedTile>,
     slots: [((i32, i32), Option<&'a Tile>); 2],
     next: usize,
 }
 
+#[cfg(test)]
 impl<'a> CellReader<'a> {
     pub(crate) fn new(tiles: &'a HashMap<(i32, i32), CachedTile>) -> Self {
         Self {

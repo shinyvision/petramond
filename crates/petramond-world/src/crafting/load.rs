@@ -69,7 +69,23 @@ fn one_u8() -> u8 {
 /// integration layer is dropped if either of its packs is. After that we filter out rows that touch
 /// some other disabled namespace.
 pub fn load_recipes_for(disabled: &std::collections::BTreeSet<String>) -> Result<Recipes, String> {
-    Ok(load_layers(read_recipe_layers()?, disabled))
+    type Memo = Vec<(u64, std::collections::BTreeSet<String>, Recipes)>;
+    static MEMO: std::sync::Mutex<Memo> = std::sync::Mutex::new(Vec::new());
+    // Recipes resolve against the content registry, so its serial (plus the disabled set)
+    // names a parse exactly; a world join then reuses the one warmed at startup.
+    let serial = crate::content::Content::current().serial();
+    let memo = MEMO
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, _, recipes)) = memo.iter().find(|(s, d, _)| *s == serial && d == disabled) {
+        return Ok(recipes.clone());
+    }
+    drop(memo);
+    let recipes = load_layers(read_recipe_layers()?, disabled);
+    MEMO.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push((serial, disabled.clone(), recipes.clone()));
+    Ok(recipes)
 }
 
 fn load_layers(

@@ -40,6 +40,8 @@ pub struct Instance {
     confinement: Confinement,
     pub(super) presentation: Presentation,
     tags: Arc<BTreeMap<String, MobTagValue>>,
+    /// Bumped on every tag write: what lets a reader tell an unchanged tag map apart cheaply.
+    tags_rev: u64,
     exposure: petramond_world::exposure::BodyExposure,
     pub(super) distance_despawned: bool,
     pub(super) rng: MobRng,
@@ -91,6 +93,7 @@ impl Instance {
             confinement: Confinement::new(seed),
             presentation: Presentation::default(),
             tags: Arc::new(d.tags.clone()),
+            tags_rev: 0,
             exposure: petramond_world::exposure::BodyExposure::new(d.tolerates),
             distance_despawned: false,
             rng: MobRng::new(seed),
@@ -267,10 +270,21 @@ impl Instance {
 
     #[inline]
     pub(super) fn tags_mut(&mut self) -> &mut BTreeMap<String, MobTagValue> {
+        self.tags_rev = self.tags_rev.wrapping_add(1);
         Arc::make_mut(&mut self.tags)
     }
 
+    /// The tag map's revision: unchanged while no tag was written.
     #[inline]
+    pub fn tags_rev(&self) -> u64 {
+        self.tags_rev
+    }
+
+    #[inline]
+    pub(in crate::mob) fn confinement_mut(&mut self) -> &mut Confinement {
+        &mut self.confinement
+    }
+
     pub fn is_confined(&self) -> bool {
         self.tags
             .get(super::tags::CONFINED)

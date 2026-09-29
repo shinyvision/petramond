@@ -121,7 +121,9 @@ impl Renderer {
             camera_block.y.div_euclid(16),
             camera_block.z.div_euclid(16),
         );
-        let occluding = terrain.occlusion.flood(camera_section, |pos| {
+        // A section's box reaches the fog only within this many columns of the camera's.
+        let reach = ((fog + petramond_mesh::FOLIAGE_OVERHANG) / 16.0).ceil() as i32 + 2;
+        let occluding = terrain.occlusion.flood(camera_section, reach, |pos| {
             let min = (glam::IVec3::new(pos.cx, pos.cy, pos.cz) * 16 - render_origin).as_vec3();
             Self::aabb_visible(min, min + glam::Vec3::splat(16.0), frustum, cam, fog, false)
         });

@@ -55,8 +55,41 @@ pub fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Origin {
+    /// A `mod.cwasm` shipped beside a bundled pack's `mod.wasm`.
+    Shipped,
     Cache,
     Compiled,
+}
+
+/// The precompiled artifact shipped beside `wasm`, when the pack it belongs to is one the game
+/// ships (never one a player installed: deserializing trusts the bytes like the engine's own)
+/// and the artifact was built for this engine and machine; otherwise the module compiles.
+fn shipped_artifact(wasm: &Path) -> Option<Module> {
+    let artifact = wasm.with_extension("cwasm");
+    if !artifact.is_file() {
+        return None;
+    }
+    let shipped = petramond_world::assets::packs().iter().any(|p| {
+        p.origin == petramond_world::assets::PackOrigin::Shipped
+            && (p.wasm.as_deref() == Some(wasm) || p.client_wasm.as_deref() == Some(wasm))
+    });
+    if !shipped {
+        log::debug!(
+            "ignoring {}: precompiled artifacts are only loaded for shipped packs",
+            artifact.display()
+        );
+        return None;
+    }
+    match unsafe { Module::deserialize_file(engine(), &artifact) } {
+        Ok(module) => Some(module),
+        Err(e) => {
+            log::info!(
+                "shipped artifact {} does not fit this engine or machine ({e:#}); compiling instead",
+                artifact.display()
+            );
+            None
+        }
+    }
 }
 
 fn load_module(path: &Path) -> Result<Module, String> {
@@ -65,6 +98,15 @@ fn load_module(path: &Path) -> Result<Module, String> {
 
 fn load_module_traced(path: &Path) -> Result<(Module, Origin), String> {
     let t = Instant::now();
+    if let Some(module) = shipped_artifact(path) {
+        log::debug!(
+            target: "petramond::modding::perf",
+            "loaded shipped artifact for {} in {:.1} ms",
+            path.display(),
+            t.elapsed().as_secs_f64() * 1e3
+        );
+        return Ok((module, Origin::Shipped));
+    }
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     let entry = CacheEntry::for_source(path, &bytes);
     if let Some(entry) = &entry {

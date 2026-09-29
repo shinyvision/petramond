@@ -24,7 +24,7 @@ mod giants;
 use mod_sdk::*;
 
 use crate::content::{Content, Species};
-use crate::probe::{self, Deferred, Pad};
+use crate::probe::{Deferred, Pad};
 use claims::Emitter;
 use dress::Dressing;
 
@@ -63,7 +63,14 @@ const PROBE_PER_CANDIDATE: usize = ANCHOR_LATTICE as usize + 1;
 
 const TOP_CONTENT_Y: i32 = crate::BIOME_TOP_Y + MAX_RISE;
 
-pub(crate) const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(i32::MIN, TOP_CONTENT_Y);
+const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(i32::MIN, TOP_CONTENT_Y);
+
+/// The registration filter: the band, gated on the cavern biome being in giant reach of the
+/// section (the widest of the gates a dispatch asks itself), so sections nowhere near a
+/// cavern are never dispatched.
+pub(crate) fn gen_filter() -> GenFeatureFilter {
+    GEN_FILTER.near_underground_biomes(biome_id(), GIANT_PAD.xz, GIANT_PAD.down, GIANT_PAD.up)
+}
 
 const CLAIM_ROWS: i32 = 16 + CEILING_MARGIN;
 
@@ -79,20 +86,9 @@ const DRESS_PAD: Pad = Pad {
     up: CEILING_MARGIN,
 };
 
-struct Gates {
-    giants: bool,
-    dressing: bool,
-}
-
-impl Gates {
-    fn ask(ours: u8, origin: [i32; 3]) -> Gates {
-        let giants = probe::in_reach(ours, origin, GIANT_PAD, underground_biomes_in_box);
-        let dressing =
-            giants && probe::in_reach(ours, origin, DRESS_PAD, underground_biomes_in_box);
-        Gates { giants, dressing }
-    }
-}
-
+/// The host dispatches only sections the cavern biome is in giant reach of (the registration
+/// gate), so the one gate left to ask is the dressing's own reach, per leaf: the dressing
+/// rolls only inside the leaves that admit the biome.
 pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferred> {
     if !GEN_FILTER.intersects(ctx.section_pos()[1], &[]) {
         return Ok(Vec::new());
@@ -102,12 +98,13 @@ pub fn generate(content: &Content, ctx: &GenCtx) -> Result<Vec<GenWrite>, Deferr
         return Ok(Vec::new());
     };
     let seed = ctx.seed();
-    let gates = Gates::ask(ours, origin);
+    let (dress_lo, dress_hi) = DRESS_PAD.around(origin);
+    let dress_leaves = underground_biome_leaves(dress_lo, dress_hi, ours);
 
-    let any_giant = gates.giants && giants::could_reach(seed, origin);
+    let any_giant = giants::could_reach(seed, origin);
     let features = cascades::overlapping(seed, ours, origin)?;
-    let dressing = if gates.dressing {
-        Dressing::gather(content, ctx, seed)
+    let dressing = if dress_leaves.any() {
+        Dressing::gather_within(content, ctx, seed, &dress_leaves)
     } else {
         Dressing::default()
     };

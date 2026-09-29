@@ -68,6 +68,7 @@ fn collect(
         flight_of(spec),
         &activation(intensity, weight),
         &View { world, cam, time },
+        &mut ColumnInfoCache::default(),
         out,
     );
 }
@@ -221,7 +222,17 @@ fn an_admitted_flier_survives_its_whole_orbit_over_steps_and_density_borders() {
             let seed = cell_seed(&act, gx, 0);
             let (x, z) = cell_anchor(flight, seed, gx, 0);
             let roll = hash01(seed ^ 5) / flight.occupancy;
-            orbit_ground(&spec, flight, &act, &world, x, z, roll).map(|g| (seed, x, z, g))
+            orbit_ground(
+                &spec,
+                flight,
+                &act,
+                &world,
+                &mut ColumnInfoCache::default(),
+                x,
+                z,
+                roll,
+            )
+            .map(|g| (seed, x, z, g))
         })
         .expect("fixture contains an admitted flight");
     let cam = WorldPos::new(x, f64::from(ground + 1.0), z);
@@ -266,8 +277,28 @@ fn an_orbit_touching_a_zero_density_biome_is_never_admitted() {
     let flight = flight_of(&spec);
     let world = habitat();
     let act = activation(1.0, &west_only);
-    assert!(orbit_ground(&spec, flight, &act, &world, -0.5, 8.0, 0.0).is_none());
-    assert!(orbit_ground(&spec, flight, &act, &world, -8.0, 8.0, 0.0).is_some());
+    assert!(orbit_ground(
+        &spec,
+        flight,
+        &act,
+        &world,
+        &mut ColumnInfoCache::default(),
+        -0.5,
+        8.0,
+        0.0
+    )
+    .is_none());
+    assert!(orbit_ground(
+        &spec,
+        flight,
+        &act,
+        &world,
+        &mut ColumnInfoCache::default(),
+        -8.0,
+        8.0,
+        0.0
+    )
+    .is_some());
 }
 
 #[test]
@@ -277,7 +308,16 @@ fn roofs_and_overhangs_reject_flights_even_above_a_ground_floor() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let ground = |world: &ReplicaWorld, x: f32| {
-        orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0)
+        orbit_ground(
+            &spec,
+            flight,
+            &act,
+            world,
+            &mut ColumnInfoCache::default(),
+            f64::from(x),
+            8.5,
+            0.0,
+        )
     };
     assert!(ground(&world, 0.5).is_some());
     for roof in [Block::OakPlanks, Block::Glass, Block::StoneSlab] {
@@ -297,9 +337,29 @@ fn roof_clearance_includes_diagonally_rotated_wing_corners() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let x = -flight.orbit[0] - spec.size[1] * FRAC_1_SQRT_2 + 0.01;
-    assert!(orbit_ground(&spec, flight, &act, &world, f64::from(x), 8.5, 0.0).is_some());
+    assert!(orbit_ground(
+        &spec,
+        flight,
+        &act,
+        &world,
+        &mut ColumnInfoCache::default(),
+        f64::from(x),
+        8.5,
+        0.0
+    )
+    .is_some());
     assert!(world.set_block_world(0, 70, 8, Block::Stone));
-    assert!(orbit_ground(&spec, flight, &act, &world, f64::from(x), 8.5, 0.0).is_none());
+    assert!(orbit_ground(
+        &spec,
+        flight,
+        &act,
+        &world,
+        &mut ColumnInfoCache::default(),
+        f64::from(x),
+        8.5,
+        0.0
+    )
+    .is_none());
 }
 
 #[test]
@@ -309,7 +369,16 @@ fn canopies_reject_ground_flights_instead_of_lifting_them_to_the_treetop() {
     let mut world = habitat();
     let act = activation(1.0, &everywhere);
     let ground = |world: &ReplicaWorld, x: f32| {
-        orbit_ground(&spec, flight, &act, world, f64::from(x), 8.5, 0.0)
+        orbit_ground(
+            &spec,
+            flight,
+            &act,
+            world,
+            &mut ColumnInfoCache::default(),
+            f64::from(x),
+            8.5,
+            0.0,
+        )
     };
     let original = ground(&world, 0.5);
     assert!(original.is_some());

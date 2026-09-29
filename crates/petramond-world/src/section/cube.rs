@@ -7,6 +7,27 @@ const NARROW_MAX: u16 = u8::MAX as u16;
 #[derive(Clone)]
 pub struct BlockCube {
     repr: Repr,
+    stamp: u64,
+}
+
+/// A value no other cube state has carried: every construction and every write takes one, and
+/// a clone keeps its source's (the content is the same). Per-thread ranges, so writers on
+/// different threads never contend on it.
+fn fresh_stamp() -> u64 {
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static THREADS: AtomicU64 = AtomicU64::new(1);
+    thread_local! {
+        static NEXT: Cell<u64> = const { Cell::new(0) };
+    }
+    NEXT.with(|next| {
+        let mut stamp = next.get();
+        if stamp == 0 {
+            stamp = THREADS.fetch_add(1, Ordering::Relaxed) << 40;
+        }
+        next.set(stamp + 1);
+        stamp
+    })
 }
 
 #[derive(Clone)]
@@ -22,7 +43,10 @@ impl BlockCube {
         } else {
             Repr::Wide(vec![id; SECTION_VOLUME].into())
         };
-        Self { repr }
+        Self {
+            repr,
+            stamp: fresh_stamp(),
+        }
     }
 
     pub fn from_ids(ids: &[u16]) -> Self {
@@ -30,10 +54,12 @@ impl BlockCube {
             let narrow: Arc<[u8]> = ids.iter().map(|&id| id as u8).collect();
             Self {
                 repr: Repr::Narrow(narrow),
+                stamp: fresh_stamp(),
             }
         } else {
             Self {
                 repr: Repr::Wide(Arc::from(ids)),
+                stamp: fresh_stamp(),
             }
         }
     }
@@ -47,11 +73,39 @@ impl BlockCube {
         }
     }
 
+    /// The ids as bytes when every id in the cube fits one.
+    #[inline]
+    pub fn as_narrow(&self) -> Option<&[u8]> {
+        match &self.repr {
+            Repr::Narrow(b) => Some(b),
+            Repr::Wide(_) => None,
+        }
+    }
+
     #[inline]
     pub fn get(&self, i: usize) -> u16 {
         match &self.repr {
             Repr::Narrow(b) => b[i] as u16,
             Repr::Wide(b) => b[i],
+        }
+    }
+
+    /// Appends every id as little-endian bytes, in cell order.
+    pub fn write_le_bytes(&self, out: &mut Vec<u8>) {
+        let start = out.len();
+        out.resize(start + 2 * self.len(), 0);
+        let dst = out[start..].as_chunks_mut::<2>().0;
+        match &self.repr {
+            Repr::Narrow(b) => {
+                for (d, &id) in dst.iter_mut().zip(b.iter()) {
+                    d[0] = id;
+                }
+            }
+            Repr::Wide(b) => {
+                for (d, &id) in dst.iter_mut().zip(b.iter()) {
+                    *d = id.to_le_bytes();
+                }
+            }
         }
     }
 
@@ -86,6 +140,14 @@ impl BlockCube {
         (0..self.len()).map(move |i| self.get(i))
     }
 
+    #[inline]
+    pub fn for_each_id(&self, mut f: impl FnMut(u16)) {
+        match &self.repr {
+            Repr::Narrow(b) => b.iter().for_each(|&id| f(u16::from(id))),
+            Repr::Wide(b) => b.iter().for_each(|&id| f(id)),
+        }
+    }
+
     /// Whether the `len` cells from `start` all hold `id`.
     #[inline]
     pub fn run_is(&self, start: usize, len: usize, id: u16) -> bool {
@@ -97,8 +159,15 @@ impl BlockCube {
         }
     }
 
+    /// Changes whenever the ids may have: equal stamps mean equal content.
+    #[inline]
+    pub fn stamp(&self) -> u64 {
+        self.stamp
+    }
+
     #[inline]
     pub fn set(&mut self, i: usize, id: u16) {
+        self.stamp = fresh_stamp();
         match &mut self.repr {
             Repr::Narrow(b) if id <= NARROW_MAX => Arc::make_mut(b)[i] = id as u8,
             Repr::Wide(b) => Arc::make_mut(b)[i] = id,
@@ -133,13 +202,23 @@ impl BlockCube {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
+    #[inline]
     pub fn is_narrow(&self) -> bool {
         matches!(self.repr, Repr::Narrow(_))
     }
 
+    /// `len` cells from `src` as bytes, when every id of the cube fits one.
+    #[inline]
+    pub fn narrow_row(&self, src: usize, len: usize) -> Option<&[u8]> {
+        match &self.repr {
+            Repr::Narrow(b) => Some(&b[src..src + len]),
+            Repr::Wide(_) => None,
+        }
+    }
+
     /// The cells, writable, for ids up to `max_id`: a narrow cube that can't hold it widens.
     pub fn cells_mut(&mut self, max_id: u16) -> CubeCells<'_> {
+        self.stamp = fresh_stamp();
         if max_id > NARROW_MAX {
             self.widen();
         }

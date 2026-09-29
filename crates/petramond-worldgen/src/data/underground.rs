@@ -86,6 +86,11 @@ impl IdSet {
     pub fn is_empty(&self) -> bool {
         self.0 == [0; 4]
     }
+    /// Holds the ordinary biome (id 0) and nothing else.
+    #[inline]
+    pub fn is_ordinary_only(&self) -> bool {
+        self.0 == [1, 0, 0, 0]
+    }
     #[inline]
     pub fn contains(&self, id: u8) -> bool {
         self.0[id as usize >> 6] & (1 << (id & 63)) != 0

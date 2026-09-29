@@ -29,7 +29,7 @@ impl Rng {
 }
 
 pub struct Fixture {
-    pub sections: FxHashMap<SectionPos, Arc<Section>>,
+    pub sections: crate::world::section_map::SectionMap,
     pub columns: FxHashMap<ChunkPos, Arc<Column>>,
     pub low: SectionPos,
     pub span: usize,
@@ -43,7 +43,7 @@ impl Fixture {
         let heights: Vec<i32> = (0..dim * dim)
             .map(|_| low.cy * SECTION_SIZE as i32 + (rng.next() % 56) as i32 + 4)
             .collect();
-        let mut sections = FxHashMap::default();
+        let mut sections = crate::world::section_map::SectionMap::default();
         for dy in 0..span {
             for dz in 0..span {
                 for dx in 0..span {

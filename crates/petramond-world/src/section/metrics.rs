@@ -179,7 +179,13 @@ impl Section {
     }
 
     pub fn metrics_from_cube(cube: &super::BlockCube) -> SectionMetrics {
-        Self::metrics_from(cube.len(), |i| cube.get(i))
+        if cube.len() != SECTION_VOLUME {
+            return SectionMetrics::default();
+        }
+        // One widening copy instead of a representation match per cell.
+        let mut ids = [0u16; SECTION_VOLUME];
+        cube.copy_ids(&mut ids);
+        Self::metrics_from_blocks(&ids)
     }
 
     fn metrics_from(len: usize, at: impl Fn(usize) -> u16) -> SectionMetrics {
@@ -305,6 +311,7 @@ impl Section {
     pub fn recompute_opaque_count(&mut self) {
         self.install_metrics(Self::metrics_from_cube(&self.blocks));
         self.compact_uniform_blocks();
+        self.present = super::IdSet::of_cube(&self.blocks);
     }
 
     fn compact_uniform_blocks(&mut self) {
@@ -326,6 +333,11 @@ impl Section {
     #[inline]
     pub fn all_opaque(&self) -> bool {
         self.opaque_count as usize == SECTION_VOLUME
+    }
+
+    #[inline]
+    pub fn has_opaque_blocks(&self) -> bool {
+        self.opaque_count > 0
     }
 
     #[inline]

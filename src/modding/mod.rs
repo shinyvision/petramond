@@ -36,6 +36,7 @@ pub fn prewarm_modules() {
                 .flatten()
                 .collect();
             host::module_cache::prewarm(paths);
+            let _ = petramond_world::crafting::load_recipes_for(&Default::default());
         });
     if let Err(e) = spawned {
         log::warn!("mod prewarm thread failed to spawn: {e}");
@@ -44,6 +45,105 @@ pub fn prewarm_modules() {
 
 pub fn clear_module_cache() {
     host::module_cache::clear();
+}
+
+/// `wasm` compiled ahead of time for `target` (the host's when `None`) with the engine's own
+/// configuration: what a shipped `mod.cwasm` beside a bundled pack's `mod.wasm` holds.
+pub fn precompile_module(wasm: &std::path::Path, target: Option<&str>) -> Result<Vec<u8>, String> {
+    let bytes = std::fs::read(wasm).map_err(|e| format!("read {}: {e}", wasm.display()))?;
+    let mut config = host::engine_config();
+    if let Some(target) = target {
+        host::retarget(&mut config, target)?;
+    }
+    let engine = wasmtime::Engine::new(&config).map_err(|e| format!("engine: {e:#}"))?;
+    engine
+        .precompile_module(&bytes)
+        .map_err(|e| format!("precompile {}: {e:#}", wasm.display()))
+}
+
+/// Loads every module the way the prewarm does (one thread each) and reports how long each
+/// took; a fresh `PETRAMOND_MODCACHE_DIR` measures compiling, a warm one loading.
+#[cfg(feature = "tools")]
+pub fn load_modules_timed(paths: &[PathBuf]) -> Vec<(PathBuf, std::time::Duration, bool)> {
+    let handles: Vec<_> = paths
+        .iter()
+        .cloned()
+        .map(|path| {
+            std::thread::spawn(move || {
+                let t = std::time::Instant::now();
+                let ok = host::module_for(&path).is_ok();
+                (path, t.elapsed(), ok)
+            })
+        })
+        .collect();
+    handles.into_iter().map(|h| h.join().unwrap()).collect()
+}
+
+/// What one detached (worldgen-side) instance of `wasm` costs to bring up: instantiation, then
+/// `mod_init` with the host calls it made.
+#[cfg(feature = "tools")]
+pub fn instantiate_cost(
+    wasm: &std::path::Path,
+) -> Result<(std::time::Duration, std::time::Duration, u64), String> {
+    let module = host::module_for(wasm)?;
+    let mod_id = wasm
+        .parent()
+        .and_then(|d| d.file_name())
+        .map_or("bench".to_owned(), |n| n.to_string_lossy().into_owned());
+    let t = std::time::Instant::now();
+    let mut inst = ModInstance::from_module_side(
+        &mod_id,
+        &module,
+        1,
+        mod_api::RuntimeSide::Worldgen,
+        None,
+        health::ModHealth::standalone(&mod_id),
+    )?;
+    let instantiate = t.elapsed();
+    let t = std::time::Instant::now();
+    inst.call_init_detached();
+    let init = t.elapsed();
+    let calls = inst.stats().host_calls;
+    inst.take_registrations();
+    Ok((instantiate, init, calls))
+}
+
+/// The fixed cost of one guest call: `calls` dispatches of a GUI click no guest handles,
+/// on a detached worldgen-side instance of `wasm`, in nanoseconds per call.
+#[cfg(feature = "tools")]
+pub fn dispatch_roundtrip_ns(
+    wasm: &std::path::Path,
+    mod_id: &str,
+    calls: u32,
+) -> Result<f64, String> {
+    let module = host::module_for(wasm)?;
+    let mut inst = ModInstance::from_module_side(
+        mod_id,
+        &module,
+        1,
+        mod_api::RuntimeSide::Worldgen,
+        None,
+        health::ModHealth::standalone(mod_id),
+    )?;
+    inst.call_init_detached();
+    inst.take_registrations();
+    // A fixed-class call (never throttled) the SDK answers without reaching mod code.
+    let call = GuestCall::GuiClick {
+        kind_key: "bench:none".into(),
+        widget_id: String::new(),
+        at: None,
+    };
+    for _ in 0..1000 {
+        inst.call_guest_detached(&call);
+    }
+    let t = std::time::Instant::now();
+    for _ in 0..calls {
+        inst.call_guest_detached(&call);
+    }
+    if inst.disabled() {
+        return Err("the bench instance was disabled".into());
+    }
+    Ok(t.elapsed().as_nanos() as f64 / f64::from(calls))
 }
 
 use std::path::PathBuf;

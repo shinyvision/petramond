@@ -49,9 +49,11 @@ impl ReplicaWorld {
                 }
                 break;
             }
-            if !self.data.sections.contains_key(&pos) {
+            let nbhd = self.gather_mesh_neighbourhood(pos);
+            let Some(center) = nbhd[crate::world::mesh_pool::nbhd_idx27(0, 0, 0)].as_ref() else {
                 continue;
-            }
+            };
+            let center_is_air = center.is_empty_air();
             if self.side.terrain.prediction_terrain.owns_mesh(pos) {
                 self.side.terrain.light_blocked_meshes.insert(pos);
                 continue;
@@ -64,7 +66,8 @@ impl ReplicaWorld {
                 self.side.terrain.hidden_parked.insert(pos);
                 continue;
             }
-            if self.clear_mesh_if_section_produces_no_mesh(pos) {
+            if center_is_air {
+                self.settle_no_mesh_output(pos);
                 if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
                         self.side.terrain.dirty_meshes.push(rest);
@@ -73,7 +76,7 @@ impl ReplicaWorld {
                 }
                 continue;
             }
-            if self.section_sealed_by_loaded_neighbors(pos)
+            if self.sealed_by_loaded_neighbors_in(pos, &nbhd)
                 && !self.side.terrain.repack_forced.contains(&pos)
             {
                 self.side.terrain.sealed_parked.insert(pos);
@@ -85,7 +88,7 @@ impl ReplicaWorld {
                 }
                 continue;
             }
-            if self.request_light_dependencies(pos) {
+            if self.request_light_dependencies(pos, &nbhd) {
                 self.side.terrain.light_blocked_meshes.insert(pos);
                 if submit_start.elapsed() >= MESH_SUBMIT_TIME_BUDGET {
                     for &rest in &candidates[i + 1..] {
@@ -95,11 +98,11 @@ impl ReplicaWorld {
                 }
                 continue;
             }
-            if self.stream_mesh_waiting(pos) {
+            if self.stream_mesh_waiting_in(pos, &nbhd) {
                 self.side.terrain.dirty_meshes.push(pos);
                 continue;
             }
-            if let Some(job) = self.build_mesh_job(pos) {
+            if let Some(job) = self.build_mesh_job_from(pos, &nbhd) {
                 let key = target.map_or(0, |t| t.section_priority_key(pos));
                 let cancel = self.side.terrain.mesh_pool.submit(key, job);
                 self.side.terrain.mesh_job_cancels.insert(pos, cancel);

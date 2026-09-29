@@ -1,9 +1,7 @@
 use super::settings::*;
 
-use super::{cave_density::CaveDensity, cave_walk::WalkField};
+use super::{cave_density::CaveDensity, cave_walk::WalkCells};
 use crate::data::underground::{self, LiningFaces, UndergroundBiomes};
-use crate::density::terrain::{channels, TerrainDensityGraph};
-use crate::graph::SamplePoint;
 use petramond_world::block::Block;
 use petramond_world::chunk::{section_idx, SECTION_SIZE};
 use petramond_world::section::Section;
@@ -67,7 +65,7 @@ pub struct CaveField {
     context: crate::cache::GenContext,
     caches: std::sync::Arc<crate::cache::GenCaches>,
     natural: std::sync::Arc<CaveDensity>,
-    terrain: std::sync::Arc<TerrainDensityGraph>,
+    columns: crate::density::columns::Columns,
     underground: &'static UndergroundBiomes,
     excavations: &'static crate::data::excavations::Excavations,
     chamber_y_span: Option<(i32, i32)>,
@@ -102,23 +100,18 @@ struct CaveLattice {
     nx: usize,
     ny: usize,
     nz: usize,
-    entrance: Vec<f64>,
-    density: Vec<f64>,
-    noodle_a: Vec<f64>,
-    noodle_b: Vec<f64>,
-    noodle_toggle: Vec<f64>,
-    noodle_width: Vec<f64>,
-    climate: [Vec<f64>; 6],
+    /// Corner values per [`lane`], indexed `(y * nz + z) * nx + x`.
+    lanes: [Vec<f64>; lane::COUNT],
     no_aquifer: bool,
     unlined: bool,
     plain: bool,
     geology: bool,
     regions: regions::Columns,
-    walk_cells: Vec<bool>,
+    ordinary: Vec<bool>,
     #[cfg(test)]
     chamber_live: bool,
     fields: Fields,
-    walks: Option<WalkField>,
+    walks: WalkCells,
     volumes: volumes::Tiles,
     claims: volumes::claims::Columns,
     pools: fluid_pools::Pools,
@@ -140,6 +133,7 @@ struct Col<'a> {
     x: i32,
     z: i32,
     region: regions::Column,
+    column_cell: usize,
     i00: usize,
     i01: usize,
     plane: usize,
@@ -166,16 +160,20 @@ impl CaveField {
         excavations: &'static crate::data::excavations::Excavations,
     ) -> Self {
         let sources = super::sources::SeedSources::for_seed(seed);
+        let caches = crate::cache::installed();
         Self {
             seed,
             context: crate::cache::GenContext::new(seed, underground, excavations),
-            caches: crate::cache::installed(),
+            columns: crate::density::columns::Columns::new(
+                sources.terrain,
+                std::sync::Arc::clone(&caches),
+            ),
+            caches,
             underground,
             chamber_y_span: excavations.y_span,
             excavations,
             lining_faces: underground.lining_faces_vary,
             natural: sources.natural,
-            terrain: sources.terrain,
         }
     }
 
@@ -189,6 +187,7 @@ impl CaveField {
     }
 
     pub(crate) fn with_caches(mut self, caches: std::sync::Arc<crate::cache::GenCaches>) -> Self {
+        self.columns = self.columns.with_caches(std::sync::Arc::clone(&caches));
         self.caches = caches;
         self
     }
@@ -268,8 +267,9 @@ impl CaveField {
             return CaveCut::Air;
         }
         if interior || gate {
-            if let Some(walks) = c.lat.walks.as_ref().filter(|_| c.lat.walk_cells[c.cell()]) {
-                let walk = walks.at([c.x as f64, y as f64, c.z as f64]);
+            let cell = c.cell();
+            if c.lat.walks.any(cell) {
+                let walk = c.lat.walks.at(cell, [c.x as f64, y as f64, c.z as f64]);
                 let floor = ((y - CAVE_MIN_Y) as f64 / CAVE_FLOOR_FADE).clamp(0.0, 1.0);
                 density = density.min(0.12 + (walk - 0.12) * floor);
             }
@@ -291,7 +291,13 @@ impl CaveField {
             self.underground.base
         } else {
             c.region.id(self, y).map_or_else(
-                || self.underground.shell_at(c.climate(y), y),
+                || {
+                    if c.ordinary(y) {
+                        self.underground.base
+                    } else {
+                        self.underground.shell_at(c.climate(y), y)
+                    }
+                },
                 |id| self.underground.shell(id),
             )
         };
@@ -367,7 +373,13 @@ impl CaveField {
         lat.claims
             .at([x, y, z])
             .or_else(|| lat.regions.at(x, z).id(self, y))
-            .unwrap_or_else(|| self.underground.id_at(lat.climate_at(x, y, z), y))
+            .unwrap_or_else(|| {
+                if lat.ordinary_at(x, y, z) {
+                    0
+                } else {
+                    self.underground.id_at(lat.climate_at(x, y, z), y)
+                }
+            })
     }
 
     #[inline]
@@ -376,7 +388,13 @@ impl CaveField {
             .claims
             .at([c.x, y, c.z])
             .or_else(|| c.region.id(self, y))
-            .unwrap_or_else(|| self.underground.id_at(c.climate(y), y))
+            .unwrap_or_else(|| {
+                if c.ordinary(y) {
+                    0
+                } else {
+                    self.underground.id_at(c.climate(y), y)
+                }
+            })
     }
 
     #[inline]

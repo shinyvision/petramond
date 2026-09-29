@@ -123,7 +123,7 @@ pub struct WorldSave {
     /// now-stale record, instead of leaving the disk copy to resurrect them on the next
     /// load. Populated both when we save such a record and when we read one back (so
     /// cross-session staleness is seen).
-    entities_on_disk: HashSet<SectionPos>,
+    entities_on_disk: rustc_hash::FxHashSet<SectionPos>,
     players: Arc<PlayerFiles>,
     dir: PathBuf,
     held_writes: Arc<AtomicU64>,
@@ -286,6 +286,10 @@ impl WorldSave {
 
     pub fn record_holds_entities(&self, pos: SectionPos) -> bool {
         self.entities_on_disk.contains(&pos)
+    }
+
+    pub fn sections_holding_entities(&self) -> impl Iterator<Item = SectionPos> + '_ {
+        self.entities_on_disk.iter().copied()
     }
 
     pub fn note_record_holds_entities(&mut self, pos: SectionPos) {
@@ -666,7 +670,7 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
             writer_handle: Some(writer_handle),
             reader_handles,
             colgen_manifest,
-            entities_on_disk: HashSet::new(),
+            entities_on_disk: Default::default(),
             players,
             dir: world_dir,
             held_writes,

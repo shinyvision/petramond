@@ -1,3 +1,4 @@
+pub(crate) mod columns;
 pub mod lattice;
 pub mod noise;
 #[cfg(test)]

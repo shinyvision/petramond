@@ -42,6 +42,20 @@ impl ShapeSim for CustomFamily {
             .is_some_and(|boxes| boxes.iter().any(|bx| overlaps(lo, hi, bx.min, bx.max)))
     }
 
+    fn shade_boxes(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        out: &mut Vec<Aabb>,
+    ) -> bool {
+        if let Some(boxes) = nb.baked_collision(pos) {
+            out.extend_from_slice(boxes);
+        }
+        true
+    }
+
     fn full_face(
         &self,
         _p: &ShapeParams,

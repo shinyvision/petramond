@@ -12,6 +12,7 @@ impl<S: WorldSide> World<S> {
             s.mark_light_dirty();
             if self.side.replica().is_none() {
                 self.data.relight_demand.insert(pos);
+                self.note_send_event(pos);
             }
         }
         if self.data.light_deferred.contains(&pos) {

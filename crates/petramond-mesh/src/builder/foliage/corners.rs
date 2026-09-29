@@ -99,15 +99,16 @@ impl CrownCorners {
         for v in &vertices[start..start + 4] {
             original[((v.packed >> vertex::CORNER_SHIFT) & 3) as usize] = *v;
         }
-        let mut moved = original.map(|v| Vec3::from_array(v.pos));
+        let mut moved = [Vec3::ZERO; 4];
         let mut changed = false;
-        for p in &mut moved {
-            let local = *p - self.origin;
+        for (p, v) in moved.iter_mut().zip(&original) {
+            let pos = Vec3::from_array(v.pos);
+            let local = pos - self.origin;
             let key = usize::from(local.x > 0.5)
                 | (usize::from(local.y > 0.5) << 1)
                 | (usize::from(local.z > 0.5) << 2);
             changed |= self.offsets[key] != Vec3::ZERO;
-            *p += self.offsets[key];
+            *p = pos + self.offsets[key];
         }
         if !changed {
             return;
@@ -118,27 +119,26 @@ impl CrownCorners {
             }
             return;
         }
-        let center = original
-            .iter()
-            .map(|v| Vec3::from_array(v.pos))
-            .sum::<Vec3>()
-            * 0.25;
+        let mut center = Vec3::ZERO;
+        for v in &original {
+            center += Vec3::from_array(v.pos);
+        }
+        let center = center * 0.25;
+        let corners = CornerLights::of(&original);
         let mut grid = [original[0]; 9];
-        for y in 0..3 {
-            for x in 0..3 {
+        for y in 0..3u32 {
+            for x in 0..3u32 {
                 let weights = [(2 - x) * (2 - y), x * (2 - y), x * y, (2 - x) * y];
                 let p = if x == 1 && y == 1 {
                     center
                 } else {
-                    (0..4).map(|i| moved[i] * weights[i] as f32 * 0.25).sum()
+                    let mut p = Vec3::ZERO;
+                    for i in 0..4 {
+                        p += moved[i] * weights[i] as f32 * 0.25;
+                    }
+                    p
                 };
-                grid[y * 3 + x] = sample(
-                    &original,
-                    weights.map(|w| w as u32),
-                    p,
-                    x as u32 * 8,
-                    16 - y as u32 * 8,
-                );
+                grid[(y * 3 + x) as usize] = corners.sample(weights, p, x * 8, 16 - y * 8);
             }
         }
         for (i, ids) in [[0, 1, 4, 3], [1, 2, 5, 4], [3, 4, 7, 6], [4, 5, 8, 7]]
@@ -155,36 +155,71 @@ impl CrownCorners {
     }
 }
 
+/// The four carrier corners decoded once: every grid point of a softened face blends the same
+/// corner lights, AO and sky, so decoding them per sample was nine times the work.
+struct CornerLights {
+    base: Vertex,
+    rgb: [f32; 3],
+    light: [[u32; 3]; 4],
+    ao: [u32; 4],
+    sky: [u32; 4],
+}
+
+impl CornerLights {
+    fn of(corners: &[Vertex; 4]) -> Self {
+        let mut light = [[0u32; 3]; 4];
+        let mut ao = [0u32; 4];
+        let mut sky = [0u32; 4];
+        for i in 0..4 {
+            light[i] = vertex::decode_vertex_light(&corners[i]).channels();
+            ao[i] = (corners[i].packed >> vertex::AO_SHIFT) & 3;
+            sky[i] = (corners[i].packed >> vertex::SKY_SHIFT) & 63;
+        }
+        Self {
+            base: corners[0],
+            rgb: vertex::unpack_tint(corners[0].tint),
+            light,
+            ao,
+            sky,
+        }
+    }
+
+    fn sample(&self, weights: [u32; 4], pos: Vec3, u: u32, v: u32) -> Vertex {
+        let blend = |v: [u32; 4]| {
+            let w = weights;
+            (v[0] * w[0] + v[1] * w[1] + v[2] * w[2] + v[3] * w[3] + 2) / 4
+        };
+        let l = &self.light;
+        let light = BlockLight6::new(
+            blend([l[0][0], l[1][0], l[2][0], l[3][0]]),
+            blend([l[0][1], l[1][1], l[2][1], l[3][1]]),
+            blend([l[0][2], l[1][2], l[2][2], l[3][2]]),
+        );
+        let mut out = self.base;
+        out.pos = pos.to_array();
+        out.tint = light.tint_word(self.rgb);
+        let mask = (3 << vertex::CORNER_SHIFT)
+            | (3 << vertex::AO_SHIFT)
+            | (63 << vertex::SKY_SHIFT)
+            | (7 << vertex::UV_MODE_SHIFT)
+            | (vertex::CHROMA_HI_MASK << vertex::CHROMA_HI_SHIFT);
+        out.packed = (out.packed & !mask)
+            | light.packed_bits()
+            | (vertex::UV_MODE_CELL_LOCAL << vertex::UV_MODE_SHIFT)
+            | (blend(self.ao) << vertex::AO_SHIFT)
+            | (blend(self.sky) << vertex::SKY_SHIFT);
+        let uv_mask = (vertex::CELL_UV_MASK << vertex::CELL_UV_U_SHIFT)
+            | (vertex::CELL_UV_MASK << vertex::CELL_UV_V_SHIFT);
+        out.packed2 = (out.packed2 & !(uv_mask | vertex::BLOCK_LIGHT_MASK))
+            | vertex::pack_cell_uv(u, v)
+            | light.packed2_bits();
+        out
+    }
+}
+
+#[cfg(test)]
 fn sample(corners: &[Vertex; 4], weights: [u32; 4], pos: Vec3, u: u32, v: u32) -> Vertex {
-    let blend = |v: [u32; 4]| {
-        let w = weights;
-        (v[0] * w[0] + v[1] * w[1] + v[2] * w[2] + v[3] * w[3] + 2) / 4
-    };
-    let lights = corners.map(|c| vertex::decode_vertex_light(&c).channels());
-    let light = BlockLight6::new(
-        blend(lights.map(|c| c[0])),
-        blend(lights.map(|c| c[1])),
-        blend(lights.map(|c| c[2])),
-    );
-    let mut out = corners[0];
-    out.pos = pos.to_array();
-    out.tint = light.tint_word(vertex::unpack_tint(out.tint));
-    let mask = (3 << vertex::CORNER_SHIFT)
-        | (3 << vertex::AO_SHIFT)
-        | (63 << vertex::SKY_SHIFT)
-        | (7 << vertex::UV_MODE_SHIFT)
-        | (vertex::CHROMA_HI_MASK << vertex::CHROMA_HI_SHIFT);
-    out.packed = (out.packed & !mask)
-        | light.packed_bits()
-        | (vertex::UV_MODE_CELL_LOCAL << vertex::UV_MODE_SHIFT)
-        | (blend(corners.map(|c| (c.packed >> vertex::AO_SHIFT) & 3)) << vertex::AO_SHIFT)
-        | (blend(corners.map(|c| (c.packed >> vertex::SKY_SHIFT) & 63)) << vertex::SKY_SHIFT);
-    let uv_mask = (vertex::CELL_UV_MASK << vertex::CELL_UV_U_SHIFT)
-        | (vertex::CELL_UV_MASK << vertex::CELL_UV_V_SHIFT);
-    out.packed2 = (out.packed2 & !(uv_mask | vertex::BLOCK_LIGHT_MASK))
-        | vertex::pack_cell_uv(u, v)
-        | light.packed2_bits();
-    out
+    CornerLights::of(corners).sample(weights, pos, u, v)
 }
 
 #[cfg(test)]

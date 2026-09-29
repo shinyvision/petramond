@@ -43,17 +43,15 @@ impl LocalSpec {
     }
 }
 
-pub(crate) static CAVE_SOURCE: LocalSpec = LocalSpec::new("cave.source.local", 16_384);
-pub(crate) static CAVE_CLIMATE: LocalSpec = LocalSpec::new("cave.climate.local", 2048);
+pub(crate) static TERRAIN_COLUMNS: LocalSpec = LocalSpec::new("terrain.columns.local", 256);
 pub(crate) static CAVE_REGIONS: LocalSpec = LocalSpec::new("cave.regions.local", 256);
 pub(crate) static CAVE_TERRITORY: LocalSpec = LocalSpec::new("cave.territory.local", 256);
 pub(crate) static CAVE_POINTS: LocalSpec = LocalSpec::new("cave.points.local", 128);
 pub(crate) static SURFACE_CLIMATE: LocalSpec = LocalSpec::new("surface.climate.local", 32_768);
 pub(crate) static CLIMATE_WARP: LocalSpec = LocalSpec::new("surface.warp.local", 1024);
 
-static ALL: [&LocalSpec; 7] = [
-    &CAVE_SOURCE,
-    &CAVE_CLIMATE,
+static ALL: [&LocalSpec; 6] = [
+    &TERRAIN_COLUMNS,
     &CAVE_REGIONS,
     &CAVE_TERRITORY,
     &CAVE_POINTS,

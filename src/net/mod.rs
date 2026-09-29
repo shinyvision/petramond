@@ -10,7 +10,8 @@ pub mod rate;
 pub mod remap;
 pub mod secure;
 pub mod spatial_loops;
+pub mod tick_delta;
 
-pub const PROTOCOL_VERSION: u16 = 56;
+pub const PROTOCOL_VERSION: u16 = 57;
 
 pub const DEFAULT_PORT: u16 = 7434;

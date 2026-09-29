@@ -361,6 +361,32 @@ fn exposure_masks_match_the_per_face_cull_on_random_sections() {
     }
 }
 
+/// A corner folded once at a vertex and shared by the faces meeting there must equal the corner
+/// each face folds for itself: random sections (slabs, box families, leaves, glass, fluids) and
+/// generated terrain, meshed with and without the vertex cache.
+#[test]
+fn vertex_shared_face_lighting_matches_the_per_face_fold() {
+    use crate::builder::scratch::with_vertex_light_sharing;
+    let pos = SectionPos::new(0, 0, 0);
+    for seed in 0..48u64 {
+        let (section, scene) = random_scene(0x11f7_0000 + seed);
+        let shared = scene.mesh(&section, pos);
+        let unshared = with_vertex_light_sharing(false, || scene.mesh(&section, pos));
+        assert_same_mesh(&shared, &unshared, &format!("random section seed {seed}"));
+    }
+    let mut stored = 0;
+    for (pos, section, scene) in fixtures::generated_sections() {
+        let shared = scene.mesh(&section, pos);
+        stored += crate::builder::scratch::vertex_lights_stored();
+        let unshared = with_vertex_light_sharing(false, || scene.mesh(&section, pos));
+        assert_same_mesh(&shared, &unshared, &format!("generated section {pos:?}"));
+    }
+    assert!(
+        stored > 1000,
+        "terrain must actually share corners ({stored} stored)"
+    );
+}
+
 #[test]
 fn closure_front_end_meshes_the_pad_the_mesh_pool_would_assemble() {
     const PAD: usize = SECTION_SIZE + 2;

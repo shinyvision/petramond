@@ -21,16 +21,16 @@
 //! the cell-wise union is section-order independent, where a first-come claim
 //! would not be.
 //!
-//! HOST-CALL BUDGET: one box gate, one biome batch over the rolled roots, one
-//! terrain batch over every cell outside the section those roots may read,
-//! and a second terrain batch only when a column's foot needs its discs.
+//! HOST-CALL BUDGET: one leaf-mask gate, one biome batch over the rolled
+//! roots, and one whole-section read per neighbouring section a root's run
+//! or cone may grow through.
 
 use std::collections::BTreeSet;
 
 use mod_sdk::*;
 
 use super::{Dripstone, BIOME_TOP_Y};
-use crate::probe::{self, Pad, TerrainReads};
+use crate::probe::{self, Pad, SectionSpace};
 
 const SALT_ROOT: u64 = 0x0E58_2000_0000_0001;
 const SALT_FORMATION: u64 = 0x0E58_2000_0000_0002;
@@ -71,8 +71,13 @@ const CONE_ONE_IN: i32 = 30;
 const CONE_WIDE_ONE_IN: i32 = 2;
 const COLUMN_ONE_IN: i32 = 2;
 
-pub const GEN_FILTER: GenFeatureFilter =
-    GenFeatureFilter::y_band(i32::MIN, BIOME_TOP_Y + MARGIN_CONE);
+const GEN_FILTER: GenFeatureFilter = GenFeatureFilter::y_band(i32::MIN, BIOME_TOP_Y + MARGIN_CONE);
+
+/// The registration filter: the band, gated on the habitat being within a formation's reach
+/// of the section, the same box a dispatch checks first.
+pub fn gen_filter(biome: Option<u8>) -> GenFeatureFilter {
+    GEN_FILTER.near_underground_biomes(biome, REACH_PAD.xz, REACH_PAD.down, REACH_PAD.up)
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Kind {
@@ -138,11 +143,13 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
     };
     let origin = ctx.origin_world();
     let seed = ctx.seed();
-    if !probe::in_reach(ours, origin, REACH_PAD, underground_biomes_in_box) {
+    let (lo, hi) = REACH_PAD.around(origin);
+    let leaves = underground_biome_leaves(lo, hi, ours);
+    if !leaves.any() {
         return Vec::new();
     }
 
-    let roots = gather(seed, origin);
+    let roots = gather_within(seed, origin, &leaves);
     if roots.is_empty() {
         return Vec::new();
     }
@@ -160,8 +167,7 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
         return Vec::new();
     }
 
-    let mut probes = TerrainReads::new();
-    probes.ask_unseen(ctx, roots.iter().flat_map(cells_read));
+    let probes = SectionSpace::new(&d.fluids);
     let snapshot = |c: [i32; 3]| -> Option<Space> {
         ctx.block(c).map(|b| {
             if b == d.air {
@@ -173,26 +179,15 @@ pub fn generate(d: &Dripstone, ctx: &GenCtx) -> Vec<GenWrite> {
             }
         })
     };
+    let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
 
     let mut w = Writes::default();
-    let feet: Vec<Foot> = {
-        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
-        roots
-            .iter()
-            .filter_map(|r| place_root(&space, &mut w, r))
-            .collect()
-    };
-
-    if !feet.is_empty() {
-        probes.ask_unseen(
-            ctx,
-            feet.iter()
-                .flat_map(|f| cone_cells(f.base, f.up, f.wide, false)),
-        );
-        let space = |c: [i32; 3]| snapshot(c).unwrap_or_else(|| Space::of(probes.space(c)));
-        for f in &feet {
-            place_cone(&space, &mut w, f.base, f.up, f.wide, true);
-        }
+    let feet: Vec<Foot> = roots
+        .iter()
+        .filter_map(|r| place_root(&space, &mut w, r))
+        .collect();
+    for f in &feet {
+        place_cone(&space, &mut w, f.base, f.up, f.wide, true);
     }
     w.into_writes(d, ctx)
 }
@@ -297,31 +292,6 @@ fn cone_profile(wide: bool) -> &'static [i32] {
     }
 }
 
-fn cone_cells(root: [i32; 3], step: i32, wide: bool, with_run: bool) -> Vec<[i32; 3]> {
-    let profile = cone_profile(wide);
-    let mut v = Vec::new();
-    for (k, &r) in profile.iter().enumerate() {
-        let y = root[1] + step * k as i32;
-        for dx in -r..=r {
-            for dz in -r..=r {
-                if dx * dx + dz * dz <= r * r {
-                    v.push([root[0] + dx, y, root[2] + dz]);
-                }
-            }
-        }
-    }
-    if with_run {
-        for k in 0..CONE_RUN {
-            v.push([
-                root[0],
-                root[1] + step * (profile.len() as i32 + k),
-                root[2],
-            ]);
-        }
-    }
-    v
-}
-
 fn place_cone(
     space: &dyn Fn([i32; 3]) -> Space,
     w: &mut Writes,
@@ -374,43 +344,40 @@ fn arms(p: [i32; 3]) -> [[i32; 3]; 4] {
     ]
 }
 
-fn cells_read(r: &Root) -> Vec<[i32; 3]> {
-    let mut v = Vec::new();
-    let mut column = |root: [i32; 3], len: i32| {
-        for k in -len..=len {
-            v.push([root[0], root[1] + k, root[2]]);
-        }
-    };
-    match r.kind {
-        Kind::Single => column(r.p, r.len),
-        Kind::Cluster => {
-            column(r.p, r.len);
-            for arm in arms(r.p) {
-                column(arm, (r.len - 1).max(1));
-            }
-        }
-        Kind::Cone {
-            wide,
-            column: is_column,
-        } => {
-            column(r.p, if is_column { COLUMN_REACH } else { 1 });
-            for step in [-1, 1] {
-                v.extend(cone_cells(r.p, step, wide, true));
-            }
-        }
-    }
-    v
+#[cfg(test)]
+fn gather(seed: u32, origin: [i32; 3]) -> Vec<Root> {
+    gather_within(seed, origin, &LeafMask::everywhere())
 }
 
-fn gather(seed: u32, origin: [i32; 3]) -> Vec<Root> {
+/// The roots whose reach touches the section, rolled only where `leaves` admits the habitat:
+/// a root outside it is dropped by the biome check anyway, and rolls are positional.
+fn gather_within(seed: u32, origin: [i32; 3], leaves: &LeafMask) -> Vec<Root> {
     let mut roots = Vec::new();
     for lz in -SIDE_MARGIN..16 + SIDE_MARGIN {
         for lx in -SIDE_MARGIN..16 + SIDE_MARGIN {
             let (x, z) = (origin[0] + lx, origin[2] + lz);
+            let column = leaves.column(x, z);
+            if !column.any() {
+                continue;
+            }
             let side_away = (-lx).max(lx - 15).max(-lz).max(lz - 15).max(0);
             let (density, core) = formation_at(seed, x, z);
-            for ly in -MARGIN_CONE..16 + MARGIN_CONE {
+            // Outside a formation's core every root is a single run: no side reach and at most
+            // `MAX_LEN` rows, so only the section's own columns within that many rows can
+            // hold one that reaches it. Rolls are positional, so skipping cells shifts nothing.
+            if !core && side_away > 0 {
+                continue;
+            }
+            let rows = if core {
+                -MARGIN_CONE..16 + MARGIN_CONE
+            } else {
+                1 - MAX_LEN..15 + MAX_LEN
+            };
+            for ly in rows {
                 let y = origin[1] + ly;
+                if !column.may_hold(y) {
+                    continue;
+                }
                 let mut rng = GenRng::positional(seed, SALT_ROOT, x, y, z);
                 if rng.next_i32(0, 999) >= density {
                     continue;
@@ -581,28 +548,5 @@ mod tests {
             w.hanging.contains(&[0, 3, 0]),
             "the cone ends in a hanging run"
         );
-    }
-
-    #[test]
-    fn a_cones_probe_list_covers_everything_it_can_write() {
-        for wide in [false, true] {
-            let r = Root {
-                p: [3, 40, -7],
-                len: 1,
-                kind: Kind::Cone { wide, column: true },
-            };
-            let read: BTreeSet<[i32; 3]> = cells_read(&r).into_iter().collect();
-            for step in [-1, 1] {
-                let mut w = Writes::default();
-                place_cone(&|_| Space::Air, &mut w, r.p, step, wide, false);
-                for c in w.solid.iter().chain(&w.hanging).chain(&w.standing) {
-                    assert!(read.contains(c), "{c:?} written but never read");
-                }
-            }
-            let (axial, side) = r.reach();
-            for c in &read {
-                assert!((c[1] - r.p[1]).abs() <= axial && (c[0] - r.p[0]).abs() <= side);
-            }
-        }
     }
 }

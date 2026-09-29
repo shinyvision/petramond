@@ -1,4 +1,3 @@
-use petramond_world::block::Block;
 use petramond_world::block_state::LogAxis;
 use petramond_world::facing::Facing;
 use petramond_world::tile::Tile;
@@ -17,14 +16,14 @@ pub(super) fn facing_face(facing: Facing) -> Face {
 
 #[inline]
 pub(super) fn cube_face_tile(
-    block: Block,
+    is_log: bool,
     face: Face,
     tiles: [Tile; 3],
     front: Option<(Face, Tile)>,
     log_axis: LogAxis,
 ) -> Tile {
     let [tile_top, tile_bot, tile_side] = tiles;
-    if block.is_log() {
+    if is_log {
         return match (log_axis, face) {
             (LogAxis::X, Face::PosX) | (LogAxis::Y, Face::PosY) | (LogAxis::Z, Face::PosZ) => {
                 tile_top
@@ -47,13 +46,14 @@ pub(super) fn cube_face_tile(
 
 #[inline]
 pub(super) fn cube_face_uv_turn(
-    block: Block,
+    uv_turns: [u8; 3],
+    is_log: bool,
     face: Face,
     front: Option<Face>,
     log_axis: LogAxis,
 ) -> u32 {
-    let [top, bottom, side] = block.uv_turns().map(u32::from);
-    if block.is_log() {
+    let [top, bottom, side] = uv_turns.map(u32::from);
+    if is_log {
         return match (log_axis, face) {
             (LogAxis::X, Face::PosX) | (LogAxis::Y, Face::PosY) | (LogAxis::Z, Face::PosZ) => top,
             (LogAxis::X, Face::NegX) | (LogAxis::Y, Face::NegY) | (LogAxis::Z, Face::NegZ) => {

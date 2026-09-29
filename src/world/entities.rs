@@ -1,5 +1,4 @@
 use crate::world::ServerWorld;
-use std::collections::HashMap;
 
 use crate::entity::{DroppedItem, Motion};
 use crate::mob::PlayerAnchor;
@@ -288,7 +287,7 @@ impl DroppedItems {
         if self.items.len() < 2 {
             return;
         }
-        let mut cells: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::new();
+        let mut cells: rustc_hash::FxHashMap<(i32, i32, i32), Vec<u32>> = Default::default();
         for (i, it) in self.items.iter().enumerate() {
             let c = it.pos.block();
             cells.entry((c.x, c.y, c.z)).or_default().push(i as u32);
@@ -300,7 +299,7 @@ impl DroppedItems {
                 continue;
             }
             let origin = self.items[i].pos.block();
-            let near = |cells: &HashMap<(i32, i32, i32), Vec<u32>>| {
+            let near = |cells: &rustc_hash::FxHashMap<(i32, i32, i32), Vec<u32>>| {
                 let mut out = Vec::new();
                 for dx in -1..=1 {
                     for dy in -1..=1 {
@@ -410,8 +409,8 @@ impl DroppedItems {
         taken
     }
 
-    pub(super) fn items_by_section(&self) -> HashMap<SectionPos, Vec<DroppedItem>> {
-        let mut map: HashMap<SectionPos, Vec<DroppedItem>> = HashMap::new();
+    pub(super) fn items_by_section(&self) -> rustc_hash::FxHashMap<SectionPos, Vec<DroppedItem>> {
+        let mut map: rustc_hash::FxHashMap<SectionPos, Vec<DroppedItem>> = Default::default();
         for it in &self.items {
             if let Some(pos) = section_of(it.pos) {
                 map.entry(pos).or_default().push(it.clone());

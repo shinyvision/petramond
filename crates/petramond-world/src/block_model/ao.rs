@@ -82,6 +82,41 @@ struct Caster {
     mn: Vec3,
     mx: Vec3,
     weight: f32,
+    posed_mn: Vec3,
+    posed_mx: Vec3,
+}
+
+fn posed_bounds(pose: &Mat4, mn: Vec3, mx: Vec3) -> (Vec3, Vec3) {
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for i in 0..8 {
+        let corner = Vec3::new(
+            if i & 1 == 0 { mn.x } else { mx.x },
+            if i & 2 == 0 { mn.y } else { mx.y },
+            if i & 4 == 0 { mn.z } else { mx.z },
+        );
+        let p = pose.transform_point3(corner);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    (lo, hi)
+}
+
+fn box_gap(amn: Vec3, amx: Vec3, bmn: Vec3, bmx: Vec3) -> f32 {
+    (bmn - amx).max(amn - bmx).max(Vec3::ZERO).length()
+}
+
+/// True when no face test of `ray_box_face_hit` can report a hit with `t <= reach`: on some
+/// axis the ray's coordinate over `t` in `[-1e-6, reach]` stays clear of the box's slab by more
+/// than the face test's tolerance. Deliberately loose so it can only skip certain misses.
+#[inline]
+fn segment_misses_box(o: Vec3, d: Vec3, reach: f32, mn: Vec3, mx: Vec3) -> bool {
+    const TOL: f32 = 1e-4;
+    let a = o - d * 1e-6;
+    let b = o + d * reach;
+    let lo = a.min(b) - Vec3::splat(TOL);
+    let hi = a.max(b) + Vec3::splat(TOL);
+    hi.cmplt(mn).any() || lo.cmpgt(mx).any()
 }
 
 pub(super) fn bake_face_ao(
@@ -117,22 +152,51 @@ pub fn bake_box_ao(
         .map(|b| {
             let thick = (b.to - b.from).abs().min_element() / unit;
             let weight = ((thick - THIN_MIN) / (THIN_FULL - THIN_MIN)).clamp(0.0, 1.0);
+            let (mn, mx) = (b.from.min(b.to), b.from.max(b.to));
+            let (posed_mn, posed_mx) = posed_bounds(&b.pose, mn, mx);
             Caster {
                 pose: b.pose,
                 inv_pose: b.pose.inverse(),
-                mn: b.from.min(b.to),
-                mx: b.from.max(b.to),
+                mn,
+                mx,
                 weight: if b.casts { weight } else { 0.0 },
+                posed_mn,
+                posed_mx,
             }
         })
         .collect();
+
+    // A counted hit is the posed point `origin + dir * t` with `t <= reach`, and
+    // it lies on the caster's posed box, so a caster whose posed bounds sit
+    // farther than `reach * |dir|` from the ray origin cannot contribute.
+    // Skipping it is exact: the per-ray combine is a max. `|dir| <= sqrt(3)`
+    // bounds any frame; each face then uses its own rays' longest `dir`.
+    let slack = 1e-3 * unit;
+    let box_reach = lift + reach * 3f32.sqrt() + slack;
 
     boxes
         .iter()
         .enumerate()
         .map(|(ri, cube)| {
             let mut per_face = [[1.0f32; 4]; 6];
-            let tilt = &casters[ri].pose;
+            let receiver = &casters[ri];
+            let tilt = &receiver.pose;
+            let nearby: Vec<usize> = casters
+                .iter()
+                .enumerate()
+                .filter(|&(oi, other)| {
+                    oi != ri
+                        && other.weight > 0.0
+                        && box_gap(
+                            receiver.posed_mn,
+                            receiver.posed_mx,
+                            other.posed_mn,
+                            other.posed_mx,
+                        ) <= box_reach
+                })
+                .map(|(oi, _)| oi)
+                .collect();
+            let mut candidates: Vec<(usize, Vec3)> = Vec::with_capacity(nearby.len());
             for (slot, face) in Face::ALL.into_iter().enumerate() {
                 if !cube.faces[slot] {
                     continue;
@@ -146,19 +210,29 @@ pub fn bake_box_ao(
                 let t_axis = tilt.transform_vector3(es).normalize();
                 let normal = tilt.transform_vector3(es.cross(et).normalize()).normalize();
                 let b_axis = normal.cross(t_axis);
+                let dirs: Vec<Vec3> = rays
+                    .iter()
+                    .map(|ray| t_axis * ray[0] + b_axis * ray[1] + normal * ray[2])
+                    .collect();
+                let dir_reach = reach * dirs.iter().fold(0.0f32, |m, d| m.max(d.length())) + slack;
                 for (ci, corner) in local.into_iter().enumerate() {
                     let posed = tilt.transform_point3(Vec3::from(corner));
                     let origin = posed + normal * lift;
+                    candidates.clear();
+                    candidates.extend(nearby.iter().filter_map(|&oi| {
+                        let other = &casters[oi];
+                        (box_gap(origin, origin, other.posed_mn, other.posed_mx) <= dir_reach)
+                            .then(|| (oi, other.inv_pose.transform_point3(origin)))
+                    }));
                     let mut occ_sum = 0.0f32;
-                    for ray in &rays {
-                        let dir = t_axis * ray[0] + b_axis * ray[1] + normal * ray[2];
+                    for &dir in &dirs {
                         let mut best = 0.0f32;
-                        for (oi, other) in casters.iter().enumerate() {
-                            if oi == ri || other.weight <= 0.0 {
+                        for &(oi, ol) in &candidates {
+                            let other = &casters[oi];
+                            let dl = other.inv_pose.transform_vector3(dir);
+                            if segment_misses_box(ol, dl, reach, other.mn, other.mx) {
                                 continue;
                             }
-                            let ol = other.inv_pose.transform_point3(origin);
-                            let dl = other.inv_pose.transform_vector3(dir);
                             for hit_face in Face::ALL {
                                 let Some((t, hit)) =
                                     ray_box_face_hit(ol, dl, other.mn, other.mx, hit_face)

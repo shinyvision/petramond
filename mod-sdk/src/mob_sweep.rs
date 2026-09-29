@@ -1,11 +1,16 @@
 use std::collections::HashSet;
 
-use mod_api::MobSnapshot;
+use mod_api::{MobId, MobSnapshot};
 
-use crate::mobs_in_radius;
+use crate::{mobs_in_radius, mobs_in_radius_of};
 
 pub fn mobs_near_any(anchors: &[[f64; 3]], radius: f32) -> Vec<MobSnapshot> {
     first_seen(anchors, |at| mobs_in_radius(at, radius))
+}
+
+/// [`mobs_near_any`] for the species `kinds` only.
+pub fn mobs_near_any_of(anchors: &[[f64; 3]], radius: f32, kinds: &[MobId]) -> Vec<MobSnapshot> {
+    first_seen(anchors, |at| mobs_in_radius_of(at, radius, kinds.to_vec()))
 }
 
 fn first_seen(

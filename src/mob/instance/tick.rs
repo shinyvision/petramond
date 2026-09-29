@@ -55,6 +55,7 @@ struct Myself<'a> {
     attacker: Option<(EntityRef, u32)>,
     nav_idle: bool,
     tags: &'a std::sync::Arc<std::collections::BTreeMap<String, MobTagValue>>,
+    tags_rev: u64,
     region: Option<&'a ConfinedRegion>,
 }
 
@@ -93,6 +94,7 @@ fn ai_ctx<'a>(
         mob_index: inputs.mobs.by_id(me.id).map(|(i, _)| i),
         mobs: inputs.mobs,
         tags: me.tags,
+        tags_rev: me.tags_rev,
         confined_region: me.region,
         scripted,
         rng,
@@ -189,13 +191,13 @@ impl Instance {
             cell,
             think,
             judgeable: self.motion.on_ground && !on_fluid,
-            nav_rev: world.nav_revision(),
+            terrain_rev: world.terrain_revision(),
         };
         let verdict = self.confinement.refresh(probe, regions, || {
             let params = d.path_params();
             let step_allowed = nav::navigation_step_gate(&cursor, params, d.size.height);
             let loaded = nav::nav_loaded_fn(&cursor);
-            confined::confined_region(
+            confined::confinement_verdict(
                 cell,
                 params,
                 &solid,
@@ -286,6 +288,7 @@ impl Instance {
             mind,
             combat,
             tags,
+            tags_rev,
             confinement,
             rng,
             ..
@@ -307,6 +310,7 @@ impl Instance {
             attacker: combat.attacker.map(|who| (who, combat.attacker_ticks)),
             nav_idle: nav.is_idle(),
             tags,
+            tags_rev: *tags_rev,
             region: confinement.region(),
         };
         (me, brain, held_decision, rng)

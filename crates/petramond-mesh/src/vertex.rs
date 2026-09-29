@@ -56,11 +56,18 @@ pub(crate) fn round_i32(x: f32) -> i32 {
 impl TerrainVertex {
     #[inline]
     pub fn from_mesh(v: &Vertex) -> Self {
-        let q = |p: f32| {
-            round_i32(p * TERRAIN_POS_SCALE).clamp(i16::MIN as i32, i16::MAX as i32) as i16
-        };
+        // Round half away from zero: `x + copysign(0.5, x)` truncated is exact for every
+        // magnitude the i16 lane can hold (the sum is representable below 2^22), and `as i32`
+        // saturates beyond it and maps NaN to 0, matching `round_i32` + clamp without its
+        // branches or the array-map iterator.
+        #[inline(always)]
+        fn quant(p: f32) -> i16 {
+            let x = p * TERRAIN_POS_SCALE;
+            let r = (x + 0.5f32.copysign(x)) as i32;
+            r.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+        }
         Self {
-            pos: v.pos.map(q),
+            pos: [quant(v.pos[0]), quant(v.pos[1]), quant(v.pos[2])],
             _pad: 0,
             tint: v.tint,
             packed: v.packed,
@@ -100,6 +107,44 @@ mod terrain_vertex_tests {
                 (v.round() as i32).clamp(-(1 << 30), 1 << 30),
                 "{v}"
             );
+        }
+    }
+
+    #[test]
+    fn terrain_quantization_matches_round_i32() {
+        let mut x = -600.0f32;
+        while x < 600.0 {
+            for p in [
+                x,
+                x + 1.0 / 128.0,
+                x - 1.0 / 128.0,
+                x.next_up(),
+                x.next_down(),
+            ] {
+                let want =
+                    round_i32(p * TERRAIN_POS_SCALE).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+                let got = TerrainVertex::from_mesh(&Vertex {
+                    pos: [p; 3],
+                    tint: 0,
+                    packed: 0,
+                    packed2: 0,
+                })
+                .pos[0];
+                assert_eq!(got, want, "{p}");
+            }
+            x += 0.0173;
+        }
+        for p in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e9, -1e9] {
+            let want =
+                round_i32(p * TERRAIN_POS_SCALE).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            let got = TerrainVertex::from_mesh(&Vertex {
+                pos: [p; 3],
+                tint: 0,
+                packed: 0,
+                packed2: 0,
+            })
+            .pos[0];
+            assert_eq!(got, want, "{p}");
         }
     }
 

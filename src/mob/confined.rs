@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
@@ -11,18 +12,56 @@ pub const FREE_CHECK_INTERVAL: u16 = 1200;
 
 const FREE_RECHECK_MOVE: i32 = 8;
 
-pub fn free_verdict_stale(
-    cell: IVec3,
-    checked_at: IVec3,
-    nav_rev: u64,
-    checked_rev: u64,
-    free_age: u16,
-) -> bool {
-    nav_rev != checked_rev
+/// A free verdict is re-proved when the proof itself went stale (a nav change inside the cells it
+/// read, or streaming under a proof that gave up on unloaded world), the mob drifted, or the
+/// insurance interval ran out.
+pub fn free_verdict_stale(cell: IVec3, checked_at: IVec3, proof_live: bool, free_age: u16) -> bool {
+    !proof_live
         || free_age >= FREE_CHECK_INTERVAL
         || (cell.x - checked_at.x).abs() >= FREE_RECHECK_MOVE
         || (cell.z - checked_at.z).abs() >= FREE_RECHECK_MOVE
         || cell.y != checked_at.y
+}
+
+/// Every cell a verdict read, as an inclusive box: a nav change outside it cannot change the
+/// verdict, so only a change inside re-proves it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReadBox {
+    min: IVec3,
+    max: IVec3,
+}
+
+impl ReadBox {
+    pub fn contains(&self, p: IVec3) -> bool {
+        p.cmpge(self.min).all() && p.cmple(self.max).all()
+    }
+
+    pub fn overlaps(&self, other: &ReadBox) -> bool {
+        self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
+    }
+
+    pub fn around(cells: &[IVec3]) -> Option<ReadBox> {
+        let first = *cells.first()?;
+        Some(cells.iter().fold(
+            ReadBox {
+                min: first,
+                max: first,
+            },
+            |b, &c| ReadBox {
+                min: b.min.min(c),
+                max: b.max.max(c),
+            },
+        ))
+    }
+}
+
+pub enum Verdict {
+    Confined(ConfinedRegion),
+    Free {
+        reads: ReadBox,
+        /// The proof gave up on (or read) unstreamed world, so streaming can change it.
+        hit_unloaded: bool,
+    },
 }
 
 pub const MAX_REGION_SPAN: i32 = 48;
@@ -59,8 +98,12 @@ impl ConfinedRegion {
     }
 }
 
+/// Flood the cells a mob can walk to from `start`: a closed region is a pen (`Confined`),
+/// reaching the span cap, a straight escape run or unstreamed world means `Free`. The verdict is
+/// a pure function of the cells the probes read, which a free verdict reports so its owner can
+/// keep it until a change lands inside them.
 #[allow(clippy::too_many_arguments)]
-pub fn confined_region(
+pub fn confinement_verdict(
     start: IVec3,
     params: PathParams,
     solid: &impl Fn(IVec3) -> bool,
@@ -68,15 +111,62 @@ pub fn confined_region(
     fluid: &impl Fn(IVec3) -> bool,
     step_allowed: &impl Fn(IVec3, IVec3) -> bool,
     loaded: &impl Fn(IVec3) -> bool,
-) -> Option<ConfinedRegion> {
+) -> Verdict {
+    let lo = Cell::new(start);
+    let hi = Cell::new(start);
+    let hit_unloaded = Cell::new(false);
+    let note = |c: IVec3| {
+        lo.set(lo.get().min(c));
+        hi.set(hi.get().max(c));
+    };
+    let solid = |c: IVec3| {
+        note(c);
+        solid(c)
+    };
+    let support = |c: IVec3| {
+        note(c);
+        support(c)
+    };
+    let fluid = |c: IVec3| {
+        note(c);
+        fluid(c)
+    };
+    let step_allowed = |a: IVec3, b: IVec3| {
+        note(a);
+        note(b);
+        step_allowed(a, b)
+    };
+    let loaded = |c: IVec3| {
+        note(c);
+        let is = loaded(c);
+        if !is {
+            hit_unloaded.set(true);
+        }
+        is
+    };
+    let free = || {
+        // Support and the step gate read around the cell they are asked about (the body's
+        // footprint and height), so the box grows by the body's reach.
+        let side = params.half_width.ceil() as i32 + 2;
+        let margin_lo = IVec3::new(side, 2, side);
+        let margin_hi = IVec3::new(side, params.head_cells() + 2, side);
+        Verdict::Free {
+            reads: ReadBox {
+                min: lo.get() - margin_lo,
+                max: hi.get() + margin_hi,
+            },
+            hit_unloaded: hit_unloaded.get(),
+        }
+    };
+
     let memo = crate::mob::path::CellMemo::<512>::default();
     let foothold = |c: IVec3| {
         memo.get(c, |c| {
-            is_navigation_foothold_with(c, params, solid, support, fluid)
+            is_navigation_foothold_with(c, params, &solid, &support, &fluid)
         })
     };
     if !foothold(start) {
-        return None;
+        return free();
     }
 
     for (dx, dz) in DIRS {
@@ -84,12 +174,12 @@ pub fn confined_region(
             start,
             (dx, dz),
             params,
-            solid,
+            &solid,
             &foothold,
-            step_allowed,
-            loaded,
+            &step_allowed,
+            &loaded,
         ) {
-            return None;
+            return free();
         }
     }
 
@@ -101,7 +191,7 @@ pub fn confined_region(
 
     while let Some(c) = queue.pop() {
         if set.len() > MAX_REGION_CELLS {
-            return None;
+            return free();
         }
 
         for (dx, dz) in DIRS {
@@ -116,12 +206,20 @@ pub fn confined_region(
                 }
                 true
             };
-            match step_from(c, (dx, dz), params, solid, &foothold, step_allowed, loaded) {
-                Step::Unloaded => return None,
+            match step_from(
+                c,
+                (dx, dz),
+                params,
+                &solid,
+                &foothold,
+                &step_allowed,
+                &loaded,
+            ) {
+                Step::Unloaded => return free(),
                 Step::Blocked => {}
                 Step::To(next) => {
                     if !reach(next) {
-                        return None;
+                        return free();
                     }
                 }
             }
@@ -130,7 +228,7 @@ pub fn confined_region(
 
     let mut cells: Vec<IVec3> = set.iter().copied().collect();
     cells.sort_unstable_by_key(|c| (c.x, c.z, c.y));
-    Some(ConfinedRegion {
+    Verdict::Confined(ConfinedRegion {
         cells,
         set,
         min,
@@ -320,7 +418,10 @@ mod tests {
         let fluid = crate::mob::nav::nav_fluid_fn(&cursor);
         let step = crate::mob::nav::navigation_step_gate(&cursor, params(), 1.4);
         let loaded = crate::mob::nav::nav_loaded_fn(&cursor);
-        confined_region(start, params(), &solid, &support, &fluid, &step, &loaded)
+        match confinement_verdict(start, params(), &solid, &support, &fluid, &step, &loaded) {
+            Verdict::Confined(region) => Some(region),
+            Verdict::Free { .. } => None,
+        }
     }
 
     fn check(world: &ServerWorld, start: IVec3) -> bool {

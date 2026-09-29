@@ -31,7 +31,8 @@ pub(crate) use queries::UndergroundBoxKey;
 pub use queries::{
     blocks_at as terrain_blocks_at, heights_at as terrain_heights_at,
     heights_in as terrain_heights_in, section_blocks as terrain_section_at, surface_biome_at,
-    terrain_solid_at, terrain_space_at, underground_biomes_at, underground_biomes_in_box,
+    terrain_solid_at, terrain_space_at, underground_biome_leaves, underground_biomes_at,
+    underground_biomes_in_box, underground_box_admits,
 };
 pub use rng::FeatureRng;
 

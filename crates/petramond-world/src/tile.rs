@@ -88,6 +88,13 @@ impl Tile {
         Tile(self.0 + (seed % data().cells[self.index()].variation_count as u32) as u16)
     }
 
+    /// The tile `offset` variations after this one (`variation` / `face_variation` resolved
+    /// with an already-chosen index).
+    #[inline]
+    pub const fn variant(self, offset: u16) -> Tile {
+        Tile(self.0 + offset)
+    }
+
     #[inline]
     pub fn face_variation(self, cell: [i32; 3], normal: u32) -> Tile {
         let meta = &data().cells[self.index()];

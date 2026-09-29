@@ -218,8 +218,13 @@ impl<'a> BatchCarve<'a> {
                     if lane == u16::MAX {
                         continue;
                     }
-                    let biome =
-                        span.unwrap_or_else(|| self.field.underground.id_at(cur.climate(yy), yy));
+                    let biome = span.unwrap_or_else(|| {
+                        if cur.ordinary(yy) {
+                            0
+                        } else {
+                            self.field.underground.id_at(cur.climate(yy), yy)
+                        }
+                    });
                     let Some(pattern) = self.field.underground.geology(biome) else {
                         continue;
                     };

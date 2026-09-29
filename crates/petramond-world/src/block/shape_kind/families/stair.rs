@@ -93,6 +93,21 @@ impl ShapeSim for StairFamily {
             crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
         })
     }
+
+    fn shade_boxes(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        _b: Block,
+        out: &mut Vec<Aabb>,
+    ) -> bool {
+        let shape = stair_shape_at(nb, pos);
+        push_octants(out, |ix, iy, iz| {
+            crate::stair::shape_half_cell_occupied(shape, ix, iy, iz)
+        });
+        true
+    }
 }
 
 impl ShapeRender for StairFamily {

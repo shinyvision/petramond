@@ -14,15 +14,17 @@
 //! neighbours would still write their share. Anything that decides WHETHER a
 //! multi-section structure exists reads [`TerrainReads`], which is positional.
 //! A single-cell decoration needs no agreement, only the truth about its own
-//! neighbours: it reads the snapshot for cells it owns and asks
-//! [`TerrainReads::ask_unseen`] for the rest, never assuming an unseen cell is
-//! air.
+//! neighbours: it reads the snapshot for cells it owns and the host's terrain
+//! for the rest ([`TerrainReads`] per cell, [`SectionSpace`] per section),
+//! never assuming an unseen cell is air.
 //!
 //! HOST-CALL BUDGET. Every query here is an ABI crossing, not a field sampler.
 //! Candidates are filtered by their free positional rolls first, then asked
 //! about in one batch per question ([`ask`], split at the ABI cap rather than
-//! truncated), and a short reply is never read as an answer. [`in_reach`] is
-//! the bounded gate a pass pays before gathering anything at all.
+//! truncated), and a short reply is never read as an answer. The bounded gate a
+//! pass pays before gathering anything is the host's: a feature registers the
+//! biome and [`Pad`] it needs, and asks for the leaves within that pad that can
+//! hold it before rolling a candidate.
 //!
 //! MEMOIZATION. A fact that costs real crossings (a site probe, a containment
 //! proof, a root verdict) is published to the shared memo so the first worker
@@ -51,10 +53,6 @@ pub(crate) struct TerrainReads {
 }
 
 impl TerrainReads {
-    pub(crate) fn new() -> TerrainReads {
-        TerrainReads::with_query(terrain_space_at)
-    }
-
     pub(crate) fn with_query(query: Query<TerrainSpace>) -> TerrainReads {
         TerrainReads {
             query,
@@ -88,14 +86,6 @@ impl TerrainReads {
         }
     }
 
-    pub(crate) fn ask_unseen(
-        &mut self,
-        ctx: &GenCtx,
-        cells: impl IntoIterator<Item = [i32; 3]>,
-    ) -> bool {
-        self.ask(cells.into_iter().filter(|&c| ctx.block(c).is_none()))
-    }
-
     pub(crate) fn space(&self, c: [i32; 3]) -> Option<TerrainSpace> {
         self.answers.get(&c).copied()
     }
@@ -111,6 +101,45 @@ impl TerrainReads {
 
     pub(crate) fn free(&self, c: [i32; 3]) -> bool {
         self.space(c) == Some(TerrainSpace::Air)
+    }
+}
+
+/// Terrain space read a section at a time: a pass that touches whole neighbourhoods of cells
+/// around each root (every cell a run or cone may grow through) fetches the few sections they
+/// lie in once, instead of asking per cell. The host answers a section as generation fills it,
+/// falls included, so a cell classifies exactly as [`TerrainReads`] would classify it.
+pub(crate) struct SectionSpace<'a> {
+    fluids: &'a crate::fluids::Fluids,
+    fetch: fn([i32; 3]) -> Vec<BlockId>,
+    cache: std::cell::RefCell<TerrainCache>,
+}
+
+impl<'a> SectionSpace<'a> {
+    pub(crate) fn new(fluids: &'a crate::fluids::Fluids) -> SectionSpace<'a> {
+        SectionSpace::with_fetch(fluids, terrain_section_at)
+    }
+
+    pub(crate) fn with_fetch(
+        fluids: &'a crate::fluids::Fluids,
+        fetch: fn([i32; 3]) -> Vec<BlockId>,
+    ) -> SectionSpace<'a> {
+        SectionSpace {
+            fluids,
+            fetch,
+            cache: std::cell::RefCell::new(TerrainCache::new(16)),
+        }
+    }
+
+    /// The cell's space; `None` when its section could not be read.
+    pub(crate) fn space(&self, c: [i32; 3]) -> Option<TerrainSpace> {
+        let block = self.cache.borrow_mut().block_with(c, self.fetch)?;
+        Some(if block == BlockId::AIR {
+            TerrainSpace::Air
+        } else if self.fluids.contains(block) {
+            TerrainSpace::Fluid
+        } else {
+            TerrainSpace::Solid
+        })
     }
 }
 
@@ -136,16 +165,6 @@ impl Pad {
             ],
         )
     }
-}
-
-pub(crate) fn in_reach(
-    ours: u8,
-    origin: [i32; 3],
-    pad: Pad,
-    biomes_in_box: fn([i32; 3], [i32; 3]) -> Vec<u8>,
-) -> bool {
-    let (lo, hi) = pad.around(origin);
-    biomes_in_box(lo, hi).contains(&ours)
 }
 
 #[derive(Debug, PartialEq, Eq)]

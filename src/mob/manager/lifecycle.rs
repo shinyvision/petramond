@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::mob::{populate, spawn, Instance, Mob, MobId, SavedMob};
 use crate::world::ServerWorld;
 use petramond_math::math::Vec3;
@@ -112,8 +110,8 @@ impl Mobs {
         taken
     }
 
-    pub fn saved_by_section(&self) -> HashMap<SectionPos, Vec<SavedMob>> {
-        let mut map: HashMap<SectionPos, Vec<SavedMob>> = HashMap::new();
+    pub fn saved_by_section(&self) -> rustc_hash::FxHashMap<SectionPos, Vec<SavedMob>> {
+        let mut map: rustc_hash::FxHashMap<SectionPos, Vec<SavedMob>> = Default::default();
         for m in &self.list {
             if m.is_dead() {
                 continue;

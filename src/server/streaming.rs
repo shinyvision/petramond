@@ -7,17 +7,22 @@
 //! the in-process pipe the payloads are `Arc` refcount bumps.
 //!
 //! The wanted/keep shapes are the streamer's own (`World::plan_terrain_send`
-//! reuses `column_wanted`/`column_kept` over the anchor's facing target), and
-//! the diff is INCREMENTAL: it reruns only when the anchor's quantized target
-//! or the world's terrain-content revision moved (`World::terrain_send_key`),
-//! or while a previous plan hit the per-pump budget.
+//! reuses `column_wanted`/`column_kept` over the anchor's facing target). Each
+//! connection keeps its plan LIVE: a full diff runs only when the anchor's
+//! quantized target moves (or the world's plan epoch does); between those every
+//! section whose sendability may have changed — loaded, unloaded, lit, marked
+//! dirty, finality flipped — reaches the plan as a world SEND EVENT and is
+//! re-evaluated on its own, so a pump costs the events, never the loaded set.
+//! A full-recompute oracle (`verify_plan`) asserts the live plan equals the
+//! full diff after every sync in tests and under `PETRAMOND_SEND_PLAN_ORACLE`.
 
 use crate::net::protocol::{SectionCacheClaim, ServerToClient, SECTION_CACHE_CAP};
-use crate::world::{LoadAnchor, SentSections};
+use crate::world::{LoadAnchor, SendEvents, SentSections, ServerWorld, TerrainSendPlan};
 use petramond_math::math::IVec3;
 use petramond_world::chunk::{ChunkPos, SectionPos};
+use petramond_world::world::load_targets::LoadTarget;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::collections::VecDeque;
+use std::collections::BTreeSet;
 
 use super::game::ServerGame;
 
@@ -65,20 +70,48 @@ fn terrain_budget(allowance: usize) -> usize {
     TERRAIN_SECTIONS_PER_PUMP.min(allowance / 2)
 }
 
+type PosKey = (i32, i32, i32);
+/// A planned section under its ship key: nearest-first, then by position, so the ship order is
+/// total and reproducible.
+type PlanKey = (i64, PosKey);
+
+#[inline]
+fn pos_key(sp: SectionPos) -> PosKey {
+    (sp.cx, sp.cy, sp.cz)
+}
+
+#[inline]
+fn key_pos(k: PosKey) -> SectionPos {
+    SectionPos::new(k.0, k.1, k.2)
+}
+
+fn plan_oracle_enabled() -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("PETRAMOND_SEND_PLAN_ORACLE").is_some())
+}
+
 pub struct TerrainSync {
     sent_columns: FxHashSet<ChunkPos>,
     sent_column_revisions: FxHashMap<ChunkPos, u64>,
     sent: SentSections,
     pending_light: FxHashSet<SectionPos>,
-    last_send_key: Option<u64>,
-    backlog: bool,
-    /// One full nearest-first diff, consumed incrementally across paced batches.
-    /// World revisions that arrive while this plan is non-empty are folded into
-    /// the next refill instead of rescanning every 5 ms.
-    planned_sections: VecDeque<SectionPos>,
-    planned_drop_sections: VecDeque<SectionPos>,
-    planned_drop_columns: VecDeque<ChunkPos>,
-    planned_target_key: Option<u64>,
+    /// The live plan: every loaded, wanted, unsent, ship-final section under its
+    /// nearest-first key, and what left the keep shape or the server. Consumed
+    /// incrementally across paced batches.
+    planned: BTreeSet<PlanKey>,
+    planned_keys: FxHashMap<SectionPos, i64>,
+    planned_drop_sections: BTreeSet<PosKey>,
+    planned_drop_columns: BTreeSet<ChunkPos>,
+    /// (target key, world plan epoch) the plan was built under; `None` until the
+    /// first sync. A change rebuilds the plan from the whole world.
+    planned_under: Option<(u64, u64)>,
+    /// Sections this connection un-sent itself (cache misses) since its last
+    /// sync: they re-enter the plan through the same re-evaluation as a world
+    /// send event.
+    rechecks: Vec<SectionPos>,
     /// What this connection's client holds in its SECTION CACHE, by the
     /// server-domain content hash vouched at unload (value: hash + insertion
     /// stamp). Seeded from the Join manifest, grown by unload emission,
@@ -110,12 +143,12 @@ impl Default for TerrainSync {
             sent_column_revisions: FxHashMap::default(),
             sent: SentSections::default(),
             pending_light: FxHashSet::default(),
-            last_send_key: None,
-            backlog: false,
-            planned_sections: VecDeque::new(),
-            planned_drop_sections: VecDeque::new(),
-            planned_drop_columns: VecDeque::new(),
-            planned_target_key: None,
+            planned: BTreeSet::new(),
+            planned_keys: FxHashMap::default(),
+            planned_drop_sections: BTreeSet::new(),
+            planned_drop_columns: BTreeSet::new(),
+            planned_under: None,
+            rechecks: Vec::new(),
             client_cache: FxHashMap::default(),
             client_cache_stamp: 0,
             unacked_batches: 0,
@@ -168,7 +201,7 @@ impl TerrainSync {
         self.client_cache.remove(&pos);
         if self.sent.remove(pos) {
             self.pending_light.remove(&pos);
-            self.planned_sections.push_back(pos);
+            self.rechecks.push(pos);
         }
     }
 
@@ -183,17 +216,321 @@ impl TerrainSync {
         self.max_unacked = self.max_unacked.min(window_limit).max(1);
         self.batch_quota = self.batch_quota.min(batch_limit as f32);
     }
+
+    fn set_planned(&mut self, sp: SectionPos, key: Option<i64>) {
+        let old = self.planned_keys.get(&sp).copied();
+        if old == key {
+            return;
+        }
+        if let Some(old) = old {
+            self.planned.remove(&(old, pos_key(sp)));
+        }
+        match key {
+            Some(key) => {
+                self.planned.insert((key, pos_key(sp)));
+                self.planned_keys.insert(sp, key);
+            }
+            None => {
+                self.planned_keys.remove(&sp);
+            }
+        }
+    }
+
+    fn set_drop_section(&mut self, sp: SectionPos, drop: bool) {
+        if drop {
+            self.planned_drop_sections.insert(pos_key(sp));
+        } else {
+            self.planned_drop_sections.remove(&pos_key(sp));
+        }
+    }
+
+    fn install_plan(&mut self, plan: TerrainSendPlan, under: (u64, u64)) {
+        self.planned.clear();
+        self.planned_keys.clear();
+        for (key, sp) in plan.section_keys {
+            self.planned.insert((key, pos_key(sp)));
+            self.planned_keys.insert(sp, key);
+        }
+        self.planned_drop_sections = plan.drop_sections.into_iter().map(pos_key).collect();
+        self.planned_drop_columns = plan.drop_columns.into_iter().collect();
+        self.planned_under = Some(under);
+    }
+
+    /// A SENT column through the drop rule. Returns whether its membership moved.
+    fn reevaluate_column_drop(&mut self, world: &ServerWorld, target: LoadTarget, cp: ChunkPos) {
+        let drop = self.sent_columns.contains(&cp) && world.column_drop_due(target, cp);
+        if drop {
+            self.planned_drop_columns.insert(cp);
+        } else {
+            self.planned_drop_columns.remove(&cp);
+        }
+    }
+
+    /// One section through the ship rule and the drop rule against this
+    /// connection's sent sets. Idempotent: every call reads the CURRENT world,
+    /// so repeated or out-of-order events converge on the same plan.
+    fn reevaluate_section(
+        &mut self,
+        world: &ServerWorld,
+        target: LoadTarget,
+        underground: bool,
+        sp: SectionPos,
+    ) {
+        let cp = sp.chunk_pos();
+        self.reevaluate_column_drop(world, target, cp);
+        if self.sent.contains(sp) {
+            self.set_planned(sp, None);
+            let drop =
+                !self.planned_drop_columns.contains(&cp) && world.section_drop_due(target, sp);
+            self.set_drop_section(sp, drop);
+        } else {
+            self.set_drop_section(sp, false);
+            self.set_planned(sp, world.section_send_key(target, underground, sp));
+        }
+    }
+
+    /// Everything about one column: its drop membership and every section of it
+    /// that is sent, loaded or planned.
+    fn reevaluate_column(
+        &mut self,
+        world: &ServerWorld,
+        target: LoadTarget,
+        underground: bool,
+        cp: ChunkPos,
+    ) {
+        self.reevaluate_column_drop(world, target, cp);
+        let loaded = world
+            .data()
+            .section_column_cys
+            .get(&cp)
+            .copied()
+            .unwrap_or(0);
+        let held = self.sent.column_bits(cp);
+        for cy in petramond_world::world::data::WorldData::column_section_range() {
+            let sp = SectionPos::new(cp.cx, cy, cp.cz);
+            let bit = 1u32 << (cy - petramond_world::chunk::SECTION_MIN_CY);
+            if (loaded | held) & bit != 0 || self.planned_keys.contains_key(&sp) {
+                self.reevaluate_section(world, target, underground, sp);
+            }
+        }
+    }
+
+    /// Bring the plan up to date with the world: a full diff when the target or
+    /// the world's plan epoch moved, otherwise one re-evaluation per send event
+    /// and per own recheck. Runs EVERY pump for every session, before and
+    /// independently of emission — events are taken from the world once, so a
+    /// session that skips them (no allowance, a full window) would lose them.
+    pub(crate) fn sync_plan(
+        &mut self,
+        world: &ServerWorld,
+        anchor: LoadAnchor,
+        events: &SendEvents,
+    ) {
+        let (target, underground) = world.send_frame(anchor);
+        let under = (world.terrain_target_key(anchor), world.plan_epoch());
+        if self.planned_under != Some(under) {
+            let plan = world.plan_terrain_send(anchor, &self.sent_columns, &self.sent, usize::MAX);
+            self.install_plan(plan, under);
+        } else {
+            for &cp in &events.columns {
+                self.reevaluate_column(world, target, underground, cp);
+            }
+            for i in 0..events.sections.len() + self.rechecks.len() {
+                let sp = events
+                    .sections
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(|| self.rechecks[i - events.sections.len()]);
+                self.reevaluate_section(world, target, underground, sp);
+            }
+        }
+        self.rechecks.clear();
+        if plan_oracle_enabled() {
+            self.verify_plan(world, anchor);
+        }
+    }
+
+    /// The full-recompute oracle: the live plan must equal the full diff, in
+    /// ship order. Always on in tests; `PETRAMOND_SEND_PLAN_ORACLE` turns it on
+    /// in a running game (appbench, a dedicated server) to audit the event
+    /// producers against real streaming.
+    pub(crate) fn verify_plan(&self, world: &ServerWorld, anchor: LoadAnchor) {
+        let full = world.plan_terrain_send(anchor, &self.sent_columns, &self.sent, usize::MAX);
+        let live: Vec<(i64, PosKey)> = self.planned.iter().copied().collect();
+        let want: Vec<(i64, PosKey)> = full
+            .section_keys
+            .iter()
+            .map(|&(k, sp)| (k, pos_key(sp)))
+            .collect();
+        assert_plan_eq("sections", &live, &want);
+        assert_eq!(
+            self.planned_keys.len(),
+            self.planned.len(),
+            "send plan key index out of step with the ordered plan"
+        );
+        let live: Vec<PosKey> = self.planned_drop_sections.iter().copied().collect();
+        let mut want: Vec<PosKey> = full.drop_sections.iter().copied().map(pos_key).collect();
+        want.sort_unstable();
+        assert_plan_eq("drop_sections", &live, &want);
+        let live: Vec<ChunkPos> = self.planned_drop_columns.iter().copied().collect();
+        let mut want = full.drop_columns;
+        want.sort_unstable();
+        assert_plan_eq("drop_columns", &live, &want);
+    }
+
+    fn plan_is_empty(&self) -> bool {
+        self.planned.is_empty()
+            && self.planned_drop_sections.is_empty()
+            && self.planned_drop_columns.is_empty()
+    }
+
+    /// Emit this connection's terrain from its plan: unloads first, then each
+    /// new section preceded by its (re-freshed) column payload —
+    /// column-before-section is the install contract, and re-shipping the
+    /// column keeps the replica's heightmap and summaries current as more of
+    /// the column lands server-side.
+    ///
+    /// EVERY emitted message pays from `allowance`, unloads included — a
+    /// server-side eviction sweep can drop thousands of sent sections at
+    /// once, and an unpaced unload burst overflows the connection queue just
+    /// like unpaced terrain did. Deferring emission is always safe: the plan
+    /// and the sent sets move ONLY for messages actually emitted, so a paused
+    /// connection resumes exactly where it stopped.
+    pub(crate) fn emit_terrain(
+        &mut self,
+        world: &ServerWorld,
+        allowance: &mut usize,
+        msgs: &mut Vec<ServerToClient>,
+    ) {
+        if *allowance == 0 || self.plan_is_empty() {
+            return;
+        }
+        while let Some(&cp) = self.planned_drop_columns.first() {
+            if *allowance == 0 {
+                break;
+            }
+            self.planned_drop_columns.remove(&cp);
+            *allowance -= 1;
+            self.sent_columns.remove(&cp);
+            self.sent_column_revisions.remove(&cp);
+            let dropped = self.sent.take_column(cp);
+            let mut cache_hashes = Vec::new();
+            for sp in dropped {
+                if self.pending_light.contains(&sp) {
+                    continue;
+                }
+                if let Some(payload) = world.section_payload(sp) {
+                    let hash = payload.content_hash();
+                    self.note_client_cached(sp, hash);
+                    cache_hashes.push((sp.cy, hash));
+                }
+            }
+            self.pending_light.retain(|sp| sp.chunk_pos() != cp);
+            msgs.push(ServerToClient::ColumnUnload {
+                pos: cp,
+                cache_hashes,
+            });
+        }
+        while self.planned_drop_columns.is_empty() {
+            let Some(&k) = self.planned_drop_sections.first() else {
+                break;
+            };
+            let sp = key_pos(k);
+            let cp = sp.chunk_pos();
+            let column_revision = world.data().column_payload_revision(cp);
+            let fresh_column =
+                self.sent_column_revisions.get(&cp).copied() != Some(column_revision);
+            if *allowance < 1 + usize::from(fresh_column) {
+                break;
+            }
+            if fresh_column {
+                if let Some(column) = world.column_payload(cp) {
+                    self.sent_column_revisions.insert(cp, column_revision);
+                    *allowance -= 1;
+                    msgs.push(ServerToClient::ColumnData(column));
+                }
+            }
+            self.planned_drop_sections.remove(&k);
+            *allowance -= 1;
+            self.sent.remove(sp);
+            let cache_hash = (!self.pending_light.remove(&sp))
+                .then(|| world.section_payload(sp).map(|p| p.content_hash()))
+                .flatten();
+            if let Some(hash) = cache_hash {
+                self.note_client_cached(sp, hash);
+            }
+            msgs.push(ServerToClient::SectionUnload {
+                pos: sp,
+                cache_hash,
+            });
+        }
+
+        while self.planned_drop_columns.is_empty() && self.planned_drop_sections.is_empty() {
+            let Some(&(key, k)) = self.planned.first() else {
+                break;
+            };
+            let sp = key_pos(k);
+            let cp = sp.chunk_pos();
+            let column_revision = world.data().column_payload_revision(cp);
+            let fresh_column =
+                self.sent_column_revisions.get(&cp).copied() != Some(column_revision);
+            if *allowance < 1 + usize::from(fresh_column) {
+                break;
+            }
+            self.planned.remove(&(key, k));
+            self.planned_keys.remove(&sp);
+            if fresh_column {
+                let Some(column) = world.column_payload(cp) else {
+                    continue;
+                };
+                self.sent_columns.insert(cp);
+                self.sent_column_revisions.insert(cp, column_revision);
+                *allowance -= 1;
+                msgs.push(ServerToClient::ColumnData(column));
+            }
+            let Some(section) = world.section_payload(sp) else {
+                continue;
+            };
+            self.sent.insert(sp);
+            *allowance -= 1;
+            if let Some(&(hash, _)) = self.client_cache.get(&sp) {
+                self.client_cache.remove(&sp);
+                if section.content_hash() == hash {
+                    msgs.push(ServerToClient::SectionCached { pos: sp, hash });
+                    continue;
+                }
+            }
+            msgs.push(ServerToClient::SectionData(Box::new(section)));
+        }
+    }
+}
+
+fn assert_plan_eq<T: PartialEq + std::fmt::Debug>(what: &str, live: &[T], want: &[T]) {
+    if live == want {
+        return;
+    }
+    let at = live
+        .iter()
+        .zip(want)
+        .position(|(a, b)| a != b)
+        .unwrap_or(live.len().min(want.len()));
+    panic!(
+        "incremental send plan diverged from the full plan in {what}: live {} entries, full {} \
+         entries, first difference at {at}: live {:?} vs full {:?}",
+        live.len(),
+        want.len(),
+        live.get(at),
+        want.get(at)
+    );
 }
 
 impl ServerGame {
     #[cfg(any(test, feature = "test-support"))]
     pub fn mark_section_sent_for_test(&mut self, session: usize, cell: IVec3) {
         let section = SectionPos::from_world(cell.x, cell.y, cell.z).expect("valid test cell");
-        self.sessions[session]
-            .transport
-            .terrain
-            .sent
-            .insert(section);
+        let sync = &mut self.sessions[session].transport.terrain;
+        sync.sent.insert(section);
+        sync.rechecks.push(section);
     }
 
     fn load_anchors(&self) -> Vec<LoadAnchor> {
@@ -236,6 +573,9 @@ impl ServerGame {
     ) {
         debug_assert_eq!(per_session.len(), self.sessions.len());
         debug_assert_eq!(queue_room.len(), self.sessions.len());
+        // Taken even with no session: a joining connection rebuilds its plan from the world, so
+        // events logged while nobody listened are noise that must not pile up.
+        let events = self.world.take_send_events();
         let anchors = self.load_anchors();
         if anchors.is_empty() {
             return;
@@ -247,11 +587,10 @@ impl ServerGame {
         let local_at_zero = self.sessions.has_local_session();
         for (s, msgs) in per_session.iter_mut().enumerate() {
             self.bank_light_refreshes(s, &relit);
-            self.sessions[s]
-                .transport
-                .terrain
-                .configure_loopback(s == 0 && local_at_zero);
-            self.send_batch_for(s, anchors[s], dt, queue_room[s], msgs);
+            let sync = &mut self.sessions[s].transport.terrain;
+            sync.configure_loopback(s == 0 && local_at_zero);
+            sync.sync_plan(&self.world, anchors[s], &events);
+            self.send_batch_for(s, dt, queue_room[s], msgs);
         }
 
         self.world.update_load_multi(&anchors);
@@ -262,7 +601,6 @@ impl ServerGame {
     fn send_batch_for(
         &mut self,
         s: usize,
-        anchor: LoadAnchor,
         dt: f32,
         queue_room: usize,
         msgs: &mut Vec<ServerToClient>,
@@ -281,7 +619,7 @@ impl ServerGame {
             return;
         }
         let start = msgs.len();
-        self.send_terrain_for(s, anchor, &mut allowance, msgs);
+        sync.emit_terrain(&self.world, &mut allowance, msgs);
         self.send_light_for(s, &mut allowance, msgs);
         let count = msgs.len() - start;
         if count == 0 {
@@ -324,155 +662,6 @@ impl ServerGame {
             *allowance -= 1;
             msgs.push(ServerToClient::LightData(p));
         }
-    }
-
-    /// Diff session `s`'s wanted terrain against its sent sets and append the
-    /// resulting messages: unloads first, then each new section preceded by
-    /// its (re-freshed) column payload — column-before-section is the install
-    /// contract, and re-shipping the column keeps the replica's heightmap and
-    /// summaries current as more of the column lands server-side.
-    ///
-    /// EVERY emitted message pays from `allowance`, unloads included — a
-    /// server-side eviction sweep can drop thousands of sent sections at
-    /// once, and an unpaced unload burst overflows the connection queue just
-    /// like unpaced terrain did. Deferring emission is always safe: the sent
-    /// sets are updated ONLY for messages actually emitted, so the next
-    /// plan's diff re-finds whatever was clipped (`backlog` forces that
-    /// replan). A zero-allowance pump skips WITHOUT touching
-    /// `last_send_key` — a key is only ever marked done by a plan that ran
-    /// under it — so paused streaming always resumes.
-    fn send_terrain_for(
-        &mut self,
-        s: usize,
-        anchor: LoadAnchor,
-        allowance: &mut usize,
-        msgs: &mut Vec<ServerToClient>,
-    ) {
-        if *allowance == 0 {
-            return;
-        }
-        let key = self.world.terrain_send_key(anchor);
-        let target_key = self.world.terrain_target_key(anchor);
-        let sync = &mut self.sessions[s].transport.terrain;
-        let plan_empty = sync.planned_sections.is_empty()
-            && sync.planned_drop_sections.is_empty()
-            && sync.planned_drop_columns.is_empty();
-        let target_changed = sync.planned_target_key != Some(target_key);
-        if target_changed || (plan_empty && (sync.last_send_key != Some(key) || sync.backlog)) {
-            let plan =
-                self.world
-                    .plan_terrain_send(anchor, &sync.sent_columns, &sync.sent, usize::MAX);
-            sync.planned_sections = plan.sections.into();
-            sync.planned_drop_sections = plan.drop_sections.into();
-            sync.planned_drop_columns = plan.drop_columns.into();
-            sync.planned_target_key = Some(target_key);
-            sync.last_send_key = Some(key);
-        }
-        if sync.planned_sections.is_empty()
-            && sync.planned_drop_sections.is_empty()
-            && sync.planned_drop_columns.is_empty()
-        {
-            sync.backlog = false;
-            return;
-        }
-
-        while let Some(cp) = sync.planned_drop_columns.front().copied() {
-            if *allowance == 0 {
-                break;
-            }
-            sync.planned_drop_columns.pop_front();
-            *allowance -= 1;
-            sync.sent_columns.remove(&cp);
-            sync.sent_column_revisions.remove(&cp);
-            let dropped = sync.sent.take_column(cp);
-            let mut cache_hashes = Vec::new();
-            for sp in dropped {
-                if sync.pending_light.contains(&sp) {
-                    continue;
-                }
-                if let Some(payload) = self.world.section_payload(sp) {
-                    let hash = payload.content_hash();
-                    sync.note_client_cached(sp, hash);
-                    cache_hashes.push((sp.cy, hash));
-                }
-            }
-            sync.pending_light.retain(|sp| sp.chunk_pos() != cp);
-            msgs.push(ServerToClient::ColumnUnload {
-                pos: cp,
-                cache_hashes,
-            });
-        }
-        while sync.planned_drop_columns.is_empty() {
-            let Some(sp) = sync.planned_drop_sections.front().copied() else {
-                break;
-            };
-            let cp = sp.chunk_pos();
-            let column_revision = self.world.data().column_payload_revision(cp);
-            let fresh_column =
-                sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
-            if *allowance < 1 + usize::from(fresh_column) {
-                break;
-            }
-            if fresh_column {
-                if let Some(column) = self.world.column_payload(cp) {
-                    sync.sent_column_revisions.insert(cp, column_revision);
-                    *allowance -= 1;
-                    msgs.push(ServerToClient::ColumnData(column));
-                }
-            }
-            sync.planned_drop_sections.pop_front();
-            *allowance -= 1;
-            sync.sent.remove(sp);
-            let cache_hash = (!sync.pending_light.remove(&sp))
-                .then(|| self.world.section_payload(sp).map(|p| p.content_hash()))
-                .flatten();
-            if let Some(hash) = cache_hash {
-                sync.note_client_cached(sp, hash);
-            }
-            msgs.push(ServerToClient::SectionUnload {
-                pos: sp,
-                cache_hash,
-            });
-        }
-
-        while sync.planned_drop_columns.is_empty() && sync.planned_drop_sections.is_empty() {
-            let Some(sp) = sync.planned_sections.front().copied() else {
-                break;
-            };
-            let cp = sp.chunk_pos();
-            let column_revision = self.world.data().column_payload_revision(cp);
-            let fresh_column =
-                sync.sent_column_revisions.get(&cp).copied() != Some(column_revision);
-            if *allowance < 1 + usize::from(fresh_column) {
-                break;
-            }
-            sync.planned_sections.pop_front();
-            if fresh_column {
-                let Some(column) = self.world.column_payload(cp) else {
-                    continue;
-                };
-                sync.sent_columns.insert(cp);
-                sync.sent_column_revisions.insert(cp, column_revision);
-                *allowance -= 1;
-                msgs.push(ServerToClient::ColumnData(column));
-            }
-            let Some(section) = self.world.section_payload(sp) else {
-                continue;
-            };
-            sync.sent.insert(sp);
-            *allowance -= 1;
-            if let Some(&(hash, _)) = sync.client_cache.get(&sp) {
-                sync.client_cache.remove(&sp);
-                if section.content_hash() == hash {
-                    msgs.push(ServerToClient::SectionCached { pos: sp, hash });
-                    continue;
-                }
-            }
-            msgs.push(ServerToClient::SectionData(Box::new(section)));
-        }
-        sync.backlog = !sync.planned_sections.is_empty()
-            || !sync.planned_drop_sections.is_empty()
-            || !sync.planned_drop_columns.is_empty();
     }
 }
 

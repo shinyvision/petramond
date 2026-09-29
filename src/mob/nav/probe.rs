@@ -316,14 +316,16 @@ pub fn site_open(world: &ServerWorld, kind: Mob, cell: IVec3) -> bool {
     }
     let step_allowed = navigation_step_gate(&cursor, params, d.size.height);
     let loaded = nav_loaded_fn(&cursor);
-    crate::mob::confined::confined_region(
-        cell,
-        params,
-        &solid,
-        &support,
-        &fluid,
-        &step_allowed,
-        &loaded,
+    matches!(
+        crate::mob::confined::confinement_verdict(
+            cell,
+            params,
+            &solid,
+            &support,
+            &fluid,
+            &step_allowed,
+            &loaded,
+        ),
+        crate::mob::confined::Verdict::Free { .. }
     )
-    .is_none()
 }

@@ -2,6 +2,11 @@ use crate::density::noise::{build_climate_field, ClimateFieldParams, ReferenceDo
 
 const CAVERN_DENSITY_BIAS: f64 = 0.35;
 
+pub(super) const BATCH: usize = 64;
+
+/// The noise fields [`CaveDensity::sample_batch`] reads per point.
+const FIELDS: usize = 20;
+
 #[derive(Clone)]
 struct Noise(ReferenceDoublePerlin);
 
@@ -43,13 +48,45 @@ pub(super) struct CaveDensity {
     noodle_width: Noise,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct Sample {
     pub entrance: f64,
     pub interior: f64,
     pub noodle: [f64; 4],
     #[cfg(test)]
     pub chamber_live: bool,
+}
+
+impl Sample {
+    /// A sample read only through its entrance lane: what a point above the
+    /// interior band holds.
+    pub(super) fn entrance_only(entrance: f64) -> Self {
+        Self {
+            entrance,
+            interior: 1.0,
+            noodle: [0.0, 0.0, -1.0, 0.0],
+            #[cfg(test)]
+            chamber_live: false,
+        }
+    }
+
+    /// Applies rooms and the floor fade at height `y`.
+    pub(super) fn finish(&mut self, y: f64, excavation: (f64, f64)) {
+        #[cfg(test)]
+        {
+            self.chamber_live = excavation.0 > 0.0;
+        }
+        if excavation.1 > 0.0 {
+            self.interior = self.interior.min(self.entrance - 0.035 * excavation.1);
+        }
+        let room = excavation.0.clamp(0.0, 1.0);
+        self.interior = self
+            .interior
+            .min(self.interior + (-0.6 - self.interior) * room);
+        let floor = ((y - super::settings::CAVE_MIN_Y as f64) / super::settings::CAVE_FLOOR_FADE)
+            .clamp(0.0, 1.0);
+        self.interior = 0.12 + (self.interior - 0.12) * floor;
+    }
 }
 
 impl CaveDensity {
@@ -77,101 +114,112 @@ impl CaveDensity {
         }
     }
 
-    fn compute(&self, p: [f64; 3], depth: f64, interior: bool) -> Sample {
-        let width = map(self.tunnel_width.at(p, 1.0, 1.0), 0.065, 0.088);
-        let rarity = select(
-            self.tunnel_rarity.at(p, 2.0, 1.0),
-            &[-0.5, 0.0, 0.5],
-            &[0.75, 1.0, 1.5, 2.0],
-        );
-        let ridge = self
-            .tunnel
-            .iter()
-            .map(|n| n.at(p, rarity.recip(), rarity.recip()).abs() * rarity)
-            .fold(0.0, f64::max);
-        let rough = (self.roughness.at(p, 1.0, 1.0).abs() - 0.4)
-            * map(self.roughness_gain.at(p, 1.0, 1.0), 0.0, -0.1);
-        let tunnel = ridge - width + rough;
-        let mouth = self.entrance.at(p, 0.75, 0.5)
-            + 0.37
-            + 0.3 * (1.0 - ((p[1] + 10.0) / 40.0).clamp(0.0, 1.0));
-        let entrance = mouth.min(tunnel);
-        if !interior {
-            return Sample {
-                entrance,
-                interior: 1.0,
-                noodle: [0.0, 0.0, -1.0, 0.0],
-                #[cfg(test)]
-                chamber_live: false,
-            };
-        }
-
-        let horizontal_width = map(self.horizontal_width.at(p, 2.0, 1.0), 0.6, 1.3);
-        let horizontal_rarity = select(
-            self.horizontal_rarity.at(p, 2.0, 1.0),
-            &[-0.75, -0.5, 0.5, 0.75],
-            &[0.5, 0.75, 1.0, 2.0, 3.0],
-        );
-        let horizontal_ridge = self
-            .horizontal
-            .at(p, horizontal_rarity.recip(), horizontal_rarity.recip())
-            .abs()
-            * horizontal_rarity;
-        let elevation = self.horizontal_height.at(p, 1.0, 0.0) * 64.0;
-        let horizontal = (horizontal_ridge - 0.083 * horizontal_width)
-            .max(((p[1] - elevation).abs() / 8.0 - horizontal_width).powi(3))
-            + rough;
-
-        let layers = self.layer.at(p, 1.0, 8.0).powi(2) * 4.0;
-        let roof = (1.5 - depth * 12.8).clamp(0.0, 0.5);
-        let cavern = (self.cheese.at(p, 1.0, 2.0 / 3.0) + CAVERN_DENSITY_BIAS).clamp(-1.0, 1.0)
-            + layers
-            + roof;
-        let pillar = (2.0 * self.pillar.at(p, 25.0, 0.3)
-            + map(self.pillar_rarity.at(p, 1.0, 1.0), 0.0, -2.0))
-            * map(self.pillar_width.at(p, 1.0, 1.0), 0.0, 1.1).powi(3);
-        let mut interior = cavern.min(entrance).min(horizontal);
-        if pillar >= 0.03 {
-            interior = interior.max(pillar);
-        }
-        Sample {
-            entrance,
-            interior,
-            #[cfg(test)]
-            chamber_live: false,
-            noodle: [
-                self.noodle[0].at(p, 8.0 / 3.0, 8.0 / 3.0),
-                self.noodle[1].at(p, 8.0 / 3.0, 8.0 / 3.0),
-                self.noodle_toggle.at(p, 1.0, 1.0),
-                map(self.noodle_width.at(p, 1.0, 1.0), 0.05, 0.1),
-            ],
-        }
-    }
-
-    pub(super) fn sample(
+    /// Samples every point of a batch (at most [`BATCH`]), each exactly as a
+    /// lone point would be: one field at a time over the whole batch, so a
+    /// field's octave tables stay hot and neighbouring points share cells.
+    pub(super) fn sample_batch(
         &self,
-        p: [f64; 3],
-        depth: f64,
-        excavation: (f64, f64),
-        interior: bool,
-    ) -> Sample {
-        let mut sample = self.compute(p, depth, interior);
-        #[cfg(test)]
-        {
-            sample.chamber_live = excavation.0 > 0.0;
+        p: &[[f64; 3]],
+        depth: &[f64],
+        excavation: &[(f64, f64)],
+        out: &mut [Sample],
+    ) {
+        let n = p.len();
+        assert!(n <= BATCH && depth.len() == n && excavation.len() == n && out.len() == n);
+        let mut coords = [[0.0; BATCH]; 3];
+        let mut field = |noise: &Noise,
+                         xz: &dyn Fn(usize) -> f64,
+                         y: &dyn Fn(usize) -> f64,
+                         values: &mut [f64; BATCH]| {
+            let [xs, ys, zs] = &mut coords;
+            for i in 0..n {
+                xs[i] = p[i][0] * xz(i);
+                ys[i] = p[i][1] * y(i);
+                zs[i] = p[i][2] * xz(i);
+            }
+            noise
+                .0
+                .sample_many(&xs[..n], &ys[..n], &zs[..n], &mut values[..n]);
+        };
+        let mut v = [[0.0; BATCH]; FIELDS];
+        let [width, rarity, ridge0, ridge1, roughness, gain, mouth, horizontal_width, horizontal_rarity, horizontal, elevation, layer, cheese, pillar, pillar_rarity, pillar_width, noodle_a, noodle_b, noodle_toggle, noodle_width] =
+            &mut v;
+        field(&self.tunnel_width, &|_| 1.0, &|_| 1.0, width);
+        field(&self.tunnel_rarity, &|_| 2.0, &|_| 1.0, rarity);
+        for r in rarity.iter_mut().take(n) {
+            *r = select(*r, &[-0.5, 0.0, 0.5], &[0.75, 1.0, 1.5, 2.0]);
         }
-        if excavation.1 > 0.0 {
-            sample.interior = sample.interior.min(sample.entrance - 0.035 * excavation.1);
+        let scale = |i: usize| rarity[i].recip();
+        field(&self.tunnel[0], &scale, &scale, ridge0);
+        field(&self.tunnel[1], &scale, &scale, ridge1);
+        field(&self.roughness, &|_| 1.0, &|_| 1.0, roughness);
+        field(&self.roughness_gain, &|_| 1.0, &|_| 1.0, gain);
+        field(&self.entrance, &|_| 0.75, &|_| 0.5, mouth);
+        let mut rough = [0.0; BATCH];
+        for i in 0..n {
+            let width = map(width[i], 0.065, 0.088);
+            let ridge = [ridge0[i], ridge1[i]]
+                .iter()
+                .map(|r| r.abs() * rarity[i])
+                .fold(0.0, f64::max);
+            rough[i] = (roughness[i].abs() - 0.4) * map(gain[i], 0.0, -0.1);
+            let tunnel = ridge - width + rough[i];
+            let mouth = mouth[i] + 0.37 + 0.3 * (1.0 - ((p[i][1] + 10.0) / 40.0).clamp(0.0, 1.0));
+            out[i] = Sample::entrance_only(mouth.min(tunnel));
         }
-        let room = excavation.0.clamp(0.0, 1.0);
-        sample.interior = sample
-            .interior
-            .min(sample.interior + (-0.6 - sample.interior) * room);
-        let floor = ((p[1] - super::settings::CAVE_MIN_Y as f64)
-            / super::settings::CAVE_FLOOR_FADE)
-            .clamp(0.0, 1.0);
-        sample.interior = 0.12 + (sample.interior - 0.12) * floor;
-        sample
+        field(&self.horizontal_width, &|_| 2.0, &|_| 1.0, horizontal_width);
+        field(
+            &self.horizontal_rarity,
+            &|_| 2.0,
+            &|_| 1.0,
+            horizontal_rarity,
+        );
+        for i in 0..n {
+            horizontal_width[i] = map(horizontal_width[i], 0.6, 1.3);
+            horizontal_rarity[i] = select(
+                horizontal_rarity[i],
+                &[-0.75, -0.5, 0.5, 0.75],
+                &[0.5, 0.75, 1.0, 2.0, 3.0],
+            );
+        }
+        let scale = |i: usize| horizontal_rarity[i].recip();
+        field(&self.horizontal, &scale, &scale, horizontal);
+        field(&self.horizontal_height, &|_| 1.0, &|_| 0.0, elevation);
+        field(&self.layer, &|_| 1.0, &|_| 8.0, layer);
+        field(&self.cheese, &|_| 1.0, &|_| 2.0 / 3.0, cheese);
+        field(&self.pillar, &|_| 25.0, &|_| 0.3, pillar);
+        field(&self.pillar_rarity, &|_| 1.0, &|_| 1.0, pillar_rarity);
+        field(&self.pillar_width, &|_| 1.0, &|_| 1.0, pillar_width);
+        field(&self.noodle[0], &|_| 8.0 / 3.0, &|_| 8.0 / 3.0, noodle_a);
+        field(&self.noodle[1], &|_| 8.0 / 3.0, &|_| 8.0 / 3.0, noodle_b);
+        field(&self.noodle_toggle, &|_| 1.0, &|_| 1.0, noodle_toggle);
+        field(&self.noodle_width, &|_| 1.0, &|_| 1.0, noodle_width);
+        for i in 0..n {
+            let horizontal_ridge = horizontal[i].abs() * horizontal_rarity[i];
+            let elevation = elevation[i] * 64.0;
+            let horizontal = (horizontal_ridge - 0.083 * horizontal_width[i])
+                .max(((p[i][1] - elevation).abs() / 8.0 - horizontal_width[i]).powi(3))
+                + rough[i];
+            let layers = layer[i].powi(2) * 4.0;
+            let roof = (1.5 - depth[i] * 12.8).clamp(0.0, 0.5);
+            let cavern = (cheese[i] + CAVERN_DENSITY_BIAS).clamp(-1.0, 1.0) + layers + roof;
+            let pillar = (2.0 * pillar[i] + map(pillar_rarity[i], 0.0, -2.0))
+                * map(pillar_width[i], 0.0, 1.1).powi(3);
+            let mut value = cavern.min(out[i].entrance).min(horizontal);
+            if pillar >= 0.03 {
+                value = value.max(pillar);
+            }
+            out[i].interior = value;
+            out[i].noodle = [
+                noodle_a[i],
+                noodle_b[i],
+                noodle_toggle[i],
+                map(noodle_width[i], 0.05, 0.1),
+            ];
+        }
+        for i in 0..n {
+            out[i].finish(p[i][1], excavation[i]);
+        }
     }
 
     pub(super) fn knead(&self, p: [f64; 3]) -> f64 {

@@ -11,6 +11,7 @@ use crate::section::{Section, SectionSummary};
 use super::environment::WorldEnvironment;
 use super::load_targets::LoadTarget;
 use super::saved_index::SavedIndex;
+use super::section_map::SectionMap;
 use super::tick_state::TickState;
 
 #[derive(Default)]
@@ -33,13 +34,17 @@ pub struct WorldData {
     /// per bake — assembling those neighbourhoods was a multi-millisecond per-frame spike
     /// while streaming. Mutation is copy-on-write via [`Arc::make_mut`]: a setter clones a
     /// section's storage only while a bake still holds the old handle.
-    pub sections: FxHashMap<SectionPos, Arc<Section>>,
+    pub sections: SectionMap,
     pub columns: FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     pub column_payload_revisions: FxHashMap<ChunkPos, u64>,
     pub column_revision_counter: u64,
     pub section_column_cys: FxHashMap<ChunkPos, u32>,
-    pub section_column_rt: FxHashMap<ChunkPos, u32>,
+    pub random_tick_index: super::random_tick_index::RandomTickIndex,
+    /// Sections mutably touched or installed since the random-tick index last absorbed them.
     pub random_tick_dirty: FxHashSet<SectionPos>,
+    /// Sections touched since the last save flush: the only ones whose persisted state can
+    /// have changed beyond the light and entity sets the flush also reads.
+    pub persist_candidates: FxHashSet<SectionPos>,
     pub render_dist: i32,
     pub lighting_revision: u64,
     pub block_entity_sections: FxHashSet<SectionPos>,
@@ -73,13 +78,14 @@ impl WorldData {
     pub fn new(seed: u32, render_dist: i32) -> Self {
         Self {
             seed,
-            sections: FxHashMap::default(),
+            sections: SectionMap::default(),
             columns: FxHashMap::default(),
             column_payload_revisions: FxHashMap::default(),
             column_revision_counter: 0,
             section_column_cys: FxHashMap::default(),
-            section_column_rt: FxHashMap::default(),
+            random_tick_index: Default::default(),
             random_tick_dirty: FxHashSet::default(),
+            persist_candidates: FxHashSet::default(),
             render_dist,
             lighting_revision: 0,
             block_entity_sections: FxHashSet::default(),

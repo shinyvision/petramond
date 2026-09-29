@@ -76,6 +76,28 @@ impl ShapeSim for SlabFamily {
             })
     }
 
+    fn shade_boxes(
+        &self,
+        _p: &ShapeParams,
+        nb: &dyn ShapeNeighborhood,
+        pos: IVec3,
+        b: Block,
+        out: &mut Vec<Aabb>,
+    ) -> bool {
+        let state = crate::slab::normalize_state(b, slab_state_at(nb, pos));
+        if state.is_full() {
+            out.push(Aabb {
+                min: [-OPEN_ENDED; 3],
+                max: [OPEN_ENDED; 3],
+            });
+        } else {
+            push_octants(out, |ix, iy, iz| {
+                crate::slab::half_cell_occupied(state, ix, iy, iz)
+            });
+        }
+        true
+    }
+
     fn parts(
         &self,
         _p: &ShapeParams,

@@ -466,3 +466,72 @@ fn air_edit_into_absent_full_opaque_section_materializes_generated_base() {
         "materialization preserves the generated solid neighbours instead of creating an empty section"
     );
 }
+
+fn persisted(world: &ServerWorld, sp: SectionPos) -> bool {
+    let saved = world.data.saved_index();
+    saved.authoritative_contains(sp) || saved.explored_contains(sp)
+}
+
+/// The save flush examines only sections that changed since the last one; it must still write
+/// exactly what a scan of every loaded section would (a first persist, an edit, an edit made
+/// after a flush, a section that only persists once its light settles).
+#[test]
+fn a_save_flush_writes_every_section_a_full_scan_would() {
+    let dir = petramond_util::test_dirs::TestScratchDir::new("flush-candidates");
+    let opened = crate::save::open_at(dir.to_path_buf()).expect("open save");
+    let mut world = ServerWorld::new(0, 0);
+    world.attach_save(opened.save, opened.saved);
+    let lit = |sp: SectionPos, dirty_light: bool| {
+        let mut s = Section::new(sp.cx, sp.cy, sp.cz);
+        s.set_block(3, 0, 3, Block::Stone);
+        s.set_skylight(vec![0u8; SECTION_VOLUME].into());
+        s.set_blocklight(vec![petramond_world::light::LightRgb::ZERO; SECTION_VOLUME].into());
+        s.mark_light_clean();
+        s.light_dirty = dirty_light;
+        s
+    };
+    let sections: Vec<SectionPos> = (0..6).map(|i| SectionPos::new(i, 4, 0)).collect();
+    for (i, &sp) in sections.iter().enumerate() {
+        world.insert_section_for_test(sp, lit(sp, i == 5));
+    }
+    let scan = |world: &ServerWorld| -> Vec<SectionPos> {
+        let mut out: Vec<SectionPos> = world
+            .data
+            .sections
+            .keys()
+            .copied()
+            .filter(|&sp| {
+                world
+                    .snapshot_section_for_save(sp, Vec::new(), Vec::new(), false)
+                    .is_some()
+            })
+            .collect();
+        out.sort_by_key(|p| (p.cx, p.cy, p.cz));
+        out
+    };
+
+    let expected = scan(&world);
+    assert_eq!(
+        expected.len(),
+        5,
+        "fixture: five light-final first persists"
+    );
+    world.flush_modified_chunks();
+    assert!(expected.iter().all(|&sp| persisted(&world, sp)));
+    assert!(!persisted(&world, sections[5]), "unsettled light waits");
+    assert!(scan(&world).is_empty(), "nothing left for a full scan");
+
+    world.set_block_world(2 * 16 + 5, 65, 5, Block::Dirt);
+    world
+        .data
+        .section_mut(sections[5])
+        .expect("loaded")
+        .mark_light_clean();
+    let expected = scan(&world);
+    assert!(expected.contains(&sections[2]) && expected.contains(&sections[5]));
+    world.flush_modified_chunks();
+    assert!(scan(&world).is_empty(), "the flush caught every change");
+    assert!(persisted(&world, sections[5]));
+    assert!(!world.data.sections[&sections[2]].modified);
+    drop(world);
+}

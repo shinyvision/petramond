@@ -93,26 +93,9 @@ impl WorldData {
         !self.content.custom_bake_dirty.is_empty()
     }
 
-    pub fn scan_section_custom_bakes(&mut self, pos: crate::chunk::SectionPos) {
-        let Some(section) = self.sections.get(&pos) else {
-            return;
-        };
-        if section.is_empty_air() {
-            return;
-        }
-        let (ox, oy, oz) = pos.origin_world();
-        let table = crate::block::BlockTable::current();
-        let mut dirty: Vec<IVec3> = Vec::new();
-        section.blocks().cells_where(
-            |id| table.custom_shape(id),
-            |idx| {
-                let (lx, ly, lz) = crate::chunk::section_local(idx);
-                dirty.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
-            },
-        );
-        for p in dirty {
-            self.content.custom_bake_dirty.insert(p);
-        }
+    /// Queue custom-shape cells for the bake pump (a landed section's, found by the load scan).
+    pub fn mark_custom_bakes_dirty(&mut self, cells: impl IntoIterator<Item = IVec3>) {
+        self.content.custom_bake_dirty.extend(cells);
     }
 
     pub fn remark_state_key_bakes(&mut self, wx: i32, wy: i32, wz: i32, key: &str) {

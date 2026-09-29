@@ -20,6 +20,7 @@
 //! floods would. Widening the block cell scales both cube sizes by the same factor, so that ratio
 //! (and the break-even point) doesn't move. The BFS visits the same cells either way.
 
+use crate::world::section_map::SectionMap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -27,10 +28,9 @@ use crate::chunk::{ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
 use crate::light::LightRgb;
 use crate::mathh::IVec3;
-use crate::section::Section;
 
 use super::bake::LightBakeOutput;
-use super::shape::LightCells;
+use super::shape::{with_light_cells, ApertureScratch, Ids};
 use super::skylight::SkyClass;
 use super::{flood, neighborhood, skylight};
 
@@ -87,7 +87,7 @@ pub fn group_positions(positions: &[SectionPos]) -> Vec<(SectionPos, Vec<Section
 pub fn snapshot_batch(
     base: SectionPos,
     member_positions: &[SectionPos],
-    sections: &FxHashMap<SectionPos, Arc<Section>>,
+    sections: &SectionMap,
     columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
 ) -> Option<LightBatchJob> {
     let mut members = Vec::with_capacity(member_positions.len());
@@ -132,6 +132,8 @@ pub fn snapshot_batch(
 
 struct BatchScratch {
     blocks: Vec<u16>,
+    narrow: Vec<u8>,
+    apertures: ApertureScratch,
     flood: flood::FloodScratch,
 }
 
@@ -139,6 +141,8 @@ thread_local! {
     static BATCH_SCRATCH: std::cell::RefCell<BatchScratch> =
         std::cell::RefCell::new(BatchScratch {
             blocks: vec![0u16; BVOL],
+            narrow: vec![0u8; BVOL],
+            apertures: ApertureScratch::default(),
             flood: flood::FloodScratch::new(),
         });
 }
@@ -156,16 +160,22 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBakeOutput> {
         let mut scratch = scratch.borrow_mut();
         let BatchScratch {
             blocks: block_buf,
+            narrow: narrow_buf,
+            apertures,
             flood: flood_scratch,
         } = &mut *scratch;
 
-        if let Some(n) = &nbhd {
-            n.assemble_blocks(block_buf);
-        }
-        let states = nbhd
-            .as_ref()
-            .map(neighborhood::Snapshot::shape_states)
-            .unwrap_or_default();
+        let ids: Option<Ids<'_>> = nbhd.as_ref().map(|n| {
+            n.fill_apertures(apertures);
+            if n.all_narrow() {
+                n.assemble_narrow(narrow_buf);
+                Ids::Narrow(&narrow_buf[..])
+            } else {
+                n.assemble_blocks(block_buf);
+                Ids::Wide(&block_buf[..])
+            }
+        });
+        let apertures = &*apertures;
         let keep = flood::Keep::new(SECTION_SIZE, SECTION_SIZE * (1 + GROUP as usize));
         let (box_, boy, boz) = base.origin_world();
         let member_off = |m: &BatchMember| {
@@ -177,21 +187,21 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBakeOutput> {
         };
 
         let sky_cubes: Vec<Arc<[u8]>> = if let Some(surface) = &surface {
-            let cells = LightCells::new(&block_buf[..], &states, BDIM);
-            let cube = flood::skylight_cube(
+            let ids = ids.as_ref().expect("a flooding batch carries its blocks");
+            let cube = with_light_cells!(*ids, apertures, BDIM, |cells| flood::skylight_cube(
                 boy - SECTION_SIZE as i32,
                 BDIM,
                 cells,
                 keep,
                 surface,
                 flood_scratch,
-            );
+            ));
             members
                 .iter()
                 .map(|m| match m.sky {
                     SkyClass::Full => crate::section::uniform_cube(SKY_FULL),
                     SkyClass::Dark => crate::section::uniform_cube(0),
-                    SkyClass::Flood => flood::clip_cube(cube, BDIM, member_off(m)),
+                    SkyClass::Flood => flood::clip_sky_cube(cube, BDIM, member_off(m)),
                 })
                 .collect()
         } else {
@@ -207,16 +217,25 @@ pub fn run_light_bake_batch(job: LightBatchJob) -> Vec<LightBakeOutput> {
         let block_cubes: Vec<Arc<[LightRgb]>> = if emitters.is_empty() {
             members.iter().map(|_| crate::light::dark_cube()).collect()
         } else {
-            let cells = LightCells::new(&block_buf[..], &states, BDIM);
+            let ids = ids
+                .as_ref()
+                .expect("a block-light batch carries its blocks");
             let origin = (
                 box_ - SECTION_SIZE as i32,
                 boy - SECTION_SIZE as i32,
                 boz - SECTION_SIZE as i32,
             );
-            let cube = flood::block_light_cube(origin, BDIM, cells, keep, &emitters, flood_scratch);
+            let cube = with_light_cells!(*ids, apertures, BDIM, |cells| flood::block_light_cube(
+                origin,
+                BDIM,
+                cells,
+                keep,
+                &emitters,
+                flood_scratch
+            ));
             members
                 .iter()
-                .map(|m| flood::clip_cube(cube, BDIM, member_off(m)))
+                .map(|m| flood::clip_block_cube(cube, BDIM, member_off(m)))
                 .collect()
         };
 

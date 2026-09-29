@@ -1,5 +1,5 @@
 use crate::data::EntityRef;
-use crate::ids::PlayerId;
+use crate::ids::{MobId, PlayerId};
 use crate::legality::prelude::*;
 
 host_domain! {
@@ -176,6 +176,13 @@ host_domain! {
         } => legal(SERVER, Sim, Write),
         MobRidersMany {
             mob_ids: Vec<u64>,
+        } => legal(SERVER, Sim, Read),
+        /// [`EntityCall::MobsInRadius`] for the species `kinds` only: the snapshots of the live
+        /// mobs of those kinds within `radius` of `pos`.
+        MobsInRadiusOf {
+            pos: [f64; 3],
+            radius: f32,
+            kinds: Vec<MobId>,
         } => legal(SERVER, Sim, Read),
     }
 }

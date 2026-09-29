@@ -31,6 +31,7 @@ pub fn ctx<'a>(world: &'a ServerWorld, rng: &'a mut MobRng) -> AiCtx<'a> {
         mob_index: None,
         mobs: crate::mob::spatial::MobSnapshot::empty(),
         tags: empty_tags(),
+        tags_rev: 0,
         confined_region: None,
         scripted: Default::default(),
         rng,

@@ -54,6 +54,7 @@ impl SplineInput for BTreeMap<SplineAxis, f64> {
 pub struct CubicSpline {
     axis: SplineAxis,
     points: Vec<SplinePoint>,
+    hermite: bool,
 }
 
 impl CubicSpline {
@@ -72,9 +73,11 @@ impl CubicSpline {
                 "spline point locations must be strictly increasing"
             );
         }
+        let hermite = points.iter().all(|point| point.derivative.is_some());
         Self {
             axis: axis.into(),
             points,
+            hermite,
         }
     }
 
@@ -89,22 +92,71 @@ impl CubicSpline {
         axes
     }
 
+    /// Evaluates only the point values the result reads: the segment's ends,
+    /// plus the neighbours its monotone slopes need. Nested splines at other
+    /// points are never visited.
     pub fn evaluate<I: SplineInput + ?Sized>(&self, input: &mut I) -> f64 {
         let x = input.axis_value(&self.axis);
-        let point_count = self.points.len();
-        if point_count <= INLINE_SPLINE_POINTS {
-            let mut values = [0.0; INLINE_SPLINE_POINTS];
-            for (index, point) in self.points.iter().enumerate() {
-                values[index] = point.value.evaluate(input);
-            }
-            evaluate_points(self.points.as_slice(), &values[..point_count], x)
-        } else {
-            let mut values = Vec::with_capacity(point_count);
-            for point in &self.points {
-                values.push(point.value.evaluate(input));
-            }
-            evaluate_points(self.points.as_slice(), values.as_slice(), x)
+        let points = self.points.as_slice();
+        let mut value = |index: usize| points[index].value.evaluate(&mut *input);
+        let n = points.len();
+        if n == 1 {
+            return value(0);
         }
+        let last = n - 1;
+        if self.hermite {
+            if x <= points[0].location {
+                let slope = points[0].derivative.unwrap_or(0.0);
+                return value(0) + slope * (x - points[0].location);
+            }
+            if x >= points[last].location {
+                let slope = points[last].derivative.unwrap_or(0.0);
+                return value(last) + slope * (x - points[last].location);
+            }
+            let segment = segment_of(points, x);
+            let slopes = [
+                points[segment].derivative.unwrap_or(0.0),
+                points[segment + 1].derivative.unwrap_or(0.0),
+            ];
+            let ends = [value(segment), value(segment + 1)];
+            return interpolate_hermite(points, ends, slopes, segment, x);
+        }
+        if x <= points[0].location {
+            return value(0);
+        }
+        if x >= points[last].location {
+            return value(last);
+        }
+        let segment = segment_of(points, x);
+        let reads = |i: usize| match i {
+            _ if n == 2 => 0..=1,
+            0 => 0..=2,
+            _ if i == last => last - 2..=last,
+            _ => i - 1..=i + 1,
+        };
+        let (lo, hi) = (*reads(segment).start(), *reads(segment + 1).end());
+        let mut values = [0.0; INLINE_SPLINE_POINTS];
+        let mut spill = Vec::new();
+        let values: &mut [f64] = if n <= INLINE_SPLINE_POINTS {
+            &mut values[..n]
+        } else {
+            spill.resize(n, 0.0);
+            &mut spill
+        };
+        for (i, slot) in values.iter_mut().enumerate().take(hi + 1).skip(lo) {
+            *slot = value(i);
+        }
+        let slopes = [
+            monotone_slope(points, values, segment),
+            monotone_slope(points, values, segment + 1),
+        ];
+        interpolate_hermite(
+            points,
+            [values[segment], values[segment + 1]],
+            slopes,
+            segment,
+            x,
+        )
     }
 
     fn collect_required_axes(&self, axes: &mut BTreeSet<SplineAxis>) {
@@ -189,95 +241,46 @@ impl SplineValue {
     }
 }
 
-fn evaluate_points(points: &[SplinePoint], values: &[f64], x: f64) -> f64 {
-    debug_assert_eq!(points.len(), values.len());
-    if points.len() == 1 {
-        return values[0];
-    }
-    if points.iter().all(|point| point.derivative.is_some()) {
-        return evaluate_hermite_explicit(points, values, x);
-    }
-
-    if x <= points[0].location {
-        return values[0];
-    }
-    let last = points.len() - 1;
-    if x >= points[last].location {
-        return values[last];
-    }
-
-    let segment = points
+fn segment_of(points: &[SplinePoint], x: f64) -> usize {
+    points
         .windows(2)
         .position(|pair| x >= pair[0].location && x <= pair[1].location)
-        .expect("clamped spline coordinate must fall inside one segment");
-    if points.len() <= INLINE_SPLINE_POINTS {
-        let mut slopes = [0.0; INLINE_SPLINE_POINTS];
-        fill_monotone_slopes(points, values, &mut slopes[..points.len()]);
-        interpolate_segment(points, values, &slopes[..points.len()], segment, x)
-    } else {
-        let mut slopes = vec![0.0; points.len()];
-        fill_monotone_slopes(points, values, slopes.as_mut_slice());
-        interpolate_segment(points, values, slopes.as_slice(), segment, x)
-    }
+        .expect("clamped spline coordinate must fall inside one segment")
 }
 
-fn evaluate_hermite_explicit(points: &[SplinePoint], values: &[f64], x: f64) -> f64 {
-    let last = points.len() - 1;
-    if x <= points[0].location {
-        let slope = points[0].derivative.unwrap_or(0.0);
-        return values[0] + slope * (x - points[0].location);
-    }
-    if x >= points[last].location {
-        let slope = points[last].derivative.unwrap_or(0.0);
-        return values[last] + slope * (x - points[last].location);
-    }
-
-    let segment = points
-        .windows(2)
-        .position(|pair| x >= pair[0].location && x <= pair[1].location)
-        .expect("clamped spline coordinate must fall inside one segment");
-    let slopes = [
-        points[segment].derivative.unwrap_or(0.0),
-        points[segment + 1].derivative.unwrap_or(0.0),
-    ];
-    interpolate_segment_pair(points, values, &slopes, segment, x)
-}
-
-fn fill_monotone_slopes(points: &[SplinePoint], values: &[f64], slopes: &mut [f64]) {
+/// The monotone (Fritsch–Carlson style) slope at `i`; reads only the values
+/// [`CubicSpline::evaluate`] computed for it.
+fn monotone_slope(points: &[SplinePoint], values: &[f64], i: usize) -> f64 {
     let n = points.len();
-    debug_assert_eq!(points.len(), values.len());
-    debug_assert_eq!(points.len(), slopes.len());
     if n == 2 {
-        let secant = secant(points, values, 0);
-        slopes[0] = secant;
-        slopes[1] = secant;
-        return;
+        return secant(points, values, 0);
     }
-
-    slopes[0] = endpoint_slope(
-        span(points, 0),
-        span(points, 1),
-        secant(points, values, 0),
-        secant(points, values, 1),
-    );
-    slopes[n - 1] = endpoint_slope(
-        span(points, n - 2),
-        span(points, n - 3),
-        secant(points, values, n - 2),
-        secant(points, values, n - 3),
-    );
-    for (i, slope) in slopes.iter_mut().enumerate().take(n - 1).skip(1) {
-        let h_prev = span(points, i - 1);
-        let h_next = span(points, i);
-        let d_prev = secant(points, values, i - 1);
-        let d_next = secant(points, values, i);
-        *slope = if d_prev * d_next <= 0.0 {
-            0.0
-        } else {
-            let w1 = 2.0 * h_next + h_prev;
-            let w2 = h_next + 2.0 * h_prev;
-            (w1 + w2) / (w1 / d_prev + w2 / d_next)
-        };
+    if i == 0 {
+        return endpoint_slope(
+            span(points, 0),
+            span(points, 1),
+            secant(points, values, 0),
+            secant(points, values, 1),
+        );
+    }
+    if i == n - 1 {
+        return endpoint_slope(
+            span(points, n - 2),
+            span(points, n - 3),
+            secant(points, values, n - 2),
+            secant(points, values, n - 3),
+        );
+    }
+    let h_prev = span(points, i - 1);
+    let h_next = span(points, i);
+    let d_prev = secant(points, values, i - 1);
+    let d_next = secant(points, values, i);
+    if d_prev * d_next <= 0.0 {
+        0.0
+    } else {
+        let w1 = 2.0 * h_next + h_prev;
+        let w2 = h_next + 2.0 * h_prev;
+        (w1 + w2) / (w1 / d_prev + w2 / d_next)
     }
 }
 
@@ -300,10 +303,10 @@ fn span(points: &[SplinePoint], index: usize) -> f64 {
     points[index + 1].location - points[index].location
 }
 
-fn interpolate_segment(
+fn interpolate_hermite(
     points: &[SplinePoint],
-    values: &[f64],
-    slopes: &[f64],
+    [v0, v1]: [f64; 2],
+    [s0, s1]: [f64; 2],
     segment: usize,
     x: f64,
 ) -> f64 {
@@ -318,31 +321,7 @@ fn interpolate_segment(
     let h01 = -2.0 * t3 + 3.0 * t2;
     let h11 = t3 - t2;
 
-    h00 * values[segment]
-        + h10 * h * slopes[segment]
-        + h01 * values[segment + 1]
-        + h11 * h * slopes[segment + 1]
-}
-
-fn interpolate_segment_pair(
-    points: &[SplinePoint],
-    values: &[f64],
-    slopes: &[f64],
-    segment: usize,
-    x: f64,
-) -> f64 {
-    let x0 = points[segment].location;
-    let x1 = points[segment + 1].location;
-    let h = x1 - x0;
-    let t = (x - x0) / h;
-    let t2 = t * t;
-    let t3 = t2 * t;
-    let h00 = 2.0 * t3 - 3.0 * t2 + 1.0;
-    let h10 = t3 - 2.0 * t2 + t;
-    let h01 = -2.0 * t3 + 3.0 * t2;
-    let h11 = t3 - t2;
-
-    h00 * values[segment] + h10 * h * slopes[0] + h01 * values[segment + 1] + h11 * h * slopes[1]
+    h00 * v0 + h10 * h * s0 + h01 * v1 + h11 * h * s1
 }
 
 #[cfg(test)]

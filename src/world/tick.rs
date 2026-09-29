@@ -138,6 +138,14 @@ impl<S: WorldSide> World<S> {
     }
 }
 
+#[inline]
+fn cell_pos(ox: i32, oy: i32, oz: i32, i: usize) -> IVec3 {
+    let lx = i & (SECTION_SIZE - 1);
+    let lz = (i >> 4) & (SECTION_SIZE - 1);
+    let ly = i >> 8;
+    IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32)
+}
+
 impl ServerWorld {
     pub fn restore_tick(&mut self, tick: u64) {
         self.data.sim.tick = tick;
@@ -224,7 +232,8 @@ impl ServerWorld {
     }
 
     /// Random ticks: [`RANDOM_TICK_SPEED`] random cells per loaded section with a tickable block.
-    /// Air bails fast, and a section with nothing tickable is skipped via its counter.
+    /// Sections come from the per-column random-tick index and each draw is answered by the
+    /// section's tickable-cell mask, so the scan never touches block storage.
     ///
     /// Only sections within [`RANDOM_TICK_CHUNK_RADIUS`] chunks of a player tick, never past
     /// `render_dist - 2`, because leaf decay looks across chunk borders and needs neighbours
@@ -250,9 +259,10 @@ impl ServerWorld {
 
         let mut due = std::mem::take(&mut self.data.sim.batch_scratch);
         due.clear();
-        let mut visited: rustc_hash::FxHashSet<petramond_world::chunk::ChunkPos> =
-            rustc_hash::FxHashSet::default();
-        for &(center, r) in &anchors {
+        let data = &mut self.data;
+        data.random_tick_index.refresh_ids();
+        let index = &mut data.random_tick_index;
+        for (a, &(center, r)) in anchors.iter().enumerate() {
             for dz in -r..=r {
                 for dx in -r..=r {
                     if dx * dx + dz * dz > r * r {
@@ -260,40 +270,35 @@ impl ServerWorld {
                     }
                     let cx = center.cx + dx;
                     let cz = center.cz + dz;
-                    if anchors.len() > 1
-                        && !visited.insert(petramond_world::chunk::ChunkPos::new(cx, cz))
-                    {
+                    let covered_earlier = anchors[..a].iter().any(|&(c, r)| {
+                        let (ex, ez) = (cx - c.cx, cz - c.cz);
+                        ex * ex + ez * ez <= r * r
+                    });
+                    if covered_earlier {
                         continue;
                     }
-                    let mut cys = self
-                        .data
-                        .section_column_rt
-                        .get(&petramond_world::chunk::ChunkPos::new(cx, cz))
-                        .copied()
-                        .unwrap_or(0);
+                    let column = petramond_world::chunk::ChunkPos::new(cx, cz);
+                    let Some(entry) = index.columns.get_mut(&column) else {
+                        continue;
+                    };
+                    let mut cys = entry.bits();
                     while cys != 0 {
-                        let cy =
-                            petramond_world::chunk::SECTION_MIN_CY + cys.trailing_zeros() as i32;
+                        let slot = cys.trailing_zeros() as usize;
                         cys &= cys - 1;
-                        let Some(section) = self.data.sections.get(&SectionPos::new(cx, cy, cz))
+                        let cy = petramond_world::chunk::SECTION_MIN_CY + slot as i32;
+                        let pos = SectionPos::new(cx, cy, cz);
+                        let (ox, oy, oz) = pos.origin_world();
+                        let sections = &data.sections;
+                        let Some(mask) =
+                            entry.mask(slot, || sections.get(&pos).map(|s| &**s), &index.tickable)
                         else {
                             continue;
                         };
-                        let (ox, oy, oz) = SectionPos::new(cx, cy, cz).origin_world();
-                        let blocks = section.blocks();
                         for _ in 0..RANDOM_TICK_SPEED {
-                            let i = (self.data.sim.next_random() >> 16) as usize % SECTION_VOLUME;
-                            let id = blocks.get(i);
-                            if id == 0 {
-                                continue;
+                            let i = (data.sim.next_random() >> 16) as usize % SECTION_VOLUME;
+                            if mask.get(i) {
+                                due.push(cell_pos(ox, oy, oz, i));
                             }
-                            if !Block::from_id(id).has_random_tick() {
-                                continue;
-                            }
-                            let lx = i & (SECTION_SIZE - 1);
-                            let lz = (i >> 4) & (SECTION_SIZE - 1);
-                            let ly = i >> 8;
-                            due.push(IVec3::new(ox + lx as i32, oy + ly as i32, oz + lz as i32));
                         }
                     }
                 }
@@ -348,9 +353,10 @@ mod tests {
     fn live_random_tick_index(world: &ServerWorld) -> Vec<(ChunkPos, u32)> {
         let mut out: Vec<(ChunkPos, u32)> = world
             .data
-            .section_column_rt
+            .random_tick_index
+            .columns
             .iter()
-            .map(|(&p, &b)| (p, b))
+            .map(|(&p, e)| (p, e.bits()))
             .collect();
         out.sort_by_key(|(p, _)| (p.cx, p.cz));
         assert!(out.iter().all(|(_, b)| *b != 0), "empty column entry kept");
@@ -402,6 +408,58 @@ mod tests {
             brute_random_tick_index(&world)
         );
         assert!(live_random_tick_index(&world).is_empty());
+    }
+
+    fn assert_masks_match_blocks(world: &mut ServerWorld) {
+        world.repair_random_tick_index();
+        let data = &mut world.data;
+        data.random_tick_index.refresh_ids();
+        let index = &mut data.random_tick_index;
+        for (&column, entry) in index.columns.iter_mut() {
+            let mut bits = entry.bits();
+            while bits != 0 {
+                let slot = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                let pos = SectionPos::new(
+                    column.cx,
+                    petramond_world::chunk::SECTION_MIN_CY + slot as i32,
+                    column.cz,
+                );
+                let section = data.sections.get(&pos).expect("indexed section is loaded");
+                let mask = entry
+                    .mask(slot, || Some(&**section), &index.tickable)
+                    .expect("mask");
+                for i in 0..SECTION_VOLUME {
+                    let id = section.blocks().get(i);
+                    assert_eq!(
+                        mask.get(i),
+                        id != 0 && Block::from_id(id).has_random_tick(),
+                        "cell {i} of {pos:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The scan answers "is this cell tickable" from a cached per-section mask; an edit must
+    /// drop it, or a planted sapling or a new leaf would never tick (and a removed one would).
+    #[test]
+    fn random_tick_masks_follow_block_edits() {
+        let mut world = world_with_centered_chunk();
+        let leaf = IVec3::new(8, 70, 8);
+        world.set_block_world(leaf.x, leaf.y, leaf.z, Block::OakLeaves);
+        assert_masks_match_blocks(&mut world);
+        world.set_block_world(leaf.x + 1, leaf.y, leaf.z, Block::OakLeaves);
+        world.set_block_world(leaf.x, leaf.y + 1, leaf.z, Block::Dirt);
+        assert_masks_match_blocks(&mut world);
+        world.set_block_world(leaf.x, leaf.y, leaf.z, Block::Stone);
+        assert_masks_match_blocks(&mut world);
+
+        let sp = SectionPos::from_world(leaf.x, leaf.y, leaf.z).expect("in range");
+        let mut replacement = petramond_world::section::Section::new(sp.cx, sp.cy, sp.cz);
+        replacement.set_block(1, 2, 3, Block::OakLeaves);
+        world.insert_section_for_test(sp, replacement);
+        assert_masks_match_blocks(&mut world);
     }
 
     #[test]

@@ -131,10 +131,14 @@ memo_group! {
             ("terrain.section_cubes", 8192, Frontier, cube_heap),
         section_spaces: crate::section_memo::Key => Arc<crate::section_memo::SpaceMask> =
             ("terrain.section_spaces", 16_384, Frontier, pointee),
+        columns: crate::density::columns::Key => Arc<crate::density::columns::Tile> =
+            ("terrain.columns", 2048, Frontier, pointee),
         surface_tiles: crate::feature::TileKey => Arc<crate::feature::RegionTile> =
             ("terrain.surface_tiles", 2048, Frontier, pointee),
         underground_boxes: crate::UndergroundBoxKey => Arc<[u8]> =
             ("terrain.underground_boxes", 4096, Frontier, slice),
+        ore_veins: crate::feature::scatter::VeinKey => Arc<crate::feature::scatter::ColumnVeins> =
+            ("terrain.ore_veins", 2048, Frontier, |v: &Arc<crate::feature::scatter::ColumnVeins>| v.heap_bytes()),
         placed_features: crate::feature::placement::PlacedKey =>
             Arc<crate::feature::placement::PlacedFeature> =
             ("terrain.placed_features", 256, Frontier, crate::feature::placement::placed_heap),

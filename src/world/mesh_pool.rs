@@ -51,17 +51,36 @@ pub(super) struct NeighborSnap {
     pub blocklight: Option<std::sync::Arc<[petramond_world::light::LightRgb]>>,
     pub cell_states: Option<Box<[(u16, petramond_world::block::ShapeState)]>>,
     pub transition_tints: Box<[(u16, bool)]>,
+    /// Whether the section MAY hold a snow cover or snow-bedded block (a superset test off its
+    /// id set), which is the only thing the pad's transition exclusion pass looks for.
+    pub blanket: bool,
 }
 
+/// The ids of every snow cover / snow-bedded block.
+pub(super) static BLANKET_IDS: petramond_world::content::Slot<petramond_world::section::IdSet> =
+    petramond_world::content::Slot::new(
+        "snow blanket ids",
+        &[petramond_world::content::stage::BLOCK_VIEWS],
+        |_| {
+            Ok(petramond_world::section::IdSet::from_ids(
+                petramond_world::block::Block::all()
+                    .iter()
+                    .filter(|b| b.is_snow_cover() || b.is_snow_bedded())
+                    .map(|b| b.id()),
+            ))
+        },
+    );
+
 /// Meshing job: 3x3x3 neighbourhood as cheap Arc snapshots (indexed by [`nbhd_idx27`], centre at
-/// 13), plus owned clone of centre section (mesher needs full `Section` for block-entity maps),
-/// plus small per-column biome strip. Building this is one `Section` clone and 27x4 Arc bumps, not
-/// 27 deep copies. No mutable world state touched. The padded mesh buffers, the heavy part, get
-/// built off-thread in [`build`].
+/// 13), plus the centre section's own `Arc` (the mesher needs the full `Section` for its
+/// block-entity and cell-state maps; sharing the handle costs a refcount bump, and a write to
+/// the section while the job is in flight copies it on write instead of every job deep-copying
+/// its state maps up front), plus small per-column biome strip. No mutable world state touched.
+/// The padded mesh buffers, the heavy part, get built off-thread in [`build`].
 pub(super) struct MeshJob {
     pub pos: SectionPos,
     pub revision: u64,
-    pub center: Section,
+    pub center: Arc<Section>,
     pub nbhd: [Option<NeighborSnap>; 27],
     pub biome: Arc<[u8]>,
 }
@@ -189,6 +208,10 @@ struct Pad {
     cell_states: Box<[petramond_world::block::ShapeState]>,
     loaded: Box<[bool]>,
     transition_blocked: Box<[bool]>,
+    /// The sparse fields' cells the last assembly wrote: the next one clears exactly those
+    /// instead of the whole pad. The dense fields are written whole, row by row.
+    written_states: Vec<usize>,
+    written_blocked: Vec<usize>,
 }
 
 impl Pad {
@@ -201,18 +224,18 @@ impl Pad {
             cell_states: vec![petramond_world::block::ShapeState::NONE; PAD_VOL].into_boxed_slice(),
             loaded: vec![false; PAD_VOL].into_boxed_slice(),
             transition_blocked: vec![false; PAD_VOL].into_boxed_slice(),
+            written_states: Vec::new(),
+            written_blocked: Vec::new(),
         }
     }
 
-    fn reset(&mut self) {
-        self.blocks.fill(0);
-        self.fluid.fill(0);
-        self.skylight.fill(SKY_FULL);
-        self.blocklight.fill(petramond_world::light::LightRgb::ZERO);
-        self.cell_states
-            .fill(petramond_world::block::ShapeState::NONE);
-        self.loaded.fill(false);
-        self.transition_blocked.fill(false);
+    fn clear_sparse(&mut self) {
+        for i in self.written_states.drain(..) {
+            self.cell_states[i] = petramond_world::block::ShapeState::NONE;
+        }
+        for i in self.written_blocked.drain(..) {
+            self.transition_blocked[i] = false;
+        }
     }
 }
 
@@ -232,10 +255,13 @@ thread_local! {
 /// neighbour (the centre-X section) and is a contiguous slice copy, not 16 per-cell
 /// neighbour lookups; only the two X-border cells fall to per-cell handling. That keeps the
 /// per-cell `pad_axis`/`nbhd_idx27`/`Option` decode to the two edges plus once per row,
-/// instead of all 18³ cells. Stair states (rare) are scattered per bearing neighbour after.
+/// instead of all 18³ cells. Every dense field is written exactly once per cell (a present
+/// neighbour's row or the absent-neighbour default), so nothing is cleared up front; the two
+/// sparse fields clear only the cells the previous assembly wrote. Stair states (rare) are
+/// scattered per bearing neighbour after.
 fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pad) {
     let (_ox, oy, _oz) = pos.origin_world();
-    pad.reset();
+    pad.clear_sparse();
     let Pad {
         blocks,
         fluid,
@@ -244,6 +270,8 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         cell_states,
         loaded,
         transition_blocked,
+        written_states,
+        written_blocked,
     } = pad;
 
     for pz in 0..PAD {
@@ -251,30 +279,38 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         for py in 0..PAD {
             let (ddy, ly) = pad_axis(py);
             let base = pad_idx(1, py, pz);
+            let row = base..base + SECTION_SIZE;
             let src = petramond_world::chunk::section_idx(0, ly, lz);
             match nbhd[nbhd_idx27(0, ddy, ddz)].as_ref() {
                 Some(s) => {
-                    s.blocks
-                        .expand_row_into(src, &mut blocks[base..base + SECTION_SIZE]);
-                    if let Some(w) = s.fluid.as_ref() {
-                        fluid[base..base + SECTION_SIZE]
-                            .copy_from_slice(&w[src..src + SECTION_SIZE]);
+                    s.blocks.expand_row_into(src, &mut blocks[row.clone()]);
+                    match s.fluid.as_ref() {
+                        Some(w) => fluid[row.clone()].copy_from_slice(&w[src..src + SECTION_SIZE]),
+                        None => fluid[row.clone()].fill(0),
                     }
-                    if let Some(sk) = s.skylight.as_ref() {
-                        skylight[base..base + SECTION_SIZE]
-                            .copy_from_slice(&sk[src..src + SECTION_SIZE]);
+                    match s.skylight.as_ref() {
+                        Some(sk) => {
+                            skylight[row.clone()].copy_from_slice(&sk[src..src + SECTION_SIZE])
+                        }
+                        None => skylight[row.clone()].fill(SKY_FULL),
                     }
-                    if let Some(bl) = s.blocklight.as_ref() {
-                        blocklight[base..base + SECTION_SIZE]
-                            .copy_from_slice(&bl[src..src + SECTION_SIZE]);
+                    match s.blocklight.as_ref() {
+                        Some(bl) => {
+                            blocklight[row.clone()].copy_from_slice(&bl[src..src + SECTION_SIZE])
+                        }
+                        None => {
+                            blocklight[row.clone()].fill(petramond_world::light::LightRgb::ZERO)
+                        }
                     }
-                    loaded[base..base + SECTION_SIZE].fill(true);
+                    loaded[row].fill(true);
                 }
                 None => {
                     let wy = oy - 1 + py as i32;
-                    if wy < WORLD_MIN_Y {
-                        skylight[base..base + SECTION_SIZE].fill(0);
-                    }
+                    blocks[row.clone()].fill(0);
+                    fluid[row.clone()].fill(0);
+                    skylight[row.clone()].fill(if wy >= WORLD_MIN_Y { SKY_FULL } else { 0 });
+                    blocklight[row.clone()].fill(petramond_world::light::LightRgb::ZERO);
+                    loaded[row].fill(false);
                 }
             }
         }
@@ -300,7 +336,11 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                     }
                     None => {
                         let wy = oy - 1 + py as i32;
+                        blocks[pi] = 0;
+                        fluid[pi] = 0;
                         skylight[pi] = if wy >= WORLD_MIN_Y { SKY_FULL } else { 0 };
+                        blocklight[pi] = petramond_world::light::LightRgb::ZERO;
+                        loaded[pi] = false;
                     }
                 }
             }
@@ -316,10 +356,14 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
                     continue;
                 };
                 scatter_border_states(&s.transition_tints, (dx, dy, dz), |i, _| {
-                    transition_blocked[i] = true
+                    transition_blocked[i] = true;
+                    written_blocked.push(i);
                 });
                 if let Some(states) = s.cell_states.as_ref() {
-                    scatter_border_states(states, (dx, dy, dz), |i, state| cell_states[i] = state);
+                    scatter_border_states(states, (dx, dy, dz), |i, state| {
+                        cell_states[i] = state;
+                        written_states.push(i);
+                    });
                 }
             }
         }
@@ -352,6 +396,7 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
         if let Some(i) = pad_index(cover - cover_step) {
             if rules.is_material(blocks[i]) {
                 transition_blocked[i] = true;
+                written_blocked.push(i);
             }
         }
     };
@@ -359,6 +404,13 @@ fn assemble_pad(pos: SectionPos, nbhd: &[Option<NeighborSnap>; 27], pad: &mut Pa
     let blanket = |id: u16| {
         table.has_tag(id, BlockTag::SNOW_COVER) || table.has_tag(id, BlockTag::SNOW_BEDDED)
     };
+    // The exclusion pass only ever marks a cell under an unloaded cell or under a blanket; with
+    // every neighbour present and none that may hold a blanket, it would walk 19×18×18 cells
+    // to mark nothing. (Every pad cell and the layer above it come from the 27 neighbours.)
+    let nothing_to_exclude = nbhd.iter().all(|s| s.as_ref().is_some_and(|s| !s.blanket));
+    if nothing_to_exclude {
+        return;
+    }
     for py in 0..=PAD {
         for pz in 0..PAD {
             for px in 0..PAD {

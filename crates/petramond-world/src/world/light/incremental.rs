@@ -57,6 +57,8 @@ use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::world::section_map::SectionMap;
+
 use crate::block::{Block, LIGHT_APERTURES_OPEN, LIGHT_CELL_DIRECT_SKY, LIGHT_CELL_SHAPED};
 use crate::chunk::{section_idx, section_local, ChunkPos, SectionPos, SECTION_SIZE, SKY_FULL};
 use crate::column::Column;
@@ -90,7 +92,7 @@ pub fn light_depends_on_state(block: Block) -> bool {
         .is_some_and(|&w| w & LIGHT_CELL_SHAPED != 0)
 }
 
-pub fn edit_relightable(sections: &FxHashMap<SectionPos, Arc<Section>>, cell: IVec3) -> bool {
+pub fn edit_relightable(sections: &SectionMap, cell: IVec3) -> bool {
     let mut positions = Vec::with_capacity(27);
     let Some(home) = SectionPos::from_world(cell.x, cell.y, cell.z) else {
         return false;
@@ -104,7 +106,7 @@ pub fn edit_relightable(sections: &FxHashMap<SectionPos, Arc<Section>>, cell: IV
 }
 
 pub fn relight_edits(
-    sections: &FxHashMap<SectionPos, Arc<Section>>,
+    sections: &SectionMap,
     columns: &FxHashMap<ChunkPos, Arc<Column>>,
     edits: &[IVec3],
 ) -> Option<Vec<RelitSection>> {
@@ -218,7 +220,7 @@ struct Region<'a> {
 
 impl<'a> Region<'a> {
     fn build(
-        sections: &'a FxHashMap<SectionPos, Arc<Section>>,
+        sections: &'a SectionMap,
         columns: &'a FxHashMap<ChunkPos, Arc<Column>>,
         edits: &[IVec3],
     ) -> Option<Self> {

@@ -40,6 +40,9 @@ impl<S: WorldSide> World<S> {
 
     pub(in crate::world) fn remove_column(&mut self, pos: ChunkPos) {
         self.data.missing_columns_settled = false;
+        if let Some(server) = self.side.server_mut() {
+            server.replication.column_events.push(pos);
+        }
         let bits = self.data.section_column_cys.get(&pos).copied().unwrap_or(0);
         self.unstamp_column(pos, bits);
         for_each_column_cy(bits, |cy| {
@@ -112,8 +115,9 @@ impl<S: WorldSide> World<S> {
         self.data.column_biome_halos.clear();
         self.data.column_deep_band_los.clear();
         self.data.section_column_cys.clear();
-        self.data.section_column_rt.clear();
+        self.data.random_tick_index.columns.clear();
         self.data.random_tick_dirty.clear();
+        self.data.persist_candidates.clear();
         self.data.light_deferred.clear();
         self.data.light_edited_since_persist.clear();
         self.data.deferred_recheck_needed = false;
@@ -142,6 +146,9 @@ impl<S: WorldSide> World<S> {
         self.data.stream_nonfinal.clear();
         self.data.clear_custom_bake();
         self.bump_terrain_revision();
+        if let Some(server) = self.side.server_mut() {
+            server.replication.plan_epoch = server.replication.plan_epoch.wrapping_add(1);
+        }
     }
 
     fn forget_stream_section(&mut self, pos: SectionPos) {
@@ -161,8 +168,9 @@ impl<S: WorldSide> World<S> {
         if !gen.pending_sections.contains(&pos)
             && !gen.awaited_overlays.contains(&pos)
             && !gen.pending_overlays.contains_key(&pos)
+            && self.data.stream_nonfinal.remove(&pos)
         {
-            self.data.stream_nonfinal.remove(&pos);
+            server.replication.send_events.push(pos);
         }
     }
 

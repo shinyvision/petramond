@@ -11,6 +11,7 @@ impl<'a> Col<'a> {
             x,
             z,
             region: lat.regions.at(x, z),
+            column_cell: cz * (lat.nx - 1) + cx,
             i00: cz * lat.nx + cx,
             i01: (cz + 1) * lat.nx + cx,
             plane: lat.nz * lat.nx,
@@ -40,16 +41,7 @@ impl<'a> Col<'a> {
         }
         if self.cached & (1 << k) == 0 {
             let lat = self.lat;
-            let field: &[f64] = match k {
-                lane::ENTRANCE => &lat.entrance,
-                lane::INTERIOR => &lat.density,
-                lane::NOODLE_TOGGLE => &lat.noodle_toggle,
-                lane::NOODLE_A => &lat.noodle_a,
-                lane::NOODLE_B => &lat.noodle_b,
-                lane::NOODLE_WIDTH => &lat.noodle_width,
-                lane::CLIMATE..lane::COUNT => &lat.climate[k - lane::CLIMATE],
-                _ => unreachable!("unknown cave lane"),
-            };
+            let field: &[f64] = &lat.lanes[k];
             debug_assert!(
                 !field.is_empty(),
                 "lattice built without a field group this decision reads"
@@ -64,19 +56,34 @@ impl<'a> Col<'a> {
         self.lo[k] + (self.hi[k] - self.lo[k]) * ty
     }
 
+    /// Whether only the ordinary biome can win the climate at `y` in this column.
+    #[inline]
+    pub(super) fn ordinary(&self, y: i32) -> bool {
+        self.lat.ordinary_at(self.x, y, self.z)
+    }
+
     pub(super) fn climate(&mut self, y: i32) -> underground::ClimatePoint {
         std::array::from_fn(|axis| self.get(lane::CLIMATE + axis, y))
     }
 
     #[inline]
     pub(super) fn cell(&self) -> usize {
-        let (mx, mz) = (self.lat.nx - 1, self.lat.nz - 1);
-        let (cx, cz) = (self.i00 % self.lat.nx, self.i00 / self.lat.nx);
-        (self.cell_y as usize * mz + cz) * mx + cx
+        self.cell_y as usize * (self.lat.nz - 1) * (self.lat.nx - 1) + self.column_cell
     }
 }
 
 impl CaveLattice {
+    #[inline]
+    pub(super) fn ordinary_at(&self, x: i32, y: i32, z: i32) -> bool {
+        if self.ordinary.is_empty() {
+            return false;
+        }
+        let cx = (x.div_euclid(LATTICE_STEP) - self.lx0) as usize;
+        let cy = (y.div_euclid(LATTICE_STEP) - self.ly0) as usize;
+        let cz = (z.div_euclid(LATTICE_STEP) - self.lz0) as usize;
+        self.ordinary[(cy * (self.nz - 1) + cz) * (self.nx - 1) + cx]
+    }
+
     #[inline]
     pub(super) fn tri(&self, field: &[f64], x: i32, y: i32, z: i32) -> f64 {
         debug_assert!(
@@ -121,19 +128,16 @@ impl CaveLattice {
         for cy in 0..my {
             for cz in 0..mz {
                 for cx in 0..mx {
-                    let density = bounds(&self.entrance, cx, cy, cz)
+                    let lanes = &self.lanes;
+                    let density = bounds(&lanes[lane::ENTRANCE], cx, cy, cz)
                         .0
-                        .min(bounds(&self.density, cx, cy, cz).0);
-                    let noodles = bounds(&self.noodle_toggle, cx, cy, cz).1 >= 0.0
+                        .min(bounds(&lanes[lane::INTERIOR], cx, cy, cz).0);
+                    let noodles = bounds(&lanes[lane::NOODLE_TOGGLE], cx, cy, cz).1 >= 0.0
                         && 1.5
-                            * abs_min(bounds(&self.noodle_a, cx, cy, cz)).max(abs_min(bounds(
-                                &self.noodle_b,
-                                cx,
-                                cy,
-                                cz,
-                            )))
-                            < bounds(&self.noodle_width, cx, cy, cz).1 + shell;
-                    let walks = self.walks.is_some() && self.walk_cells[(cy * mz + cz) * mx + cx];
+                            * abs_min(bounds(&lanes[lane::NOODLE_A], cx, cy, cz))
+                                .max(abs_min(bounds(&lanes[lane::NOODLE_B], cx, cy, cz)))
+                            < bounds(&lanes[lane::NOODLE_WIDTH], cx, cy, cz).1 + shell;
+                    let walks = self.walks.any((cy * mz + cz) * mx + cx);
                     let field = self.volumes.touched([
                         self.lx0 + cx as i32,
                         self.ly0 + cy as i32,
@@ -164,6 +168,6 @@ impl CaveLattice {
     }
 
     pub(super) fn climate_at(&self, x: i32, y: i32, z: i32) -> underground::ClimatePoint {
-        std::array::from_fn(|axis| self.tri(&self.climate[axis], x, y, z))
+        std::array::from_fn(|axis| self.tri(&self.lanes[lane::CLIMATE + axis], x, y, z))
     }
 }

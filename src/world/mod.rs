@@ -66,7 +66,7 @@ pub use petramond_world::world::custom_bake::CustomBakeCell;
 pub use petramond_world::world::shape_bake_validate::ingest_shape_boxes;
 pub use remote::{
     column_key, decode_section_payload, section_key, Cached, Changes, DetachedFold, FrameChanges,
-    PieceRange, Resident, SectionContent, SentSections, TerrainEdit,
+    PieceRange, Resident, SectionContent, SendEvents, SentSections, TerrainEdit, TerrainSendPlan,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use stream::split_generated_column;

@@ -390,6 +390,16 @@ impl BlockTable {
             self.def(id).tags.contains(&tag)
         }
     }
+
+    #[inline]
+    pub fn emission(self, id: u16) -> u8 {
+        row(&self.0.emission, id)
+    }
+
+    #[inline]
+    pub fn emission_rgb(self, id: u16) -> [u8; 3] {
+        row(&self.0.emission_rgb, id)
+    }
 }
 
 #[inline]

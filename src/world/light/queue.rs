@@ -4,7 +4,6 @@ use std::sync::Arc;
 use petramond_world::chunk::{ChunkPos, SectionPos};
 use petramond_world::column::Column;
 use petramond_world::light::LightRgb;
-use petramond_world::section::Section;
 
 use petramond_world::world::light::bake::{bake_section, LightBakeOutput, SectionBakeJob};
 
@@ -13,6 +12,8 @@ pub struct LightBakeQueue {
     pending: FxHashMap<SectionPos, PendingLightBake>,
     next_id: u64,
     ready: Vec<LightBakeEvent>,
+    requested: u64,
+    landed: u64,
 }
 
 #[derive(Clone)]
@@ -68,14 +69,21 @@ impl LightBakeQueue {
             pending: FxHashMap::default(),
             next_id: 1,
             ready: Vec::new(),
+            requested: 0,
+            landed: 0,
         }
+    }
+
+    /// Bakes submitted and results accepted so far (operation counts for instruments).
+    pub fn stats(&self) -> (u64, u64) {
+        (self.requested, self.landed)
     }
 
     pub fn request(
         &mut self,
         key: i64,
         pos: SectionPos,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        sections: &petramond_world::world::section_map::SectionMap,
         columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) {
         if self.pending.contains_key(&pos) {
@@ -90,6 +98,7 @@ impl LightBakeQueue {
         self.next_id = self.next_id.wrapping_add(1).max(1);
         let revision = sections.get(&pos).map_or(0, |s| s.light_revision);
         let cancel = self.backend.submit(key, job);
+        self.requested += 1;
         self.pending.insert(
             pos,
             PendingLightBake {
@@ -105,7 +114,7 @@ impl LightBakeQueue {
         key: i64,
         base: SectionPos,
         members: &[SectionPos],
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        sections: &petramond_world::world::section_map::SectionMap,
         columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) {
         let fresh: Vec<SectionPos> = members
@@ -136,6 +145,7 @@ impl LightBakeQueue {
             );
             cancels.push((pos, id, cancel));
         }
+        self.requested += cancels.len() as u64;
         self.backend.submit_batch(key, job, cancels);
     }
 
@@ -158,6 +168,7 @@ impl LightBakeQueue {
                 BakeReport::Baked(results) => {
                     for res in results {
                         if self.take_pending(res.pos, res.id).is_some() {
+                            self.landed += 1;
                             self.ready.push(LightBakeEvent::Baked(res));
                         }
                     }
@@ -190,7 +201,7 @@ impl LightBakeJob {
     pub fn snapshot(
         id: u64,
         pos: SectionPos,
-        sections: &FxHashMap<SectionPos, Arc<Section>>,
+        sections: &petramond_world::world::section_map::SectionMap,
         columns: &FxHashMap<ChunkPos, std::sync::Arc<Column>>,
     ) -> Option<Self> {
         let bake = SectionBakeJob::snapshot(pos, sections, columns)?;

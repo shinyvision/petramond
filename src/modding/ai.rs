@@ -56,6 +56,9 @@ pub struct AiNodeRequest {
     pub player_held: Option<mod_api::ItemId>,
     pub player_foothold: Option<[i32; 3]>,
     pub tags: Arc<BTreeMap<String, MobTagValue>>,
+    /// The tag map's revision ([`crate::mob::Instance::tags_rev`]): a batch resends a mob's tags
+    /// only when it moved.
+    pub tags_rev: u64,
 }
 
 impl AiNodeRequest {
@@ -106,11 +109,15 @@ impl Serialize for AiNodeCtxRef<'_> {
         ctx.serialize_field("attacker", &r.attacker)?;
         ctx.serialize_field("player_held", &r.player_held)?;
         ctx.serialize_field("player_foothold", &r.player_foothold)?;
-        ctx.serialize_field("tags", &AbiTags(&r.tags))?;
+        // A batch carries tags beside the contexts, only for mobs whose tags changed.
+        ctx.serialize_field("tags", &AbiTags(&EMPTY_TAGS))?;
         ctx.end()
     }
 }
 
+static EMPTY_TAGS: BTreeMap<String, MobTagValue> = BTreeMap::new();
+
+#[derive(Debug)]
 struct AbiTags<'a>(&'a BTreeMap<String, MobTagValue>);
 
 impl Serialize for AbiTags<'_> {
@@ -119,6 +126,7 @@ impl Serialize for AbiTags<'_> {
     }
 }
 
+#[derive(Debug)]
 struct AbiTag<'a>(&'a MobTagValue);
 
 impl Serialize for AbiTag<'_> {
@@ -144,6 +152,8 @@ const AI_NODE_BATCH_VARIANT: u32 = 17;
 struct AiNodeBatchRef<'a> {
     callback_id: u32,
     ctxs: &'a [AiNodeCtxRef<'a>],
+    /// Parallel to `ctxs`: the mob's tags when they changed since this instance last saw it.
+    tags: &'a [Option<AbiTags<'a>>],
 }
 
 impl Serialize for AiNodeBatchRef<'_> {
@@ -152,18 +162,23 @@ impl Serialize for AiNodeBatchRef<'_> {
             "GuestCall",
             AI_NODE_BATCH_VARIANT,
             "AiNodeBatch",
-            2,
+            3,
         )?;
         call.serialize_field("callback_id", &self.callback_id)?;
         call.serialize_field("ctxs", self.ctxs)?;
+        call.serialize_field("tags", self.tags)?;
         call.end()
     }
 }
+
+/// Per AI node, the tag revision last sent for each mob of its latest batch.
+pub(super) type SentTags = rustc_hash::FxHashMap<u32, rustc_hash::FxHashMap<u64, u64>>;
 
 fn batch_kind() -> std::mem::Discriminant<GuestCall> {
     std::mem::discriminant(&GuestCall::AiNodeBatch {
         callback_id: 0,
         ctxs: Vec::new(),
+        tags: Vec::new(),
     })
 }
 
@@ -208,9 +223,26 @@ fn dispatch_node(
                 tick,
             })
             .collect();
+        // Both sides keep exactly the mobs of the latest batch: a mob's tags go over when its
+        // revision differs from the one last sent, or when it was not in the last batch.
+        let last = instance
+            .sent_tags()
+            .remove(&reg.callback_id)
+            .unwrap_or_default();
+        let mut next = rustc_hash::FxHashMap::default();
+        let tags: Vec<Option<AbiTags<'_>>> = members
+            .iter()
+            .map(|&i| {
+                let r = &requests[i];
+                next.insert(r.mob_id, r.tags_rev);
+                (last.get(&r.mob_id) != Some(&r.tags_rev)).then_some(AbiTags(&r.tags))
+            })
+            .collect();
+        instance.sent_tags().insert(reg.callback_id, next);
         let call = AiNodeBatchRef {
             callback_id: reg.callback_id,
             ctxs: &ctxs,
+            tags: &tags,
         };
         match instance.call_guest_encoded(
             &call,
@@ -274,6 +306,7 @@ mod tests {
                     .map(|(k, v)| ((*k).to_owned(), v.clone()))
                     .collect(),
             ),
+            tags_rev: 1,
         }
     }
 
@@ -295,14 +328,27 @@ mod tests {
             .iter()
             .map(|request| AiNodeCtxRef { request, tick: 77 })
             .collect();
+        let tags: Vec<Option<AbiTags<'_>>> = requests
+            .iter()
+            .enumerate()
+            .map(|(i, r)| (i == 0).then_some(AbiTags(&r.tags)))
+            .collect();
         let borrowed = mod_api::encode(&AiNodeBatchRef {
             callback_id: 5,
             ctxs: &ctxs,
+            tags: &tags,
         })
         .unwrap();
         let owned = mod_api::encode(&GuestCall::AiNodeBatch {
             callback_id: 5,
-            ctxs: requests.iter().map(|r| r.to_ctx(77)).collect(),
+            ctxs: requests
+                .iter()
+                .map(|r| AiNodeCtx {
+                    tags: Vec::new(),
+                    ..r.to_ctx(77)
+                })
+                .collect(),
+            tags: vec![Some(requests[0].to_ctx(77).tags), None],
         })
         .unwrap();
         assert_eq!(borrowed, owned);

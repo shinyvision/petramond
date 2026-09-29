@@ -60,6 +60,7 @@ impl ScriptedNode {
             .flatten()
             .map(|c| c.to_array()),
             tags: std::sync::Arc::clone(ctx.tags),
+            tags_rev: ctx.tags_rev,
         })
     }
 }

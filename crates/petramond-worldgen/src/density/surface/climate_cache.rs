@@ -1,8 +1,9 @@
 use crate::biome::climate::{
-    BiomeClimateIndex, ClimateSampleCell, ClimateSampler, SurfaceClimate, CLIMATE_SAMPLE_CELL_X,
+    BiomeClimateIndex, ClimateSampleCell, SurfaceClimate, CLIMATE_SAMPLE_CELL_X,
     CLIMATE_SAMPLE_CELL_Z,
 };
 use crate::cache::local::{self, LocalTable};
+use crate::density::columns::Columns;
 use petramond_world::biome::Biome;
 use rustc_hash::FxHashMap;
 
@@ -13,7 +14,7 @@ pub(super) struct CellClimate {
 }
 
 pub(super) struct ClimateCellCache<'a> {
-    sampler: ClimateSampler<'a>,
+    columns: &'a Columns,
     index: &'a BiomeClimateIndex,
     seed: u32,
     climate: FxHashMap<ClimateSampleCell, SurfaceClimate>,
@@ -54,13 +55,9 @@ fn climate_memo_hash(seed: u32, cell: ClimateSampleCell) -> u64 {
 }
 
 impl<'a> ClimateCellCache<'a> {
-    pub(super) fn new(
-        sampler: ClimateSampler<'a>,
-        index: &'a BiomeClimateIndex,
-        seed: u32,
-    ) -> Self {
+    pub(super) fn new(columns: &'a Columns, index: &'a BiomeClimateIndex, seed: u32) -> Self {
         Self {
-            sampler,
+            columns,
             index,
             seed,
             climate: FxHashMap::default(),
@@ -114,14 +111,11 @@ impl<'a> ClimateCellCache<'a> {
             return *cached;
         }
         let seed = self.seed;
-        let sampler = self.sampler;
+        let columns = self.columns;
         let (climate, _) = CLIMATE_MEMO.with(|memo| {
             memo.get_or_insert_with(climate_memo_hash(seed, cell), (seed, cell), || {
-                let climate = sampler
-                    .sample_surface_cell(cell)
-                    .expect("surface density graph must expose climate channels")
-                    .climate;
-                (climate, None)
+                let (x, _, z) = cell.origin();
+                (SurfaceClimate::from_column(&columns.at(x, z)), None)
             })
         });
         self.climate.insert(cell, climate);

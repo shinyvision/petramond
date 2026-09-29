@@ -49,6 +49,22 @@ impl ShapeSim for PaneFamily {
         let c = conn(p);
         lo[0] < c.post_hi && hi[0] > c.post_lo && lo[2] < c.post_hi && hi[2] > c.post_lo
     }
+
+    fn shade_boxes(
+        &self,
+        p: &ShapeParams,
+        _nb: &dyn ShapeNeighborhood,
+        _pos: IVec3,
+        _b: Block,
+        out: &mut Vec<Aabb>,
+    ) -> bool {
+        let c = conn(p);
+        out.push(Aabb {
+            min: [c.post_lo, -OPEN_ENDED, c.post_lo],
+            max: [c.post_hi, OPEN_ENDED, c.post_hi],
+        });
+        true
+    }
 }
 
 impl ShapeRender for PaneFamily {
