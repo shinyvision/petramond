@@ -100,6 +100,9 @@ pub struct Animation {
     pub length: f32,
     pub looping: bool,
     pub hold: bool,
+    /// Blockbench's "override previous animations": the bones this clip keys are REPLACED (blended
+    /// by the layer's weight) instead of summed onto what earlier layers posed.
+    pub overrides: bool,
     tracks: Vec<Track>,
     markers: Vec<Marker>,
 }
@@ -110,9 +113,15 @@ impl Animation {
             length,
             looping,
             hold,
+            overrides: false,
             tracks: Vec::new(),
             markers: Vec::new(),
         }
+    }
+
+    pub fn with_overrides(mut self, overrides: bool) -> Self {
+        self.overrides = overrides;
+        self
     }
 
     pub fn set_track(&mut self, bone: usize, channel: Channel, mut keys: Vec<Keyframe>) {

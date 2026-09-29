@@ -102,7 +102,7 @@ impl DroppedItems {
     /// nothing until `changed` (the world's announced block changes since
     /// the last tick, `overflow` = positions lost, every anchor re-checked)
     /// names its anchor cell; the tick that cell loses its collision, it
-    /// drops loose.
+    /// resumes its flight with a small horizontal drift along its heading.
     ///
     /// When `freeze_unloaded` is set (a save is attached), a drop whose own
     /// cell or the cell under it has not ARRIVED (see
@@ -200,7 +200,11 @@ impl DroppedItems {
             }
             let lived = self.items[i].ticks_lived.saturating_add(1);
             self.items[i].ticks_lived = lived;
-            if lived >= ITEM_LIFETIME_TICKS {
+            if lived
+                >= self.items[i]
+                    .lifetime_ticks()
+                    .unwrap_or(ITEM_LIFETIME_TICKS)
+            {
                 self.items.swap_remove(i);
             }
         }
@@ -330,6 +334,7 @@ impl DroppedItems {
                     let (a, b) = (&self.items[i], &self.items[j]);
                     (
                         a.stack.can_stack_with(&b.stack)
+                            && (a.lifetime_ticks().is_none() || a.ticks_lived == b.ticks_lived)
                             && d.length_squared() <= ITEM_MERGE_RADIUS * ITEM_MERGE_RADIUS,
                         a.stack.space_left(),
                         b.stack.count,

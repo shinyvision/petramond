@@ -1,6 +1,7 @@
 mod dropped_item;
 #[cfg(test)]
 pub mod fluid_fixture;
+mod item_rules;
 pub mod shore;
 
 #[cfg(any(test, feature = "test-support"))]

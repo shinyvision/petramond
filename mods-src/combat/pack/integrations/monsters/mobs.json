@@ -11,6 +11,12 @@
       "data": {
         "combat:paced_combo": true
       }
+    },
+    {
+      "patch": "monsters:skeleton",
+      "data": {
+        "combat:paced_combo": true
+      }
     }
   ]
 }

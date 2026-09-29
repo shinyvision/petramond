@@ -1,6 +1,7 @@
 use crate::net::protocol::ServerToClient;
 use crate::server::chat::ChatTargets;
 
+mod camp_guard;
 mod events;
 mod interest;
 

@@ -438,8 +438,8 @@ fn position_tracks_translate_the_bone() {
 fn compiled_model_layout_change_requires_a_format_version_bump() {
     use crate::asset_cache::CompiledAsset;
 
-    const GOLDEN_VERSION: u32 = 10;
-    const GOLDEN_HEX: &str = "01000000000000000400000000000000726f6f740000004000000040000000400000000000000000000000000001000000000000000400000000000000626f6479000000000000000000000000000080400000804000008040000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000100000000000000090000000000000069646c655f776176650000803f00000100000000000000000000000000000001000000000000000000803e00002041000000000000a04000002041000000000000a04000000000000001000000000000000000003f00000000000040c00000000000000000000040c00000000000000000000000000000000000000100000000000000090000000000000069646c655f776176650400000000000000ff0000ff0100000001000000";
+    const GOLDEN_VERSION: u32 = 11;
+    const GOLDEN_HEX: &str = "01000000000000000400000000000000726f6f740000004000000040000000400000000000000000000000000001000000000000000400000000000000626f6479000000000000000000000000000080400000804000008040000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000100000000000000090000000000000069646c655f776176650000803f0000000100000000000000000000000000000001000000000000000000803e00002041000000000000a04000002041000000000000a04000000000000001000000000000000000003f00000000000040c00000000000000000000040c00000000000000000000000000000000000000100000000000000090000000000000069646c655f776176650400000000000000ff0000ff0100000001000000";
 
     let tex = one_pixel_texture([255, 0, 0, 255]);
     let src = format!(
@@ -476,6 +476,61 @@ fn compiled_model_layout_change_requires_a_format_version_bump() {
          together. A layout change WITHOUT the bump lets stale caches mis-decode \
          into garbage models (invisible mobs).",
         Model::FORMAT_VERSION,
+    );
+}
+
+#[test]
+fn an_override_clip_replaces_earlier_layers_on_the_bones_it_keys() {
+    let tex = one_pixel_texture([255, 0, 0, 255]);
+    let clip = |name: &str, over: bool, x: f32| {
+        format!(
+            r#"{{ "name": "{name}", "loop": "loop", "override": {over}, "length": 1.0,
+                "animators": {{ "g": {{ "name": "root", "type": "bone", "keyframes": [
+                    {{ "channel": "rotation", "time": 0, "data_points": [{{ "x": "{x}", "y": "0", "z": "0" }}] }}
+                ] }} }} }}"#
+        )
+    };
+    let src = format!(
+        r#"{{
+            "resolution": {{ "width": 16, "height": 16 }},
+            "textures": [{{ "uv_width": 16, "uv_height": 16, "source": "{tex}" }}],
+            "elements": [{{ "uuid": "c", "type": "cube", "name": "body", "from": [0,0,0], "to": [4,4,4],
+                "faces": {{ "up": {{ "uv": [0,0,16,16], "texture": 0 }} }} }}],
+            "groups": [{{ "uuid": "g", "name": "root", "origin": [0,0,0] }}],
+            "outliner": [{{ "uuid": "g", "name": "root", "origin": [0,0,0], "children": ["c"] }}],
+            "animations": [{}, {}, {}]
+        }}"#,
+        clip("walk", false, 40.0),
+        clip("add", false, 10.0),
+        clip("stance", true, 10.0),
+    );
+    let m = Model::load(&src).expect("model loads");
+    let angle = |pose: &[Mat4]| {
+        pose[0]
+            .to_scale_rotation_translation()
+            .1
+            .to_euler(glam::EulerRot::XYZ)
+            .0
+    };
+    let (walk, add, stance) = (
+        m.animation("walk").unwrap(),
+        m.animation("add").unwrap(),
+        m.animation("stance").unwrap(),
+    );
+    let summed = angle(&m.pose_layers(&[(walk, 0.0, 1.0), (add, 0.0, 1.0)]));
+    let replaced = angle(&m.pose_layers(&[(walk, 0.0, 1.0), (stance, 0.0, 1.0)]));
+    let half = angle(&m.pose_layers(&[(walk, 0.0, 1.0), (stance, 0.0, 0.5)]));
+    assert!(
+        (summed - 50f32.to_radians()).abs() < 1e-4,
+        "additive layers sum"
+    );
+    assert!(
+        (replaced - 10f32.to_radians()).abs() < 1e-4,
+        "an override replaces"
+    );
+    assert!(
+        (half - 25f32.to_radians()).abs() < 1e-4,
+        "a half-weight override crossfades from what was posed"
     );
 }
 

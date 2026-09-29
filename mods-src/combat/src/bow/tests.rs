@@ -240,9 +240,14 @@ fn damage_runs_between_the_arrows_rungs_by_speed_and_speed_by_draw() {
     assert!(mid[1] > arrow.damage_weak[1] && mid[1] < arrow.damage_full[1]);
     assert_eq!(
         arrow.damage_at(0.0),
-        arrow.damage_weak,
-        "slower than any launch is the floor"
+        [0.0; 2],
+        "an arrow at rest carries no damage"
     );
+    assert_eq!(
+        arrow.damage_at(arrow.speed_weak * 0.5),
+        arrow.damage_weak.map(|d| d * 0.5)
+    );
+    assert_eq!(arrow.damage_at(-1.0), [0.0; 2]);
     assert_eq!(
         arrow.damage_at(1e6),
         arrow.damage_full,

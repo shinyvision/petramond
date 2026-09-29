@@ -91,7 +91,7 @@ pub(super) fn item_entity_data(it: &DroppedItem) -> mod_api::ItemEntityData {
         Motion::Loose => (None, mod_api::ItemMotion::Loose),
         Motion::Flight(f) => (f.owner, mod_api::ItemMotion::Flight),
         Motion::Stuck(s) => (
-            None,
+            s.flight.owner,
             mod_api::ItemMotion::Stuck {
                 cell: s.anchor.to_array(),
             },

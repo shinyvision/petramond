@@ -164,7 +164,7 @@ fn namespaced_pack_row_registers_a_hostile_mob_with_a_data_brain() {
     assert_eq!(z.mob, Mob(engine as u8));
     assert_eq!(z.name, "mymod:zombling");
     assert_eq!(z.category, MobCategory::Hostile);
-    assert_eq!(z.despawn_radius, Some(64.0));
+    assert_eq!(z.despawn.map(|d| d.radius), Some(64.0));
     assert!(
         !z.spawn.is_spawnable(),
         "an empty spawn rule = programmatic-spawn-only"

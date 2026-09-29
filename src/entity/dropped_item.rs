@@ -57,7 +57,7 @@ pub struct Flight {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Stuck {
-    pub heading: Heading,
+    pub flight: Flight,
     pub anchor: IVec3,
     pub verified: bool,
 }
@@ -71,13 +71,21 @@ pub enum Motion {
 
 impl Motion {
     pub fn flying(vel: Vec3, owner: Option<crate::mob::EntityRef>) -> Motion {
-        match Heading::of(vel) {
-            Some(heading) => Motion::Flight(Flight {
-                owner,
-                left_owner: owner.is_none(),
-                heading,
+        Motion::Flight(Flight {
+            owner,
+            left_owner: owner.is_none(),
+            heading: Heading::of(vel).unwrap_or(Heading {
+                yaw: 0.0,
+                pitch: 0.0,
             }),
-            None => Motion::Loose,
+        })
+    }
+
+    pub fn projectile(self) -> Option<Flight> {
+        match self {
+            Motion::Flight(f) => Some(f),
+            Motion::Stuck(s) => Some(s.flight),
+            Motion::Loose => None,
         }
     }
 }
@@ -113,6 +121,7 @@ pub struct DroppedItem {
     pub motion: Motion,
     pub prev_pos: petramond_math::world_pos::WorldPos,
     pub prev_spin: f32,
+    rules: super::item_rules::ItemRules,
     escape: petramond_world::collision::EscapeRoute,
 }
 
@@ -136,6 +145,7 @@ impl DroppedItem {
             motion,
             prev_pos: pos,
             prev_spin: 0.0,
+            rules: super::item_rules::ItemRules::of(stack),
             escape: Default::default(),
         }
     }
@@ -172,21 +182,21 @@ impl DroppedItem {
     }
 
     pub fn heading(&self) -> Option<Heading> {
-        match self.motion {
-            Motion::Loose => None,
-            Motion::Flight(f) => Some(f.heading),
-            Motion::Stuck(s) => Some(s.heading),
-        }
+        self.motion.projectile().map(|f| f.heading)
     }
 
     pub fn collectable(&self) -> bool {
-        !matches!(self.motion, Motion::Flight(_))
+        self.rules.pickup && !matches!(self.motion, Motion::Flight(_))
+    }
+
+    pub fn lifetime_ticks(&self) -> Option<u32> {
+        self.rules.lifetime_ticks
     }
 
     pub fn lodge(&mut self, anchor: IVec3) {
-        if let Some(heading) = self.heading() {
+        if let Some(flight) = self.motion.projectile() {
             self.motion = Motion::Stuck(Stuck {
-                heading,
+                flight,
                 anchor,
                 verified: true,
             });

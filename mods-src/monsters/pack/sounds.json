@@ -33,6 +33,38 @@
       "category": "mob"
     },
     {
+      "sound": "monsters:skeleton_idle",
+      "variants": [
+        "sounds/skeleton_idle.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:skeleton_hurt",
+      "variants": [
+        "sounds/skeleton_hurt1.ogg",
+        "sounds/skeleton_hurt2.ogg",
+        "sounds/skeleton_hurt3.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
+      "sound": "monsters:skeleton_death",
+      "variants": [
+        "sounds/skeleton_death.ogg"
+      ],
+      "gain": 0.85,
+      "pitch_variation": 0.08,
+      "attenuation_distance": 8.0,
+      "category": "mob"
+    },
+    {
       "sound": "monsters:hushjaw_hurt",
       "variants": [
         "sounds/hushjaw_hurt1.ogg",

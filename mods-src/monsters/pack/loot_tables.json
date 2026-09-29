@@ -25,6 +25,30 @@
       ]
     },
     {
+      "loot": "monsters:skeleton_drops",
+      "pools": [
+        {
+          "rolls": [
+            0,
+            2
+          ],
+          "entries": [
+            {
+              "weight": 1,
+              "result": {
+                "type": "item",
+                "item": "petramond:stick",
+                "count": [
+                  1,
+                  1
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "loot": "monsters:camp_hut_chest",
       "pools": [
         {

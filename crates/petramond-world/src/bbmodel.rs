@@ -371,10 +371,18 @@ impl Model {
                     }
                     let t = anim.clip_time(*time);
                     if let Some(r) = anim.sample(i, Channel::Rotation, t) {
-                        rot += r * w;
+                        rot = if anim.overrides {
+                            rot.lerp(r, w)
+                        } else {
+                            rot + r * w
+                        };
                     }
                     if let Some(p) = anim.sample(i, Channel::Position, t) {
-                        pos += p * w;
+                        pos = if anim.overrides {
+                            pos.lerp(p, w)
+                        } else {
+                            pos + p * w
+                        };
                     }
                 }
                 bone_transform(b, rot, pos)
@@ -448,7 +456,7 @@ impl Model {
 
 impl CompiledAsset for Model {
     const MAGIC: [u8; 8] = *b"LLMOB\0\0\0";
-    const FORMAT_VERSION: u32 = 10;
+    const FORMAT_VERSION: u32 = 11;
     const SUBDIR: &'static str = "models";
     const EXTENSION: &'static str = "llmob";
 

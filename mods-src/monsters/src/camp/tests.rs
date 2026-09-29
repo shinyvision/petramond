@@ -1,4 +1,4 @@
-use mod_sdk::build::{Derived, Families, Heights, Noise2, Site};
+use mod_sdk::build::{Derived, Families, Form, Heights, IndexedPlan, Noise2, Site};
 
 use super::*;
 
@@ -172,4 +172,127 @@ fn water_and_cliffs_turn_a_site_away() {
         amplitude: 40.0,
     };
     assert!(camp_at(&families, &cliffs, 1).is_none());
+}
+
+/// Every camp the invariant tests below look at: each style on open land, several seeds.
+fn sample_camps(families: &Families) -> impl Iterator<Item = (u32, u32, Box<Camp<'_>>, Plan)> + '_ {
+    style::STYLE_BIOMES.into_iter().flat_map(move |style| {
+        (0..8u32).filter_map(move |seed| {
+            let land = Land {
+                biome: style,
+                amplitude: 2.0 + (seed % 3) as f32,
+            };
+            let (camp, plan) = camp_at(families, &land, seed)?;
+            Some((style as u32, seed, camp, plan))
+        })
+    })
+}
+
+/// A resolver that gives every block a distinct id, so a plan can be emitted without a host.
+fn stub_ids() -> impl FnMut(&str) -> Option<mod_sdk::BlockId> {
+    let mut names: Vec<String> = Vec::new();
+    move |name| {
+        let i = names.iter().position(|n| n == name).unwrap_or_else(|| {
+            names.push(name.to_string());
+            names.len() - 1
+        });
+        Some(mod_sdk::BlockId(i as u16))
+    }
+}
+
+fn dist(a: [i32; 2], b: [i32; 2]) -> f32 {
+    (((a[0] - b[0]).pow(2) + (a[1] - b[1]).pow(2)) as f32).sqrt()
+}
+
+#[test]
+fn every_post_is_a_floor_with_room_that_the_emitted_section_carries() {
+    let families = families();
+    let mut ids = stub_ids();
+    for (style, seed, camp, plan) in sample_camps(&families) {
+        let ctx = format!("biome {style} seed {seed}");
+        assert!(!camp.posts.is_empty(), "{ctx}: no posts");
+        let mut emitted = IndexedPlan::parse(plan.encode(), 0).expect("the plan parses");
+        for (i, post) in camp.posts.iter().enumerate() {
+            let [x, y, z] = post.floor;
+            let floor = plan
+                .get(post.floor)
+                .unwrap_or_else(|| panic!("{ctx}: post {:?} has no floor in the plan", post.floor));
+            assert!(
+                floor.solid_top() && !matches!(floor.form, Form::Stairs | Form::Fence),
+                "{ctx}: post {:?} floor {floor:?} is not something to stand centred on",
+                post.floor
+            );
+            for k in 1..=2 {
+                assert!(
+                    plan.get([x, y + k, z]).is_none_or(Material::is_air),
+                    "{ctx}: post {:?} has no room {k} above its floor",
+                    post.floor
+                );
+            }
+            for other in &camp.posts[i + 1..] {
+                assert!(
+                    dist([x, z], [other.floor[0], other.floor[2]]) >= 3.0,
+                    "{ctx}: posts {:?} and {:?} crowd each other",
+                    post.floor,
+                    other.floor
+                );
+            }
+            let mut out = mod_sdk::GenOutput::default();
+            emitted.emit([x >> 4, y >> 4, z >> 4], &mut ids, &mut out);
+            assert!(
+                out.authored.cells.iter().any(|(p, _)| p == post.floor),
+                "{ctx}: post {:?} floor is not emitted",
+                post.floor
+            );
+            let data: Vec<_> = out
+                .authored
+                .data
+                .iter()
+                .filter(|d| d.pos == post.floor && d.key == crate::keys::POST_MARKER)
+                .collect();
+            assert_eq!(data.len(), 1, "{ctx}: post {:?} data", post.floor);
+            assert_eq!(data[0].value, [post.role as u8, post.yaw]);
+        }
+    }
+}
+
+#[test]
+fn posts_stand_where_their_role_says() {
+    use posts::PostRole;
+    let families = families();
+    for (style, seed, camp, _) in sample_camps(&families) {
+        let ctx = format!("biome {style} seed {seed}");
+        let count = |role| camp.posts.iter().filter(|p| p.role == role).count();
+        assert!(count(PostRole::Watch) >= 1, "{ctx}: no watch post");
+        assert!(
+            (1..=2 * camp.gates.len()).contains(&count(PostRole::Gate)),
+            "{ctx}: {} gate posts for {} gates",
+            count(PostRole::Gate),
+            camp.gates.len()
+        );
+        assert!(camp.centre.is_some() || count(PostRole::Centre) == 0);
+        assert!(!camp.huts.is_empty() || count(PostRole::Hut) == 0);
+        for post in &camp.posts {
+            let c = [post.floor[0], post.floor[2]];
+            let near = |target: [i32; 2], reach: f32| dist(c, target) <= reach;
+            let ok = match post.role {
+                PostRole::Watch => post.floor[1] >= camp.g(c) + 2,
+                PostRole::Gate => camp.gates.iter().any(|g| near(camp.ring[g.i], 9.0)),
+                PostRole::Centre => camp
+                    .centre
+                    .as_ref()
+                    .is_some_and(|m| near(m.at, m.need + 5.0)),
+                PostRole::Hut => camp
+                    .huts
+                    .iter()
+                    .any(|h| near(h.frame.at(h.w / 2, h.d / 2), 8.0)),
+                PostRole::Yard => camp.depth(c) >= 1 && camp.plateau_at.get(c) == 0,
+            };
+            assert!(
+                ok,
+                "{ctx}: {:?} post at {:?} is out of place",
+                post.role, post.floor
+            );
+        }
+    }
 }

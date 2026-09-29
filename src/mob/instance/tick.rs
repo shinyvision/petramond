@@ -8,7 +8,7 @@ use crate::mob::brain::{AiCtx, BehaviorOutput, Brain, ScriptedReplies, TickInput
 use crate::mob::confined::{self, ConfinedRegion, RegionCache};
 use crate::mob::kinematics::{route_steering_supported, Locomotion, Surroundings};
 use crate::mob::model_meta::{IdleAnimMeta, NamedAnimMeta, Skeleton};
-use crate::mob::{nav, path, EntityRef, MobDef, MobRng, MobTagValue, PlayerAnchor};
+use crate::mob::{nav, path, Despawn, EntityRef, MobDef, MobRng, MobTagValue, PlayerAnchor};
 use crate::modding::ai::AiNodeRequest;
 
 const RANDOM_DESPAWN_MIN_DIST: f32 = crate::mob::PLAYER_REACTIVE_RANGE;
@@ -106,7 +106,7 @@ impl Instance {
         &mut self,
         dt: f32,
         anchor_pos: WorldPos,
-        despawn_radius: Option<f32>,
+        despawn: Option<Despawn>,
     ) -> Begun {
         self.snapshot_interp();
         self.combat.attack = None;
@@ -118,7 +118,7 @@ impl Instance {
         self.combat.count_down_feedback(dt);
         self.combat.age_attacker();
         self.regrow_coat();
-        self.check_distance_despawn(anchor_pos, despawn_radius);
+        self.check_distance_despawn(anchor_pos, despawn);
         // A mod-authored pose replaces the whole locomotion step: no
         // navigation, no brain locomotion, no integration — the body is
         // written where the mod put it. Expression (named animation layers)
@@ -464,22 +464,18 @@ impl Instance {
         }
     }
 
-    fn check_distance_despawn(&mut self, player_pos: WorldPos, despawn_radius: Option<f32>) {
-        if let Some(radius) = despawn_radius {
+    fn check_distance_despawn(&mut self, player_pos: WorldPos, despawn: Option<Despawn>) {
+        if let Some(rule) = despawn {
             let dist2 = (self.pos - player_pos).length_squared();
-            self.distance_despawned = despawn_now(dist2, radius, || self.rng.next_f32());
+            self.distance_despawned = despawn_now(dist2, rule, || self.rng.next_f32());
         } else {
             self.distance_despawned = false;
         }
     }
 
-    pub(in crate::mob) fn tick_frozen(
-        &mut self,
-        player_pos: WorldPos,
-        despawn_radius: Option<f32>,
-    ) {
+    pub(in crate::mob) fn tick_frozen(&mut self, player_pos: WorldPos, despawn: Option<Despawn>) {
         self.snapshot_interp();
-        self.check_distance_despawn(player_pos, despawn_radius);
+        self.check_distance_despawn(player_pos, despawn);
     }
 
     #[cfg(test)]
@@ -490,7 +486,7 @@ impl Instance {
         think: bool,
     ) -> MotionStart {
         let expression = crate::mob::anim::Expression::default();
-        match self.begin(ctx.dt, ctx.anchor.pos, ctx.def.despawn_radius) {
+        match self.begin(ctx.dt, ctx.anchor.pos, ctx.def.despawn) {
             Begun::Corpse => {
                 self.tick_ragdoll(ctx.dt, ctx.inputs.world, ctx.def, &ctx.meta.skeleton);
                 None
@@ -516,11 +512,13 @@ impl Instance {
     }
 }
 
-fn despawn_now(dist2: f32, radius: f32, roll: impl FnOnce() -> f32) -> bool {
-    if dist2 >= radius * radius {
+fn despawn_now(dist2: f32, rule: Despawn, roll: impl FnOnce() -> f32) -> bool {
+    if dist2 >= rule.radius * rule.radius {
         return true;
     }
-    dist2 >= RANDOM_DESPAWN_MIN_DIST * RANDOM_DESPAWN_MIN_DIST && roll() < RANDOM_DESPAWN_CHANCE
+    rule.random
+        && dist2 >= RANDOM_DESPAWN_MIN_DIST * RANDOM_DESPAWN_MIN_DIST
+        && roll() < RANDOM_DESPAWN_CHANCE
 }
 
 #[cfg(test)]
@@ -530,15 +528,30 @@ mod tests {
     #[test]
     fn despawn_is_certain_at_radius_random_when_far_never_when_near() {
         let r = 128.0;
-        assert!(despawn_now(r * r, r, || unreachable!(
+        let rule = Despawn {
+            radius: r,
+            random: true,
+        };
+        assert!(despawn_now(r * r, rule, || unreachable!(
             "no roll at the hard radius"
         )));
         let far2 = (RANDOM_DESPAWN_MIN_DIST + 1.0).powi(2);
-        assert!(despawn_now(far2, r, || 0.0));
-        assert!(!despawn_now(far2, r, || RANDOM_DESPAWN_CHANCE));
+        assert!(despawn_now(far2, rule, || 0.0));
+        assert!(!despawn_now(far2, rule, || RANDOM_DESPAWN_CHANCE));
         let near2 = (RANDOM_DESPAWN_MIN_DIST - 1.0).powi(2);
-        assert!(!despawn_now(near2, r, || unreachable!(
+        assert!(!despawn_now(near2, rule, || unreachable!(
             "no roll near the player"
         )));
+    }
+
+    #[test]
+    fn a_row_can_opt_out_of_the_random_despawn_but_not_the_hard_radius() {
+        let rule = Despawn {
+            radius: 128.0,
+            random: false,
+        };
+        let far2 = (RANDOM_DESPAWN_MIN_DIST + 1.0).powi(2);
+        assert!(!despawn_now(far2, rule, || unreachable!("no random roll")));
+        assert!(despawn_now(128.0 * 128.0, rule, || unreachable!()));
     }
 }

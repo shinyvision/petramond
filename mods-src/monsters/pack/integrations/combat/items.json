@@ -1,0 +1,78 @@
+{
+  "items": [
+    {
+      "patch": "combat:iron_sword",
+      "data": {
+        "monsters:wield": {
+          "stance": "stance_melee",
+          "melee": {
+            "damage": 4.0,
+            "knockback": 1.0,
+            "reach": 1.8,
+            "windup": 6,
+            "cooldown": 20,
+            "clip": "attack_sword"
+          },
+          "walk_stance": "carry_sword"
+        }
+      }
+    },
+    {
+      "patch": "combat:shield",
+      "data": {
+        "monsters:wield": {
+          "stance": "stance_shield",
+          "grip": "grip_shield",
+          "melee": {
+            "damage": 2.0,
+            "knockback": 6.0,
+            "reach": 1.4,
+            "windup": 7,
+            "cooldown": 30,
+            "clip": "attack_bash"
+          },
+          "guard": {
+            "arc_deg": 70.0,
+            "raise": [
+              30,
+              70
+            ],
+            "lower": [
+              25,
+              60
+            ],
+            "clip": "guard",
+            "impact_clip": "guard_impact",
+            "sound": "combat:shield_block"
+          },
+          "walk_stance": "carry_shield"
+        }
+      }
+    },
+    {
+      "patch": "combat:bow",
+      "data": {
+        "monsters:wield": {
+          "stance": "stance_bow",
+          "ranged": {
+            "ammo": "combat:arrow",
+            "draw": 20,
+            "speed": 28.0,
+            "spread": 1.5,
+            "min_range": 3.0,
+            "max_range": 24.0,
+            "rest": 24,
+            "clip_draw": "draw_bow",
+            "clip_loose": "loose_bow",
+            "pull": [
+              "combat:bow_pull_1",
+              "combat:bow_pull_2",
+              "combat:bow_pull_3"
+            ]
+          },
+          "walk_stance": "carry_bow"
+        }
+      }
+    }
+  ]
+}

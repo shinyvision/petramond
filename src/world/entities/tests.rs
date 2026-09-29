@@ -266,8 +266,8 @@ fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
         items[0].motion
     );
     assert!(
-        matches!(items[1].motion, Motion::Loose),
-        "released: the anchor is air"
+        matches!(items[1].motion, Motion::Flight(_)),
+        "flying again: the anchor is air"
     );
     assert!(
         matches!(items[2].motion, Motion::Stuck(s) if !s.verified),
@@ -277,17 +277,14 @@ fn a_restored_lodged_item_reverifies_its_anchor_once_loaded() {
 }
 
 #[test]
-fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
+fn a_lodged_item_holds_until_its_block_goes_then_resumes_with_horizontal_drift() {
     let mut w = open_world();
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);
-    let mut it = launched(
-        WorldPos::new(4.8, 64.5, 5.5),
-        Vec3::new(10.0, 0.0, 0.0),
-        None,
-    );
+    let approach = Vec3::new(10.0, -4.0, -6.0);
+    let mut it = launched(WorldPos::new(4.8, 64.5, 5.5), approach, None);
     it.lodge(IVec3::new(5, 64, 5));
     assert!(matches!(it.motion, Motion::Stuck(_)));
-    w.spawn_item(it);
+    let id = w.spawn_item(it);
 
     w.tick_item_physics(0.05, &[]);
     let held = &w.item_entities()[0];
@@ -301,7 +298,106 @@ fn a_lodged_item_holds_until_its_block_goes_then_drops_loose() {
 
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Air);
     w.tick_item_physics(0.05, &[]);
-    assert!(matches!(w.item_entities()[0].motion, Motion::Loose));
+    let released = w.dropped_items().get(id).unwrap();
+    assert!(matches!(released.motion, Motion::Flight(_)));
+    assert_eq!(
+        released.vel.y, 0.0,
+        "only gravity supplies vertical velocity"
+    );
+    let forward = Vec3::new(approach.x, 0.0, approach.z).normalize();
+    assert!(released.vel.dot(forward) > 0.0);
+    assert!(released.vel.normalize().abs_diff_eq(forward, 1e-5));
+    assert!(
+        released.vel.length() < approach.length(),
+        "a nudge, not the original launch speed"
+    );
+    assert_eq!(released.pos, WorldPos::new(4.8, 64.5, 5.5));
+    assert!(!released.collectable());
+    w.tick_item_physics(0.05, &[]);
+    let falling = w.dropped_items().get(id).unwrap();
+    assert!(falling.pos.y < 64.5 && falling.vel.y < 0.0);
+    assert!(falling.pos.x > 4.8 && falling.pos.z < 5.5);
+    let pitch = falling.heading().unwrap().pitch;
+    assert!(
+        pitch > -std::f32::consts::FRAC_PI_2 && pitch < 0.0,
+        "the first falling pose remains slanted"
+    );
+}
+
+#[test]
+fn dislodged_projectiles_use_the_same_body_sweep_and_keep_their_launcher() {
+    for player in [true, false] {
+        let mut w = open_world();
+        let feet = WorldPos::new(5.5, 64.0, 5.5);
+        let (target, owner, anchors) = if player {
+            let id = PlayerId(3);
+            (
+                ImpactTarget::Player(id),
+                EntityRef::Player(id),
+                vec![PlayerAnchor {
+                    id,
+                    pos: feet + Vec3::Y,
+                    body: Some(petramond_world::body::Body::new(feet, 0.3, 1.8)),
+                    ..Default::default()
+                }],
+            )
+        } else {
+            assert!(w.mobs_mut().spawn(crate::mob::Mob::Owl, feet, 0.0));
+            let id = w.mobs().instances()[0].id();
+            (ImpactTarget::Mob(id), EntityRef::Mob(id), vec![])
+        };
+        let block = IVec3::new(5, 69, 5);
+        w.set_block_world(
+            block.x,
+            block.y,
+            block.z,
+            petramond_world::block::Block::Stone,
+        );
+        let mut shot = launched(WorldPos::new(5.5, 68.8, 5.5), Vec3::Y * 50.0, Some(owner));
+        if let Motion::Flight(f) = &mut shot.motion {
+            f.left_owner = true;
+        }
+        let flight = shot.motion.projectile().unwrap();
+        let stack = shot.stack;
+        shot.lodge(block);
+        let id = w.spawn_item(shot);
+        w.tick_item_physics(0.05, &anchors);
+        w.set_block_world(
+            block.x,
+            block.y,
+            block.z,
+            petramond_world::block::Block::Air,
+        );
+        assert!(w.tick_item_physics(0.05, &anchors).impacts.is_empty());
+        let resumed = w.dropped_items().get(id).unwrap();
+        assert_eq!(resumed.vel, Vec3::ZERO);
+        assert_eq!(resumed.motion, Motion::Flight(flight));
+        assert_eq!(resumed.stack, stack);
+        let impact = (0..40)
+            .find_map(|_| {
+                w.tick_item_physics(0.05, &anchors)
+                    .impacts
+                    .into_iter()
+                    .next()
+            })
+            .expect("the falling projectile hits the body below");
+        assert_eq!(impact.id, id, "it is the same projectile");
+        assert_eq!(
+            impact.target, target,
+            "even its original launcher can be struck"
+        );
+        assert!(impact.vel.y < -1.0 && impact.vel.x == 0.0 && impact.vel.z == 0.0);
+        assert_eq!(
+            w.dropped_items()
+                .get(id)
+                .unwrap()
+                .motion
+                .projectile()
+                .unwrap()
+                .owner,
+            Some(owner)
+        );
+    }
 }
 
 #[test]
@@ -317,6 +413,45 @@ fn lifetime_advances_and_despawns_at_the_limit() {
         w.item_entities().is_empty(),
         "despawns once it reaches the lifetime limit"
     );
+}
+
+#[test]
+fn item_rules_prevent_collection_and_keep_their_own_expiry_after_lodging() {
+    use petramond_world::item::variant;
+    let rules = [(
+        "petramond:item_entity".into(),
+        br#"{"pickup":false,"lifetime_ticks":37}"#.to_vec(),
+    )]
+    .into();
+    let stack = ItemStack::with_variant(ItemType::Stone, 1, variant::intern(&rules).unwrap());
+    let at = WorldPos::new(0.0, 64.0, 0.0);
+    let mut shot = DroppedItem::launched(at, stack, Vec3::Z, Some(EntityRef::Mob(42)));
+    assert!(!shot.collectable());
+    shot.lodge(IVec3::new(0, 64, 1));
+    assert!(!shot.collectable());
+    shot.release();
+    assert!(
+        !shot.collectable(),
+        "breaking the anchor cannot enable pickup"
+    );
+    shot.ticks_lived = 35;
+    let world = ServerWorld::new(1, 4);
+    let mut drops = DroppedItems::default();
+    let old = drops.spawn(shot);
+    let fresh = drops.spawn(DroppedItem::new(at, stack, 1));
+    drops.merge_nearby();
+    assert_eq!(
+        drops.items.len(),
+        2,
+        "merging cannot extend a custom expiry"
+    );
+    drops.request_pickups(P0, at, |s| s.count);
+    assert!(drops.items.iter().all(|it| it.pickup_requested.is_none()));
+    drops.tick_lifetime(&world, false);
+    assert!(drops.get(old).is_some());
+    drops.tick_lifetime(&world, false);
+    assert!(drops.get(old).is_none());
+    assert!(drops.get(fresh).is_some());
 }
 
 #[test]

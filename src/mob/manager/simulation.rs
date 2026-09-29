@@ -182,10 +182,10 @@ impl Mobs {
             let d = def(mob.kind);
             let anchor = *nearest_anchor(anchors, mob.pos);
             if steps[i] == lod::SimStep::Frozen {
-                mob.tick_frozen(anchor.pos, d.despawn_radius);
+                mob.tick_frozen(anchor.pos, d.despawn);
                 continue;
             }
-            let begun = mob.begin(dt, anchor.pos, d.despawn_radius);
+            let begun = mob.begin(dt, anchor.pos, d.despawn);
             turns[i].begun = Some(begun);
             if begun == Begun::Corpse {
                 let meta = &MOB_META.current()[mob.kind.0 as usize];

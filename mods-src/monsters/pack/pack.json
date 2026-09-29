@@ -2,7 +2,7 @@
   "name": "Monsters",
   "id": "monsters",
   "version": "0.1.0",
-  "description": "Hostile monsters: zombies spawn in dark light levels using petramond:time, burn in sunlight (water snuffs the fire, rain slowly douses it when a weather mod is installed), and fight back when bitten; hushjaws hunt the deep caves by sound alone. Combat runs through the engine damage pipelines.",
+  "description": "Hostile monsters: zombies spawn in dark light levels using petramond:time, burn in sunlight (water snuffs the fire, rain slowly douses it when a weather mod is installed), and fight back when bitten; hushjaws hunt the deep caves by sound alone. Skeleton camps stand in the wilds, guarded day and night by skeletons that keep to their posts and fight with what they carry: axes, and with the combat pack installed swords, shields that sometimes block, and bows. Combat runs through the engine damage pipelines.",
   "summary": "Adds monsters to the world.",
   "icon": "icon.png",
   "wasm": "mod.wasm",

@@ -104,7 +104,8 @@ pub(super) fn parse_animations(
             Some(Value::Bool(b)) => (*b, false),
             _ => (false, false),
         };
-        let mut anim = Animation::new(length, looping, hold);
+        let overrides = a.get("override").and_then(Value::as_bool).unwrap_or(false);
+        let mut anim = Animation::new(length, looping, hold).with_overrides(overrides);
         if let Some(animators) = a.get("animators").and_then(Value::as_object) {
             for (uuid, animator) in animators {
                 let Some(kfs) = animator.get("keyframes").and_then(Value::as_array) else {

@@ -146,7 +146,12 @@ impl Camp<'_> {
         let cx = min[0] as f32 + (s - 1) as f32 / 2.0;
         let cz = min[1] as f32 + (s - 1) as f32 / 2.0;
         let dir = Dir::of(self.center[0] as f32 - cx, self.center[1] as f32 - cz);
-        self.towers.push(Tower { s, min, dir });
+        self.towers.push(Tower {
+            s,
+            min,
+            dir,
+            top: i32::MIN,
+        });
         for z in min[1]..min[1] + s {
             for x in min[0]..min[0] + s {
                 self.resv.set([x, z], Res::Tower);

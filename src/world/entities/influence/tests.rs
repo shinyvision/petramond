@@ -1,5 +1,5 @@
 use super::*;
-use crate::entity::{Heading, Stuck};
+use crate::entity::{Flight, Heading, Stuck};
 use crate::world::ServerWorld;
 use petramond_math::math::IVec3;
 use petramond_math::world_pos::WorldPos;
@@ -59,9 +59,13 @@ fn impulses_compose_without_stealing_reserved_or_lodged_items() {
         .unwrap()
         .request_pickup(crate::world::session::PlayerId(0));
     world.dropped_items_mut().get_mut(lodged).unwrap().motion = Motion::Stuck(Stuck {
-        heading: Heading {
-            yaw: 0.0,
-            pitch: 0.0,
+        flight: Flight {
+            owner: None,
+            left_owner: true,
+            heading: Heading {
+                yaw: 0.0,
+                pitch: 0.0,
+            },
         },
         anchor: IVec3::new(6, 64, 4),
         verified: true,

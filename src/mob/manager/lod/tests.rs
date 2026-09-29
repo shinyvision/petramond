@@ -1,5 +1,5 @@
 use super::*;
-use crate::mob::{Mob, Mobs};
+use crate::mob::{Despawn, Mob, Mobs};
 use crate::world::ServerWorld;
 
 fn anchor_at(x: f64, z: f64) -> PlayerAnchor {
@@ -120,7 +120,11 @@ fn frozen_mobs_do_not_simulate_while_near_ones_do() {
 #[test]
 fn a_frozen_mob_is_still_distance_despawned() {
     let mut mob = Instance::new(Mob::Owl, WorldPos::new(500.0, 64.0, 0.0), 0.0, 1);
-    mob.tick_frozen(WorldPos::new(0.0, 64.0, 0.0), Some(128.0));
+    let rule = Despawn {
+        radius: 128.0,
+        random: true,
+    };
+    mob.tick_frozen(WorldPos::new(0.0, 64.0, 0.0), Some(rule));
     assert!(mob.is_distance_despawned());
     mob.tick_frozen(WorldPos::new(0.0, 64.0, 0.0), None);
     assert!(

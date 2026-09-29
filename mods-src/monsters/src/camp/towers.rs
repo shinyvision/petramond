@@ -22,6 +22,7 @@ impl Camp<'_> {
                 }
             }
             let h = self.rng.int(5, 8);
+            self.towers[t].top = base + h;
             if self.mats.stone {
                 self.stone_tower(&frame, s, base, base + h);
             } else {

@@ -72,6 +72,40 @@
       },
       "sprite": "monsters:fang",
       "tags": []
+    },
+    {
+      "patch": "petramond:stone_axe",
+      "data": {
+        "monsters:wield": {
+          "stance": "stance_axe",
+          "melee": {
+            "damage": 6.0,
+            "knockback": 2.0,
+            "reach": 1.7,
+            "windup": 4,
+            "cooldown": 34,
+            "clip": "attack_axe"
+          },
+          "walk_stance": "carry_axe"
+        }
+      }
+    },
+    {
+      "patch": "petramond:iron_axe",
+      "data": {
+        "monsters:wield": {
+          "stance": "stance_axe",
+          "melee": {
+            "damage": 8.0,
+            "knockback": 2.5,
+            "reach": 1.7,
+            "windup": 4,
+            "cooldown": 34,
+            "clip": "attack_axe"
+          },
+          "walk_stance": "carry_axe"
+        }
+      }
     }
   ]
 }

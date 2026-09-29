@@ -41,10 +41,10 @@ use petramond_world::registry::NameTable;
 
 use super::brain::AiBehavior;
 use super::{
-    behavior, BrainNode, Buoyancy, Habitat, Mob, MobCategory, MobCollision, MobDamageFeedback,
-    MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize, MobSoundCategory, MobSoundSpec,
-    MobTagValue, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion, WanderTuning,
-    DEFAULT_DAMAGE_FLASH_SECS, DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
+    behavior, BrainNode, Buoyancy, Despawn, Habitat, Mob, MobCategory, MobCollision,
+    MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, MobDef, MobSize,
+    MobSoundCategory, MobSoundSpec, MobTagValue, ShearSpec, SpawnGroup, SpawnRule, WanderCohesion,
+    WanderTuning, DEFAULT_DAMAGE_FLASH_SECS, DEFAULT_DAMAGE_KNOCKBACK_SECS, ENGINE_MOB_NAMES,
 };
 use petramond_world::ai_vocab::{RawBrainExtension, RawBrainNode};
 
@@ -84,6 +84,8 @@ struct RawMobDef {
     category: MobCategory,
     #[serde(default)]
     despawn_radius: Option<f64>,
+    #[serde(default = "noisy")]
+    random_despawn: bool,
     cap: u32,
     spawn: RawSpawn,
     spawn_group: SpawnGroup,
@@ -368,7 +370,7 @@ fn convert(
         }),
         None => None,
     };
-    let despawn_radius = match r.despawn_radius {
+    let despawn = match r.despawn_radius {
         Some(radius) => {
             if !radius.is_finite() || radius <= 0.0 {
                 return Err(format!(
@@ -378,7 +380,11 @@ fn convert(
             Some(radius as f32)
         }
         None => r.category.default_despawn_radius(),
-    };
+    }
+    .map(|radius| Despawn {
+        radius,
+        random: r.random_despawn,
+    });
     if r.seats.len() > super::MAX_MOB_SEATS {
         return Err(format!(
             "at most {} seats per species, got {}",
@@ -443,7 +449,7 @@ fn convert(
         turn_rate: r.turn_rate as f32,
         walk_anim_rate: r.walk_anim_rate as f32,
         category: r.category,
-        despawn_radius,
+        despawn,
         cap: r.cap,
         spawn: convert_spawn(r.spawn)?,
         spawn_group: r.spawn_group,

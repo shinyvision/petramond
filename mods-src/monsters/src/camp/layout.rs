@@ -85,6 +85,8 @@ pub(super) struct Tower {
     pub s: i32,
     pub min: [i32; 2],
     pub dir: Dir,
+    /// The y of the platform's floor blocks, once the tower is built.
+    pub top: i32,
 }
 
 pub(super) struct FortArc {
@@ -291,6 +293,7 @@ impl<'a> Camp<'a> {
             huts: Vec::new(),
             wall_h: vec![0; len],
             rubble: Vec::new(),
+            posts: Vec::new(),
         }))
     }
 

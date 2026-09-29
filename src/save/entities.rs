@@ -1,4 +1,4 @@
-use crate::entity::{DroppedItem, Heading, Motion, Stuck};
+use crate::entity::{DroppedItem, Flight, Heading, Motion, Stuck};
 use crate::save::codec::DiskSlot;
 use crate::save::palette::Palette;
 use crate::save::wire::{tagged_record, wire_struct, UnknownFields, Wire};
@@ -57,8 +57,8 @@ impl EntityRecord {
             Motion::Stuck(s) => (
                 MotionKind::Stuck,
                 Some(StuckRecord {
-                    yaw: s.heading.yaw,
-                    pitch: s.heading.pitch,
+                    yaw: s.flight.heading.yaw,
+                    pitch: s.flight.heading.pitch,
                     anchor: s.anchor,
                 }),
             ),
@@ -91,9 +91,13 @@ impl EntityRecord {
         let motion = match (MotionKind::from_u8(self.motion), self.stuck) {
             (MotionKind::Flight, _) => Motion::flying(self.vel, None),
             (MotionKind::Stuck, Some(s)) => Motion::Stuck(Stuck {
-                heading: Heading {
-                    yaw: s.yaw,
-                    pitch: s.pitch,
+                flight: Flight {
+                    owner: None,
+                    left_owner: true,
+                    heading: Heading {
+                        yaw: s.yaw,
+                        pitch: s.pitch,
+                    },
                 },
                 anchor: s.anchor,
                 verified: false,
@@ -184,6 +188,26 @@ mod tests {
     }
 
     #[test]
+    fn item_rules_and_elapsed_lifetime_survive_restoration() {
+        use petramond_world::item::variant;
+        let rules = [(
+            "petramond:item_entity".into(),
+            br#"{"pickup":false,"lifetime_ticks":83}"#.to_vec(),
+        )]
+        .into();
+        let stack = ItemStack::with_variant(ItemType::Stone, 1, variant::intern(&rules).unwrap());
+        let mut shot = DroppedItem::launched(WorldPos::new(0.0, 64.0, 0.0), stack, Vec3::Z, None);
+        shot.lodge(IVec3::new(0, 64, 1));
+        shot.ticks_lived = 31;
+        let mut restored = roundtrip(&[shot]).remove(0);
+        assert_eq!(restored.ticks_lived, 31);
+        assert_eq!(restored.lifetime_ticks(), Some(83));
+        assert!(!restored.collectable());
+        restored.release();
+        assert!(!restored.collectable());
+    }
+
+    #[test]
     fn motion_survives_the_entity_roundtrip() {
         let heading = Heading {
             yaw: 0.7,
@@ -196,7 +220,11 @@ mod tests {
             1,
         );
         stuck.motion = Motion::Stuck(Stuck {
-            heading,
+            flight: Flight {
+                heading,
+                owner: None,
+                left_owner: true,
+            },
             anchor,
             verified: true,
         });
@@ -206,10 +234,11 @@ mod tests {
             Vec3::new(3.0, 1.0, 0.0),
             Some(crate::mob::EntityRef::Player(crate::player::PlayerId(4))),
         );
-        let got = roundtrip(&[stuck.clone(), flying.clone()]);
+        let at_rest = DroppedItem::launched(flying.pos, flying.stack, Vec3::ZERO, None);
+        let got = roundtrip(&[stuck.clone(), flying.clone(), at_rest]);
         match got[0].motion {
             Motion::Stuck(s) => {
-                assert_eq!(s.heading, heading);
+                assert_eq!(s.flight.heading, heading);
                 assert_eq!(s.anchor, anchor);
                 assert!(!s.verified, "a restored anchor is re-probed");
             }
@@ -223,6 +252,11 @@ mod tests {
             }
             other => panic!("a flight reloads as a flight, not {other:?}"),
         }
+        assert!(
+            matches!(got[2].motion, Motion::Flight(_)),
+            "zero velocity does not turn a projectile into a loose item"
+        );
+        assert_eq!(got[2].vel, Vec3::ZERO);
     }
 
     #[test]

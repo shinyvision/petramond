@@ -1,6 +1,7 @@
 mod camp;
 mod daylight;
 mod keys;
+mod skeleton;
 
 use mod_sdk::*;
 use weather_core::feed::FieldFeed;
@@ -36,6 +37,7 @@ struct Monsters {
     weather: FieldFeed,
     spawn_proof: SpawnProof,
     species: Species,
+    skeletons: Option<skeleton::Skeletons>,
 }
 
 #[derive(Copy, Clone)]
@@ -72,6 +74,7 @@ impl Mod for Monsters {
             zombie: resolve_mob_logged(keys::ZOMBIE),
             hushjaw: resolve_mob_logged(keys::HUSHJAW),
         };
+        self.skeletons = skeleton::Skeletons::init();
         log(&format!(
             "initialized: hostile spawner (zombie + hushjaw) + sunburn, {} spawn-proof surfaces",
             self.spawn_proof.count
@@ -92,7 +95,10 @@ impl Mod for Monsters {
         }
     }
 
-    fn tick_system(&mut self, _system_id: u32) {
+    fn tick_system(&mut self, system_id: u32) {
+        if self.skeletons.as_mut().is_some_and(|s| s.tick(system_id)) {
+            return;
+        }
         self.weather.tick();
         let Some(daylight) = daylight_factor_from_daynight() else {
             return;
@@ -105,10 +111,18 @@ impl Mod for Monsters {
     }
 
     fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Outcome {
+        let skeletons = self.skeletons.as_mut();
+        if let Some(outcome) = skeletons.and_then(|s| s.handle_event(handler_id, payload)) {
+            return outcome;
+        }
         if handler_id == ON_MOD_EVENT {
             self.weather.observe(payload);
         }
         Outcome::Continue
+    }
+
+    fn ai_node(&mut self, callback_id: u32, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+        self.skeletons.as_ref()?.ai_node(callback_id, ctx)
     }
 
     fn hostile_spawn_candidate(

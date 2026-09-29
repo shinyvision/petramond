@@ -7,6 +7,10 @@ mod_sdk::pack_keys! {
     pub CAMP_ARENA_LOOT: Loot = "monsters:camp_arena_chest";
 }
 
+/// Cell data the camp generator writes on a spawn post's floor cell (`[role, yaw]`) and the
+/// skeleton garrison reads back.
+pub const POST_MARKER: &str = "monsters:camp_post";
+
 #[cfg(test)]
 mod tests {
     #[test]

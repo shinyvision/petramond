@@ -23,7 +23,7 @@ pub(super) const ON_PATH: u8 = 8;
 
 /// The block the style's natural ground already has on top, where the camp may leave ground it
 /// did not reshape as it is; `None` where its own ground differs (podzol, snow cover).
-fn natural_top(style: &BiomeStyle) -> Option<Material> {
+pub(super) fn natural_top(style: &BiomeStyle) -> Option<Material> {
     match style.surface {
         _ if style.snow => None,
         Surface::Grass => Some(named!("grass")),

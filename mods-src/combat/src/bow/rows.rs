@@ -75,8 +75,12 @@ pub struct ArrowRow {
 
 impl ArrowRow {
     pub fn from_spec(id: ItemId, name: String, spec: &ArrowSpec) -> Result<ArrowRow, String> {
-        if spec.speed_full <= spec.speed_weak {
-            return Err("speed_full must exceed speed_weak".into());
+        if !spec.speed_weak.is_finite()
+            || !spec.speed_full.is_finite()
+            || spec.speed_weak <= 0.0
+            || spec.speed_full <= spec.speed_weak
+        {
+            return Err("speeds must be finite with 0 < speed_weak < speed_full".into());
         }
         Ok(ArrowRow {
             id,
@@ -89,10 +93,20 @@ impl ArrowRow {
     }
 
     pub fn damage_at(&self, speed: f32) -> [f32; 2] {
-        let t = ((speed - self.speed_weak) / (self.speed_full - self.speed_weak)).clamp(0.0, 1.0);
+        let (start, end, low, high) = if speed < self.speed_weak {
+            (0.0, self.speed_weak, [0.0; 2], self.damage_weak)
+        } else {
+            (
+                self.speed_weak,
+                self.speed_full,
+                self.damage_weak,
+                self.damage_full,
+            )
+        };
+        let t = ((speed - start) / (end - start)).clamp(0.0, 1.0);
         [
-            self.damage_weak[0] + (self.damage_full[0] - self.damage_weak[0]) * t,
-            self.damage_weak[1] + (self.damage_full[1] - self.damage_weak[1]) * t,
+            low[0] + (high[0] - low[0]) * t,
+            low[1] + (high[1] - low[1]) * t,
         ]
     }
 }

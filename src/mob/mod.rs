@@ -208,6 +208,14 @@ impl Mob {
 
 pub const DEFAULT_HOSTILE_DESPAWN_RADIUS: f32 = 128.0;
 
+/// When a mob far from every player leaves the world: always past `radius`, and, unless the row
+/// opts out, at random once it is beyond [`PLAYER_REACTIVE_RANGE`].
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct Despawn {
+    pub radius: f32,
+    pub random: bool,
+}
+
 pub const PLAYER_REACTIVE_RANGE: f32 = 32.0;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Deserialize)]
@@ -568,7 +576,7 @@ pub struct MobDef {
     pub turn_rate: f32,
     pub walk_anim_rate: f32,
     pub category: MobCategory,
-    pub despawn_radius: Option<f32>,
+    pub despawn: Option<Despawn>,
     pub cap: u32,
     pub spawn: SpawnRule,
     pub spawn_group: SpawnGroup,

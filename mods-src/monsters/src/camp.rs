@@ -32,6 +32,7 @@ mod ground;
 mod huts;
 mod layout;
 mod plateaus;
+mod posts;
 mod style;
 mod towers;
 mod walls;
@@ -226,6 +227,7 @@ struct Camp<'a> {
     huts: Vec<layout::Hut>,
     wall_h: Vec<i32>,
     rubble: Vec<ground::Rubble>,
+    posts: Vec<posts::Post>,
 }
 
 impl Camp<'_> {
@@ -289,6 +291,7 @@ impl Camp<'_> {
         let families = self.mats.families();
         self.plan.settle_slabs(families, |x, z| ground.get([x, z]));
         self.snow();
+        self.build_posts(fort_h);
         self.clear_space();
         let summary = self.summary();
         (std::mem::take(&mut self.plan), summary)
@@ -308,13 +311,14 @@ impl Camp<'_> {
             Some(CentreKind::Arena) => "an arena",
         };
         format!(
-            "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges",
+            "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges, {} posts",
             self.gates.len(),
             self.towers.len(),
             self.huts.len(),
             self.fort_arcs.len(),
             self.plateaus.len(),
             self.bridges.len(),
+            self.posts.len(),
         )
     }
 }

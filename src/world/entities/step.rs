@@ -10,6 +10,7 @@ use super::sweep::{sweep, SweepBodies};
 use super::ItemImpact;
 
 const IMPACT_SEAT: f32 = 0.15;
+const DISLODGE_HORIZONTAL_SPEED: f32 = 1.5;
 
 const CHANGED_HASH_THRESHOLD: usize = 16;
 
@@ -167,7 +168,15 @@ impl DroppedItem {
             return;
         }
         if ctx.world.data.collision_boxes_at(a.x, a.y, a.z).is_empty() {
-            self.release();
+            // Forward drift lets gravity tip a slanted projectile down over time.
+            let heading = stuck.flight.heading.dir();
+            let horizontal = Vec3::new(heading.x, 0.0, heading.z);
+            self.vel = if horizontal.length_squared() > 1e-12 {
+                horizontal * DISLODGE_HORIZONTAL_SPEED
+            } else {
+                Vec3::ZERO
+            };
+            self.motion = Motion::Flight(stuck.flight);
         } else if let Motion::Stuck(stuck) = &mut self.motion {
             stuck.verified = true;
         }
