@@ -639,3 +639,44 @@ fn scatter_is_independent_of_model_units_and_mob_facing() {
         }
     }
 }
+
+fn zombie() -> Skeleton {
+    let src = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/mods-src/monsters/pack/models/zombie.bbmodel"
+    ));
+    model_meta::skeleton(&Model::load(src).expect("zombie.bbmodel parses"))
+}
+
+#[test]
+fn a_corpse_dying_without_knockback_topples_on_its_legs_instead_of_sinking() {
+    let scale = 0.059375;
+    let skel = zombie();
+    let body = skel
+        .bones
+        .iter()
+        .position(|b| b.parent.is_none())
+        .expect("a physical root");
+    for seed in 0..8 {
+        let mut rag = pending(seed, Vec3::ZERO);
+        rag.init(&skel, scale, Vec3::ZERO, 0.0);
+        let mut tipped_at = None;
+        for tick in 0..(LIFETIME / 0.05) as usize {
+            rag.step(0.05, scale, Vec3::ZERO, 0.0, &floor);
+            let lowest = rag.lowest_node_y() * scale;
+            assert!(
+                lowest > -0.02,
+                "seed {seed}: a limb sank {lowest} m into the ground"
+            );
+            let up = rag.pose(1.0)[body].1 * Vec3::Y;
+            if up.angle_between(Vec3::Y) > 1.2 {
+                tipped_at.get_or_insert(tick as f32 * 0.05);
+            }
+        }
+        let tipped_at = tipped_at.unwrap_or(f32::INFINITY);
+        assert!(
+            tipped_at < 1.0,
+            "seed {seed}: the corpse topples promptly instead of standing or drifting down: {tipped_at} s"
+        );
+    }
+}

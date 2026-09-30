@@ -132,8 +132,13 @@
       "max_stack_size": 1,
       "held_pose": {
         "pitch": 0,
-        "yaw": -1.5,
-        "roll": 0.5
+        "yaw": -1.2,
+        "roll": 1.0,
+        "grip": [
+          -0.19,
+          0.0,
+          0
+        ]
       },
       "sprite": "combat:bow",
       "tags": [],

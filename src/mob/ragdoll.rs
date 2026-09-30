@@ -6,9 +6,10 @@
 //! rotation + position is then recovered from the (now-deformed) corner cloud each tick
 //! by *shape matching* (polar decomposition of the corner cross-covariance). Because the
 //! corners hit the ground at different times, a bone that lands rotates — the body topples
-//! onto its side instead of sinking flat. A light joint constraint then slides each bone
-//! so its pivot meets the matching spot on its parent, keeping the skeleton connected
-//! while each bone still tumbles on its own. Detached ragdolls omit these joints.
+//! onto its side instead of sinking flat. A joint constraint then pulls each bone's pivot
+//! and the matching spot on its parent together, moving the corners of BOTH boxes
+//! (weighted by where the pivot sits in each box and by box volume), so a grounded leg
+//! holds the body up and an off-centre load tips it over. Detached ragdolls omit joints.
 //! Each joint also has a swing limit: a limb
 //! sags under gravity relative to its parent only up to [`MAX_JOINT_SWING`], so legs
 //! droop like dead weight but never fold through the body. Bones flagged
@@ -73,12 +74,21 @@ struct RagBone {
     rest: [Vec3; 8],
     c0: Vec3,
     rest_pivot: Vec3,
-    parent: Option<usize>,
+    inv_mass: f32,
+    parent: Option<Joint>,
     weld: Option<Weld>,
     c: Vec3,
     rot: Quat,
     prev_c: Vec3,
     prev_rot: Quat,
+}
+
+/// The rest pivot embedded in both boxes as trilinear corner weights, so the joint's
+/// two ends are linear in the corners and its correction can rotate either bone.
+struct Joint {
+    parent: usize,
+    in_parent: [f32; 8],
+    in_self: [f32; 8],
 }
 
 struct Weld {
@@ -266,8 +276,18 @@ impl Ragdoll {
                     rest,
                     c0,
                     rest_pivot: b.pivot,
+                    inv_mass: 1.0 / box_volume(b.bbox_min, b.bbox_max),
                     parent: match self.joints {
-                        RagdollJoints::Connected => b.parent,
+                        RagdollJoints::Connected => b.parent.map(|p| {
+                            // A welded bone has no corners of its own to pull on.
+                            let p = anchor_of(p).unwrap_or(p);
+                            let pb = &skel.bones[p];
+                            Joint {
+                                parent: p,
+                                in_parent: trilinear(pb.bbox_min, pb.bbox_max, b.pivot),
+                                in_self: trilinear(b.bbox_min, b.bbox_max, b.pivot),
+                            }
+                        }),
                         RagdollJoints::Detached => None,
                     },
                     weld: anchor_of(i).map(|anchor| {
@@ -317,9 +337,8 @@ impl Ragdoll {
         // outside the face of the first solid cell entered. Endpoint-only tests are not
         // enough: a corpse falls up to ~2 m per tick by the end of its lifetime, which
         // skips a one-cell floor entirely. Axis order X, Z, Y so landing is decided
-        // last. A corner that STARTS inside a solid cell (the joint pass runs after the
-        // last collision pass and can slide one in; a mob can die with geometry inside
-        // a movement-blocking cell, e.g. standing on a partial block) is healed out of
+        // last. A corner that STARTS inside a solid cell (a mob can die with geometry
+        // inside a movement-blocking cell, e.g. standing on a partial block) is healed out of
         // the nearest open face — never resolved with collision disabled, which would
         // let the corner (and, through shape matching, its whole limb) fall through the
         // world. Returns the resolved model position.
@@ -355,16 +374,23 @@ impl Ragdoll {
             }
         }
 
+        let max_rot = MAX_ANGULAR_SPEED * dt;
         for _ in 0..ITERS {
             // Shape-match each bone: fit a centroid and rotation to the corner cloud and snap the
-            // corners back. So whatever moved the corners (gravity, collisions) ends up rotating
-            // the bone.
-            let max_rot = MAX_ANGULAR_SPEED * dt;
+            // corners back. So whatever moved the corners (gravity, collisions, joints) ends up
+            // rotating the bone.
             for b in &mut self.bones {
                 if b.weld.is_none() {
                     b.shape_match(max_rot);
                 }
             }
+            for i in 0..self.bones.len() {
+                if self.bones[i].weld.is_none() {
+                    self.limit_swing(i);
+                    self.close_joint(i);
+                }
+            }
+            // Collision runs after the joints so no joint can drag a corner into the ground.
             for b in &mut self.bones {
                 if b.weld.is_some() {
                     continue;
@@ -373,46 +399,96 @@ impl Ragdoll {
                     b.nodes[k] = resolve(b.nodes_old[k], b.nodes[k]);
                 }
             }
-            for i in 0..self.bones.len() {
-                if self.bones[i].weld.is_some() {
-                    continue;
-                }
-                let Some(p) = self.bones[i].parent else {
-                    continue;
-                };
-                let (pc, pr, pc0) = (self.bones[p].c, self.bones[p].rot, self.bones[p].c0);
-                let rel = (pr.inverse() * self.bones[i].rot).normalize();
-                let lim = clamp_rotation(Quat::IDENTITY, rel, MAX_JOINT_SWING);
-                if lim.angle_between(rel) > EPS {
-                    let b = &mut self.bones[i];
-                    b.rot = (pr * lim).normalize();
-                    for k in 0..8 {
-                        b.nodes[k] = b.c + b.rot * b.rest[k];
-                    }
-                }
-                let rp = self.bones[i].rest_pivot;
-                let target = pc + pr * (rp - pc0);
-                let cur = self.bones[i].c + self.bones[i].rot * (rp - self.bones[i].c0);
-                let shift = target - cur;
-                let b = &mut self.bones[i];
-                for k in 0..8 {
-                    b.nodes[k] += shift;
-                }
-                b.c += shift;
-            }
-            for i in 0..self.bones.len() {
-                let Some(weld) = &self.bones[i].weld else {
-                    continue;
-                };
-                let anchor = &self.bones[weld.anchor];
-                let c = anchor.c + anchor.rot * weld.offset;
-                let rot = (anchor.rot * weld.rotation).normalize();
-                let b = &mut self.bones[i];
-                b.rot = rot;
-                b.c = c;
+        }
+        for b in &mut self.bones {
+            if b.weld.is_none() {
+                b.shape_match(max_rot);
             }
         }
+        for i in 0..self.bones.len() {
+            if self.bones[i].weld.is_none() {
+                self.limit_swing(i);
+            }
+        }
+        // The rigid fit averages collision-resolved corners back into the ground; lift the
+        // corpse out as a whole (each piece, when detached) so no rendered box ends a tick
+        // inside terrain and no joint is pulled open.
+        let pushes: Vec<Vec3> = self
+            .bones
+            .iter()
+            .map(|b| {
+                let mut push = Vec3::ZERO;
+                if b.weld.is_none() {
+                    for k in 0..8 {
+                        push = widest(push, resolve(b.nodes_old[k], b.nodes[k]) - b.nodes[k]);
+                    }
+                }
+                push
+            })
+            .collect();
+        let whole = pushes.iter().copied().fold(Vec3::ZERO, widest);
+        for (b, push) in self.bones.iter_mut().zip(pushes) {
+            let push = match self.joints {
+                RagdollJoints::Connected => whole,
+                RagdollJoints::Detached => push,
+            };
+            // Shift the tick-start corners too: a position fix must not become upward velocity.
+            b.c += push;
+            for (node, old) in b.nodes.iter_mut().zip(&mut b.nodes_old) {
+                *node += push;
+                *old += push;
+            }
+        }
+        for i in 0..self.bones.len() {
+            let Some(weld) = &self.bones[i].weld else {
+                continue;
+            };
+            let anchor = &self.bones[weld.anchor];
+            let c = anchor.c + anchor.rot * weld.offset;
+            let rot = (anchor.rot * weld.rotation).normalize();
+            let b = &mut self.bones[i];
+            b.rot = rot;
+            b.c = c;
+        }
         self.age += dt;
+    }
+
+    fn limit_swing(&mut self, i: usize) {
+        let Some(joint) = &self.bones[i].parent else {
+            return;
+        };
+        let pr = self.bones[joint.parent].rot;
+        let rel = (pr.inverse() * self.bones[i].rot).normalize();
+        let lim = clamp_rotation(Quat::IDENTITY, rel, MAX_JOINT_SWING);
+        if lim.angle_between(rel) > EPS {
+            let b = &mut self.bones[i];
+            b.rot = (pr * lim).normalize();
+            for k in 0..8 {
+                b.nodes[k] = b.c + b.rot * b.rest[k];
+            }
+        }
+    }
+
+    /// Closes the gap between the two ends of bone `i`'s joint by moving both boxes'
+    /// corners, each by its weight over its mass.
+    fn close_joint(&mut self, i: usize) {
+        let Some(joint) = &self.bones[i].parent else {
+            return;
+        };
+        let (p, in_parent, in_self) = (joint.parent, joint.in_parent, joint.in_self);
+        let embedded = |b: &RagBone, w: &[f32; 8]| (0..8).map(|k| b.nodes[k] * w[k]).sum::<Vec3>();
+        let gap = embedded(&self.bones[i], &in_self) - embedded(&self.bones[p], &in_parent);
+        let (mp, mc) = (self.bones[p].inv_mass, self.bones[i].inv_mass);
+        let denom = mp * in_parent.iter().map(|w| w * w).sum::<f32>()
+            + mc * in_self.iter().map(|w| w * w).sum::<f32>();
+        if denom <= EPS {
+            return;
+        }
+        let lambda = gap / denom;
+        for k in 0..8 {
+            self.bones[p].nodes[k] += lambda * (mp * in_parent[k]);
+            self.bones[i].nodes[k] -= lambda * (mc * in_self[k]);
+        }
     }
 
     pub fn pose(&self, alpha: f32) -> Vec<(Vec3, Quat)> {
@@ -531,12 +607,30 @@ fn escape_solid(w: Vec3, solid: &impl Fn(IVec3) -> bool) -> Option<Vec3> {
     best.map(|(_, out)| out)
 }
 
+/// Per axis, whichever of `a` and `b` reaches further.
+fn widest(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3::select(b.abs().cmpgt(a.abs()), b, a)
+}
+
 #[inline]
 fn verlet(x: &mut Vec3, x_old: &mut Vec3, accel: Vec3, dt2: f32) {
     let vel = (*x - *x_old) * VEL_DAMP;
     let next = *x + vel + accel * dt2;
     *x_old = *x;
     *x = next;
+}
+
+/// Weights on [`corners`] that reproduce `p` exactly for any affine placement of the box.
+fn trilinear(min: Vec3, max: Vec3, p: Vec3) -> [f32; 8] {
+    let t = (p - min) / (max - min).max(Vec3::splat(EPS));
+    std::array::from_fn(|k| {
+        let axis = |bit: usize, t: f32| if k >> bit & 1 == 1 { t } else { 1.0 - t };
+        axis(0, t.x) * axis(1, t.y) * axis(2, t.z)
+    })
+}
+
+fn box_volume(min: Vec3, max: Vec3) -> f32 {
+    (max - min).max(Vec3::splat(EPS)).element_product()
 }
 
 fn corners(min: Vec3, max: Vec3) -> [Vec3; 8] {
