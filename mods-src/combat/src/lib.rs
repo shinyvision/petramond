@@ -57,11 +57,14 @@
 //! [`IMPACT_TICKS`]: guard::IMPACT_TICKS
 
 mod body;
+mod boomerang;
 mod bow;
+mod charge;
 mod claims;
 mod families;
 mod guard;
 mod keys;
+mod projectile_aim;
 mod strike;
 mod swing;
 
@@ -82,6 +85,7 @@ const RAISE_HANDLER: u32 = 3;
 const COMBO_HANDLER: u32 = 4;
 const ATTACK_HANDLER: u32 = 5;
 const PROJECTILE_HANDLER: u32 = 6;
+const FLIGHT_SYSTEM: u32 = 2;
 
 const IMPACT_EVENT: &str = "combat:shield_impact";
 const DEFLECT_SPEED_SCALE: f32 = 0.1;
@@ -90,6 +94,7 @@ const DEFLECT_SPEED_SCALE: f32 = 0.1;
 struct Combat {
     rules: Vec<Box<dyn Rule>>,
     bow: Option<Rc<bow::Rows>>,
+    boomerangs: Option<Rc<boomerang::Boomerangs>>,
     tools: Tools,
     combo_mobs: Vec<MobId>,
     authority: bool,
@@ -163,6 +168,16 @@ impl Combat {
         else {
             return Outcome::Continue;
         };
+        if let Some(boomerangs) = self.boomerangs.clone() {
+            if boomerangs.on_hit(*entity, target, *pos, *vel, fate, |victim, origin| {
+                players()
+                    .into_iter()
+                    .find(|p| p.id == victim)
+                    .is_some_and(|p| self.block(victim, &p.state, Some(origin)))
+            }) {
+                return Outcome::Continue;
+            }
+        }
         let Some(rows) = self.bow.clone() else {
             return Outcome::Continue;
         };
@@ -272,6 +287,12 @@ impl Mod for Combat {
             self.rules.push(Box::new(bow::BowRule::new(rows.clone())));
             self.bow = Some(rows);
         }
+        if let Some(boomerangs) = boomerang::Boomerangs::load() {
+            let boomerangs = Rc::new(boomerangs);
+            self.rules
+                .push(Box::new(boomerang::ThrowRule::new(boomerangs.clone())));
+            self.boomerangs = Some(boomerangs);
+        }
         if let Some(shield) = guard::ShieldRule::resolve() {
             self.rules.push(Box::new(shield));
         }
@@ -282,6 +303,7 @@ impl Mod for Combat {
             RuntimeSide::Server => {
                 self.authority = true;
                 register_tick_system(Stage::Mining, AttachSide::Before, 0, BODY_SYSTEM);
+                register_tick_system(Stage::ItemPhysics, AttachSide::Before, 0, FLIGHT_SYSTEM);
                 register_event_handler(EventKind::PlayerDamagePre, 0, DAMAGE_HANDLER);
                 register_event_handler(EventKind::UseUnclaimed, 0, RAISE_HANDLER);
                 register_event_handler(EventKind::MobDamagePre, 0, COMBO_HANDLER);
@@ -297,6 +319,12 @@ impl Mod for Combat {
     }
 
     fn tick_system(&mut self, system: u32) {
+        if system == FLIGHT_SYSTEM {
+            if let Some(boomerangs) = &self.boomerangs {
+                boomerangs.step(&players());
+            }
+            return;
+        }
         debug_assert_eq!(system, BODY_SYSTEM);
         let roster = players();
         self.clocks

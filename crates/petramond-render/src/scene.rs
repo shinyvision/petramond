@@ -165,6 +165,7 @@ fn bake_item_entities(
                     yaw: lerp_angle(py, yaw, alpha),
                     pitch: lerp_angle(pp, pitch, alpha),
                     speed: ps + (speed - ps) * alpha,
+                    spin: lerp_angle(d.prev_spin, d.spin, alpha),
                 }
             }
             (_, None) => crate::ItemEntityPose::Spin(lerp_angle(d.prev_spin, d.spin, alpha)),

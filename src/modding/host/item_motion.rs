@@ -44,5 +44,32 @@ pub(super) fn handle(call: ItemMotionCall) -> HostRet {
                 }
             }
         }
+        ItemMotionCall::SteerItem { entity, vel } => {
+            let vel = match vel.map(|v| finite3(v, "SteerItem.vel")).transpose() {
+                Ok(vel) => vel,
+                Err(error) => return error,
+            };
+            if vel.is_some_and(|v| {
+                v.length() * crate::events::tick::TICK_DT
+                    > petramond_world::collision::MAX_SAFE_EXTERNAL_SWEEP_DISTANCE
+            }) {
+                return HostRet::invalid("SteerItem: velocity exceeds the sweep bound".into());
+            }
+            sim_query(|ctx| {
+                HostRet::Bool(
+                    ctx.world
+                        .dropped_items_mut()
+                        .get_mut(entity)
+                        .is_some_and(|item| item.steer(vel)),
+                )
+            })
+        }
+        ItemMotionCall::TakeItemEntity { entity } => sim_query(|ctx| {
+            let stack = ctx.world.dropped_items().get(entity).map(|item| item.stack);
+            if stack.is_some() {
+                ctx.world.dropped_items_mut().remove(entity);
+            }
+            HostRet::ItemStack(stack.map(super::guards::item_stack_data))
+        }),
     }
 }

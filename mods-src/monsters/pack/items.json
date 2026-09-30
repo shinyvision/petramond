@@ -1,6 +1,53 @@
 {
   "items": [
     {
+      "item": "monsters:bone",
+      "key": "monsters:bone",
+      "name": "Bone",
+      "max_stack_size": 64,
+      "sprite": "monsters:bone",
+      "tags": []
+    },
+    {
+      "item": "monsters:bone_stairs",
+      "key": "monsters:bone_stairs",
+      "name": "Bone Stairs",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "monsters:bone_stairs"
+    },
+    {
+      "item": "monsters:bone_slab",
+      "key": "monsters:bone_slab",
+      "name": "Bone Slab",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "monsters:bone_slab"
+    },
+    {
+      "item": "monsters:bone_block",
+      "key": "monsters:bone_block",
+      "name": "Bone Block",
+      "max_stack_size": 64,
+      "held_pose": {
+        "pitch": 0,
+        "yaw": 1.8,
+        "roll": 0
+      },
+      "tags": [],
+      "block": "monsters:bone_block"
+    },
+    {
       "item": "monsters:hushjaw_tooth",
       "key": "monsters:hushjaw_tooth",
       "name": "Hushjaw Tooth",

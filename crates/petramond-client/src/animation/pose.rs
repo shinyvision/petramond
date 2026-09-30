@@ -46,7 +46,7 @@ pub(super) fn pose_body(
     rig: &Rig,
     state: &BodyState,
     bones: &[BoneOffset],
-    drive: Option<BodyDrive<'_>>,
+    drive: Option<&mut BodyDrive<'_>>,
     out: &mut Vec<Mat4>,
 ) -> Mat4 {
     let model = &rig.model;

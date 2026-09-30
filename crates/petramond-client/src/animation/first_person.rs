@@ -151,6 +151,13 @@ impl FirstPersonAnimator {
             .resolve_into(&self.row.model, &mut self.bones);
     }
 
+    pub(super) fn present_hands(
+        &self,
+        held: [petramond_render::HeldItemView; 2],
+    ) -> [petramond_render::HeldItemView; 2] {
+        super::inputs::present_hands(self.driver.animator(), held)
+    }
+
     pub fn bones(&self) -> &[Mat4] {
         &self.bones
     }

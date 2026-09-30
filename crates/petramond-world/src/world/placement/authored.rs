@@ -93,7 +93,7 @@ impl<'a> Inputs<'a> {
     }
 
     pub fn general(&mut self, block: Block) -> Result<PlacementPlan, String> {
-        let state = if block.is_log() {
+        let state = if block.is_axial() {
             let axis = match self.property("axis", "y") {
                 "x" => {
                     if self.turn.index().is_multiple_of(2) {

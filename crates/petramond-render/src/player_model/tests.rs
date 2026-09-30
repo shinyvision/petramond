@@ -193,3 +193,35 @@ fn off_hand_grip_is_on_the_visual_left_side() {
         "yaw 0 player-left is world +X, off grip at {grip:?}"
     );
 }
+
+#[test]
+fn an_authored_sprite_hold_keeps_its_grip_in_both_fists_when_scaled() {
+    let frame = Mat4::from_rotation_x(0.4) * Mat4::from_translation(Vec3::new(2.0, 3.0, -1.0));
+    let main = Grip::body(frame);
+    let off = Grip::body_off(frame);
+    for scale in [0.4, 1.0, 1.7] {
+        let pose = petramond_world::item::SpriteHeldPose {
+            pitch: -0.2,
+            yaw: 0.8,
+            roll: 1.2,
+            scale,
+            grip: [-0.25, 0.1, 0.0],
+        };
+        let anchor = Vec3::from(pose.grip);
+        let at = held_sprite_at(main, Some(pose));
+        let left = held_sprite_off_at(off, Some(pose));
+        assert!(
+            at.transform_point3(anchor)
+                .distance(frame.transform_point3(main.point))
+                < 1e-5
+        );
+        assert!(
+            left.transform_point3(anchor)
+                .distance(frame.transform_point3(off.point))
+                < 1e-5
+        );
+        let length = at.transform_vector3(Vec3::Y).length();
+        assert!((length - SPRITE_WORLD_SIZE / main.px * scale).abs() < 1e-5);
+        assert!((left.transform_vector3(Vec3::Y).length() - length).abs() < 1e-5);
+    }
+}

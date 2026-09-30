@@ -22,6 +22,11 @@ fn malformed_requests_are_rejected_before_entering_simulation() {
         impulses: vec![(1, [0.0; 3]), (2, [f32::NAN; 3])],
     });
     assert!(matches!(result, HostRet::Err(message) if message.detail.contains("delta")));
+    let result = handle(calls::SteerItem {
+        entity: 1,
+        vel: Some([f32::NAN; 3]),
+    });
+    assert!(matches!(result, HostRet::Err(message) if message.detail.contains("vel")));
 }
 
 #[test]
@@ -75,6 +80,18 @@ fn read_only_dispatch_can_query_but_cannot_change_item_velocity() {
             }),
         );
         assert!(matches!(denied, HostRet::Err(_)));
+        for call in [
+            HostCall::from(calls::SteerItem {
+                entity: id,
+                vel: None,
+            }),
+            HostCall::from(calls::TakeItemEntity { entity: id }),
+        ] {
+            assert!(matches!(
+                handle_host_call(&mut store, call),
+                HostRet::Err(_)
+            ));
+        }
     });
     assert_eq!(ctx.world.dropped_items().get(id).unwrap().vel, before);
     scope::enter(&mut ctx, || {

@@ -147,6 +147,63 @@ fn a_flight_strikes_the_first_body_on_its_path_and_stops_there() {
 }
 
 #[test]
+fn controlled_flights_keep_the_collision_sweep_and_drop_when_the_controller_stops() {
+    let mut w = open_world();
+    w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);
+    let id = w.spawn_item(launched(WorldPos::new(3.5, 64.5, 5.5), Vec3::X, None));
+    assert!(w
+        .dropped_items_mut()
+        .get_mut(id)
+        .unwrap()
+        .steer(Some(Vec3::X * 60.0)));
+    let step = w.tick_item_physics(0.05, &[]);
+    assert_eq!(step.impacts.len(), 1);
+    assert!(matches!(step.impacts[0].target, ImpactTarget::Block { .. }));
+    for _ in 0..3 {
+        w.tick_item_physics(0.05, &[]);
+    }
+    let item = w.dropped_items().get(id).unwrap();
+    assert_eq!(item.motion, Motion::Loose);
+    assert!(item.collectable());
+}
+
+#[test]
+fn a_deflected_contact_is_spared_until_the_flight_has_cleared_its_body() {
+    let mut w = open_world();
+    let owner = crate::player::PlayerId(0);
+    let player = PlayerAnchor {
+        id: owner,
+        pos: WorldPos::new(4.5, 64.9, 5.5),
+        body: Some(petramond_world::body::Body::new(
+            WorldPos::new(4.5, 64.0, 5.5),
+            0.3,
+            1.8,
+        )),
+        ..Default::default()
+    };
+    let mut item = launched(WorldPos::new(4.1, 65.5, 5.5), Vec3::X * 12.0, None);
+    if let Motion::Flight(f) = &mut item.motion {
+        f.contact = Some(EntityRef::Player(owner));
+    }
+    let id = w.spawn_item(item);
+    assert!(w.tick_item_physics(0.05, &[player]).impacts.is_empty());
+    for _ in 0..3 {
+        w.tick_item_physics(0.05, &[player]);
+    }
+    assert!(matches!(w.dropped_items().get(id).unwrap().motion,
+        Motion::Flight(f) if f.contact.is_none()));
+    w.dropped_items_mut()
+        .get_mut(id)
+        .unwrap()
+        .deflect(-Vec3::X * 80.0);
+    let step = w.tick_item_physics(0.05, &[player]);
+    assert!(step
+        .impacts
+        .iter()
+        .any(|hit| hit.target == ImpactTarget::Player(owner)));
+}
+
+#[test]
 fn a_flight_stops_at_collidable_terrain_and_reports_the_face() {
     let mut w = open_world();
     w.set_block_world(5, 64, 5, petramond_world::block::Block::Stone);

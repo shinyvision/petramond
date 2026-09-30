@@ -232,7 +232,7 @@ fn faces_of(block: Block, name: &str) -> Result<[FaceMaterial; 3], String> {
     if !block.is_opaque()
         || block.is_fluid()
         || !block.is_cube_shaped()
-        || block.is_log()
+        || block.is_axial()
         || block.front_tile().is_some()
     {
         return Err(format!(

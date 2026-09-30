@@ -175,7 +175,7 @@ wire_enum! {
 
 impl crate::block::CellView for LogAxis {
     fn owns(block: Block) -> bool {
-        block.is_log()
+        block.is_axial()
     }
     fn from_cell(s: ShapeState) -> Self {
         if s.is_empty() {

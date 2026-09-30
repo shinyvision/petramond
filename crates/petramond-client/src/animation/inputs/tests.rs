@@ -30,7 +30,7 @@ fn graph() -> Arc<Graph> {
         clip(&m, 1.0, false, &[("leftArm", 0.0, Vec3::X * 10.0)]),
     );
     let graph = Graph::compile(
-        r#"{ "params": { "main.mining": 0, "main.kind": "none", "main.item": "none", "main.tool": "none" },
+        r#"{ "params": { "main.item_visible": 1, "off.item_visible": 1, "main.mining": 0, "main.kind": "none", "main.item": "none", "main.tool": "none" },
              "events": ["main.equip", "main.mine", "main.eat"],
              "slots": ["equip", "mine", "eat"],
              "layers": [{ "slot": "equip" }, { "slot": "mine" }, { "slot": "eat" }],
@@ -194,4 +194,49 @@ fn a_released_claim_on_an_item_fact_uncovers_the_engines_fact_the_next_frame() {
         kind_fact(Some(block)),
         "the unchanged item still publishes"
     );
+}
+
+#[test]
+fn hiding_a_thrown_item_preserves_the_hand_inputs_and_yields_when_the_claim_ends() {
+    let graph = graph();
+    let hidden = graph.param("main.item_visible").unwrap();
+    let mut driver = BodyDriver::<()>::new(RIG, graph, 1, &[]);
+    let frame = holding(Some(ItemType::Stone));
+    let held = [petramond_render::HeldItemView {
+        item: Some(ItemType::Stone),
+        ..Default::default()
+    }; 2];
+    let params = [AnimatorParamRow {
+        rig: RIG,
+        param: hidden.index() as u16,
+        value: 0.0,
+    }];
+    for (claims, visible) in [(&[][..], true), (&params[..], false), (&[][..], true)] {
+        driver.begin(Some(&()));
+        driver.publish_hands(&[frame, frame]);
+        driver.claim(AnimatorInputs {
+            params: claims,
+            ..Default::default()
+        });
+        driver.animator.update(DT);
+        let shown = super::present_hands(&driver.animator, held);
+        assert_eq!(shown[0].item.is_some(), visible);
+        assert_eq!(
+            shown[1].item,
+            Some(ItemType::Stone),
+            "the other hand remains visible"
+        );
+        assert_eq!(
+            held[0].item,
+            Some(ItemType::Stone),
+            "inventory and animator inputs stay intact until authority catches up"
+        );
+        assert!(
+            driver
+                .animator
+                .playing(driver.animator.graph().slot("equip").unwrap())
+                .is_none(),
+            "hiding is presentation, not an equip event"
+        );
+    }
 }

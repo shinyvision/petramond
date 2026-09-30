@@ -67,7 +67,9 @@ pub enum ProjectileFate {
     Lodge,
     Drop,
     /// Keep the same projectile in flight with a new velocity, in blocks per second.
-    Deflect { vel: [f32; 3] },
+    Deflect {
+        vel: [f32; 3],
+    },
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]

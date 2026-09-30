@@ -295,6 +295,7 @@ impl Renderer {
                 };
                 streams.push(
                     item,
+                    view.hold.third_person,
                     view.variant,
                     view.block_state,
                     grip,
@@ -309,6 +310,7 @@ impl Renderer {
         for held in mob_held {
             streams.push(
                 held.item,
+                held.item.held_pose().third_person,
                 petramond_world::item::VariantId::NONE,
                 petramond_world::block_state::HeldBlockState::None,
                 held.grip,
@@ -448,6 +450,7 @@ impl HeldStreams {
     fn push(
         &mut self,
         item: petramond_world::item::ItemType,
+        sprite_pose: Option<petramond_world::item::SpriteHeldPose>,
         variant: petramond_world::item::VariantId,
         block_state: petramond_world::block_state::HeldBlockState,
         grip: crate::player_model::Grip,
@@ -481,9 +484,9 @@ impl HeldStreams {
             }
             petramond_world::item::ItemRenderKind::Sprite(tile) => {
                 let m = if off_side {
-                    crate::player_model::held_sprite_off_at(grip)
+                    crate::player_model::held_sprite_off_at(grip, sprite_pose)
                 } else {
-                    crate::player_model::held_sprite_at(grip)
+                    crate::player_model::held_sprite_at(grip, sprite_pose)
                 };
                 let count = crate::item_model::build_extruded_stack_lit(
                     tile,

@@ -408,6 +408,8 @@ pub(super) fn samples() -> Samples {
 
     s.pin("HostCall::ItemEntitiesInRadius", &HostCall::from(calls::ItemEntitiesInRadius { pos: [1.0, 2.0, 3.0], radius: 4.0, limit: 8 }));
     s.pin("HostCall::ItemImpulses", &HostCall::from(calls::ItemImpulses { impulses: vec![(9, [1.0, 0.0, -1.0])] }));
+    s.pin("HostCall::SteerItem", &HostCall::from(calls::SteerItem { entity: 9, vel: Some([1.0, 0.0, -1.0]) }));
+    s.pin("HostCall::TakeItemEntity", &HostCall::from(calls::TakeItemEntity { entity: 9 }));
     s.pin("HostCall::SectionKvFind", &HostCall::from(calls::SectionKvFind { section: [-1, -2, 3], key: "fixture:marker".into() }));
     s.pin("HostCall::StructureInfo", &HostCall::from(calls::StructureInfo { key: "fixture:room".into() }));
     s.pin("HostCall::LootRoll", &HostCall::from(calls::LootRoll { key: "fixture:loot".into(), seed: 7 }));

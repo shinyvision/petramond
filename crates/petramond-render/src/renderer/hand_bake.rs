@@ -62,7 +62,9 @@ impl Renderer {
                             ItemRenderKind::Sprite(tile) => rig.sprite_in_fist(
                                 hand,
                                 seat,
-                                crate::item_model::grip_point(tile, item.tool().is_some()),
+                                view.hold.grip.map(glam::Vec3::from).unwrap_or_else(|| {
+                                    crate::item_model::grip_point(tile, item.tool().is_some())
+                                }),
                             ),
                             _ => seat,
                         };

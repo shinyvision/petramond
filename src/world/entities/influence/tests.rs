@@ -62,6 +62,8 @@ fn impulses_compose_without_stealing_reserved_or_lodged_items() {
         flight: Flight {
             owner: None,
             left_owner: true,
+            contact: None,
+            control_ticks: None,
             heading: Heading {
                 yaw: 0.0,
                 pitch: 0.0,

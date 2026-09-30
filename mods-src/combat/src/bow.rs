@@ -25,13 +25,12 @@
 //! held DISPLAY, the speed and denial claims) and the arrow rides the
 //! generic launched-item primitive.
 
-mod clock;
 mod launch;
 mod rows;
 #[cfg(test)]
 mod tests;
 
-pub use clock::{Clock, Press, State};
+pub use crate::charge::{Clock, Press, State};
 pub use rows::{BowRow, Rows};
 
 use crate::body::BodyClocks;

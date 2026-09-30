@@ -29,18 +29,18 @@
       "pools": [
         {
           "rolls": [
-            0,
-            2
+            1,
+            1
           ],
           "entries": [
             {
               "weight": 1,
               "result": {
                 "type": "item",
-                "item": "petramond:stick",
+                "item": "monsters:bone",
                 "count": [
                   1,
-                  1
+                  3
                 ]
               }
             }

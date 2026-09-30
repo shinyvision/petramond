@@ -260,7 +260,12 @@ pub struct LocalFrame<'a> {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ItemEntityPose {
     Spin(f32),
-    Aimed { yaw: f32, pitch: f32, speed: f32 },
+    Aimed {
+        yaw: f32,
+        pitch: f32,
+        speed: f32,
+        spin: f32,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

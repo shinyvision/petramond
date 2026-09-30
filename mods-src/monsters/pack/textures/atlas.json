@@ -7,6 +7,18 @@
         {
             "name": "monsters:fang",
             "file": "fang.png"
+        },
+        {
+            "name": "monsters:bone",
+            "file": "bone.png"
+        },
+        {
+            "name": "monsters:bone_side",
+            "file": "bone_side.png"
+        },
+        {
+            "name": "monsters:bone_top",
+            "file": "bone_top.png"
         }
     ]
 }

@@ -54,7 +54,7 @@ impl CubeRow {
     fn of(block: Block) -> Self {
         let mut bits = 0;
         for (on, bit) in [
-            (block.is_log(), ROW_LOG),
+            (block.is_axial(), ROW_LOG),
             (block.is_opaque(), ROW_OPAQUE),
             (block.is_translucent(), ROW_TRANSLUCENT),
             (block.is_leaves(), ROW_LEAVES),

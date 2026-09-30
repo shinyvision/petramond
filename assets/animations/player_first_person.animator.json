@@ -20,6 +20,7 @@
     "impact": 0,
     "target": 0,
     "main.held": 0,
+    "main.item_visible": 1,
     "main.kind": "none",
     "main.tool": "none",
     "main.mining": 0,
@@ -27,6 +28,7 @@
     "main.swing_claim": 0,
     "main.jab_claim": 0,
     "off.held": 0,
+    "off.item_visible": 1,
     "off.kind": "none",
     "off.eating": 0,
     "off.jab_claim": 0

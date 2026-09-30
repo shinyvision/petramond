@@ -81,7 +81,7 @@ pub(super) fn sweep(
     ctx: &StepCtx,
     from: WorldPos,
     motion: Vec3,
-    spared: Option<EntityRef>,
+    spared: [Option<EntityRef>; 2],
 ) -> Option<(ImpactTarget, WorldPos)> {
     let length = motion.length();
     if length <= 1e-6 {
@@ -108,7 +108,7 @@ pub(super) fn sweep(
         }
     };
     for anchor in ctx.anchors {
-        if spared == Some(EntityRef::Player(anchor.id)) {
+        if spared.contains(&Some(EntityRef::Player(anchor.id))) {
             continue;
         }
         let Some(b) = anchor.body else {
@@ -138,7 +138,7 @@ pub(super) fn sweep(
             .near(from, from + motion)
             .into_iter()
             .map(|i| &instances[i as usize])
-            .filter(|m| spared != Some(EntityRef::Mob(m.id())))
+            .filter(|m| !spared.contains(&Some(EntityRef::Mob(m.id()))))
             .map(|m| (m.id(), m.pos, m.yaw, crate::mob::def(m.kind).size))
             .filter(|(_, pos, _, size)| near(*pos, *size));
         if let Some((id, t)) = crate::mob::closest_body_ray_hit(from, dir, limit, mobs) {

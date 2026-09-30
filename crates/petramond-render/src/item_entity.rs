@@ -5,7 +5,7 @@
 //! [`build_item_sprite_entities`] bakes it into the explicit-UV `ItemVertex` stream, since the
 //! packed vertex can't express the single boundary texels its side walls sample.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 use super::item_cube::push_block_item_cube_lit;
 use super::item_model::ItemVertex;
@@ -142,6 +142,10 @@ fn aim_basis(yaw: f32, pitch: f32) -> (Vec3, Vec3, Vec3) {
     (forward, up, across)
 }
 
+fn sprite_frame(roll: f32, tilt: f32) -> Mat3 {
+    Mat3::from_rotation_x(tilt) * Mat3::from_rotation_z(roll)
+}
+
 const STACK_LAYER_OFFSETS: [Vec3; STACK_MAX_LAYERS] = [
     Vec3::new(0.00, 0.000, 0.00),
     Vec3::new(0.07, 0.012, 0.05),
@@ -212,19 +216,19 @@ pub fn build_item_sprite_entities(
             continue;
         }
         let roll = match inst.pose {
-            ItemEntityPose::Aimed { .. } => inst.item.sprite_axis_roll(),
+            ItemEntityPose::Aimed { spin, .. } => inst.item.sprite_axis_roll() + spin,
             ItemEntityPose::Spin(_) => 0.0,
         };
-        let (rs, rc) = roll.sin_cos();
         let placement = Placement::of(inst, render_origin);
+        let tilt = match inst.pose {
+            ItemEntityPose::Aimed { .. } => inst.item.projectile().sprite_tilt,
+            ItemEntityPose::Spin(_) => 0.0,
+        };
+        let sprite = sprite_frame(roll, tilt);
         for &offset in &STACK_LAYER_OFFSETS[..layers(inst)] {
             let base = verts.len() as u32;
             for v in scratch.iter() {
-                let local = Vec3::new(
-                    (v.pos[0] * rc - v.pos[1] * rs) * ITEM_SPRITE_SIZE,
-                    (v.pos[0] * rs + v.pos[1] * rc) * ITEM_SPRITE_SIZE,
-                    v.pos[2] * ITEM_SPRITE_SIZE,
-                ) + offset;
+                let local = sprite * Vec3::from_array(v.pos) * ITEM_SPRITE_SIZE + offset;
                 let p = placement.apply(local);
                 verts.push(ItemVertex {
                     pos: [p.x, p.y, p.z],
@@ -322,6 +326,40 @@ mod tests {
     use petramond_world::item::ItemType;
 
     #[test]
+    fn a_tilted_sprite_spins_in_the_flight_plane_and_leaves_with_its_ends_behind() {
+        use std::f32::consts::{FRAC_PI_2, PI};
+        for (yaw, pitch) in [(0.0, 0.0), (1.3, 0.6), (-2.4, -0.8)] {
+            let (forward, up, across) = aim_basis(yaw, pitch);
+            let place = |p: Vec3| forward * p.x + up * p.y + across * p.z;
+            let frame = sprite_frame(-FRAC_PI_2, FRAC_PI_2);
+            assert!(
+                place(frame * Vec3::Y).dot(forward) > 0.999,
+                "apex faces the aim"
+            );
+            for end in [Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.5, -0.5, 0.0)] {
+                assert!(
+                    place(frame * end).dot(forward) < 0.0,
+                    "both ends face the throwing hand"
+                );
+            }
+            for spin in [0.0, 0.3, FRAC_PI_2, PI, 5.6] {
+                let frame = sprite_frame(-FRAC_PI_2 + spin, FRAC_PI_2);
+                for axis in [Vec3::X, Vec3::Y] {
+                    assert!(
+                        place(frame * axis).dot(up).abs() < 1e-6,
+                        "spin stays flat rather than tumbling upright"
+                    );
+                }
+            }
+            let upright = sprite_frame(-FRAC_PI_2, 0.0);
+            assert!(
+                place(upright * Vec3::X).dot(up).abs() > 0.999,
+                "zero tilt preserves upright projectiles"
+            );
+        }
+    }
+
+    #[test]
     fn empty_instances_produce_no_geometry() {
         let mut v = Vec::new();
         let mut i = Vec::new();
@@ -367,6 +405,7 @@ mod tests {
                 yaw: 0.0,
                 pitch: std::f32::consts::FRAC_PI_4,
                 speed: TRAIL_SPEED_MIN * 2.0,
+                spin: 0.0,
             },
             skylight: super::super::lighting::FULL_SKYLIGHT,
             blocklight: petramond_world::light::BlockLight6::DARK,

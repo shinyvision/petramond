@@ -212,6 +212,11 @@ impl Block {
     }
 
     #[inline]
+    pub fn is_axial(self) -> bool {
+        self.is_log() || self.has_tag(BlockTag::AXIAL)
+    }
+
+    #[inline]
     pub fn is_fluid(self) -> bool {
         self.flags().fluid()
     }

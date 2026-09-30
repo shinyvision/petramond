@@ -1,4 +1,23 @@
-use super::rows::Draw;
+#[derive(Clone, Debug, PartialEq)]
+pub struct Draw {
+    pub full_ticks: u32,
+    pub strain_ticks: u32,
+    pub speed_scale: f32,
+    pub launch_speed: [f32; 2],
+}
+
+impl Draw {
+    pub fn launch_speed(&self, ticks: u32) -> f32 {
+        let full = self.full_ticks.max(1);
+        let t = if full == 1 {
+            1.0
+        } else {
+            (ticks.clamp(1, full) - 1) as f32 / (full - 1) as f32
+        };
+        let [weak, strong] = self.launch_speed;
+        weak + (strong - weak) * t
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Press<'a> {

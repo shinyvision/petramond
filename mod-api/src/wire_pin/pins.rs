@@ -163,6 +163,8 @@ pub(super) const PINS: &[(&str, &str)] = &[
     ("HostCall::ContainerTake", "0c0501050402"),
     ("HostCall::ItemEntitiesInRadius", "0e00000000000000f03f000000000000004000000000000008400000804008"),
     ("HostCall::ItemImpulses", "0e0101090000803f00000000000080bf"),
+    ("HostCall::SteerItem", "0e0209010000803f00000000000080bf"),
+    ("HostCall::TakeItemEntity", "0e0309"),
     ("HostCall::SectionKvFind", "06080103060e666978747572653a6d61726b6572"),
     ("HostCall::StructureInfo", "080f0c666978747572653a726f6f6d"),
     ("HostCall::LootRoll", "08100c666978747572653a6c6f6f7407"),

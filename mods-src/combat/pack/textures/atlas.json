@@ -31,6 +31,10 @@
         {
             "name": "combat:arrow",
             "file": "arrow.png"
+        },
+        {
+            "name": "combat:bone_boomerang",
+            "file": "bone_boomerang.png"
         }
     ]
 }

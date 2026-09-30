@@ -157,6 +157,10 @@ pub(super) struct RawProjectile {
     pub drag: Option<f32>,
     #[serde(default)]
     pub sticks: Option<bool>,
+    #[serde(default)]
+    pub sprite_spin: Option<f32>,
+    #[serde(default)]
+    pub sprite_tilt: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -171,6 +175,10 @@ pub(super) struct RawPose {
     pub pitch: f64,
     pub yaw: f64,
     pub roll: f64,
+    #[serde(default)]
+    pub grip: Option<[f32; 3]>,
+    #[serde(default)]
+    pub third_person: Option<super::SpriteHeldPose>,
 }
 
 pub(super) fn table(
@@ -412,6 +420,25 @@ fn convert(
                     gravity,
                     drag,
                     sticks: p.sticks.unwrap_or(base.sticks),
+                    sprite_spin: {
+                        let spin = p.sprite_spin.unwrap_or(0.0);
+                        if !spin.is_finite() || spin.abs() > 60.0 {
+                            return Err(
+                                "projectile sprite_spin must be finite and within ±60 rad/s".into(),
+                            );
+                        }
+                        spin
+                    },
+                    sprite_tilt: {
+                        let tilt = p.sprite_tilt.unwrap_or(0.0);
+                        if !tilt.is_finite() || tilt.abs() > 180.0 {
+                            return Err(
+                                "projectile sprite_tilt must be finite and within ±180 degrees"
+                                    .into(),
+                            );
+                        }
+                        tilt.to_radians()
+                    },
                 })
             }
             None => None,
@@ -465,6 +492,24 @@ fn convert(
         }
         None => None,
     };
+    if let Some(pose) = &r.held_pose {
+        if pose
+            .grip
+            .is_some_and(|grip| grip.iter().any(|v| !v.is_finite()))
+        {
+            return Err("held_pose grip must be finite".into());
+        }
+        if let Some(body) = pose.third_person {
+            if ![body.pitch, body.yaw, body.roll, body.scale]
+                .iter()
+                .all(|v| v.is_finite())
+                || body.scale <= 0.0
+                || body.grip.iter().any(|v| !v.is_finite())
+            {
+                return Err("third-person sprite hold must be finite with a positive scale".into());
+            }
+        }
+    }
     Ok(ItemDef {
         item,
         key: Box::leak(r.key.into_boxed_str()),
@@ -475,6 +520,8 @@ fn convert(
             pitch: p.pitch as f32,
             yaw: p.yaw as f32,
             roll: p.roll as f32,
+            grip: p.grip,
+            third_person: p.third_person,
         }),
         sprite_axis_degrees,
         sprite_face_leads: r.sprite_face_leads,

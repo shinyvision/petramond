@@ -74,6 +74,25 @@ fn item_facts(item: Option<ItemType>) -> [f32; 3] {
     ]
 }
 
+pub(super) fn present_hands(
+    animator: &Animator,
+    mut held: [petramond_render::HeldItemView; 2],
+) -> [petramond_render::HeldItemView; 2] {
+    for (view, param) in held
+        .iter_mut()
+        .zip(["main.item_visible", "off.item_visible"])
+    {
+        if animator
+            .graph()
+            .param(param)
+            .is_some_and(|id| animator.param(id) <= 0.0)
+        {
+            view.item = None;
+        }
+    }
+    held
+}
+
 pub(crate) struct HandInputs {
     params: Vec<(ParamId, HandInput)>,
     kind: Option<ParamId>,

@@ -298,6 +298,79 @@
           }
         }
       }
+    },
+    {
+      "item": "combat:bone_boomerang",
+      "key": "combat:bone_boomerang",
+      "name": "Bone Boomerang",
+      "max_stack_size": 1,
+      "sprite": "combat:bone_boomerang",
+      "sprite_axis": 90,
+      "tags": [],
+      "held_pose": {
+        "pitch": -0.35,
+        "yaw": -0.3,
+        "roll": 0.9,
+        "third_person": {
+          "pitch": 0,
+          "yaw": 0,
+          "roll": 1.5707963267948966,
+          "scale": 0.75,
+          "grip": [
+            -0.2,
+            0.2,
+            0.15
+          ]
+        },
+        "grip": [
+          -0.2,
+          -0.2,
+          0
+        ]
+      },
+      "data": {
+        "petramond:projectile": {
+          "gravity": 0,
+          "drag": 0,
+          "sticks": false,
+          "sprite_spin": 24.0,
+          "sprite_tilt": 90
+        },
+        "combat:boomerang": {
+          "draw_ticks": 20,
+          "strain_ticks": 20,
+          "draw_speed_scale": 0.7,
+          "launch_speed": [
+            10,
+            26
+          ],
+          "outbound_ticks": [
+            8,
+            18
+          ],
+          "damage_weak": [
+            2,
+            3
+          ],
+          "damage_full": [
+            6,
+            8
+          ],
+          "return_speed": 30,
+          "curve": 0.16,
+          "turn_acceleration": 80,
+          "animations": {
+            "first_person": [
+              "combat:fp_boomerang_draw",
+              "combat:fp_boomerang_throw"
+            ],
+            "body": [
+              "combat:body_boomerang_draw",
+              "combat:body_boomerang_throw"
+            ]
+          }
+        }
+      }
     }
   ]
 }

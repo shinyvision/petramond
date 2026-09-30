@@ -118,7 +118,7 @@ pub(super) fn emit_fluid_cell(
             };
             (tile, flow_strip, tint_of(still.world_tint()))
         } else {
-            let tile = cube_face_tile(fluid.is_log(), face, fluid.tiles(), None, LogAxis::Y);
+            let tile = cube_face_tile(fluid.is_axial(), face, fluid.tiles(), None, LogAxis::Y);
             (tile, false, tint::NO_TINT)
         };
         let tint = match cell_tint {

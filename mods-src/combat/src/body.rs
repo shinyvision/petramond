@@ -1,3 +1,4 @@
+use crate::boomerang;
 use crate::bow;
 use crate::claims::{self, Claims, Rule};
 use crate::families::{Families, Family, FamilySpec, Style};
@@ -25,6 +26,7 @@ pub struct BodyClocks {
     pub press_owner: Option<usize>,
     pub swing: swing::Clock,
     pub draw: bow::Clock,
+    pub throwing: boomerang::motion::Clock,
     pub recoil: guard::Recoil,
     last: Option<Claims>,
 }

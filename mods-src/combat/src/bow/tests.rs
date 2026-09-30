@@ -1,6 +1,6 @@
-use super::launch::{nock, ray_box};
 use super::rows::{ArrowRow, ArrowSpec, BowSpec, Draw};
 use super::*;
+use crate::projectile_aim::{from_hand as nock, ray_box};
 use crate::strike::Aim;
 
 const BOW: ItemId = ItemId(11);

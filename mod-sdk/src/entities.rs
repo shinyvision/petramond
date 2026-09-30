@@ -326,6 +326,16 @@ host_fn! {
 }
 
 host_fn! {
+    pub fn steer_item(entity: u64, vel: Option<[f32; 3]>) -> bool
+        => SteerItem { entity, vel } => Bool
+}
+
+host_fn! {
+    pub fn take_item_entity(entity: u64) -> Option<mod_api::ItemStackData>
+        => TakeItemEntity { entity } => ItemStack
+}
+
+host_fn! {
     pub fn spawn_item_data(item: &str, count: u8, pos: [f64; 3], data: &[(&str, &[u8])]) -> bool
         => SpawnItem {
             item: item.into(),

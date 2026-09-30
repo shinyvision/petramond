@@ -66,6 +66,13 @@ impl ServerGame {
         if let Fate::Deflect { vel } = fate {
             if vel.x.is_finite() && vel.y.is_finite() && vel.z.is_finite() {
                 it.deflect(vel);
+                if let Motion::Flight(flight) = &mut it.motion {
+                    flight.contact = match impact.target {
+                        ImpactTarget::Mob(id) => Some(EntityRef::Mob(id)),
+                        ImpactTarget::Player(id) => Some(EntityRef::Player(id)),
+                        ImpactTarget::Block { .. } => None,
+                    };
+                }
                 return;
             }
             log::warn!("projectile_hit: non-finite deflection velocity — dropping instead");

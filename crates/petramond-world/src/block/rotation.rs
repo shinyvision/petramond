@@ -30,7 +30,7 @@ impl CellRotation {
 
 pub fn common(block: Block, state: ShapeState) -> CellRotation {
     let mut out = CellRotation::unchanged(block, state);
-    if block.is_log() {
+    if block.is_axial() {
         out.state = match LogAxis::from_cell(state) {
             LogAxis::X => LogAxis::Z,
             LogAxis::Z => LogAxis::X,

@@ -34,22 +34,30 @@ fn rig_clips(rig: &str) -> Vec<String> {
         .filter_map(|clip| clip.get("name").and_then(json::Value::as_str))
         .map(|name| format!("petramond:{name}"))
         .collect();
-    let animator = assets().join(field("animator"));
-    let libraries = document(&animator);
-    for library in libraries
-        .get("libraries")
-        .and_then(json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(json::Value::as_str)
-    {
-        let library = document(&animator.parent().expect("a directory").join(library));
-        if let Some(animations) = library.get("animations").and_then(json::Value::as_object) {
-            clips.extend(
-                animations
-                    .iter()
-                    .map(|(name, _)| format!("petramond:{name}")),
-            );
+    let authored = assets().join(field("animator"));
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("pack")
+        .join(field("animator"));
+    for (namespace, animator) in [("petramond", authored), ("combat", pack)] {
+        if !animator.exists() {
+            continue;
+        }
+        let libraries = document(&animator);
+        for library in libraries
+            .get("libraries")
+            .and_then(json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(json::Value::as_str)
+        {
+            let library = document(&animator.parent().expect("a directory").join(library));
+            if let Some(animations) = library.get("animations").and_then(json::Value::as_object) {
+                clips.extend(
+                    animations
+                        .iter()
+                        .map(|(name, _)| format!("{namespace}:{name}")),
+                );
+            }
         }
     }
     clips
@@ -69,6 +77,29 @@ fn every_clip_the_pack_plays_is_on_its_rig() {
     }
     for &(rig, clip) in guard::CLIPS.iter().chain(&bow::CLIPS) {
         played.push((rig, clip.to_string()));
+    }
+
+    for (_, entry) in pack_rows_with_data(
+        include_str!("../pack/items.json"),
+        "items",
+        crate::keys::BOOMERANG_KEY,
+    ) {
+        let entry = json::Value::parse(&entry).expect("boomerang data JSON");
+        let clips = entry
+            .get("animations")
+            .expect("boomerang animation bindings");
+        for (rig, key) in [
+            (rig::PLAYER_FIRST_PERSON, "first_person"),
+            (rig::PLAYER_BODY, "body"),
+        ] {
+            for clip in clips
+                .get(key)
+                .and_then(json::Value::as_array)
+                .expect("draw and throw")
+            {
+                played.push((rig, clip.as_str().expect("clip name").to_owned()));
+            }
+        }
     }
 
     let body = rig_clips(rig::PLAYER_BODY);

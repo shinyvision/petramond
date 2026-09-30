@@ -1,0 +1,23 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "combat:bone_boomerang",
+      "station": "combat:weapons_workbench",
+      "ingredients": [
+        {
+          "item": "monsters:bone",
+          "count": 2
+        },
+        {
+          "item": "petramond:rope",
+          "count": 2
+        }
+      ],
+      "result": {
+        "item": "combat:bone_boomerang",
+        "count": 1
+      }
+    }
+  ]
+}

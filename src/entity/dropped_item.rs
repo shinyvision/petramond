@@ -53,6 +53,8 @@ pub struct Flight {
     pub owner: Option<crate::mob::EntityRef>,
     pub left_owner: bool,
     pub heading: Heading,
+    pub contact: Option<crate::mob::EntityRef>,
+    pub control_ticks: Option<u8>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -78,6 +80,8 @@ impl Motion {
                 yaw: 0.0,
                 pitch: 0.0,
             }),
+            contact: None,
+            control_ticks: None,
         })
     }
 
@@ -220,6 +224,21 @@ impl DroppedItem {
         }
     }
 
+    pub fn steer(&mut self, vel: Option<Vec3>) -> bool {
+        let Some(vel) = vel else {
+            self.release();
+            self.vel = Vec3::ZERO;
+            return true;
+        };
+        if let Motion::Flight(flight) = &mut self.motion {
+            flight.control_ticks = Some(2);
+            self.deflect(vel);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn request_pickup(&mut self, by: crate::player::PlayerId) {
         self.pickup_requested = Some(by);
     }
@@ -252,6 +271,7 @@ impl DroppedItem {
         self.prev_pos = self.pos;
         self.prev_spin = self.spin;
         let params = self.stack.item.projectile();
+        self.spin = (self.spin + params.sprite_spin * dt).rem_euclid(std::f32::consts::TAU);
         self.vel.y -= params.gravity * dt;
         self.vel *= params.drag_factor(dt);
         if let Some(heading) = Heading::of(self.vel) {

@@ -53,6 +53,7 @@ impl EntityRecord {
     fn of(it: &DroppedItem, pal: &Palette) -> Self {
         let (motion, stuck) = match it.motion {
             Motion::Loose => (MotionKind::Loose, None),
+            Motion::Flight(f) if f.control_ticks.is_some() => (MotionKind::Loose, None),
             Motion::Flight(_) => (MotionKind::Flight, None),
             Motion::Stuck(s) => (
                 MotionKind::Stuck,
@@ -94,6 +95,8 @@ impl EntityRecord {
                 flight: Flight {
                     owner: None,
                     left_owner: true,
+                    contact: None,
+                    control_ticks: None,
                     heading: Heading {
                         yaw: s.yaw,
                         pitch: s.pitch,
@@ -208,6 +211,23 @@ mod tests {
     }
 
     #[test]
+    fn a_controller_owned_flight_restores_as_the_same_recoverable_stack() {
+        let mut shot = DroppedItem::launched(
+            WorldPos::new(0.0, 64.0, 0.0),
+            ItemStack::new(ItemType::Stone, 1),
+            Vec3::Z,
+            None,
+        );
+        shot.steer(Some(Vec3::Z * 20.0));
+        shot.ticks_lived = 31;
+        let restored = roundtrip(&[shot.clone()]).remove(0);
+        assert_eq!(restored.motion, Motion::Loose);
+        assert_eq!(restored.stack, shot.stack);
+        assert_eq!(restored.pos, shot.pos);
+        assert_eq!(restored.ticks_lived, shot.ticks_lived);
+    }
+
+    #[test]
     fn motion_survives_the_entity_roundtrip() {
         let heading = Heading {
             yaw: 0.7,
@@ -224,6 +244,8 @@ mod tests {
                 heading,
                 owner: None,
                 left_owner: true,
+                contact: None,
+                control_ticks: None,
             },
             anchor,
             verified: true,

@@ -195,7 +195,7 @@ fn block_icon_faces(block: Block) -> [Tile; 6] {
 
 pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -> [Tile; 6] {
     let mut faces = expand_tiles(block.tiles());
-    if block.is_log() {
+    if block.is_axial() {
         let axis = match state {
             HeldBlockState::Log(axis) => axis,
             _ => LogAxis::Y,
@@ -210,7 +210,7 @@ pub(super) fn block_icon_faces_with_state(block: Block, state: HeldBlockState) -
 
 fn block_icon_uv_turns(block: Block, state: HeldBlockState) -> [u8; 6] {
     let [top, bottom, side] = block.uv_turns();
-    if block.is_log() {
+    if block.is_axial() {
         let axis = match state {
             HeldBlockState::Log(axis) => axis,
             _ => LogAxis::Y,
@@ -517,7 +517,7 @@ pub(super) fn push_block_item_cube_lit_with_state(
         }
         return;
     }
-    if block.is_log() {
+    if block.is_axial() {
         let axis = match state {
             HeldBlockState::Log(axis) => axis,
             _ => LogAxis::Y,

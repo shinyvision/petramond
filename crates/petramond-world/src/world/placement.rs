@@ -22,7 +22,7 @@ pub fn build_position(looked_at: Block, hit: IVec3, normal: IVec3) -> IVec3 {
 }
 
 fn rotation_count(block: crate::block::Block) -> u8 {
-    if block.is_log() {
+    if block.is_axial() {
         2
     } else {
         block.shape_kind_def().placement.held_rotations()
@@ -119,7 +119,7 @@ impl HeldRotation {
         {
             return held;
         }
-        if block.is_log() {
+        if block.is_axial() {
             return HeldBlockState::Log(if self.active(selected) {
                 LogAxis::X
             } else {

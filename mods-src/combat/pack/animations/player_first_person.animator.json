@@ -1,0 +1,15 @@
+{
+  "libraries": [
+    "boomerang_fp.animation.json"
+  ],
+  "params": {
+    "combat.boomerang_claim": 0
+  },
+  "gates": [
+    {
+      "id": "combat_boomerang_equip",
+      "on": "main.equip",
+      "when": "!combat.boomerang_claim"
+    }
+  ]
+}

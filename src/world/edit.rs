@@ -164,7 +164,7 @@ impl<S: WorldSide> World<S> {
     }
 
     pub fn place_log(&mut self, pos: IVec3, block: Block, axis: LogAxis) -> bool {
-        if !block.is_log() || !self.materialize_section_at(pos) {
+        if !block.is_axial() || !self.materialize_section_at(pos) {
             return false;
         }
         let Some((section, lx, ly, lz)) = self.data.chunk_at_world_mut(pos.x, pos.y, pos.z) else {

@@ -109,6 +109,11 @@ impl DroppedItem {
                 self.step_loose(ctx.dt, ctx.world, ctx.magnet_for(self));
                 None
             }
+            Motion::Flight(f) if f.control_ticks == Some(0) => {
+                self.release();
+                self.step_loose(ctx.dt, ctx.world, ctx.magnet_for(self));
+                None
+            }
             Motion::Flight(_) => self.step_flight(ctx),
             Motion::Stuck(_) if self.pickup_requested.is_some() => {
                 self.release();
@@ -127,6 +132,15 @@ impl DroppedItem {
         let Motion::Flight(flight) = &mut self.motion else {
             return None;
         };
+        if let Some(left) = &mut flight.control_ticks {
+            *left = left.saturating_sub(1);
+        }
+        if flight
+            .contact
+            .is_some_and(|body| !ctx.segment_meets_body(body, self.pos, motion))
+        {
+            flight.contact = None;
+        }
         // The launcher is spared until one whole tick's segment is clear of
         // its body: a launch starts inside (or beside) the archer, and a
         // body walking into its own slow shot keeps meeting it. Only a shot
@@ -141,7 +155,7 @@ impl DroppedItem {
         } else {
             flight.owner
         };
-        let Some((target, point)) = sweep(ctx, self.pos, motion, spared) else {
+        let Some((target, point)) = sweep(ctx, self.pos, motion, [spared, flight.contact]) else {
             self.pos += motion;
             return None;
         };

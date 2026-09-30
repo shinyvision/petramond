@@ -24,6 +24,7 @@ const ENGINE_TAGS: &[&str] = &[
     "rock",
     "canopy",
     "nav_hazard",
+    "axial",
 ];
 
 static BLOCK_TAGS: crate::content::Slot<crate::registry::TagTable> =
@@ -66,6 +67,7 @@ impl BlockTag {
     pub const CANOPY: BlockTag = BlockTag(20);
 
     pub const NAV_HAZARD: BlockTag = BlockTag(21);
+    pub const AXIAL: BlockTag = BlockTag(22);
 
     pub fn resolve(name: &str) -> Result<BlockTag, String> {
         BLOCK_TAGS.current().resolve(name).map(BlockTag)

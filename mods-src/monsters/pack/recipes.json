@@ -1,0 +1,49 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "monsters:bone_block",
+      "station": "petramond:inventory",
+      "ingredients": [
+        {
+          "item": "monsters:bone",
+          "count": 4
+        }
+      ],
+      "result": {
+        "item": "monsters:bone_block",
+        "count": 1
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "monsters:bone_slab",
+      "station": "petramond:chiseling_station",
+      "ingredients": [
+        {
+          "item": "monsters:bone_block",
+          "count": 3
+        }
+      ],
+      "result": {
+        "item": "monsters:bone_slab",
+        "count": 6
+      }
+    },
+    {
+      "type": "crafting",
+      "recipe": "monsters:bone_stairs",
+      "station": "petramond:chiseling_station",
+      "ingredients": [
+        {
+          "item": "monsters:bone_block",
+          "count": 6
+        }
+      ],
+      "result": {
+        "item": "monsters:bone_stairs",
+        "count": 6
+      }
+    }
+  ]
+}

@@ -30,7 +30,7 @@ impl<S: WorldSide> World<S> {
         inputs: &PlaceInputs,
         occupied: &mut dyn FnMut(IVec3, &[Aabb]) -> bool,
     ) -> Option<PlacementPlan> {
-        let state = if block.is_log() {
+        let state = if block.is_axial() {
             let axis = inputs
                 .held_rotation
                 .log_axis_for_facing(inputs.held, inputs.player_facing);

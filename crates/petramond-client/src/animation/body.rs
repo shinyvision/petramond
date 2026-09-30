@@ -78,6 +78,13 @@ impl BodyAnimator {
         self.driver.claim(inputs);
     }
 
+    pub(super) fn present_hands(
+        &self,
+        held: [petramond_render::HeldItemView; 2],
+    ) -> [petramond_render::HeldItemView; 2] {
+        super::inputs::present_hands(&self.driver.animator, held)
+    }
+
     pub fn pose(&self) -> &LocalPose {
         self.driver.animator.pose()
     }

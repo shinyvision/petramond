@@ -7,6 +7,8 @@ pub struct Projectile {
     pub gravity: f32,
     pub drag: f32,
     pub sticks: bool,
+    pub sprite_spin: f32,
+    pub sprite_tilt: f32,
 }
 
 impl Default for Projectile {
@@ -15,6 +17,8 @@ impl Default for Projectile {
             gravity: DEFAULT_GRAVITY,
             drag: 0.0,
             sticks: false,
+            sprite_spin: 0.0,
+            sprite_tilt: 0.0,
         }
     }
 }

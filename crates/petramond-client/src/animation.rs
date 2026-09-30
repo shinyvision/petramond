@@ -188,7 +188,10 @@ impl PlayerAnimation {
             first_person.advance(&input.hands, &input.motion, local.inputs(), dt);
         }
         LocalFrame {
-            held: local.held,
+            held: self
+                .first_person
+                .as_ref()
+                .map_or(local.held, |fp| fp.present_hands(local.held)),
             first_person: self.first_person.as_ref().map_or(&[][..], |fp| fp.bones()),
         }
     }
@@ -289,7 +292,15 @@ fn pose_row(
     poses: &mut Vec<Mat4>,
 ) -> PlayerBodyRender {
     let start = poses.len();
-    let placement = pose::pose_body(rig, &body.state, body.bones.of(bone_offsets), drive, poses);
+    let mut drive = drive;
+    let placement = pose::pose_body(
+        rig,
+        &body.state,
+        body.bones.of(bone_offsets),
+        drive.as_mut(),
+        poses,
+    );
+    let held = drive.map_or(held, |d| d.animator.present_hands(held));
     PlayerBodyRender {
         body: PlayerRenderInstance {
             emitter_tint: body.emitter_tint,

@@ -116,16 +116,24 @@ impl Grip {
     }
 }
 
-/// Extruded sprite, unit XY slab. Art runs diagonally, handle lower-left, head upper-right.
-/// Roll 55° puts the tool along +Y, yaw turns the slab edge-on, X tilt points it forward out
-/// of the fist with a slight rise. Then shift the centre along that axis so the fist grips the
-/// handle end, not the middle or head.
-pub(super) fn held_sprite_at(grip: Grip) -> Mat4 {
-    grip.frame * sprite_hold(grip)
+/// Seat an extruded sprite at its authored grip, or use the shared diagonal tool hold.
+pub(super) fn held_sprite_at(
+    grip: Grip,
+    pose: Option<petramond_world::item::SpriteHeldPose>,
+) -> Mat4 {
+    grip.frame * sprite_hold(grip, pose)
 }
 
-fn sprite_hold(grip: Grip) -> Mat4 {
+fn sprite_hold(grip: Grip, pose: Option<petramond_world::item::SpriteHeldPose>) -> Mat4 {
     let size = SPRITE_WORLD_SIZE / grip.px;
+    if let Some(pose) = pose {
+        return Mat4::from_translation(grip.point)
+            * Mat4::from_rotation_y(pose.yaw)
+            * Mat4::from_rotation_x(pose.pitch)
+            * Mat4::from_rotation_z(pose.roll)
+            * Mat4::from_scale(Vec3::splat(size * pose.scale))
+            * Mat4::from_translation(-Vec3::from(pose.grip));
+    }
     let rot = Mat4::from_rotation_x(-65f32.to_radians())
         * Mat4::from_rotation_y(-std::f32::consts::FRAC_PI_2)
         * Mat4::from_rotation_z(55f32.to_radians())
@@ -183,8 +191,11 @@ fn model_frame(grip: Grip) -> Mat4 {
 /// lefthand preview shows. The block mini-cube keeps the winding-preserving
 /// conjugation (its pipeline culls, and a cube's three-quarter view survives
 /// conjugation).
-pub(super) fn held_sprite_off_at(grip: Grip) -> Mat4 {
-    grip.frame * reflect_local(sprite_hold(grip.mirrored()))
+pub(super) fn held_sprite_off_at(
+    grip: Grip,
+    pose: Option<petramond_world::item::SpriteHeldPose>,
+) -> Mat4 {
+    grip.frame * reflect_local(sprite_hold(grip.mirrored(), pose))
 }
 
 pub(super) fn held_block_off_at(grip: Grip) -> Mat4 {

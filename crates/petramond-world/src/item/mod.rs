@@ -23,7 +23,7 @@ pub use drops::{Drop, DropSpec};
 pub use food::FoodDef;
 pub use projectile::{Projectile, PROJECTILE_DATA_KEY};
 pub use reaction::DroppedReaction;
-pub use render::{HeldPose, ItemRenderKind, DEFAULT_SPRITE_AXIS_DEGREES};
+pub use render::{HeldPose, ItemRenderKind, SpriteHeldPose, DEFAULT_SPRITE_AXIS_DEGREES};
 pub use set::ItemSet;
 pub use stack::ItemStack;
 pub use tags::ItemTag;

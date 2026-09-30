@@ -60,7 +60,7 @@ fn block_color(block: Block) -> [u8; 3] {
 }
 
 fn priority(block: Block) -> u8 {
-    if block.is_log() {
+    if block.is_axial() {
         3
     } else if block.is_leaves() {
         2
