@@ -344,7 +344,7 @@ fn damage_feedback_components_parse_from_json_objects() {
                 {"component": "petramond:flash", "duration": 0.5},
                 {"component": "petramond:knockback", "scale": 1.5, "duration": 0.2},
                 {"component": "petramond:sound", "when": "death"},
-                {"component": "petramond:ragdoll"}
+                {"component": "petramond:ragdoll", "joints": "detached", "impulse_scale": 0.25}
             ],
             "brain": []
         }]}"#;
@@ -367,9 +367,37 @@ fn damage_feedback_components_parse_from_json_objects() {
             MobDamageFeedbackComponent::Sound {
                 category: MobDamageSound::Death,
             },
-            MobDamageFeedbackComponent::Ragdoll,
+            MobDamageFeedbackComponent::Ragdoll {
+                joints: crate::mob::RagdollJoints::Detached,
+                impulse_scale: 0.25
+            },
         ]
     );
+}
+
+#[test]
+fn ragdoll_configuration_defaults_and_rejects_unsafe_impulses() {
+    let parse = |json: &str| {
+        convert_damage_feedback(serde_json::from_str::<Vec<RawMobDamageFeedback>>(json).unwrap())
+    };
+    let default = parse(r#"[{"component":"petramond:ragdoll"}]"#).unwrap();
+    assert!(matches!(
+        default.components[0],
+        MobDamageFeedbackComponent::Ragdoll {
+            joints: super::super::RagdollJoints::Connected,
+            impulse_scale: 1.0,
+        }
+    ));
+    for impulse in [-1.0, 9.0, 1e100] {
+        assert!(parse(&format!(
+            r#"[{{"component":"petramond:ragdoll","impulse_scale":{impulse}}}]"#
+        ))
+        .is_err());
+    }
+    assert!(serde_json::from_str::<RawMobDamageFeedback>(
+        r#"{"component":"petramond:ragdoll","joints":"unknown"}"#
+    )
+    .is_err());
 }
 
 #[test]

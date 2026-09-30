@@ -58,6 +58,7 @@ pub(super) fn mob_snapshot(position: usize, m: &crate::mob::Instance) -> MobSnap
         half_length: size.half_length.unwrap_or(size.half_width),
         entombed: m.entombed(),
         conditions: crate::exposure::condition_data(m.exposure().conditions()),
+        target: m.target().map(crate::modding::convert::entity_ref),
     }
 }
 
@@ -141,6 +142,38 @@ pub(super) fn handle_entity_call(mod_id: &str, call: EntityCall) -> HostRet {
                     .map(|(mob, position)| mob_snapshot(position, mob)),
             )
         }),
+        EntityCall::MobWalkProbe {
+            mob_id,
+            offsets,
+            max_drop,
+        } => {
+            if offsets.len() > mod_api::MOB_WALK_PROBE_MAX_OFFSETS {
+                return HostRet::error(
+                    mod_api::ErrorCode::LimitExceeded,
+                    format!(
+                        "MobWalkProbe: at most {} offsets",
+                        mod_api::MOB_WALK_PROBE_MAX_OFFSETS
+                    ),
+                );
+            }
+            if !max_drop.is_finite()
+                || !(0.0..=3.0).contains(&max_drop)
+                || offsets
+                    .iter()
+                    .any(|v| !v.iter().all(|c| c.is_finite()) || v[0].hypot(v[1]) > 2.0)
+            {
+                return HostRet::invalid(
+                    "MobWalkProbe: offsets must be finite and <= 2 blocks; max_drop must be 0..=3"
+                        .into(),
+                );
+            }
+            sim_query(|ctx| {
+                HostRet::Bools(match live_mob(ctx, mob_id) {
+                    Some(mob) => crate::mob::walk_probe::probe(ctx.world, mob, &offsets, max_drop),
+                    None => vec![false; offsets.len()],
+                })
+            })
+        }
         EntityCall::MobCanReach { mob_id, cell } => sim_query(|ctx| {
             HostRet::Bool(live_mob(ctx, mob_id).is_some_and(|mob| {
                 crate::mob::mob_can_reach(
@@ -994,6 +1027,22 @@ mod tests {
             );
         };
 
+        for (offsets, max_drop) in [
+            (vec![[f32::NAN, 0.0]], 1.0),
+            (vec![[3.0, 0.0]], 1.0),
+            (vec![[0.5, 0.0]], f32::INFINITY),
+            (vec![[0.5, 0.0]], -1.0),
+            (
+                vec![[0.0, 0.0]; mod_api::MOB_WALK_PROBE_MAX_OFFSETS + 1],
+                1.0,
+            ),
+        ] {
+            rejected(calls::MobWalkProbe {
+                mob_id: 1,
+                offsets,
+                max_drop,
+            });
+        }
         rejected(calls::MobAnimSet {
             mob_id: 1,
             anim: "a".repeat(MAX_MOB_ANIM_NAME_BYTES + 1),

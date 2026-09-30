@@ -61,11 +61,13 @@ pub enum EventKind {
     CellsEditPre,
 }
 
-#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum ProjectileFate {
     Consume,
     Lodge,
     Drop,
+    /// Keep the same projectile in flight with a new velocity, in blocks per second.
+    Deflect { vel: [f32; 3] },
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
@@ -123,11 +125,31 @@ pub struct MobDamageFeedback {
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
 pub enum MobDamageFeedbackComponent {
     DecreaseHealth,
-    Flash { duration: f32 },
-    Knockback { scale: f32, duration: f32 },
-    Sound { category: MobDamageSound },
-    Ragdoll,
-    Immunity { ticks: u32 },
+    Flash {
+        duration: f32,
+    },
+    Knockback {
+        scale: f32,
+        duration: f32,
+    },
+    Sound {
+        category: MobDamageSound,
+    },
+    Ragdoll {
+        joints: RagdollJoints,
+        /// Scales the added launch and scatter (0–8); inherited velocity and gravity are unchanged.
+        impulse_scale: f32,
+    },
+    Immunity {
+        ticks: u32,
+    },
+}
+
+/// Physical links between ragdoll bodies; welded model details remain attached in either mode.
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RagdollJoints {
+    Connected,
+    Detached,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq)]
@@ -152,7 +174,10 @@ impl Default for MobDamageFeedback {
                 MobDamageFeedbackComponent::Sound {
                     category: MobDamageSound::Death,
                 },
-                MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Ragdoll {
+                    joints: RagdollJoints::Connected,
+                    impulse_scale: 1.0,
+                },
                 MobDamageFeedbackComponent::Immunity { ticks: 10 },
             ],
         }

@@ -63,7 +63,7 @@ fn clocked_feedback(species: &MobDamageFeedback) -> MobDamageFeedback {
         MobDamageFeedbackComponent::DecreaseHealth
         | MobDamageFeedbackComponent::Flash { .. }
         | MobDamageFeedbackComponent::Sound { .. }
-        | MobDamageFeedbackComponent::Ragdoll => true,
+        | MobDamageFeedbackComponent::Ragdoll { .. } => true,
     });
     feedback
 }

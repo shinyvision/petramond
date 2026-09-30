@@ -11,6 +11,7 @@ mod anim;
 pub mod bedrock;
 pub mod clips;
 mod parse;
+mod pose;
 mod self_ao;
 #[cfg(test)]
 mod tests;

@@ -90,11 +90,12 @@ impl Motion {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Fate {
     Consume,
     Lodge,
     Drop,
+    Deflect { vel: Vec3 },
 }
 
 impl Fate {
@@ -208,6 +209,15 @@ impl DroppedItem {
 
     pub fn release(&mut self) {
         self.motion = Motion::Loose;
+    }
+
+    pub fn deflect(&mut self, vel: Vec3) {
+        if let Motion::Flight(flight) = &mut self.motion {
+            self.vel = vel;
+            if let Some(heading) = Heading::of(vel) {
+                flight.heading = heading;
+            }
+        }
     }
 
     pub fn request_pickup(&mut self, by: crate::player::PlayerId) {

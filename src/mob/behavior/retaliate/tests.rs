@@ -234,3 +234,74 @@ fn params_are_validated_at_load() {
         "the shared escape radius is validated here too"
     );
 }
+
+#[test]
+fn same_species_filter_releases_retaliation_but_keeps_other_attackers() {
+    let world = flat_world();
+    let mut rng = MobRng::new(1);
+    let mut ai = RetaliateAi::from_params(&serde_json::json!({
+        "warmup_ticks": 0, "ignore_same_species": true
+    }))
+    .unwrap();
+    let pos = WorldPos::new(2.5, 64.0, 2.5);
+    let mobs = MobSnapshot::from_mobs([
+        AiMob {
+            id: 1,
+            kind: Mob::Sheep,
+            pos,
+            active: true,
+            tags: Default::default(),
+        },
+        AiMob {
+            id: 9,
+            kind: Mob::Sheep,
+            pos: WorldPos::new(7.5, 64.0, 2.5),
+            active: true,
+            tags: Default::default(),
+        },
+        AiMob {
+            id: 10,
+            kind: Mob::Owl,
+            pos: WorldPos::new(7.5, 64.0, 2.5),
+            active: true,
+            tags: Default::default(),
+        },
+    ]);
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        pos,
+        &[],
+        &mobs,
+        Some((EntityRef::Mob(10), 0)),
+    ));
+    assert_eq!(out.target, Some(EntityRef::Mob(10)));
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        pos,
+        &[],
+        &mobs,
+        Some((EntityRef::Mob(9), 0)),
+    ));
+    assert_eq!(
+        out,
+        BehaviorOutput::default(),
+        "friendly fire must leave ordinary brain nodes free"
+    );
+    assert!(ai.grudge.is_none());
+    let players = [PlayerAnchor {
+        id: PlayerId(7),
+        pos: WorldPos::new(7.5, 64.9, 2.5),
+        ..Default::default()
+    }];
+    let out = ai.tick(&mut ctx(
+        &world,
+        &mut rng,
+        pos,
+        &players,
+        &mobs,
+        Some((EntityRef::Player(PlayerId(7)), 0)),
+    ));
+    assert_eq!(out.target, Some(EntityRef::Player(PlayerId(7))));
+}

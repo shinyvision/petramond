@@ -184,5 +184,14 @@ host_domain! {
             radius: f32,
             kinds: Vec<MobId>,
         } => legal(SERVER, Sim, Read),
+        /// Checks short straight walking displacements from a mob's current feet position.
+        /// Collision, step-up, unloaded terrain and drops beyond `max_drop` refuse a leg.
+        /// At most 16 offsets, each an X/Z displacement of at most two blocks; `max_drop` is 0..=3.
+        /// Returns one boolean per offset, all false for an absent or airborne mob.
+        MobWalkProbe {
+            mob_id: u64,
+            offsets: Vec<[f32; 2]>,
+            max_drop: f32,
+        } => legal(SERVER, Sim, Read),
     }
 }

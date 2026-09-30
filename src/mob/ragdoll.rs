@@ -8,7 +8,8 @@
 //! corners hit the ground at different times, a bone that lands rotates — the body topples
 //! onto its side instead of sinking flat. A light joint constraint then slides each bone
 //! so its pivot meets the matching spot on its parent, keeping the skeleton connected
-//! while each bone still tumbles on its own. Each joint also has a swing limit: a limb
+//! while each bone still tumbles on its own. Detached ragdolls omit these joints.
+//! Each joint also has a swing limit: a limb
 //! sags under gravity relative to its parent only up to [`MAX_JOINT_SWING`], so legs
 //! droop like dead weight but never fold through the body. Bones flagged
 //! [`welded`](super::model_meta::SkBone::welded) (authored `_weld` name suffix, or a
@@ -25,11 +26,12 @@
 //! against the real world voxels (converted through the frozen transform), so the corpse
 //! can't pass through terrain and corners hanging over an edge keep falling.
 
-use glam::{Mat3, Quat};
+use glam::{Mat3, Mat4, Quat};
 
 use petramond_math::math::{voxel_at, IVec3, Vec3};
 
 use super::model_meta::Skeleton;
+use super::RagdollJoints;
 
 const GRAVITY: f32 = -22.0;
 const VEL_DAMP: f32 = 0.99;
@@ -43,10 +45,12 @@ const LIFETIME: f32 = 1.8;
 const POP_UP: f32 = 1.0;
 const LAUNCH_SPEED: f32 = 2.5;
 const LAUNCH_UP: f32 = 1.5;
+const LAUNCH_VARIATION: f32 = 0.3;
+const SCATTER_SPEED: f32 = 1.25;
+const BONE_SPIN: f32 = 4.0;
 /// How much the launch tumbles the corpse: the spin's edge velocity is this times the launch speed.
-/// Kept below 1 so the launch always beats the spin and every corner moves away from the attacker,
-/// never toward, while still giving a clear somersault. Scaling off the launch keeps that true
-/// however `LAUNCH_SPEED` is tuned.
+/// Kept below the slowest bone's forward launch so whole-body tumbling cannot pull it
+/// back toward the attacker.
 const SPIN_FRACTION: f32 = 0.25;
 const CORNER_SPIN: f32 = 1.5;
 const SEED_DT: f32 = 0.05;
@@ -59,7 +63,7 @@ const EPS: f32 = 1e-5;
 /// shape-match a rotation and to attach to its parent. `c`/`rot` are the recovered
 /// centroid + orientation; the `prev_*` fields snapshot the tick start for interpolation.
 ///
-/// A bone with `weld: Some(anchor)` runs no physics of its own — no integration, no
+/// A bone with a weld runs no physics of its own — no integration, no
 /// shape matching, no collision, no joint: its `c`/`rot` are derived rigidly from the
 /// anchor (its nearest non-welded ancestor) each iteration, and its `nodes` are unused
 /// after init.
@@ -70,11 +74,17 @@ struct RagBone {
     c0: Vec3,
     rest_pivot: Vec3,
     parent: Option<usize>,
-    weld: Option<usize>,
+    weld: Option<Weld>,
     c: Vec3,
     rot: Quat,
     prev_c: Vec3,
     prev_rot: Quat,
+}
+
+struct Weld {
+    anchor: usize,
+    offset: Vec3,
+    rotation: Quat,
 }
 
 pub struct Ragdoll {
@@ -82,16 +92,29 @@ pub struct Ragdoll {
     age: f32,
     seed: u64,
     launch: Vec3,
+    joints: RagdollJoints,
+    impulse_scale: f32,
+    // Deltas over the rendered rest pose; physics and rendering use the same bone indices.
+    initial_pose: Vec<Mat4>,
     init: bool,
 }
 
 impl Ragdoll {
-    pub fn pending(seed: u64, launch: Vec3) -> Self {
+    pub fn pending(
+        seed: u64,
+        launch: Vec3,
+        joints: RagdollJoints,
+        impulse_scale: f32,
+        initial_pose: Vec<Mat4>,
+    ) -> Self {
         Ragdoll {
             bones: Vec::new(),
             age: 0.0,
             seed,
             launch,
+            joints,
+            impulse_scale,
+            initial_pose,
             init: false,
         }
     }
@@ -106,26 +129,48 @@ impl Ragdoll {
         self.age >= LIFETIME
     }
 
+    pub fn pending_pose(&self, model: &petramond_world::bbmodel::Model) -> Vec<(Vec3, Quat)> {
+        model
+            .bones
+            .iter()
+            .zip(model.rest_pose())
+            .enumerate()
+            .map(|(i, (bone, rest))| {
+                let delta = self.initial_pose.get(i).copied().unwrap_or(Mat4::IDENTITY);
+                (
+                    delta.transform_point3(rest.transform_point3(bone.pivot)),
+                    delta.to_scale_rotation_translation().1.normalize(),
+                )
+            })
+            .collect()
+    }
+
     pub fn init(&mut self, skel: &Skeleton, scale: f32, mob_vel: Vec3, yaw: f32) {
+        let initial_pose = std::mem::take(&mut self.initial_pose);
+        let delta = |i: usize| initial_pose.get(i).copied().unwrap_or(Mat4::IDENTITY);
         let to_model = Quat::from_rotation_y(-yaw);
         let launch = to_model * self.launch;
         let inherited = (to_model * mob_vel / scale) * 0.4;
-        let launch_speed = LAUNCH_SPEED / scale;
+        let launch_speed = LAUNCH_SPEED / scale * self.impulse_scale;
         let launch_vel = launch * launch_speed;
-        let up = POP_UP + LAUNCH_UP / scale;
+        let up = (POP_UP + LAUNCH_UP / scale) * self.impulse_scale;
         let centre = if skel.bones.is_empty() {
             Vec3::ZERO
         } else {
             skel.bones
                 .iter()
-                .map(|b| (b.bbox_min + b.bbox_max) * 0.5)
+                .enumerate()
+                .map(|(i, b)| delta(i).transform_point3((b.bbox_min + b.bbox_max) * 0.5))
                 .sum::<Vec3>()
                 / skel.bones.len() as f32
         };
         let radius = skel
             .bones
             .iter()
-            .flat_map(|b| corners(b.bbox_min, b.bbox_max))
+            .enumerate()
+            .flat_map(|(i, b)| {
+                corners(b.bbox_min, b.bbox_max).map(|c| delta(i).transform_point3(c))
+            })
             .map(|c| (c - centre).length())
             .fold(0.0_f32, f32::max)
             .max(EPS);
@@ -163,21 +208,56 @@ impl Ragdoll {
                 };
                 let cs = corners(b.bbox_min, b.bbox_max);
                 let c0 = (b.bbox_min + b.bbox_max) * 0.5;
-                let base = inherited
-                    + launch_vel
-                    + Vec3::new((h(1) - 0.5) * 1.5, up + h(2) * 0.5, (h(3) - 0.5) * 1.5);
+                let c = delta(i).transform_point3(c0);
+                let rot = delta(i).to_scale_rotation_translation().1.normalize();
+                let (base, spin) = match self.joints {
+                    RagdollJoints::Connected => (
+                        inherited
+                            + launch_vel
+                            + Vec3::Y * up
+                            + Vec3::new((h(1) - 0.5) * 1.5, h(2) * 0.5, (h(3) - 0.5) * 1.5)
+                                * self.impulse_scale,
+                        Vec3::ZERO,
+                    ),
+                    RagdollJoints::Detached => {
+                        let spread = if launch.length_squared() > EPS {
+                            Vec3::Y.cross(launch) * (h(3) * 2.0 - 1.0)
+                        } else {
+                            to_model * Vec3::new(h(1) * 2.0 - 1.0, 0.0, h(3) * 2.0 - 1.0)
+                        };
+                        // Free bodies scatter in metres/second and spin in radians/second.
+                        // Seeding that spin on jointed limbs would fight their constraints.
+                        (
+                            inherited
+                                + launch_vel * (1.0 + LAUNCH_VARIATION * (h(1) * 2.0 - 1.0))
+                                + Vec3::Y
+                                    * (LAUNCH_UP / scale * self.impulse_scale)
+                                    * (0.75 + h(2) * 0.5)
+                                + spread * (SCATTER_SPEED * self.impulse_scale / scale),
+                            to_model
+                                * Vec3::new(h(4) - 0.5, h(5) - 0.5, h(6) - 0.5)
+                                * (BONE_SPIN * self.impulse_scale),
+                        )
+                    }
+                };
                 let mut nodes = [Vec3::ZERO; 8];
                 let mut nodes_old = [Vec3::ZERO; 8];
                 let mut rest = [Vec3::ZERO; 8];
                 for (k, corner) in cs.into_iter().enumerate() {
-                    let jitter = Vec3::new(
-                        h(10 + k as u64) - 0.5,
-                        h(20 + k as u64) - 0.5,
-                        h(30 + k as u64) - 0.5,
-                    ) * CORNER_SPIN;
-                    let v = base + omega.cross(corner - centre) + jitter;
-                    nodes[k] = corner;
-                    nodes_old[k] = corner - v * SEED_DT;
+                    let posed = delta(i).transform_point3(corner);
+                    let jitter = match self.joints {
+                        RagdollJoints::Connected => {
+                            Vec3::new(
+                                h(10 + k as u64) - 0.5,
+                                h(20 + k as u64) - 0.5,
+                                h(30 + k as u64) - 0.5,
+                            ) * (CORNER_SPIN * self.impulse_scale)
+                        }
+                        RagdollJoints::Detached => spin.cross(posed - c),
+                    };
+                    let v = base + omega.cross(posed - centre) + jitter;
+                    nodes[k] = posed;
+                    nodes_old[k] = posed - v * SEED_DT;
                     rest[k] = corner - c0;
                 }
                 RagBone {
@@ -186,12 +266,24 @@ impl Ragdoll {
                     rest,
                     c0,
                     rest_pivot: b.pivot,
-                    parent: b.parent,
-                    weld: anchor_of(i),
-                    c: c0,
-                    rot: Quat::IDENTITY,
-                    prev_c: c0,
-                    prev_rot: Quat::IDENTITY,
+                    parent: match self.joints {
+                        RagdollJoints::Connected => b.parent,
+                        RagdollJoints::Detached => None,
+                    },
+                    weld: anchor_of(i).map(|anchor| {
+                        let a = &skel.bones[anchor];
+                        let ac = delta(anchor).transform_point3((a.bbox_min + a.bbox_max) * 0.5);
+                        let ar = delta(anchor).to_scale_rotation_translation().1.normalize();
+                        Weld {
+                            anchor,
+                            offset: ar.inverse() * (c - ac),
+                            rotation: (ar.inverse() * rot).normalize(),
+                        }
+                    }),
+                    c,
+                    rot,
+                    prev_c: c,
+                    prev_rot: rot,
                 }
             })
             .collect();
@@ -309,13 +401,15 @@ impl Ragdoll {
                 b.c += shift;
             }
             for i in 0..self.bones.len() {
-                let Some(a) = self.bones[i].weld else {
+                let Some(weld) = &self.bones[i].weld else {
                     continue;
                 };
-                let (ac, ar, ac0) = (self.bones[a].c, self.bones[a].rot, self.bones[a].c0);
+                let anchor = &self.bones[weld.anchor];
+                let c = anchor.c + anchor.rot * weld.offset;
+                let rot = (anchor.rot * weld.rotation).normalize();
                 let b = &mut self.bones[i];
-                b.rot = ar;
-                b.c = ac + ar * (b.c0 - ac0);
+                b.rot = rot;
+                b.c = c;
             }
         }
         self.age += dt;
@@ -334,11 +428,14 @@ impl Ragdoll {
                 // A welded bone is posed by its anchor's INTERPOLATED transform — its own
                 // lerped centroid would cut the chord of the anchor's rotation arc and
                 // let it drift off the anchor mid-tick.
-                let (c, rot, c0) = match b.weld {
-                    Some(a) => (interp[a].0, interp[a].1, self.bones[a].c0),
-                    None => (interp[i].0, interp[i].1, b.c0),
+                let (c, rot) = match &b.weld {
+                    Some(weld) => {
+                        let (ac, ar) = interp[weld.anchor];
+                        (ac + ar * weld.offset, (ar * weld.rotation).normalize())
+                    }
+                    None => interp[i],
                 };
-                (c + rot * (b.rest_pivot - c0), rot)
+                (c + rot * (b.rest_pivot - b.c0), rot)
             })
             .collect()
     }

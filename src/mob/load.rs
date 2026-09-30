@@ -225,7 +225,12 @@ enum RawMobDamageFeedback {
     #[serde(rename = "petramond:sound")]
     Sound { when: RawMobDamageSound },
     #[serde(rename = "petramond:ragdoll")]
-    Ragdoll,
+    Ragdoll {
+        #[serde(default)]
+        joints: super::RagdollJoints,
+        #[serde(default = "default_ragdoll_impulse_scale")]
+        impulse_scale: f64,
+    },
     #[serde(rename = "petramond:immunity")]
     Immunity {
         #[serde(default = "default_immunity_ticks")]
@@ -503,6 +508,10 @@ fn default_gravity_scale() -> f32 {
     1.0
 }
 
+fn default_ragdoll_impulse_scale() -> f64 {
+    1.0
+}
+
 fn default_knockback_scale() -> f64 {
     1.0
 }
@@ -551,7 +560,14 @@ fn convert_damage_feedback(rows: Vec<RawMobDamageFeedback>) -> Result<MobDamageF
                     RawMobDamageSound::Death => MobDamageSound::Death,
                 },
             },
-            RawMobDamageFeedback::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+            RawMobDamageFeedback::Ragdoll { joints, impulse_scale } => {
+                if !impulse_scale.is_finite() || !(0.0..=8.0).contains(&impulse_scale) {
+                    return Err(format!(
+                        "damage_feedback petramond:ragdoll impulse_scale must be finite and between 0 and 8, got {impulse_scale}"
+                    ));
+                }
+                MobDamageFeedbackComponent::Ragdoll { joints, impulse_scale: impulse_scale as f32 }
+            }
             RawMobDamageFeedback::Immunity { ticks } => {
                 MobDamageFeedbackComponent::Immunity { ticks }
             }

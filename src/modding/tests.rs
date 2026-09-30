@@ -770,7 +770,9 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
             target: ProjectileTarget::Mob(7),
             pos: [0.0; 3],
             vel: [0.0; 3],
-            fate: ProjectileFate::Consume,
+            fate: ProjectileFate::Deflect {
+                vel: [-3.0, 0.5, 1.0],
+            },
         }),
     };
     let mut sim = Sim::new();
@@ -798,7 +800,13 @@ fn a_projectile_hit_handler_rewrites_the_fate_through_the_abi() {
         &mut ev,
     );
     assert_eq!(outcome, crate::events::Outcome::Cancel);
-    assert_eq!(ev.fate, Fate::Consume, "the echoed fate is the applied one");
+    assert_eq!(
+        ev.fate,
+        Fate::Deflect {
+            vel: Vec3::new(-3.0, 0.5, 1.0)
+        },
+        "the echoed fate carries the outgoing velocity through the ABI"
+    );
 }
 
 #[test]

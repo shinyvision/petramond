@@ -219,6 +219,7 @@
       "cap": 40,
       "despawn_radius": 128.0,
       "random_despawn": false,
+      "edge_guard": true,
       "spawn": {
         "biomes": [],
         "ground": []
@@ -252,6 +253,15 @@
           "sound": "monsters:skeleton_death"
         }
       ],
+      "damage_feedback": [
+        { "component": "petramond:decrease_health" },
+        { "component": "petramond:flash" },
+        { "component": "petramond:knockback" },
+        { "component": "petramond:sound", "when": "hurt" },
+        { "component": "petramond:sound", "when": "death" },
+        { "component": "petramond:ragdoll", "joints": "detached", "impulse_scale": 0.9 },
+        { "component": "petramond:immunity" }
+      ],
       "brain": [
         {
           "node": "wander",
@@ -278,7 +288,8 @@
           "node": "retaliate",
           "priority": 40,
           "params": {
-            "memory_ticks": 200
+            "memory_ticks": 200,
+            "ignore_same_species": true
           }
         }
       ],

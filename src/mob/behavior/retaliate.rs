@@ -54,6 +54,8 @@ struct RetaliateParams {
     warmup_ticks: u32,
     #[serde(default)]
     radius: Option<u32>,
+    #[serde(default)]
+    ignore_same_species: bool,
 }
 
 fn default_memory() -> u32 {
@@ -67,6 +69,7 @@ fn default_warmup() -> u32 {
 pub struct RetaliateAi {
     memory_ticks: u32,
     warmup_ticks: u32,
+    ignore_same_species: bool,
     grudge: Option<EntityRef>,
     grudge_ticks: u32,
     escape: EscapeRoute,
@@ -83,6 +86,7 @@ impl RetaliateAi {
         RetaliateAi {
             memory_ticks: memory_ticks.max(1),
             warmup_ticks,
+            ignore_same_species: false,
             grudge: None,
             grudge_ticks: 0,
             escape,
@@ -99,7 +103,9 @@ impl RetaliateAi {
             return Err("warmup_ticks must be < memory_ticks".into());
         }
         let escape = EscapeRoute::from_params(EscapeParams::with_radius(p.radius))?;
-        Ok(RetaliateAi::new(p.memory_ticks, p.warmup_ticks, escape))
+        let mut ai = RetaliateAi::new(p.memory_ticks, p.warmup_ticks, escape);
+        ai.ignore_same_species = p.ignore_same_species;
+        Ok(ai)
     }
 }
 
@@ -107,7 +113,17 @@ impl AiBehavior for RetaliateAi {
     fn tick(&mut self, ctx: &mut AiCtx) -> BehaviorOutput {
         let fresh = ctx
             .attacker
-            .filter(|&(_, ticks_ago)| ticks_ago <= self.memory_ticks);
+            .filter(|&(_, ticks_ago)| ticks_ago <= self.memory_ticks)
+            .filter(|&(who, _)| {
+                !self.ignore_same_species
+                    || match who {
+                        EntityRef::Player(_) => true,
+                        EntityRef::Mob(id) => ctx
+                            .live_mob(ctx.mob_id)
+                            .zip(ctx.live_mob(id))
+                            .is_none_or(|(me, attacker)| me.kind != attacker.kind),
+                    }
+            });
         let Some((who, _)) = fresh else {
             self.grudge = None;
             self.grudge_ticks = 0;

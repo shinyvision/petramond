@@ -57,6 +57,8 @@ pub struct MobSnapshot {
     pub half_length: f32,
     pub entombed: bool,
     pub conditions: Vec<ConditionData>,
+    /// The brain's current combat lock; absent while inspecting or escaping.
+    pub target: Option<EntityRef>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

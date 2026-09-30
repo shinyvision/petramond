@@ -529,6 +529,7 @@ fn abi_roundtrip_host_and_guest_calls() {
     })));
     roundtrip(HostRet::Light(None));
     roundtrip(HostRet::Mobs(vec![MobSnapshot {
+        target: None,
         conditions: Vec::new(),
         index: 0,
         kind: MobId(0),

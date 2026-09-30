@@ -23,6 +23,7 @@ impl State {
     fn snapshot(&self, id: u64) -> Option<MobSnapshot> {
         let mob = self.mobs.get(&id)?;
         Some(MobSnapshot {
+            target: None,
             index: 0,
             kind: mob.kind,
             pos: mob.pos,

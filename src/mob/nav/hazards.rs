@@ -79,7 +79,7 @@ fn any_cell(min: [f64; 3], max: [f64; 3], mut test: impl FnMut(IVec3) -> bool) -
     false
 }
 
-fn body_in_hazard(
+pub(in crate::mob) fn body_in_hazard(
     cur: &SectionCursor<'_>,
     min: [f64; 3],
     max: [f64; 3],

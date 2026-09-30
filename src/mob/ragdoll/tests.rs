@@ -2,6 +2,10 @@ use super::*;
 use crate::mob::model_meta::{self, SkBone};
 use petramond_world::bbmodel::Model;
 
+fn pending(seed: u64, launch: Vec3) -> Ragdoll {
+    Ragdoll::pending(seed, launch, RagdollJoints::Connected, 1.0, Vec::new())
+}
+
 fn boxed(pivot: Vec3, min: Vec3, max: Vec3, parent: Option<usize>) -> SkBone {
     SkBone {
         pivot,
@@ -55,7 +59,7 @@ fn sheep_skeleton() -> Skeleton {
 fn ragdoll_stays_connected_settles_above_ground_and_finishes() {
     let skel = two_bone_skeleton();
     let joint_rest = (skel.bones[1].pivot - skel.bones[0].pivot).length();
-    let mut rag = Ragdoll::pending(42, Vec3::X);
+    let mut rag = pending(42, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     assert!(rag.is_initialized());
 
@@ -81,7 +85,7 @@ fn the_body_tumbles_and_falls_over() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(7, Vec3::X);
+    let mut rag = pending(7, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     let mut max_angle = 0.0f32;
     for _ in 0..36 {
@@ -105,7 +109,7 @@ fn the_killing_blow_flings_the_corpse_in_the_punched_direction() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(3, Vec3::X);
+    let mut rag = pending(3, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     let x0 = rag.pose(1.0)[0].0.x;
     for _ in 0..8 {
@@ -136,7 +140,7 @@ fn the_launch_never_drags_a_bone_toward_the_attacker() {
             ),
         ],
     };
-    let mut rag = Ragdoll::pending(5, Vec3::X);
+    let mut rag = pending(5, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     let x0: Vec<f32> = rag.pose(1.0).iter().map(|p| p.0.x).collect();
     for _ in 0..6 {
@@ -165,7 +169,7 @@ fn the_launch_is_world_space_regardless_of_facing() {
         )],
     };
     let yaw = 1.3;
-    let mut rag = Ragdoll::pending(3, Vec3::X);
+    let mut rag = pending(3, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, yaw);
     let p0 = rag.pose(1.0)[0].0;
     for _ in 0..8 {
@@ -190,7 +194,7 @@ fn a_corpse_rests_on_a_block_and_does_not_sink_through() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(2, Vec3::ZERO);
+    let mut rag = pending(2, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..80 {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
@@ -212,7 +216,7 @@ fn a_long_fall_lands_on_thick_ground_instead_of_sinking_in() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(4, Vec3::ZERO);
+    let mut rag = pending(4, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..(LIFETIME / 0.05) as usize {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
@@ -235,7 +239,7 @@ fn a_fast_falling_corpse_does_not_skip_through_a_thin_floor() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(4, Vec3::ZERO);
+    let mut rag = pending(4, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..(LIFETIME / 0.05) as usize {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &thin);
@@ -257,7 +261,7 @@ fn a_corner_embedded_at_death_heals_out_instead_of_falling_through() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(6, Vec3::ZERO);
+    let mut rag = pending(6, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..(LIFETIME / 0.05) as usize {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &floor);
@@ -280,7 +284,7 @@ fn a_corpse_falls_off_the_edge_of_a_block() {
             None,
         )],
     };
-    let mut rag = Ragdoll::pending(9, Vec3::ZERO);
+    let mut rag = pending(9, Vec3::ZERO);
     rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
     for _ in 0..80 {
         rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &solid);
@@ -295,7 +299,7 @@ fn a_corpse_falls_off_the_edge_of_a_block() {
 #[test]
 fn sheep_scale_ragdoll_goes_limp_and_does_not_spin() {
     let skel = sheep_skeleton();
-    let mut rag = Ragdoll::pending(11, Vec3::X);
+    let mut rag = pending(11, Vec3::X);
     rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
 
     let mut prev = rag.pose(1.0);
@@ -341,7 +345,7 @@ fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
         .expect("physical root");
     let rest_y = skel.bones[body].pivot.y;
     for seed in [1u64, 9] {
-        let mut rag = Ragdoll::pending(seed, Vec3::X);
+        let mut rag = pending(seed, Vec3::X);
         rag.init(&skel, 0.04, Vec3::ZERO, 0.0);
         let mut prev = rag.pose(1.0);
         let mut total = 0.0f32;
@@ -397,7 +401,7 @@ fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
             ),
         ],
     };
-    let mut rag = Ragdoll::pending(11, Vec3::X);
+    let mut rag = pending(11, Vec3::X);
     rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
     let mut tumbled = 0.0f32;
     for _ in 0..(LIFETIME / 0.05) as usize {
@@ -407,8 +411,8 @@ fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
             let (anchor_pos, anchor_rot) = pose[0];
             tumbled = tumbled.max(anchor_rot.angle_between(Quat::IDENTITY));
             for (i, &(pos, rot)) in pose.iter().enumerate().take(3).skip(1) {
-                assert_eq!(
-                    rot, anchor_rot,
+                assert!(
+                    rot.abs_diff_eq(anchor_rot, 1e-6),
                     "welded bone {i} keeps its anchor's orientation"
                 );
                 let expected =
@@ -429,7 +433,7 @@ fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
 #[test]
 fn limbs_never_swing_past_the_joint_limit() {
     let skel = sheep_skeleton();
-    let mut rag = Ragdoll::pending(11, Vec3::X);
+    let mut rag = pending(11, Vec3::X);
     rag.init(&skel, 0.0625, Vec3::ZERO, 0.0);
     let mut max_swing = 0.0f32;
     for _ in 0..(LIFETIME / 0.05) as usize {
@@ -471,7 +475,167 @@ fn rotation_extraction_is_exact_regardless_of_box_size() {
 
 #[test]
 fn uninitialised_ragdoll_has_no_pose() {
-    let rag = Ragdoll::pending(1, Vec3::ZERO);
+    let rag = pending(1, Vec3::ZERO);
     assert!(!rag.is_initialized());
     assert!(rag.pose(0.5).is_empty(), "no bones before init");
+}
+
+#[test]
+fn detached_bodies_land_on_separate_surfaces_and_expire() {
+    let skel = Skeleton {
+        bones: vec![
+            boxed(
+                Vec3::new(0.0, 4.0, 0.0),
+                Vec3::new(-0.4, 3.6, -0.4),
+                Vec3::new(0.4, 4.4, 0.4),
+                None,
+            ),
+            boxed(
+                Vec3::new(3.0, 4.0, 0.0),
+                Vec3::new(2.6, 3.6, -0.4),
+                Vec3::new(3.4, 4.4, 0.4),
+                Some(0),
+            ),
+        ],
+    };
+    let terrain = |c: IVec3| c.y < if c.x < 1 { 0 } else { -4 };
+    let mut rag = Ragdoll::pending(8, Vec3::X, RagdollJoints::Detached, 0.0, Vec::new());
+    rag.init(&skel, 1.0, Vec3::ZERO, 0.0);
+    for _ in 0..40 {
+        rag.step(0.05, 1.0, Vec3::ZERO, 0.0, &terrain);
+    }
+    let pose = rag.pose(1.0);
+    assert!(pose[0].0.y > 0.0 && pose[0].0.y < 1.0);
+    assert!(
+        pose[1].0.y > -4.0 && pose[1].0.y < -3.0,
+        "the detached child falls off the parent's ledge: {:?}",
+        pose[1]
+    );
+    assert!(
+        (pose[1].0.x - 3.0).abs() < 0.01,
+        "zero impulse adds no scatter or launch"
+    );
+    assert!(rag.is_done(), "detachment retains corpse cleanup");
+}
+
+#[test]
+fn detached_pose_and_animated_welds_survive_initialization_and_interpolation() {
+    let mut skel = two_bone_skeleton();
+    skel.bones[1].welded = true;
+    let start = vec![
+        Mat4::from_rotation_translation(Quat::from_rotation_z(0.4), Vec3::new(2.0, 8.0, 0.0)),
+        Mat4::from_rotation_translation(Quat::from_rotation_x(-0.6), Vec3::new(1.0, 9.0, 0.0)),
+    ];
+    let mut rag = Ragdoll::pending(12, Vec3::X, RagdollJoints::Detached, 0.15, start.clone());
+    rag.init(&skel, 0.25, Vec3::ZERO, 0.0);
+    let initial = rag.pose(1.0);
+    for (i, &(p, q)) in initial.iter().enumerate() {
+        assert!((p - start[i].transform_point3(skel.bones[i].pivot)).length() < 1e-4);
+        assert!(q.angle_between(start[i].to_scale_rotation_translation().1) < 1e-3);
+    }
+    let offset = initial[0].1.inverse() * (initial[1].0 - initial[0].0);
+    let rotation = initial[0].1.inverse() * initial[1].1;
+    for _ in 0..30 {
+        rag.step(0.05, 0.25, Vec3::ZERO, 0.0, &floor);
+        for alpha in [0.0, 0.25, 0.75, 1.0] {
+            let pose = rag.pose(alpha);
+            assert!((pose[1].0 - (pose[0].0 + pose[0].1 * offset)).length() < 1e-3);
+            for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+                assert!((pose[1].1 * axis - pose[0].1 * rotation * axis).length() < 1e-4);
+            }
+        }
+    }
+}
+
+#[test]
+fn zero_impulse_keeps_inherited_motion_without_an_upward_kick() {
+    let skel = two_bone_skeleton();
+    let mut rag = Ragdoll::pending(9, Vec3::Z, RagdollJoints::Detached, 0.0, Vec::new());
+    let yaw = std::f32::consts::FRAC_PI_2;
+    rag.init(&skel, 1.0, Vec3::X * 3.0, yaw);
+    let before = rag.pose(1.0);
+    rag.step(0.05, 1.0, Vec3::ZERO, yaw, &|_| false);
+    for (i, (pos, _)) in rag.pose(1.0).into_iter().enumerate() {
+        let movement = Quat::from_rotation_y(yaw) * (pos - before[i].0);
+        assert!(
+            movement.x > 0.0,
+            "existing motion survives a zero impulse scale"
+        );
+        assert!(
+            movement.y < 0.0,
+            "gravity immediately drops a stationary vertical body"
+        );
+        assert!(movement.z.abs() < 1e-4, "the attack's launch was disabled");
+    }
+}
+
+fn scattered_bodies(seed: u64, scale: f32, yaw: f32) -> Vec<(Vec3, Quat)> {
+    let centre = Vec3::Y * 8.0;
+    let skel = Skeleton {
+        bones: vec![
+            boxed(
+                centre / scale,
+                (centre - Vec3::splat(0.2)) / scale,
+                (centre + Vec3::splat(0.2)) / scale,
+                None,
+            );
+            12
+        ],
+    };
+    let mut rag = Ragdoll::pending(seed, Vec3::X, RagdollJoints::Detached, 1.0, Vec::new());
+    rag.init(&skel, scale, Vec3::ZERO, yaw);
+    for _ in 0..6 {
+        rag.step(0.05, scale, Vec3::ZERO, yaw, &|_| false);
+    }
+    let facing = Quat::from_rotation_y(yaw);
+    rag.pose(1.0)
+        .into_iter()
+        .map(|(p, q)| (facing * (p * scale) - centre, facing * q * facing.inverse()))
+        .collect()
+}
+
+#[test]
+fn scatter_varies_per_bone_and_per_death_while_following_knockback() {
+    let pose = scattered_bodies(7, 0.0625, 0.9);
+    assert_eq!(
+        pose,
+        scattered_bodies(7, 0.0625, 0.9),
+        "the same seeded death is deterministic"
+    );
+    assert_ne!(
+        pose,
+        scattered_bodies(8, 0.0625, 0.9),
+        "different deaths scatter differently"
+    );
+    let mut min = Vec3::splat(f32::INFINITY);
+    let mut max = Vec3::splat(f32::NEG_INFINITY);
+    for &(p, _) in &pose {
+        assert!(
+            p.x > p.z.abs(),
+            "the spread follows world-space knockback: {p:?}"
+        );
+        min = min.min(p);
+        max = max.max(p);
+    }
+    assert!(max.x - min.x > 0.05, "bones have different forward speeds");
+    assert!(min.z < -0.05 && max.z > 0.05, "bones fan to both sides");
+    assert!(
+        pose.iter()
+            .skip(1)
+            .any(|(_, q)| (*q * Vec3::Y - pose[0].1 * Vec3::Y).length() > 0.05),
+        "bones tumble independently"
+    );
+}
+
+#[test]
+fn scatter_is_independent_of_model_units_and_mob_facing() {
+    let reference = scattered_bodies(11, 0.25, 0.0);
+    for (scale, yaw) in [(0.0625, 0.0), (1.0, 0.0), (0.25, 1.3), (0.0625, -0.8)] {
+        for ((p, _), (expected, _)) in scattered_bodies(11, scale, yaw).iter().zip(&reference) {
+            assert!(
+                (*p - *expected).length() < 1e-3,
+                "world-space scatter changed with scale {scale}, yaw {yaw}: {p:?} vs {expected:?}"
+            );
+        }
+    }
 }

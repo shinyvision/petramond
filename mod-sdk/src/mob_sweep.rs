@@ -37,6 +37,7 @@ mod tests {
 
     fn mob(id: u64) -> MobSnapshot {
         MobSnapshot {
+            target: None,
             index: id as u32,
             kind: MobId(0),
             pos: [0.0; 3],

@@ -46,7 +46,7 @@
 //! - The client frame hook runs the local player a round trip earlier. We need both, or the
 //!   shield shows up before the arm holding it and first-person swings hold a still tool.
 //! - Blocking re-runs the rules against the victim's live snapshot and cancels a frontal
-//!   `MobAttack` hit or drops a frontal arrow. Falls, PvP melee and other mods' damage pass.
+//!   `MobAttack` hit or deflects a frontal arrow. Falls, PvP melee and other mods' damage pass.
 //!
 //! ## The recoil clock is server state, and the client is told
 //!
@@ -84,6 +84,7 @@ const ATTACK_HANDLER: u32 = 5;
 const PROJECTILE_HANDLER: u32 = 6;
 
 const IMPACT_EVENT: &str = "combat:shield_impact";
+const DEFLECT_SPEED_SCALE: f32 = 0.1;
 
 #[derive(Default)]
 struct Combat {
@@ -146,7 +147,7 @@ impl Combat {
     /// Hits a body: damage scales with arrival speed off the arrow row's rungs, archer named as
     /// attacker so knockback/retaliation/`mob_damage_pre` see a real hit, arrow fate becomes
     /// `Consume`.
-    /// Hits a player with guard raised toward the flight: stopped, drops at their feet instead.
+    /// Hits a player with guard raised toward the flight: bounces back at reduced speed.
     /// Hits a block: keeps engine fate, sticks if the row says so.
     /// Always returns `Continue`, since another rule (poison on the arrow, say) might still act on
     /// this hit.
@@ -189,7 +190,9 @@ impl Combat {
                     .find(|entry| entry.id == *victim)
                     .is_some_and(|entry| self.block(*victim, &entry.state, Some(came_from)));
                 if blocked {
-                    *fate = ProjectileFate::Drop;
+                    *fate = ProjectileFate::Deflect {
+                        vel: vel.map(|v| -v * DEFLECT_SPEED_SCALE),
+                    };
                 } else {
                     damage_player(*victim, roll().round() as i32, Some(*pos), item.owner);
                     *fate = ProjectileFate::Consume;

@@ -164,6 +164,11 @@ impl Instance {
         self.mind.contacts.extend(contacts);
     }
 
+    /// The target chosen by the brain at its latest decision.
+    pub fn target(&self) -> Option<EntityRef> {
+        self.mind.current_target
+    }
+
     #[inline]
     pub fn contacts(&self) -> &[EntityRef] {
         &self.mind.contacts

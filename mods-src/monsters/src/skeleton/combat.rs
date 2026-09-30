@@ -1,11 +1,11 @@
 //! The fight, once a tick for every skeleton near a player: who it sees, then what its hands do
 //! about it. [`melee`] winds a swing up and lands it at its impact tick; [`archery`] draws, holds
-//! and looses an aimed arrow; the shield's own clock is the guard's. A skeleton stands still,
-//! facing its foe, while it swings or draws; an archer stands its ground while its foe is within
-//! the bow's reach, and a watch guard whenever it has a foe.
+//! and looses an aimed arrow; the shield's own clock is the guard's. Combat follows the brain's
+//! lock, and archers retreat from nearby foes without dropping their aim.
 
 mod archery;
 mod melee;
+mod movement;
 
 use mod_sdk::*;
 
@@ -20,13 +20,6 @@ pub use melee::on_player_damage;
 
 /// Skeletons this close to a player are run.
 const ENGAGE_RADIUS: f32 = 40.0;
-const SIGHT_RADIUS: f64 = 24.0;
-/// A sneaking player is seen this much closer, like the chase node's own penalty.
-const SNEAK_PENALTY: f64 = 5.0;
-const GIVE_UP: f64 = 32.0;
-const LOOK: Cadence = Cadence::every(4);
-/// A foe not seen for this long is dropped.
-const FORGET_TICKS: u64 = 60;
 /// An attack only starts on a foe seen this recently.
 const FRESH_TICKS: u64 = 8;
 /// Radians a standing skeleton turns per tick toward its foe.
@@ -37,7 +30,8 @@ const EYE: f32 = 0.9;
 
 #[derive(Default)]
 pub struct Fight {
-    target: Option<PlayerId>,
+    target: Option<EntityRef>,
+    retreat: movement::Retreat,
     seen_at: u64,
     pub(super) act: Act,
     /// The first tick a new swing or draw may start.
@@ -119,10 +113,6 @@ pub fn held_display<'k>(kit: &'k Kit, fight: &Fight, now: u64) -> [Option<&'k st
     held
 }
 
-fn eye_of(p: &PlayerSnapshot) -> [f64; 3] {
-    [p.pos[0], p.pos[1] + f64::from(p.eye_height), p.pos[2]]
-}
-
 fn upright(m: &MobSnapshot) -> Upright {
     Upright {
         feet: m.pos,
@@ -131,11 +121,41 @@ fn upright(m: &MobSnapshot) -> Upright {
     }
 }
 
-fn player_upright(p: &PlayerSnapshot) -> Upright {
-    Upright {
-        feet: p.pos,
-        half_width: p.half_width,
-        height: p.height,
+#[derive(Clone, Copy)]
+struct Foe {
+    id: EntityRef,
+    body: Upright,
+    eye: [f64; 3],
+    vel: [f32; 3],
+}
+
+impl Foe {
+    fn resolve(id: EntityRef, roster: &[PlayerListEntry]) -> Option<Self> {
+        match id {
+            EntityRef::Player(id) => {
+                let p = &roster.iter().find(|p| p.id == id)?.state;
+                Some(Self {
+                    id: EntityRef::Player(id),
+                    body: Upright {
+                        feet: p.pos,
+                        half_width: p.half_width,
+                        height: p.height,
+                    },
+                    eye: [p.pos[0], p.pos[1] + f64::from(p.eye_height), p.pos[2]],
+                    vel: p.vel,
+                })
+            }
+            EntityRef::Mob(id) => {
+                let m = mob_info(id).filter(|m| m.health > 0.0)?;
+                let body = upright(&m);
+                Some(Self {
+                    id: EntityRef::Mob(id),
+                    body,
+                    eye: body.at(EYE),
+                    vel: m.vel,
+                })
+            }
+        }
     }
 }
 
@@ -188,18 +208,20 @@ pub fn tick(sk: &mut Skeletons) {
             me,
             kit,
             hold: false,
+            velocity: None,
+            retreating: false,
+            foe: None,
             plays: Vec::new(),
         };
         turn.run(body, &roster, shoves);
         if turn.hold {
-            let foe = body
-                .fight
-                .target
-                .and_then(|t| roster.iter().find(|p| p.id == t));
-            let yaw = foe
-                .and_then(|f| yaw_toward(me.pos, f.state.pos))
+            let yaw = turn
+                .foe
+                .and_then(|f| yaw_toward(me.pos, f.body.feet))
                 .map(|want| turn_toward(me.yaw, want, FACE_STEP));
-            drives.push(MobDriveData::horizontal(me.id, [0.0, 0.0], yaw));
+            let mut drive = MobDriveData::horizontal(me.id, turn.velocity.unwrap_or([0.0; 2]), yaw);
+            drive.gait = turn.velocity.is_some();
+            drives.push(drive);
         }
         let plays = std::mem::take(&mut turn.plays);
         if let Some([main, off]) = body.presence.display(held_display(kit, &body.fight, now)) {
@@ -234,6 +256,9 @@ struct Turn<'a> {
     me: &'a MobSnapshot,
     kit: &'a Kit,
     hold: bool,
+    velocity: Option<[f32; 2]>,
+    retreating: bool,
+    foe: Option<Foe>,
     plays: Vec<Play<'a>>,
 }
 
@@ -245,18 +270,33 @@ impl Turn<'_> {
         shoves: &mut Vec<(PlayerId, [f32; 3])>,
     ) {
         let foe = self.look(&mut body.fight, roster);
-        self.guard(&mut body.fight, foe);
+        self.foe = foe;
+        if let Some(foe) = foe.filter(|_| self.kit.bow.is_some()) {
+            self.velocity = self.retreat(&mut body.fight.retreat, &foe);
+            self.retreating = self.velocity.is_some();
+            // Hold the chase shut when no safe retreat exists.
+            if distance(self.me.pos, foe.body.feet) <= movement::KEEP_DISTANCE {
+                self.hold = true;
+            }
+            if !self.retreating
+                && self.in_melee_reach(&foe)
+                && matches!(body.fight.act, Act::Draw { .. } | Act::Loose { .. })
+            {
+                self.cancel_act(&mut body.fight);
+            }
+        }
+        self.guard(&mut body.fight, foe.as_ref());
         match body.fight.act {
             Act::Idle => {
                 if let Some(foe) = foe {
-                    self.start(&mut body.fight, foe);
+                    self.start(&mut body.fight, &foe);
                 }
             }
-            Act::Swing { .. } => self.swinging(&mut body.fight, foe, shoves),
-            Act::Draw { .. } => self.drawing(&mut body.fight, foe),
+            Act::Swing { .. } => self.swinging(&mut body.fight, foe.as_ref(), shoves),
+            Act::Draw { .. } => self.drawing(&mut body.fight, foe.as_ref()),
             Act::Loose { .. } => self.resting(&mut body.fight),
         }
-        let archer_in_band = foe.is_some_and(|f| self.within_band(f))
+        let archer_in_band = foe.is_some_and(|f| self.within_band(&f))
             && matches!(body.fight.act, Act::Idle | Act::Loose { .. });
         if archer_in_band || (body.watch && foe.is_some()) {
             self.hold = true;
@@ -267,59 +307,43 @@ impl Turn<'_> {
         upright(self.me).at(EYE)
     }
 
-    /// The foe: the one already fought while it stays near and is seen now and then, else the
-    /// nearest player in sight.
-    fn look<'r>(
-        &self,
-        fight: &mut Fight,
-        roster: &'r [PlayerListEntry],
-    ) -> Option<&'r PlayerListEntry> {
-        let eye = self.eye();
-        let due = LOOK.due(self.now, self.me.id);
-        if let Some(target) = fight.target {
-            let kept = roster
-                .iter()
-                .find(|p| p.id == target)
-                .filter(|p| distance(eye, p.state.pos) <= GIVE_UP);
-            if let Some(p) = kept {
-                if due && clear_line(eye, eye_of(&p.state)) {
-                    fight.seen_at = self.now;
-                }
-                if self.now.saturating_sub(fight.seen_at) <= FORGET_TICKS {
-                    return Some(p);
+    fn cancel_act(&self, fight: &mut Fight) {
+        match fight.act {
+            Act::Swing { .. } => {
+                if let Some(swing) = &self.kit.swing {
+                    self.stop(&swing.melee.clip);
                 }
             }
-            fight.target = None;
+            Act::Draw { .. } | Act::Loose { .. } => {
+                if let Some(bow) = &self.kit.bow {
+                    self.stop(&bow.ranged.clip_draw);
+                    self.stop(&bow.ranged.clip_loose);
+                }
+            }
+            Act::Idle => {}
         }
-        if !due {
-            return None;
-        }
-        let mut near: Vec<(&PlayerListEntry, f64)> = roster
-            .iter()
-            .map(|p| (p, distance(eye, p.state.pos)))
-            .filter(|(p, d)| {
-                let radius = if p.state.sneak {
-                    SIGHT_RADIUS - SNEAK_PENALTY
-                } else {
-                    SIGHT_RADIUS
-                };
-                *d <= radius
-            })
-            .collect();
-        near.sort_by(|a, b| a.1.total_cmp(&b.1));
-        let (seen, _) = near
-            .into_iter()
-            .find(|(p, _)| clear_line(eye, eye_of(&p.state)))?;
-        fight.target = Some(seen.id);
-        fight.seen_at = self.now;
-        Some(seen)
+        fight.act = Act::Idle;
     }
 
-    fn guard(&self, fight: &mut Fight, foe: Option<&PlayerListEntry>) {
+    fn look(&self, fight: &mut Fight, roster: &[PlayerListEntry]) -> Option<Foe> {
+        if fight.target != self.me.target {
+            self.cancel_act(fight);
+            fight.target = self.me.target;
+            fight.seen_at = self.now.saturating_sub(FRESH_TICKS + 1);
+            fight.retreat = movement::Retreat::default();
+        }
+        let foe = Foe::resolve(self.me.target?, roster)?;
+        if clear_line(self.eye(), foe.eye) {
+            fight.seen_at = self.now;
+        }
+        Some(foe)
+    }
+
+    fn guard(&self, fight: &mut Fight, foe: Option<&Foe>) {
         let Some(shield) = &self.kit.shield else {
             return;
         };
-        let engaged = foe.is_some_and(|f| distance(self.me.pos, f.state.pos) <= GUARD_RANGE);
+        let engaged = foe.is_some_and(|f| distance(self.me.pos, f.body.feet) <= GUARD_RANGE);
         let swinging = matches!(fight.act, Act::Swing { .. });
         let id = self.me.id;
         let roll = || splitmix64_mix(rng_u64("skeleton_guard") ^ id);
@@ -336,11 +360,11 @@ impl Turn<'_> {
         }
     }
 
-    fn start(&mut self, fight: &mut Fight, foe: &PlayerListEntry) {
+    fn start(&mut self, fight: &mut Fight, foe: &Foe) {
         if self.now.saturating_sub(fight.seen_at) > FRESH_TICKS || self.now < fight.ready_at {
             return;
         }
-        if !self.start_swing(fight, foe) {
+        if self.retreating || !self.start_swing(fight, foe) {
             self.start_draw(fight, foe);
         }
     }
@@ -353,3 +377,6 @@ impl Turn<'_> {
         mob_anim_set(self.me.id, clip, false);
     }
 }
+
+#[cfg(test)]
+mod tests;

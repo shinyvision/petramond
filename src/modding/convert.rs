@@ -309,6 +309,7 @@ fn fate_out(fate: crate::entity::Fate) -> api::ProjectileFate {
         Fate::Consume => api::ProjectileFate::Consume,
         Fate::Lodge => api::ProjectileFate::Lodge,
         Fate::Drop => api::ProjectileFate::Drop,
+        Fate::Deflect { vel } => api::ProjectileFate::Deflect { vel: vec(vel) },
     }
 }
 
@@ -318,6 +319,9 @@ pub(super) fn fate_in(fate: api::ProjectileFate) -> crate::entity::Fate {
         api::ProjectileFate::Consume => Fate::Consume,
         api::ProjectileFate::Lodge => Fate::Lodge,
         api::ProjectileFate::Drop => Fate::Drop,
+        api::ProjectileFate::Deflect { vel } => Fate::Deflect {
+            vel: Vec3::new(vel[0], vel[1], vel[2]),
+        },
     }
 }
 
@@ -369,7 +373,16 @@ fn mob_damage_feedback_component(
                 MobDamageSound::Death => api::MobDamageSound::Death,
             },
         },
-        MobDamageFeedbackComponent::Ragdoll => api::MobDamageFeedbackComponent::Ragdoll,
+        MobDamageFeedbackComponent::Ragdoll {
+            joints,
+            impulse_scale,
+        } => api::MobDamageFeedbackComponent::Ragdoll {
+            joints: match joints {
+                crate::mob::RagdollJoints::Connected => api::RagdollJoints::Connected,
+                crate::mob::RagdollJoints::Detached => api::RagdollJoints::Detached,
+            },
+            impulse_scale,
+        },
     }
 }
 

@@ -175,9 +175,7 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
     } = species;
     let first = batch.next_instance();
     let slots = bone_slots(model);
-    let head_bone = model.head_bone();
     let walk = model.animation(clips::WALK);
-    let hurt_clip = model.animation(clips::HURT);
     let MobPoseCache {
         clips: anim_clips,
         layers,
@@ -235,41 +233,7 @@ pub(crate) fn pose_mob_instances<'i, 'm>(
                             .map(|a| (a, layer.phase, layer.weight))
                     }),
             );
-            let looking_head = head_bone.map(|hb| {
-                let owned: f32 = layers
-                    .iter()
-                    .filter(|(a, _, _)| a.affects_bone(hb))
-                    .map(|(_, _, weight)| weight.clamp(0.0, 1.0))
-                    .sum();
-                (hb, 1.0 - owned.min(1.0))
-            });
-            if inst.hurt > 0.001 {
-                if let Some(hurt) = hurt_clip {
-                    layers.push((
-                        hurt,
-                        (1.0 - inst.hurt.clamp(0.0, 1.0)) * hurt.length,
-                        inst.hurt.clamp(0.0, 1.0),
-                    ));
-                }
-            }
-            let mut pose = if layers.is_empty() {
-                model.rest_pose()
-            } else {
-                model.pose_layers(layers)
-            };
-            if let Some((hb, free)) = looking_head.filter(|(_, free)| *free > 0.001) {
-                let parent = model.bones[hb]
-                    .parent
-                    .map(|p| pose[p].to_scale_rotation_translation().1)
-                    .unwrap_or(glam::Quat::IDENTITY);
-                let look = glam::Quat::IDENTITY.slerp(
-                    glam::Quat::from_rotation_y(inst.head_yaw)
-                        * glam::Quat::from_rotation_x(inst.head_pitch),
-                    free,
-                );
-                model.apply_bone_rotation(&mut pose, hb, parent * look * parent.conjugate());
-            }
-            pose
+            model.pose_mob_layers(layers, inst.head_yaw, inst.head_pitch, inst.hurt)
         };
 
         // Place the posed model: scale to metres, into the body frame (yaw to

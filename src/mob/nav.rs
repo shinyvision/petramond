@@ -34,7 +34,7 @@ mod probe;
 mod step_gate;
 
 pub use budget::{PathBudget, ReachBudget};
-pub(super) use hazards::foothold_in_hazard;
+pub(super) use hazards::{body_in_hazard, foothold_in_hazard};
 pub use kept::KeptBoxes;
 pub(super) use plan::NavInputs;
 pub use plan::NavTuning;

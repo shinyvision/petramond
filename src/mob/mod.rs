@@ -34,6 +34,7 @@ pub mod riding;
 mod spatial;
 mod spawn;
 pub mod tags;
+pub(crate) mod walk_probe;
 
 pub use body_geometry::{
     append_body_supports, body_boxes, body_has_peer_support, body_overlaps_block_boxes,
@@ -340,11 +341,33 @@ pub struct MobDamageFeedback {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum MobDamageFeedbackComponent {
     DecreaseHealth,
-    Flash { duration: f32 },
-    Knockback { scale: f32, duration: f32 },
-    Sound { category: MobDamageSound },
-    Ragdoll,
-    Immunity { ticks: u32 },
+    Flash {
+        duration: f32,
+    },
+    Knockback {
+        scale: f32,
+        duration: f32,
+    },
+    Sound {
+        category: MobDamageSound,
+    },
+    Ragdoll {
+        joints: RagdollJoints,
+        impulse_scale: f32,
+    },
+    Immunity {
+        ticks: u32,
+    },
+}
+
+petramond_math::wire_enum::wire_enum! {
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum RagdollJoints: u8 {
+        Connected = 0,
+        Detached = 1,
+    }
+    default Connected
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -401,7 +424,10 @@ impl Default for MobDamageFeedback {
                 MobDamageFeedbackComponent::Sound {
                     category: MobDamageSound::Death,
                 },
-                MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Ragdoll {
+                    joints: RagdollJoints::Connected,
+                    impulse_scale: 1.0,
+                },
                 MobDamageFeedbackComponent::Immunity {
                     ticks: petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS,
                 },

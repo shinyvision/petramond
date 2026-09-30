@@ -1,5 +1,7 @@
 pub const SIM_BATCH_MAX: usize = 4096;
 
+pub const MOB_WALK_PROBE_MAX_OFFSETS: usize = 16;
+
 pub const TERRAIN_HEIGHTS_IN_MAX: usize = 256 * 256;
 
 pub const FIND_BLOCKS_VOLUME_MAX: i64 = 32 * 32 * 32;

@@ -922,7 +922,16 @@ fn mob_damage_feedback_component(
                 },
             }
         }
-        mod_api::MobDamageFeedbackComponent::Ragdoll => MobDamageFeedbackComponent::Ragdoll,
+        mod_api::MobDamageFeedbackComponent::Ragdoll {
+            joints,
+            impulse_scale,
+        } => MobDamageFeedbackComponent::Ragdoll {
+            joints: match joints {
+                mod_api::RagdollJoints::Connected => crate::mob::RagdollJoints::Connected,
+                mod_api::RagdollJoints::Detached => crate::mob::RagdollJoints::Detached,
+            },
+            impulse_scale: finite_nonnegative(impulse_scale, 0.0).min(8.0),
+        },
         mod_api::MobDamageFeedbackComponent::Immunity { ticks } => {
             MobDamageFeedbackComponent::Immunity {
                 ticks: ticks.min(1200),

@@ -433,6 +433,7 @@ pub(super) fn samples() -> Samples {
     s.pin("HostRet::Blocks", &HostRet::Blocks(vec![None, Some(BlockId(2))]));
     s.pin("HostRet::Light", &HostRet::Light(Some(LightData { combined: 1, sky: 2, block: 3, block_rgb: [3, 2, 1] })));
     s.pin("HostRet::Mobs", &HostRet::Mobs(vec![MobSnapshot {
+        target: Some(EntityRef::Mob(9)),
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4, entombed: false,
@@ -524,6 +525,7 @@ pub(super) fn samples() -> Samples {
     s.pin("HostRet::SpawnedMob", &HostRet::SpawnedMob(Some(7)));
     s.pin("HostRet::FoundBlocks", &HostRet::FoundBlocks(Some(vec![[1, -2, 3]])));
     s.pin("HostRet::Mob", &HostRet::Mob(Some(MobSnapshot {
+        target: Some(EntityRef::Mob(9)),
         index: 1, kind: MobId(2), pos: [1.0, 2.0, 3.0], health: 4.0, id: 5,
         yaw: 0.5, pitch: 0.0, roll: 0.0, vel: [1.0, 0.0, 2.0], on_ground: true, moving: false,
         half_width: 0.4, height: 1.2, half_length: 0.4, entombed: false,
@@ -783,6 +785,7 @@ pub(super) fn samples() -> Samples {
     ]);
     s.pin("ProjectileFate::*", &vec![
         ProjectileFate::Consume, ProjectileFate::Lodge, ProjectileFate::Drop,
+        ProjectileFate::Deflect { vel: [1.0, -2.0, 3.0] },
     ]);
     s.pin("ItemMotion::*", &vec![
         ItemMotion::Loose, ItemMotion::Flight, ItemMotion::Stuck { cell: [1, 2, 3] },
@@ -799,7 +802,7 @@ pub(super) fn samples() -> Samples {
                 MobDamageFeedbackComponent::Flash { duration: 0.5 },
                 MobDamageFeedbackComponent::Knockback { scale: 1.0, duration: 0.5 },
                 MobDamageFeedbackComponent::Sound { category: MobDamageSound::Hurt },
-                MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Ragdoll { joints: RagdollJoints::Connected, impulse_scale: 1.0 },
                 MobDamageFeedbackComponent::Immunity { ticks: 10 },
             ],
         },
@@ -907,9 +910,10 @@ pub(super) fn samples() -> Samples {
         MobDamageFeedbackComponent::Flash { duration: 0.5 },
         MobDamageFeedbackComponent::Knockback { scale: 1.0, duration: 0.5 },
         MobDamageFeedbackComponent::Sound { category: MobDamageSound::Hurt },
-        MobDamageFeedbackComponent::Ragdoll,
+        MobDamageFeedbackComponent::Ragdoll { joints: RagdollJoints::Connected, impulse_scale: 1.0 },
         MobDamageFeedbackComponent::Immunity { ticks: 10 },
     ]);
+    s.pin("RagdollJoints::*", &vec![RagdollJoints::Connected, RagdollJoints::Detached]);
     s.pin("MobDamageSound::*", &vec![MobDamageSound::Hurt, MobDamageSound::Death]);
     s.pin("BodyAction::*", &vec![BodyAction::Attack, BodyAction::Mine, BodyAction::Use]);
     s.pin("GuiValue::List", &GuiValue::List(vec![[ ("n".into(),GuiValue::I32(2)) ].into_iter().collect()]));
@@ -1400,5 +1404,6 @@ pub(super) fn samples() -> Samples {
     s.pin("ClientRosterEntry", &crate::ClientRosterEntry { player: PlayerId(0), name: "p".into() });
     s.pin("ClientCapturedEnv", &crate::ClientCapturedEnv { params: vec![("m:k".into(), [1.0, 0.0, 0.0, 1.0])] });
 
+    s.pin("HostCall::MobWalkProbe", &HostCall::from(calls::MobWalkProbe { mob_id: 7, offsets: vec![[0.5, -0.5]], max_drop: 1.0 }));
     s
 }

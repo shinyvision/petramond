@@ -8,7 +8,7 @@ use super::super::aim;
 use super::super::geometry::{distance, segment_meets_box};
 use super::super::kit::Bow;
 use super::super::presence::Play;
-use super::{clear_line, player_upright, Act, Fight, Turn};
+use super::{clear_line, Act, Fight, Foe, Turn};
 
 /// A drawn bow waits this long past full draw for a clear shot before it is let down.
 const HOLD_PATIENCE: u64 = 40;
@@ -20,24 +20,27 @@ const NOCK_HEIGHT: f32 = 0.8;
 const NOCK_AHEAD: f64 = 0.35;
 const AIM_HEIGHT: f32 = 0.55;
 
-fn aim_point(p: &PlayerSnapshot) -> [f64; 3] {
-    player_upright(p).at(AIM_HEIGHT)
+fn aim_point(foe: &Foe) -> [f64; 3] {
+    foe.body.at(AIM_HEIGHT)
 }
 
 impl Turn<'_> {
     /// Whether the bow can reach `foe` from here.
-    pub(super) fn within_band(&self, foe: &PlayerListEntry) -> bool {
+    pub(super) fn within_band(&self, foe: &Foe) -> bool {
         self.kit.bow.as_ref().is_some_and(|bow| {
-            let d = distance(self.me.pos, foe.state.pos);
+            let d = distance(self.me.pos, foe.body.feet);
             d >= f64::from(bow.ranged.min_range) && d <= f64::from(bow.ranged.max_range)
         })
     }
 
-    pub(super) fn start_draw(&mut self, fight: &mut Fight, foe: &PlayerListEntry) {
+    pub(super) fn start_draw(&mut self, fight: &mut Fight, foe: &Foe) {
         let Some(bow) = &self.kit.bow else {
             return;
         };
-        if !self.within_band(foe) || !self.line_free(self.nock(foe), aim_point(&foe.state)) {
+        if distance(self.me.pos, foe.body.feet) > f64::from(bow.ranged.max_range)
+            || !(self.retreating || self.within_band(foe))
+            || !self.line_free(self.nock(foe), aim_point(foe), foe.id)
+        {
             return;
         }
         let draw = u64::from(bow.ranged.draw);
@@ -52,14 +55,14 @@ impl Turn<'_> {
         });
     }
 
-    pub(super) fn drawing(&mut self, fight: &mut Fight, foe: Option<&PlayerListEntry>) {
+    pub(super) fn drawing(&mut self, fight: &mut Fight, foe: Option<&Foe>) {
         self.hold = true;
         let (Act::Draw { release, give_up }, Some(bow)) = (fight.act, &self.kit.bow) else {
             fight.act = Act::Idle;
             return;
         };
         let reach = f64::from(bow.ranged.max_range) + DRAW_SLACK;
-        let Some(foe) = foe.filter(|f| distance(self.me.pos, f.state.pos) <= reach) else {
+        let Some(foe) = foe.filter(|f| distance(self.me.pos, f.body.feet) <= reach) else {
             fight.act = Act::Idle;
             fight.ready_at = self.now + DRAW_BACKOFF;
             return;
@@ -102,9 +105,9 @@ impl Turn<'_> {
         };
     }
 
-    fn nock(&self, foe: &PlayerListEntry) -> [f64; 3] {
+    fn nock(&self, foe: &Foe) -> [f64; 3] {
         let [x, y, z] = self.me.pos;
-        let (dx, dz) = (foe.state.pos[0] - x, foe.state.pos[2] - z);
+        let (dx, dz) = (foe.body.feet[0] - x, foe.body.feet[2] - z);
         let len = dx.hypot(dz).max(1.0e-6);
         [
             x + dx / len * NOCK_AHEAD,
@@ -114,7 +117,7 @@ impl Turn<'_> {
     }
 
     /// Whether a shot from `from` to `to` meets no terrain and no other body.
-    fn line_free(&self, from: [f64; 3], to: [f64; 3]) -> bool {
+    fn line_free(&self, from: [f64; 3], to: [f64; 3], target: EntityRef) -> bool {
         if !clear_line(from, to) {
             return false;
         }
@@ -126,7 +129,7 @@ impl Turn<'_> {
         let radius = (0.5 * distance(from, to) + 2.0) as f32;
         mobs_in_radius(mid, radius)
             .iter()
-            .filter(|m| m.id != self.me.id)
+            .filter(|m| m.id != self.me.id && target != EntityRef::Mob(m.id))
             .all(|m| {
                 let r = f64::from(m.half_width.max(m.half_length));
                 let [x, y, z] = m.pos;
@@ -136,14 +139,14 @@ impl Turn<'_> {
             })
     }
 
-    fn loose(&self, bow: &Bow, foe: &PlayerListEntry) -> bool {
+    fn loose(&self, bow: &Bow, foe: &Foe) -> bool {
         let from = self.nock(foe);
-        let at = aim_point(&foe.state);
-        if !self.line_free(from, at) {
+        let at = aim_point(foe);
+        if !self.line_free(from, at, foe.id) {
             return false;
         }
         let speed = bow.ranged.speed;
-        let Some(shot) = aim::aim_leading(bow.flight, speed, from, at, foe.state.vel) else {
+        let Some(shot) = aim::aim_leading(bow.flight, speed, from, at, foe.vel) else {
             return false;
         };
         let roll = rng_u64("skeleton_arrow") ^ self.me.id;

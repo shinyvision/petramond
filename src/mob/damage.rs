@@ -6,6 +6,8 @@ use super::model_meta::Skeleton;
 use super::ragdoll::Ragdoll;
 use super::{EntityRef, MobDamageFeedback, MobDamageFeedbackComponent, MobDef};
 
+mod pose;
+
 const KNOCKBACK_SPEED: f32 = 6.5;
 const KNOCKBACK_UP: f32 = 4.2;
 
@@ -71,6 +73,13 @@ impl Instance {
             self.set_health(0.0);
         }
 
+        let mut death_pose = (lethal
+            && feedback
+                .components
+                .iter()
+                .any(|c| matches!(c, MobDamageFeedbackComponent::Ragdoll { .. })))
+        .then(|| self.death_pose());
+
         for component in &feedback.components {
             match *component {
                 MobDamageFeedbackComponent::Immunity { .. } => {}
@@ -93,15 +102,23 @@ impl Instance {
                     }
                 }
                 MobDamageFeedbackComponent::Sound { .. } => {}
-                MobDamageFeedbackComponent::Ragdoll => {
+                MobDamageFeedbackComponent::Ragdoll {
+                    joints,
+                    impulse_scale,
+                } => {
                     if lethal && matches!(self.combat.death, DeathState::Alive) {
                         let mut away = origin
                             .filter(|_| attack)
                             .map_or(Vec3::ZERO, |from| self.pos - from);
                         away.y = 0.0;
                         let launch = away.normalize_or_zero();
-                        self.combat.death =
-                            DeathState::Ragdoll(Ragdoll::pending(self.rng.next_u64(), launch));
+                        self.combat.death = DeathState::Ragdoll(Ragdoll::pending(
+                            self.rng.next_u64(),
+                            launch,
+                            joints,
+                            impulse_scale,
+                            death_pose.take().unwrap_or_default(),
+                        ));
                     }
                 }
             }
@@ -181,7 +198,7 @@ impl Instance {
             return None;
         };
         if !rag.is_initialized() {
-            return None;
+            return Some(rag.pending_pose(super::model(self.kind)));
         }
         Some(rag.pose(alpha))
     }
@@ -299,7 +316,10 @@ mod tests {
     fn ragdoll_feedback_is_death_gated() {
         let mut ragdoll_only = Instance::new(Mob::Owl, WorldPos::new(0.5, 0.0, 0.5), 0.0, 1);
         let ragdoll = MobDamageFeedback {
-            components: vec![MobDamageFeedbackComponent::Ragdoll],
+            components: vec![MobDamageFeedbackComponent::Ragdoll {
+                joints: crate::mob::RagdollJoints::Connected,
+                impulse_scale: 1.0,
+            }],
         };
         assert!(!ragdoll_only.damage(
             100.0,
@@ -317,7 +337,10 @@ mod tests {
         let health_and_ragdoll = MobDamageFeedback {
             components: vec![
                 MobDamageFeedbackComponent::DecreaseHealth,
-                MobDamageFeedbackComponent::Ragdoll,
+                MobDamageFeedbackComponent::Ragdoll {
+                    joints: crate::mob::RagdollJoints::Connected,
+                    impulse_scale: 1.0,
+                },
             ],
         };
         assert!(dead_with_ragdoll.damage(
@@ -420,8 +443,8 @@ mod tests {
             "the kill flashes red like a normal hit"
         );
         assert!(
-            dead.ragdoll_pose(0.5).is_none(),
-            "ragdoll pose is None until a dead tick inits it"
+            dead.ragdoll_pose(0.5).is_some(),
+            "the pose at death is available before physics starts"
         );
     }
 }

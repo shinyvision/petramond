@@ -368,3 +368,9 @@ host_fn! {
     pub fn set_mob_draw(mob_id: u64, frame: mod_api::DrawFrame, prims: Vec<mod_api::DrawPrim>) -> bool
         => SetMobDraw { mob_id, frame, prims } => Bool
 }
+
+host_fn! {
+    /// Tests short straight walking legs against collision and safe footing.
+    pub fn mob_walk_probe(mob_id: u64, offsets: Vec<[f32; 2]>, max_drop: f32) -> Vec<bool>
+        => MobWalkProbe { mob_id, offsets, max_drop } => Bools
+}
