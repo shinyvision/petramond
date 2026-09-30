@@ -12,7 +12,7 @@
 
 mod cell_state;
 #[cfg(test)]
-mod golden;
+mod fixtures;
 mod item_slot;
 mod kept;
 #[cfg(test)]

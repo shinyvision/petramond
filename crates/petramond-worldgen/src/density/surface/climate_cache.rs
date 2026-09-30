@@ -37,7 +37,7 @@ struct BlockMemo {
 /// answer) — the cell's base biome. A fresh [`ClimateCellCache`] is built per
 /// region call, and adjacent window tiles share edge cells, so without this
 /// the same quart corner is re-sampled by several tile builds. Keyed by exact
-/// `(seed, cell)`: pure dedupe, values byte-identical.
+/// `(seed, cell)`: pure dedupe, values unchanged.
 type MemoValue = (SurfaceClimate, Option<Biome>);
 
 thread_local! {

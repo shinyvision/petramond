@@ -166,7 +166,7 @@ pub fn skylight_cube<'s, B: BlockIds>(
     // ... but only the terrain-envelope FRONTIER enters the BFS queue: sky cells
     // with at least one in-cube neighbour at-or-below that neighbour's column
     // surface. An interior sky cell's pop can never push (all its neighbours
-    // already hold SKY_FULL), so skipping it is byte-identical. Per column the
+    // already hold SKY_FULL), so skipping it changes nothing. Per column the
     // frontier is the band from the cell directly
     // above the surface up to the highest of the four horizontal neighbours'
     // surfaces (cells beside terrain), clamped to the cube.

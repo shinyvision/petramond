@@ -49,7 +49,7 @@ const SIMPLEX: [([f64; 3], u64, u64); 10] = [
 ];
 
 #[test]
-fn simplex_matches_bit_exact_goldens() {
+fn simplex_outputs_stay_fixed() {
     for (p, two, three) in SIMPLEX {
         assert_bits(simplex2(p[0], p[2]), two, &format!("simplex2 at {p:?}"));
         assert_bits(simplex3(p), three, &format!("simplex3 at {p:?}"));
@@ -64,7 +64,7 @@ fn simplex2_with_the_standard_permutation_is_simplex2() {
 }
 
 #[test]
-fn simplex2_permutation_matches_bit_exact_goldens() {
+fn simplex2_permutation_outputs_stay_fixed() {
     let mut reversed = PERM;
     reversed.reverse();
     let cases: [([f64; 2], u64); 10] = [
@@ -89,7 +89,7 @@ fn simplex2_permutation_matches_bit_exact_goldens() {
 }
 
 #[test]
-fn scaled_simplex_matches_bit_exact_goldens() {
+fn scaled_simplex_outputs_stay_fixed() {
     let cases: [([f64; 3], u64, u64); 10] = [
         ([0.0, 0.0, 0.0], 0xbfdc2d58a7ba7b76, 0x0000000000000000),
         ([1.25, -3.5, 8.75], 0xbfe04312c85e7e71, 0x3fe4d9215fdf3a9f),
@@ -134,7 +134,7 @@ fn scaled_simplex_matches_bit_exact_goldens() {
 }
 
 #[test]
-fn cellular2_matches_bit_exact_goldens() {
+fn cellular2_outputs_stay_fixed() {
     type CellularCase = (u32, [f64; 2], f64, [u64; 2], u64, i32);
     let cases: [CellularCase; 6] = [
         (

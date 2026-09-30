@@ -1,6 +1,4 @@
 pub mod climate;
-#[cfg(test)]
-pub mod surface_table;
 pub mod trees;
 
 use crate::rng::FeatureRng;

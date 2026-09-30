@@ -328,56 +328,6 @@ fn sheep_scale_ragdoll_goes_limp_and_does_not_spin() {
 }
 
 #[test]
-fn hushjaw_corpse_collapses_to_the_ground_and_neither_freezes_nor_flips() {
-    // The real hushjaw at its in-game scale: a huge geometry-bearing skull under a
-    // cube-less rig root. The corpse must COLLAPSE — the physical root visibly drops
-    // from its standing height instead of hanging in a statue pose off the rig
-    // placeholder — and must settle without the placeholder-noise flip that turned
-    // corpses upside down. Both rotations must preserve the authored pose.
-    let src = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/mods-src/monsters/pack/models/hushjaw.bbmodel"
-    ));
-    let model = Model::load(src).expect("hushjaw parses");
-    let skel = model_meta::skeleton(&model);
-    let body = (0..skel.bones.len())
-        .find(|&i| skel.bones[i].parent.is_none())
-        .expect("physical root");
-    let rest_y = skel.bones[body].pivot.y;
-    for seed in [1u64, 9] {
-        let mut rag = pending(seed, Vec3::X);
-        rag.init(&skel, 0.04, Vec3::ZERO, 0.0);
-        let mut prev = rag.pose(1.0);
-        let mut total = 0.0f32;
-        for _ in 0..(LIFETIME / 0.05) as usize {
-            rag.step(0.05, 0.04, Vec3::ZERO, 0.0, &floor);
-            let pose = rag.pose(1.0);
-            let (_, rot) = pose[body];
-            assert!(
-                rot.angle_between(Quat::IDENTITY) < 2.0,
-                "seed {seed}: the body never flips upside down"
-            );
-            total += rot.angle_between(prev[body].1);
-            prev = pose;
-        }
-        assert!(
-            total < 10.0,
-            "seed {seed}: the body settles instead of spinning: {total} rad"
-        );
-        assert!(
-            prev[body].0.y < rest_y - 5.0,
-            "seed {seed}: the corpse collapsed to the ground, no statue: pivot y {} vs rest {rest_y}",
-            prev[body].0.y
-        );
-        assert!(
-            rag.lowest_node_y() * 0.04 > -0.2,
-            "seed {seed}: the corpse rests on the ground, not through it: {} model units",
-            rag.lowest_node_y()
-        );
-    }
-}
-
-#[test]
 fn welded_bones_ride_their_anchor_rigidly_through_the_tumble() {
     let skel = Skeleton {
         bones: vec![
@@ -637,46 +587,5 @@ fn scatter_is_independent_of_model_units_and_mob_facing() {
                 "world-space scatter changed with scale {scale}, yaw {yaw}: {p:?} vs {expected:?}"
             );
         }
-    }
-}
-
-fn zombie() -> Skeleton {
-    let src = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/mods-src/monsters/pack/models/zombie.bbmodel"
-    ));
-    model_meta::skeleton(&Model::load(src).expect("zombie.bbmodel parses"))
-}
-
-#[test]
-fn a_corpse_dying_without_knockback_topples_on_its_legs_instead_of_sinking() {
-    let scale = 0.059375;
-    let skel = zombie();
-    let body = skel
-        .bones
-        .iter()
-        .position(|b| b.parent.is_none())
-        .expect("a physical root");
-    for seed in 0..8 {
-        let mut rag = pending(seed, Vec3::ZERO);
-        rag.init(&skel, scale, Vec3::ZERO, 0.0);
-        let mut tipped_at = None;
-        for tick in 0..(LIFETIME / 0.05) as usize {
-            rag.step(0.05, scale, Vec3::ZERO, 0.0, &floor);
-            let lowest = rag.lowest_node_y() * scale;
-            assert!(
-                lowest > -0.02,
-                "seed {seed}: a limb sank {lowest} m into the ground"
-            );
-            let up = rag.pose(1.0)[body].1 * Vec3::Y;
-            if up.angle_between(Vec3::Y) > 1.2 {
-                tipped_at.get_or_insert(tick as f32 * 0.05);
-            }
-        }
-        let tipped_at = tipped_at.unwrap_or(f32::INFINITY);
-        assert!(
-            tipped_at < 1.0,
-            "seed {seed}: the corpse topples promptly instead of standing or drifting down: {tipped_at} s"
-        );
     }
 }

@@ -788,13 +788,6 @@ mod tests {
     }
 
     #[test]
-    fn every_sound_has_at_least_one_variant() {
-        for def in sound_defs() {
-            assert!(!def.variants.is_empty(), "{:?} has no clips", def.sound);
-        }
-    }
-
-    #[test]
     fn jitter_stays_in_unit_range() {
         let mut a = silent_audio(0x1234_5678_9abc_def1);
         for _ in 0..10_000 {

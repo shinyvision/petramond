@@ -17,7 +17,7 @@ CARGO ?= nice -n 10 cargo
 NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 
 # Cargo-level tuning belongs in ~/.cargo/config.toml, not here, so plain
-# `cargo` invocations (genparity, rust-analyzer) build with the same flags as
+# `cargo` invocations (rust-analyzer) build with the same flags as
 # make and do not thrash the shared target dir. For example:
 #
 #   # Cap parallel rustc jobs so a build leaves cores free for the desktop
@@ -28,7 +28,6 @@ NV_OFFLOAD ?= __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GL
 #
 #   # Codegen for this CPU. Scope it to the host triple ONLY (never a [build]
 #   # rustflags) so cross-compiles are untouched. `x86-64-v3` (AVX2+FMA+BMI2)
-#   # or `native`; neither changes float semantics, but re-run the genparity
-#   # gate after changing it: COMBINED must stay at the committed hash.
+#   # or `native`; neither changes float semantics.
 #   [target.x86_64-unknown-linux-gnu]
 #   rustflags = ["-C", "target-cpu=native"]

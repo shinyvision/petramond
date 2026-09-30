@@ -23,7 +23,7 @@ fn baking_nested_group_rotations_preserves_every_authored_corner() {
 
     let source = serde_json::json!({
         "resolution": {"width": 16, "height": 16},
-        "textures": [{"source": GOLDEN_URI}],
+        "textures": [{"source": PIXEL_URI}],
         "groups": [
             {"uuid": "parent", "origin": [3, 5, -2], "rotation": [21, 37, -16]},
             {"uuid": "child", "origin": [-1, 4, 2], "rotation": [-13, 72, 9]}
@@ -87,7 +87,7 @@ fn cullfaces_compile_into_face_slots() {
         "outliner": ["c"]
     }"##;
     let m = BlockModel::compile(
-        SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\""))
+        SRC.replace("\"URI\"", &format!("\"{PIXEL_URI}\""))
             .as_bytes(),
     )
     .expect("compiles");
@@ -483,12 +483,12 @@ fn baked_self_ao_darkens_joints_and_stays_a_valid_multiplier() {
     );
 }
 
-const GOLDEN_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+const PIXEL_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
 
 #[test]
 fn compiled_block_model_layout_change_requires_a_format_version_bump() {
-    const GOLDEN_VERSION: u32 = 13;
-    const GOLDEN_HEX: &str = "01000000000000000400000000000000626f647900000000000000000000000000008041000080400000804100000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000000000000000400000000000000ff0000ff010000000100000001000000000000000000000000000000000000000000804100008040000080410000000000000000000000000000804100008040000080410000000000007041000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000f0410000344200000000000000000000803f000000009a99193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000004100000000";
+    const PINNED_VERSION: u32 = 13;
+    const COMPILED_HEX: &str = "01000000000000000400000000000000626f647900000000000000000000000000008041000080400000804100000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000000000000000400000000000000ff0000ff010000000100000001000000000000000000000000000000000000000000804100008040000080410000000000000000000000000000804100008040000080410000000000007041000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000f0410000344200000000000000000000803f000000009a99193f9a99193f9a99193f0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000803f0000803f0000803f000000000000000000000000000000000000000000000000000000000000004100000000";
 
     const SRC: &str = r##"{
         "resolution": { "width": 16, "height": 16 },
@@ -504,19 +504,19 @@ fn compiled_block_model_layout_change_requires_a_format_version_bump() {
         }
     }"##;
     let m = BlockModel::compile(
-        SRC.replace("\"URI\"", &format!("\"{GOLDEN_URI}\""))
+        SRC.replace("\"URI\"", &format!("\"{PIXEL_URI}\""))
             .as_bytes(),
     )
     .expect("canonical block model compiles");
     let bytes = bincode::serialize(&m).expect("serializes");
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     assert!(
-        BlockModel::FORMAT_VERSION == GOLDEN_VERSION && hex == GOLDEN_HEX,
+        BlockModel::FORMAT_VERSION == PINNED_VERSION && hex == COMPILED_HEX,
         "compiled .llblock layout or version changed.\n\
-         FORMAT_VERSION: {} (golden {GOLDEN_VERSION})\n\
+         FORMAT_VERSION: {} (pinned {PINNED_VERSION})\n\
          serialized canonical model:\n{hex}\n\
          If any serialized struct or the compile output changed, bump FORMAT_VERSION \
-         in `impl CompiledAsset for BlockModel` and update GOLDEN_VERSION + GOLDEN_HEX \
+         in `impl CompiledAsset for BlockModel` and update PINNED_VERSION + COMPILED_HEX \
          together. A layout change WITHOUT the bump lets stale caches mis-decode into \
          garbage models (the invisible-hushjaw class of bug).",
         BlockModel::FORMAT_VERSION,

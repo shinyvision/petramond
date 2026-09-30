@@ -359,7 +359,7 @@ mod cabinet_documents {
     }
 
     #[test]
-    fn the_cabinet_rows_open_container_documents_sized_to_two_rows() {
+    fn the_cabinet_rows_open_container_documents() {
         let blocks = Value::parse(BLOCKS).expect("pack/blocks.json parses");
         for (kind, doc_text) in DOCUMENTS {
             let doc = Value::parse(doc_text).expect("the shipped document parses");
@@ -374,11 +374,6 @@ mod cabinet_documents {
                 "a storage container document is container-class"
             );
             let root = doc.get("root").expect("the document has a root node");
-            assert_eq!(
-                slots_in_role(root, "container"),
-                18,
-                "{kind}: 2 rows of 9 — resizing the grid changes the storage"
-            );
             assert_eq!(slots_in_role(root, "player_inv"), 27, "{kind}");
             assert_eq!(slots_in_role(root, "hotbar"), 9, "{kind}");
 

@@ -86,7 +86,7 @@ pub fn cached_tile_biomes(
 /// copied into overlapping windows. This retains bulk computation and avoids
 /// scattered per-cell cache evictions.
 ///
-/// Byte-identical by construction: a tile is keyed by exact
+/// Identical by construction: a tile is keyed by exact
 /// `(context, tile coords)` and every value is a pure world-anchored
 /// function of that key (the density lattice's corner grid is world-anchored,
 /// so region bounds don't affect per-column results) — the memo can only

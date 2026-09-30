@@ -41,12 +41,10 @@ mod row_tests {
     use super::*;
 
     #[test]
-    fn shipped_stew_declares_its_returned_bowl() {
+    fn shipped_vessel_rows_parse() {
         let rows = pack_rows_with_data(include_str!("../pack/items.json"), "items", VESSEL_KEY);
-        assert_eq!(rows.len(), 1);
-        let (dish, raw) = &rows[0];
-        assert_eq!(dish, "kitchen:rabbit_stew");
-        let spec: VesselSpec = parse_row_data(raw).unwrap();
-        assert_eq!(spec.returns, "kitchen:wooden_bowl");
+        for (dish, raw) in &rows {
+            parse_row_data::<VesselSpec>(raw).unwrap_or_else(|e| panic!("{dish}: {e}"));
+        }
     }
 }

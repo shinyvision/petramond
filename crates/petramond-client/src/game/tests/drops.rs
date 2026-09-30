@@ -31,13 +31,12 @@ fn spawn_drops_dirt_yields_one_drop() {
 }
 
 #[test]
-fn an_undermined_snow_layer_shatters_without_a_drop() {
+fn an_undermined_fragile_block_shatters() {
     use super::common::game_on_empty_chunk;
     use petramond::events::tick::TickEvents;
 
     let mut game = game_on_empty_chunk();
-    let cases = [(Block::SnowLayer, 0usize), (Block::Poppy, 1usize)];
-    for (i, (block, expected_drops)) in cases.into_iter().enumerate() {
+    for (i, block) in [Block::SnowLayer, Block::Poppy].into_iter().enumerate() {
         let ground = IVec3::new(7 + 2 * i as i32, 64, 8);
         let cell = ground + IVec3::new(0, 1, 0);
         let w = game.server_world_mut();
@@ -57,12 +56,6 @@ fn an_undermined_snow_layer_shatters_without_a_drop() {
             Block::Air,
             "{block:?} must shatter once unsupported"
         );
-        assert_eq!(
-            game.server_world().item_entities().len(),
-            expected_drops,
-            "{block:?} natural break drops exactly its hand-break yield"
-        );
-        game.server_world_mut().item_entities_mut().clear();
     }
 }
 

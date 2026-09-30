@@ -110,7 +110,7 @@ fn a_truncated_file_is_corrupt() {
     );
 }
 
-fn assert_golden(got: &PlayerData) {
+fn assert_fixture(got: &PlayerData) {
     assert_eq!(got.pos, WorldPos::new(1.5, 64.0, -2.5));
     assert_eq!(got.vel, Vec3::new(0.0, -0.5, 0.0));
     assert_eq!((got.yaw, got.pitch), (0.5, -0.25));
@@ -130,24 +130,24 @@ fn assert_golden(got: &PlayerData) {
 }
 
 #[test]
-fn golden_player_v8_decodes() {
-    assert_golden(&decode(V8).expect("v8 decodes"));
+fn fixture_player_v8_decodes() {
+    assert_fixture(&decode(V8).expect("v8 decodes"));
 }
 
 #[test]
-fn golden_player_v7_migrates() {
-    assert_golden(&decode(V7).expect("v7 migrates"));
+fn fixture_player_v7_migrates() {
+    assert_fixture(&decode(V7).expect("v7 migrates"));
 }
 
 #[test]
-fn the_v7_step_produces_the_golden_v8_bytes() {
+fn the_v7_step_produces_the_v8_fixture_bytes() {
     assert_eq!(&V7[..4], &7u32.to_le_bytes());
     assert_eq!(&V8[..4], &8u32.to_le_bytes());
     assert_eq!(v7::upgrade(&V7[4..]).expect("upgrades"), &V8[4..]);
 }
 
 #[test]
-fn the_encoder_writes_the_golden_v8_layout() {
+fn the_encoder_writes_the_v8_layout() {
     let got = decode(V8).expect("decodes");
     assert_eq!(encode(&got.restore()), V8);
 }

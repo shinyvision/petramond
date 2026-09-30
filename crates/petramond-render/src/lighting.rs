@@ -2,8 +2,8 @@ use petramond_world::light::BlockLight6;
 
 pub(super) const FULL_SKYLIGHT: u8 = 63;
 
-const SKY_MIN: f32 = 0.02;
-const FINAL_MIN: f32 = 0.006;
+pub(crate) const SKY_MIN: f32 = 0.02;
+pub(crate) const FINAL_MIN: f32 = 0.006;
 
 #[inline]
 pub(super) fn skylight_bits(skylight: u8) -> u32 {

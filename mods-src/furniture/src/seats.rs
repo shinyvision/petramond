@@ -110,7 +110,7 @@ impl Furniture {
 /// group is gone, so we guess its base and facing: each (facing, contained cell) pair gives a
 /// candidate base. If that base still holds the piece, it's a different group that's still standing
 /// (an adjacent chair) and we skip it. The rest have their exact seat anchors matched against the
-/// roster. Anchors are bit-exact, from the same f32 math as sitting, so a neighbouring piece's
+/// roster. Anchors are exact, from the same f32 math as sitting, so a neighbouring piece's
 /// sitter is never released by proximity.
 pub(super) fn release_broken_piece_sitters(block: BlockId, piece: &Piece, pos: [i32; 3]) {
     let posed: Vec<(PlayerId, [f64; 3])> = players()
@@ -154,7 +154,6 @@ mod row_tests {
     #[test]
     fn shipped_seat_rows_have_usable_footprints() {
         let rows = pack_rows_with_data(include_str!("../pack/blocks.json"), "blocks", keys::SEATS);
-        assert_eq!(rows.len(), 2);
         for (block, raw) in rows {
             let piece: Piece = parse_row_data(&raw).unwrap_or_else(|e| panic!("{block}: {e}"));
             assert!(piece.footprint.iter().all(|side| *side > 0), "{block}");

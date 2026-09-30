@@ -8,7 +8,7 @@ pub mod shape;
 pub mod skylight;
 
 #[cfg(test)]
-mod parity_tests;
+mod bake_agreement_tests;
 #[cfg(test)]
 mod test_fixture;
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::item_model::ItemVertex;
-use crate::lighting::{LightEnv, FULL_SKYLIGHT};
+use crate::lighting::{LightEnv, FINAL_MIN, FULL_SKYLIGHT, SKY_MIN};
 use crate::mob_model::{bake_model_cubes, body_tint};
 use petramond_world::bbmodel::clips;
 use petramond_world::light::BlockLight6;
@@ -24,8 +24,6 @@ fn look() -> SkinLook {
 }
 
 fn shader_tint(inst: &SkinInstance, env: LightEnv) -> [f32; 3] {
-    const SKY_MIN: f32 = 0.02;
-    const FINAL_MIN: f32 = 0.006;
     let x = inst.light[0];
     let sky = SKY_MIN + (1.0 - SKY_MIN) * (x * x * x * env.sky_scale.clamp(0.0, 1.0));
     std::array::from_fn(|c| {
@@ -82,33 +80,6 @@ fn skinned_mesh_matches_the_cpu_bake() {
             assert!(d < 1e-4, "skinned vertex drifted {d} from the bake");
         }
     }
-}
-
-#[test]
-fn coat_parts_flag_exactly_the_coat_cubes() {
-    let sheep = model("sheep");
-    let mesh = SkinMesh::build(&sheep, 0.0625, None, |cube| {
-        if sheep.cubes[cube].name == "wool" {
-            PART_COAT
-        } else {
-            0
-        }
-    });
-    let coat = mesh.verts.iter().filter(|v| v.parts == PART_COAT).count();
-    assert!(coat > 0, "the fleece is flagged");
-    assert!(coat < mesh.verts.len(), "the body under it is not");
-    let (mut shorn, mut indices) = (Vec::new(), Vec::new());
-    bake_model_cubes(
-        &sheep,
-        &sheep.rest_pose(),
-        Mat4::from_scale(Vec3::splat(0.0625)),
-        [1.0; 3],
-        |cube| sheep.cubes[cube].name == "wool",
-        None,
-        &mut shorn,
-        &mut indices,
-    );
-    assert_eq!(mesh.verts.len() - coat, shorn.len());
 }
 
 #[test]

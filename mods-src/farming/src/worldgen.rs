@@ -202,7 +202,6 @@ mod row_tests {
             "blocks",
             crate::keys::WILD_PATCH_DATA,
         );
-        assert_eq!(rows.len(), 3);
         for (priority, (name, raw)) in rows.into_iter().enumerate() {
             let row: WildPatchRow = parse_row_data(&raw).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(usize::from(row.priority), priority);

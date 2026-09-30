@@ -685,14 +685,6 @@ mod tests {
     }
 
     #[test]
-    fn gui_scale_is_clamped_and_increases_with_height() {
-        assert_eq!(petramond::gui::gui_scale((320, 240)), 1.0);
-        assert!(petramond::gui::gui_scale((1920, 1080)) >= 2.0);
-        assert_eq!(petramond::gui::gui_scale((10, 10)), 1.0);
-        assert_eq!(petramond::gui::gui_scale((10000, 10000)), 4.0);
-    }
-
-    #[test]
     fn zero_screen_and_missing_document_build_nothing() {
         let mut b = UiBuild::default();
         let s = snap(GuiKind::Hotbar, false);

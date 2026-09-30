@@ -467,7 +467,7 @@ thread_local! {
     /// temperature/humidity/continentality/erosion/weirdness all recompute an
     /// identical `(sx, sz)` at the same quart cell — as do the height (density
     /// lattice) and biome (climate cell) passes, which sample the same
-    /// world-anchored 4-block grid. Memoizing the warp is bit-exact: the cached
+    /// world-anchored 4-block grid. Memoizing the warp changes nothing: the cached
     /// values are the very f64s the direct computation yields.
     static WARP_MEMO: LocalTable<[u64; 3], (f64, f64)> =
         LocalTable::new(&local::CLIMATE_WARP);
@@ -565,7 +565,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn warp_memo_is_bit_exact_across_interleaved_seeds_and_fields() {
+    fn warp_memo_matches_across_interleaved_seeds_and_fields() {
         let fields: Vec<ShiftedClimateField> = vec![
             ShiftedClimateField::new(0x1234_5678, &climate_fields::CONTINENTALITY),
             ShiftedClimateField::new(0x1234_5678, &climate_fields::EROSION),

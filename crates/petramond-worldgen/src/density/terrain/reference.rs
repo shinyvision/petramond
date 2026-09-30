@@ -62,13 +62,6 @@ pub struct ReferenceTerrainSpec {
 }
 
 impl ReferenceTerrainSpec {
-    pub fn default_surface() -> Self {
-        Self {
-            shaping: ShapingSplineSpecs::default_surface(),
-            floor: FloorDensitySpec::default_surface(),
-        }
-    }
-
     pub fn build_graph(&self, seed: u32) -> TerrainDensityGraph {
         let mut graph = ScalarGraph::new();
 
@@ -228,14 +221,6 @@ impl ReferenceTerrainSpec {
 #[derive(Clone, Debug)]
 pub struct ShapingSplineSpecs {
     pub offset: CubicSpline,
-}
-
-impl ShapingSplineSpecs {
-    pub fn default_surface() -> Self {
-        Self {
-            offset: shaper::offset_spline(),
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug)]

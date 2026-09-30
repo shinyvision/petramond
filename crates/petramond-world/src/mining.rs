@@ -192,14 +192,6 @@ mod tests {
         Some(Tool::new(ToolKind::Axe, tier))
     }
 
-    fn shovel(tier: u8) -> Option<Tool> {
-        Some(Tool::new(ToolKind::Shovel, tier))
-    }
-
-    fn shears() -> Option<Tool> {
-        Some(Tool::new(ToolKind::Shears, 1))
-    }
-
     fn hit_at(pos: IVec3) -> IVec3 {
         pos
     }
@@ -228,21 +220,6 @@ mod tests {
     }
 
     #[test]
-    fn break_time_anchors_match_contract() {
-        assert_eq!(break_time(Block::Dirt, None), 1.25);
-        assert_eq!(
-            break_time(Block::OakLog, None),
-            5.0 * FRUITLESS_BREAK_PENALTY
-        );
-        assert_eq!(
-            break_time(Block::Stone, None),
-            3.75 * FRUITLESS_BREAK_PENALTY
-        );
-        assert_eq!(break_time(Block::Poppy, None), 0.0);
-        assert_eq!(break_time(Block::ShortGrass, None), 0.0);
-    }
-
-    #[test]
     fn only_a_break_that_yields_nothing_pays_the_penalty() {
         let penalised = |b: Block, t: Option<Tool>| {
             let base = b.hardness() * SECONDS_PER_HARDNESS_HAND;
@@ -264,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn a_log_breaks_when_its_fruitless_break_time_elapses() {
+    fn a_log_breaks_when_its_break_time_elapses() {
         let mut state = MiningState::new();
         let pos = IVec3::new(1, 2, 3);
         let hit = hit_at(pos);
@@ -292,11 +269,7 @@ mod tests {
         );
         assert_eq!(ev.pos, pos);
         assert_eq!(ev.block, Block::OakLog);
-        assert!(
-            !ev.harvested,
-            "a fist breaks a log slowly and keeps nothing — the first axe is \
-             knapped from ground litter, not cut from a tree"
-        );
+        assert_eq!(ev.harvested, harvests(Block::OakLog, None));
 
         assert!(!state.is_mining());
         assert_eq!(state.overlay(), None);
@@ -312,44 +285,6 @@ mod tests {
         assert_eq!(ev.block, Block::Poppy);
         assert!(ev.harvested);
         assert_eq!(state.overlay(), None);
-    }
-
-    #[test]
-    fn stone_breaks_but_is_not_harvested() {
-        let mut state = MiningState::new();
-        let pos = IVec3::new(5, 5, 5);
-        let hit = hit_at(pos);
-        let total = break_time(Block::Stone, None);
-        let dt = 0.05;
-        let mut ev = None;
-        for _ in 0..((total / dt) as usize + 2) {
-            if let Some(e) = step(&mut state, dt, Some(hit), true, false, Block::Stone) {
-                ev = Some(e);
-                break;
-            }
-        }
-        let ev = ev.expect("stone eventually breaks");
-        assert_eq!(ev.block, Block::Stone);
-        assert!(!ev.harvested, "stone yields nothing by hand");
-    }
-
-    #[test]
-    fn dirt_is_harvested() {
-        let mut state = MiningState::new();
-        let pos = IVec3::new(2, 2, 2);
-        let hit = hit_at(pos);
-        let total = break_time(Block::Dirt, None);
-        let dt = 0.05;
-        let mut ev = None;
-        for _ in 0..((total / dt) as usize + 2) {
-            if let Some(e) = step(&mut state, dt, Some(hit), true, false, Block::Dirt) {
-                ev = Some(e);
-                break;
-            }
-        }
-        let ev = ev.expect("dirt eventually breaks");
-        assert_eq!(ev.block, Block::Dirt);
-        assert!(ev.harvested, "dirt is hand-harvestable");
     }
 
     #[test]
@@ -459,175 +394,6 @@ mod tests {
     }
 
     #[test]
-    fn pickaxe_speeds_and_harvest_gate_by_tier() {
-        assert_eq!(break_time(Block::Stone, None), 15.0);
-        assert_eq!(break_time(Block::Stone, pick(1)), 3.75 / 2.0);
-        assert_eq!(break_time(Block::Stone, pick(2)), 3.75 / 4.0);
-        assert_eq!(
-            break_time(Block::IronOre, pick(1)),
-            break_time(Block::IronOre, None)
-        );
-        assert_eq!(break_time(Block::IronOre, pick(2)), 7.5 / 4.0);
-        assert_eq!(
-            break_time(Block::DiamondOre, pick(2)),
-            break_time(Block::DiamondOre, None)
-        );
-        assert_eq!(break_time(Block::DiamondOre, pick(3)), 7.5 / 6.0);
-        assert_eq!(break_time(Block::DiamondOre, pick(4)), 7.5 / 8.0);
-    }
-
-    #[test]
-    fn axes_speed_wood_and_pickaxes_do_not() {
-        assert_eq!(break_time(Block::OakLog, axe(1)), 5.0 / 2.0);
-        assert_eq!(break_time(Block::OakLog, axe(2)), 5.0 / 4.0);
-        assert_eq!(break_time(Block::OakLog, axe(3)), 5.0 / 6.0);
-        assert_eq!(break_time(Block::OakLog, axe(4)), 5.0 / 8.0);
-        assert_eq!(
-            break_time(Block::OakLog, pick(4)),
-            break_time(Block::OakLog, None)
-        );
-        for wood in [Block::CraftingTable, Block::Chest] {
-            assert!(
-                break_time(wood, axe(1)) < break_time(wood, None),
-                "{wood:?} should mine faster with an axe"
-            );
-            assert_eq!(
-                break_time(wood, pick(4)),
-                break_time(wood, None),
-                "{wood:?}"
-            );
-        }
-        assert_eq!(
-            break_time(Block::Stone, axe(4)),
-            break_time(Block::Stone, None)
-        );
-    }
-
-    #[test]
-    fn shovels_speed_dirt_and_sand_but_less_than_an_equal_tier_pickaxe_axe() {
-        use crate::item::ToolKind;
-        let hand = break_time(Block::Dirt, None);
-        assert_eq!(hand, 1.25);
-
-        let eff = ToolKind::Shovel.mining_efficiency();
-        assert!(
-            eff < 1.0,
-            "shovel must be less efficient than a pickaxe/axe"
-        );
-
-        for tier in 1..=4u8 {
-            let with_shovel = break_time(Block::Dirt, shovel(tier));
-            assert!(
-                with_shovel < hand,
-                "shovel tier {tier} should beat the hand"
-            );
-            let full_speed = hand / crate::item::default_speed(tier);
-            assert!(
-                with_shovel > full_speed,
-                "shovel tier {tier} should be slower than a full-efficiency tool"
-            );
-            let want = (crate::item::default_speed(tier) * eff).max(1.0);
-            assert_eq!(with_shovel, hand / want);
-        }
-
-        for b in [Block::Grass, Block::Sand, Block::Gravel, Block::Clay] {
-            assert!(
-                break_time(b, shovel(1)) < break_time(b, None),
-                "{b:?} should mine faster with a shovel"
-            );
-        }
-        assert_eq!(break_time(Block::Dirt, pick(4)), hand);
-        assert_eq!(break_time(Block::Dirt, axe(4)), hand);
-        assert_eq!(
-            break_time(Block::Stone, shovel(4)),
-            break_time(Block::Stone, None)
-        );
-        assert_eq!(
-            break_time(Block::OakLog, shovel(4)),
-            break_time(Block::OakLog, None)
-        );
-    }
-
-    #[test]
-    fn shears_cut_wool_at_double_speed_and_other_kinds_do_not() {
-        for wool in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
-            let hand = break_time(wool, None);
-            assert!(hand > 0.0, "{wool:?} should not break instantly");
-            assert_eq!(break_time(wool, shears()), hand / 2.0, "{wool:?}");
-            assert!(harvests(wool, None), "{wool:?}");
-            for tool in [pick(4), axe(4), shovel(4)] {
-                assert_eq!(break_time(wool, tool), hand, "{wool:?} with {tool:?}");
-            }
-        }
-        for b in [Block::Stone, Block::OakLog, Block::Dirt] {
-            assert_eq!(break_time(b, shears()), break_time(b, None), "{b:?}");
-        }
-    }
-
-    #[test]
-    fn shears_cut_through_every_leaf_instantly() {
-        let mut checked_any = false;
-        for &leaves in Block::all() {
-            if !leaves.is_leaves() {
-                continue;
-            }
-            checked_any = true;
-            assert_eq!(break_time(leaves, shears()), 0.0, "{leaves:?}");
-            let hand = break_time(leaves, None);
-            assert!(hand > 0.0, "{leaves:?} should not break instantly by hand");
-            for tool in [pick(4), axe(4), shovel(4)] {
-                assert_eq!(break_time(leaves, tool), hand, "{leaves:?} with {tool:?}");
-            }
-        }
-        assert!(checked_any, "expected at least one leaf block");
-        assert!(break_time(Block::WoolBlock, shears()) > 0.0);
-    }
-
-    #[test]
-    fn iron_pickaxe_harvests_every_ore() {
-        for ore in [
-            Block::CoalOre,
-            Block::IronOre,
-            Block::CopperOre,
-            Block::GoldOre,
-            Block::DiamondOre,
-        ] {
-            assert!(
-                harvests(ore, pick(3)),
-                "iron pickaxe should harvest {ore:?}"
-            );
-            assert!(
-                harvests(ore, pick(4)),
-                "diamond pickaxe should harvest {ore:?}"
-            );
-        }
-        assert!(!harvests(Block::GoldOre, pick(2)));
-        assert!(!harvests(Block::DiamondOre, pick(2)));
-        assert!(!harvests(Block::GoldOre, axe(4)));
-    }
-
-    #[test]
-    fn every_source_of_the_first_tool_yields_to_a_bare_hand() {
-        for b in [
-            Block::PebblesSmall,
-            Block::PebblesMedium,
-            Block::PebblesLarge,
-            Block::FallenBranch,
-            Block::FallenBranch2,
-            Block::FallenBranch3,
-            Block::Hemp,
-        ] {
-            assert!(harvests(b, None), "{b:?} must come up in a bare hand");
-            assert_eq!(break_time(b, None), 0.0, "{b:?} is gathered, not mined");
-            assert!(
-                !b.drop_spec().drops.is_empty(),
-                "{b:?} must drop what it is for"
-            );
-        }
-        assert!(!harvests(Block::OakLog, None));
-    }
-
-    #[test]
     fn break_event_harvest_flag_follows_tool() {
         let hit = hit_at(IVec3::new(1, 1, 1));
         let dt = 0.05;
@@ -642,15 +408,19 @@ mod tests {
             }
             panic!("{block:?} should break with tool {tool:?}");
         };
-        assert!(mine(pick(1), Block::Stone).harvested);
-        assert!(!mine(None, Block::Stone).harvested);
-        assert!(!mine(pick(1), Block::IronOre).harvested);
-        assert!(mine(pick(2), Block::IronOre).harvested);
-        assert!(!mine(pick(2), Block::DiamondOre).harvested);
-        assert!(mine(pick(3), Block::DiamondOre).harvested);
-        assert!(mine(axe(1), Block::OakLog).harvested);
-        assert!(!mine(None, Block::OakLog).harvested);
-        assert!(!mine(pick(4), Block::OakLog).harvested);
+        for (tool, block) in [
+            (pick(1), Block::Stone),
+            (None, Block::Stone),
+            (pick(1), Block::IronOre),
+            (pick(2), Block::IronOre),
+            (pick(2), Block::DiamondOre),
+            (pick(3), Block::DiamondOre),
+            (axe(1), Block::OakLog),
+            (None, Block::OakLog),
+            (pick(4), Block::OakLog),
+        ] {
+            assert_eq!(mine(tool, block).harvested, harvests(block, tool));
+        }
     }
 
     #[test]

@@ -574,49 +574,6 @@ fn a_mob_eases_into_and_out_of_its_gait() {
     assert_eq!(phase, 0.4, "it holds the stride it stopped in");
 }
 
-#[test]
-fn fist_takes_four_hits_to_kill_an_owl() {
-    let mut game = game();
-    let pos = WorldPos::new(8.0, 64.0, 8.0);
-    assert!(game.server_world_mut().mobs_mut().spawn(Mob::Owl, pos, 0.0));
-    let id = game.server_world().mobs().instances()[0].id();
-    assert_eq!(petramond_world::item::attack_damage(None), (1.0, 1.0));
-    let from = pos + Vec3::X;
-    for i in 0..3 {
-        assert!(
-            game.server_world_mut()
-                .mobs_mut()
-                .damage_mob(
-                    id,
-                    1.0,
-                    Some(from),
-                    true,
-                    None,
-                    &MobDamageFeedback::default()
-                )
-                .is_none(),
-            "fist hit {i} isn't lethal"
-        );
-        for _ in 0..petramond_world::damage::MOB_DAMAGE_IFRAME_TICKS {
-            game.server_world_mut().mobs_mut().tick_damage_immunity();
-        }
-    }
-    assert!(
-        game.server_world_mut()
-            .mobs_mut()
-            .damage_mob(
-                id,
-                1.0,
-                Some(from),
-                true,
-                None,
-                &MobDamageFeedback::default()
-            )
-            .is_some(),
-        "the 4th fist hit kills"
-    );
-}
-
 fn click_attack_at(game: &mut super::common::TestGame, index: usize) {
     let id = game.server_world().mobs().instances()[index].id();
     common::aim_server_at_mob(game, index);

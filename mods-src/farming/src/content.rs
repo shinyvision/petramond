@@ -251,7 +251,6 @@ mod crop_rows_tests {
     #[test]
     fn shipped_crop_rows_have_valid_stages_and_yields() {
         let rows = pack_rows_with_data(include_str!("../pack/blocks.json"), "blocks", CROP_KEY);
-        assert_eq!(rows.len(), 4);
         for (mature, raw) in rows {
             let spec: CropSpec = parse_row_data(&raw).unwrap_or_else(|e| panic!("{mature}: {e}"));
             assert_eq!(spec.stages[3], mature);

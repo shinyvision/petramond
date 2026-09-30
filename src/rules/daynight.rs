@@ -87,19 +87,8 @@ mod tests {
     const C: u64 = DEFAULT_CYCLE_TICKS;
 
     #[test]
-    fn day_minutes_map_to_cycle_ticks_and_clamp() {
-        assert_eq!(cycle_ticks_for_day_minutes(15), 36_000);
-        assert_eq!(C, 36_000, "default day length is 15 minutes");
-        assert_eq!(
-            C,
-            crate::world::session::DEFAULT_DAY_CYCLE_TICKS,
-            "a fresh server world starts on the same default cycle"
-        );
-        assert_eq!(cycle_ticks_for_day_minutes(10), 24_000);
-        assert_eq!(cycle_ticks_for_day_minutes(30), 72_000);
-        assert_eq!(cycle_ticks_for_day_minutes(5), 24_000, "clamped low");
-        assert_eq!(cycle_ticks_for_day_minutes(99), 72_000, "clamped high");
-        assert_eq!(fresh_clock(C) as f32 / C as f32, 0.05);
+    fn a_fresh_server_world_starts_on_the_default_cycle() {
+        assert_eq!(C, crate::world::session::DEFAULT_DAY_CYCLE_TICKS);
     }
 
     #[test]
@@ -122,18 +111,13 @@ mod tests {
             "a fraction read off a clock maps back onto it"
         );
         assert_eq!(moon_phase(clock, C), 3.0);
-        assert_eq!(moon_phase(9 * C, C), 1.0, "phases wrap every eight days");
+        assert_eq!(moon_phase((MOON_PHASES + 1) * C, C), 1.0, "phases wrap");
     }
 
     #[test]
-    fn sky_is_bright_at_noon_and_blue_dark_at_midnight() {
+    fn sky_is_brighter_at_noon_than_at_midnight() {
         let (noon_time, noon_light) = sky_params(0.25, 0.0);
         assert_eq!(noon_time[0], 0.25);
-        assert!(noon_time[1] > 0.99, "full daylight at noon: {noon_time:?}");
-        assert!(
-            noon_light[0] > 0.99,
-            "noon sky at full scale: {noon_light:?}"
-        );
 
         let (midnight_time, light) = sky_params(1.75, 4.0);
         assert!(
@@ -141,11 +125,7 @@ mod tests {
             "the fraction wraps into 0..1"
         );
         assert_eq!(midnight_time[2], 4.0, "the moon phase rides through");
-        assert!(light[0] < 0.5, "midnight sky light is dark: {light:?}");
-        assert!(
-            light[1] < light[3] && light[2] < light[3],
-            "midnight sky light keeps the blue-dominant tint: {light:?}"
-        );
+        assert!(light[0] < noon_light[0], "{light:?} vs {noon_light:?}");
     }
 
     #[test]

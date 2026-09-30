@@ -9,7 +9,7 @@ use petramond_world::chunk::{ChunkPos, SECTION_SIZE};
 
 pub const FORMAT_VERSION: u8 = 12;
 
-pub const ENGINE_STAMP: u64 = crate::parity::EXPECTED_COMBINED;
+include!(concat!(env!("OUT_DIR"), "/engine_stamp.rs"));
 
 fn table_fingerprint(seed: u32) -> u64 {
     crate::cache::GenContext::installed(seed).tables()

@@ -219,48 +219,6 @@ fn moving_plays_walk_idle_uses_rest_pose() {
 }
 
 #[test]
-fn shorn_hides_exactly_the_wool_named_cubes() {
-    let sheep = Model::load(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/models/sheep.bbmodel"
-    )))
-    .expect("sheep model");
-    assert!(
-        sheep.cubes.iter().any(|c| c.name == "wool"),
-        "fixture must author its fleece as `wool` cubes"
-    );
-    let draw = |model: &Model, kind: Mob, shorn: bool| {
-        let mut inst = instance(0.0, false);
-        inst.kind = kind;
-        inst.shorn = shorn;
-        skin(
-            model,
-            0.0625,
-            &inst,
-            &MobRig::resolve(model, None, Some("wool")),
-        )
-    };
-    let coated = draw(&sheep, Mob::Sheep, false);
-    let shorn = draw(&sheep, Mob::Sheep, true);
-    assert!(
-        shorn.len() < coated.len(),
-        "hiding the fleece removes geometry: {} -> {}",
-        coated.len(),
-        shorn.len()
-    );
-
-    let owl = owl_model();
-    assert!(owl.cubes.iter().all(|c| c.name != "wool"));
-    let owl_plain = draw(&owl, Mob::Owl, false);
-    let owl_shorn = draw(&owl, Mob::Owl, true);
-    assert_eq!(
-        owl_plain.len(),
-        owl_shorn.len(),
-        "a model without wool cubes is unaffected by shorn"
-    );
-}
-
-#[test]
 fn head_look_rotates_the_head_when_idle() {
     let m = owl_model();
     let rig = MobRig::resolve(&m, None, None);

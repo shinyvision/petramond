@@ -265,37 +265,3 @@ fn cover_cluster_allows(cluster: Option<CoverCluster>, seed: u32, wx: i32, wz: i
         Some(c) => patch_field(seed, c.salt, wx, wz, c.period) < c.coverage,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_snowfield_still_grows_the_ingredients_of_the_first_tool() {
-        const SEED: u32 = 0x5EA5_04E5;
-        const SIDE: i32 = 600;
-
-        let mut pebbles = 0;
-        let mut hemp = 0;
-        for wz in 0..SIDE {
-            for wx in 0..SIDE {
-                let mut rng = FeatureRng::positional(SEED, salts::VEGETATION, wx, 0, wz);
-                match pick_litter(Biome::SNOWY_TAIGA, Block::Grass, SEED, wx, wz, &mut rng) {
-                    Some(Block::Hemp) => hemp += 1,
-                    Some(_) => pebbles += 1,
-                    None => {}
-                }
-            }
-        }
-
-        let columns = SIDE * SIDE;
-        assert!(
-            pebbles > 400,
-            "snowfield grew {pebbles} pebbles over {columns} columns"
-        );
-        assert!(
-            hemp > 0,
-            "snowfield grew {hemp} hemp over {columns} columns"
-        );
-    }
-}

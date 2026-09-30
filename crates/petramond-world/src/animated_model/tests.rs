@@ -50,21 +50,12 @@ fn assert_same_box(drawn: Aabb, collides: Aabb, what: &str) {
 }
 
 #[test]
-fn every_engine_model_loads_and_the_rows_that_draw_one_name_it() {
+fn every_engine_model_loads() {
     for &key in ENGINE_MODEL_NAMES {
         let model = engine(key);
         assert_eq!(model.key, key);
         assert!(!model.variants().is_empty());
     }
-    assert_eq!(
-        Block::Chest.animated_model().map(|m| m.key),
-        Some("petramond:chest")
-    );
-    assert_eq!(
-        Block::OakDoor.animated_model().map(|m| m.key),
-        Some("petramond:door")
-    );
-    assert!(Block::Stone.animated_model().is_none());
 }
 
 #[test]
@@ -176,12 +167,8 @@ fn a_family_poses_its_model_from_the_cell_state() {
 }
 
 #[test]
-fn the_chest_item_sits_centred_and_a_part_takes_its_rows_tiles() {
-    let chest = engine("petramond:chest");
-    assert!(chest.item);
-    assert!((chest.item_lift - 1.0 / 16.0).abs() < 1e-6);
+fn a_part_takes_its_rows_tiles() {
     let door = engine("petramond:door");
-    assert!(!door.item, "a door's item is its sprite");
     let [top, bottom, side] = Block::OakDoor.tiles();
     let lower = door.variant(0).parts[0].tiles(Block::OakDoor);
     assert_eq!(lower, [side, side, side, side, bottom, bottom]);

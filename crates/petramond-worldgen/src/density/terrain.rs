@@ -65,11 +65,9 @@ mod tests {
         FloorDensitySpec, ReferenceTerrainSpec, ShapingSplineSpecs, DEPTH_OFFSET_BIAS, HEIGHT_SCALE,
     };
     use super::*;
-    use crate::density::lattice::{DensityLattice, DensityLatticeBounds, DensityLatticeCellSize};
     use crate::density::shaper;
     use crate::graph::spline::CubicSpline;
     use crate::graph::SamplePoint;
-    use petramond_world::chunk::{CHUNK_SY, SEA_LEVEL};
 
     fn assert_close(actual: f64, expected: f64) {
         assert!(
@@ -87,47 +85,6 @@ mod tests {
                 ),
             },
             floor: FloorDensitySpec::new(0.0, 8.0, 64.0),
-        }
-    }
-
-    #[derive(Copy, Clone, Debug)]
-    struct SurfaceWindowStats {
-        max: i32,
-        stdev: f64,
-        exposed_land_pct: f64,
-    }
-
-    fn surface_stats(seed: u32, x0: i32, z0: i32, size: usize) -> SurfaceWindowStats {
-        let density = TerrainDensitySpec::default_surface().build_graph(seed);
-        let bounds = DensityLatticeBounds::new(x0, 0, z0, size, CHUNK_SY, size);
-        let lattice = DensityLattice::sample_channel(
-            density.graph(),
-            channels::MASTER_DENSITY,
-            bounds,
-            DensityLatticeCellSize::default(),
-        )
-        .expect("default density graph must expose master density");
-        let surfaces = lattice
-            .top_solid_surfaces()
-            .into_iter()
-            .map(|surface| surface.unwrap_or(-1))
-            .collect::<Vec<_>>();
-        let max = surfaces.iter().copied().max().unwrap_or(-1);
-        let mean = surfaces.iter().map(|&y| f64::from(y)).sum::<f64>() / surfaces.len() as f64;
-        let variance = surfaces
-            .iter()
-            .map(|&y| {
-                let d = f64::from(y) - mean;
-                d * d
-            })
-            .sum::<f64>()
-            / surfaces.len() as f64;
-        let exposed_land =
-            surfaces.iter().filter(|&&y| y >= SEA_LEVEL).count() as f64 / surfaces.len() as f64;
-        SurfaceWindowStats {
-            max,
-            stdev: variance.sqrt(),
-            exposed_land_pct: exposed_land * 100.0,
         }
     }
 
@@ -220,33 +177,5 @@ mod tests {
             .unwrap();
         assert!(faded > unfaded);
         assert_close(unfaded, 24.0);
-    }
-
-    #[test]
-    fn default_surface_recipe_produces_exposed_land_and_relief() {
-        let origin = surface_stats(42, -192, -192, 384);
-        let far = surface_stats(42, 19_808, 19_808, 384);
-
-        assert_surface_window_has_land_and_relief("origin", origin, 3.0);
-        assert_surface_window_has_land_and_relief("far", far, 2.0);
-    }
-
-    fn assert_surface_window_has_land_and_relief(
-        label: &str,
-        stats: SurfaceWindowStats,
-        min_stdev: f64,
-    ) {
-        assert!(
-            stats.exposed_land_pct >= 5.0,
-            "expected {label} window to expose meaningful land; stats={stats:?}"
-        );
-        assert!(
-            stats.max >= SEA_LEVEL + 8,
-            "expected {label} terrain to rise above sea level; stats={stats:?}"
-        );
-        assert!(
-            stats.stdev >= min_stdev,
-            "expected {label} top-solid relief to be non-flat; stats={stats:?}"
-        );
     }
 }

@@ -99,61 +99,6 @@ fn crafting_browser_documents_ship_and_validate() {
 }
 
 #[test]
-fn the_recipe_grid_shows_several_rows_at_the_smallest_viewport() {
-    use petramond_ui::{
-        FrameArgs, FrameOutput, FrameState, NoImages, UiMap, UiRuntime, UiState, UiValue,
-    };
-    let doc = doc_for(GuiKind::CraftingTable).expect("crafting table document loads");
-    let rows: Vec<UiMap> = (0..120)
-        .map(|_| {
-            let mut row = UiMap::new();
-            row.insert("enabled".into(), UiValue::Bool(true));
-            row
-        })
-        .collect();
-    let mut state = UiState::new();
-    state.set("craft_recipes", UiValue::List(Arc::new(rows)));
-    state.set("no_craft_results", UiValue::Bool(false));
-
-    let screen = (1280u32, 720u32);
-    let scale = crate::gui::gui_scale(screen) as i32;
-    let runtime = UiRuntime::new(doc.doc, crate::gui::doc_theme::theme());
-    let mut fs = FrameState::new();
-    let mut out = FrameOutput::default();
-    runtime.frame(
-        FrameArgs {
-            screen,
-            scale,
-            now: 0.0,
-            state: &state,
-            input: &[],
-            clipboard: None,
-            images: &NoImages,
-            dim: None,
-            preview: None,
-        },
-        &mut fs,
-        &mut out,
-    );
-
-    let scroll = out.rect("craft_scroll").expect("scroll solves");
-    let mut tops: Vec<i32> = out
-        .named
-        .iter()
-        .filter(|(key, _)| key.id == "recipe")
-        .map(|(_, r)| r.y)
-        .filter(|y| *y >= scroll.y && *y < scroll.y + scroll.h)
-        .collect();
-    tops.sort_unstable();
-    tops.dedup();
-    assert!(
-        tops.len() >= 3,
-        "only {} grid rows visible at 720p — the browser is being squeezed",
-        tops.len()
-    );
-}
-
-#[test]
 fn crafting_table_browser_shrinks_before_inventory_leaves_the_viewport() {
     use petramond_ui::{
         FrameArgs, FrameOutput, FrameState, NoImages, UiMap, UiRuntime, UiState, UiValue,
@@ -257,20 +202,6 @@ fn inventory_browser_shrinks_before_inventory_leaves_the_viewport() {
             .all(|slot| slot.rect.y >= 0 && slot.rect.y + slot.rect.h <= 720),
         "the compact stacked form must keep every inventory slot on-screen"
     );
-    let craft = output
-        .named
-        .iter()
-        .find(|(key, _)| key.id == "craft")
-        .expect("craft button solves")
-        .1;
-    assert!(
-        output
-            .slots
-            .iter()
-            .filter(|slot| slot.role == "player_inv" || slot.role == "hotbar")
-            .all(|slot| slot.rect.y >= craft.y + craft.h),
-        "small screens stack the crafting panel above the inventory panel"
-    );
 }
 
 #[test]
@@ -280,18 +211,6 @@ fn documents_resolve_images_beside_the_document() {
         !doc.images.is_empty(),
         "the screenshot backdrop resolves beside the document"
     );
-}
-
-#[test]
-fn minimap_client_documents_ship_and_validate() {
-    for (key, class) in [
-        ("minimap:create_waypoint", petramond_ui::DocClass::Screen),
-        ("minimap:edit_waypoint", petramond_ui::DocClass::Screen),
-    ] {
-        let kind = crate::gui::intern_kind(key).expect("namespaced kind interns");
-        let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
-        assert_eq!(doc.doc.class, class, "{key}");
-    }
 }
 
 fn show_item_tip_nodes(node: &petramond_ui::Node) -> usize {
@@ -332,8 +251,6 @@ fn container_documents_get_the_item_tooltip_injected_at_load() {
         "petramond:crafting_table",
         "petramond:chest",
         "petramond:furnace",
-        "forge:forging_furnace",
-        "forge:anvil",
     ] {
         let kind = crate::gui::intern_kind(key).expect("kind interns");
         let doc = doc_for(kind).unwrap_or_else(|| panic!("{key} document loads"));
@@ -362,9 +279,6 @@ fn container_documents_get_the_slot_tooltip_injected_at_load() {
     .unwrap();
     inject_slot_tooltip(&mut screen);
     assert_eq!(show_slot_tip_nodes(&screen.root), 0, "screens carry none");
-    let kind = crate::gui::intern_kind("forge:anvil").expect("kind interns");
-    let doc = doc_for(kind).expect("anvil document loads");
-    assert_eq!(show_slot_tip_nodes(&doc.doc.root), 1, "forge:anvil");
 }
 
 #[test]

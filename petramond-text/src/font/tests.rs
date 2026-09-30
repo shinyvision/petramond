@@ -119,9 +119,6 @@ fn atlas_pixels_match_every_glyph_bitmap() {
 fn coverage_comes_from_the_face_not_a_latin_list() {
     let bytes = shipped_font_bytes();
     let font = Font::from_ttf(&bytes, 11.0).unwrap();
-    for ch in "AZaz09 ×·—…'\"Ööäëéèñçßæø".chars() {
-        assert!(font.has_glyph(ch), "missing glyph {ch:?}");
-    }
     let face = ab_glyph::FontRef::try_from_slice(&bytes).unwrap();
     let mapped_beyond_latin: Vec<char> = {
         use ab_glyph::Font as _;

@@ -11,7 +11,6 @@ pub mod formula;
 pub mod graph;
 pub mod hooks;
 mod noise;
-pub mod parity;
 #[cfg(feature = "tools")]
 pub mod preview;
 mod queries;

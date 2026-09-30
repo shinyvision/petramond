@@ -3,7 +3,6 @@ mod common;
 mod creative;
 
 mod bed;
-mod breaking;
 mod camera;
 mod combat_entities;
 mod drops;

@@ -49,9 +49,7 @@ pub struct ModelCellTemplate {
     /// bit, cullface neighbour test) and stream route (opaque-cutout vs
     /// alpha-blend). Baking them contiguously is what lets the mesher emit an
     /// arbitrary parts mask / neighbour configuration as a handful of slice
-    /// copies instead of a per-cube filter — and a row with no optional parts,
-    /// no cullfaces, and no semi-transparent faces bakes byte-identically to
-    /// what it did before segments existed (one ungated opaque segment).
+    /// copies instead of a per-cube filter.
     pub segments: Vec<TemplateSegment>,
 }
 

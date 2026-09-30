@@ -168,8 +168,9 @@ mod tests {
         assert!(each_item::<SlotsSpec>(keys::AUGMENT_SLOTS_DATA) > 0);
         let blocks = include_str!("../pack/blocks.json");
         let upgrades = pack_rows_with_data(blocks, "blocks", keys::UPGRADES_DATA);
-        assert_eq!(upgrades.len(), 1);
-        parse_row_data::<Vec<UpgradeSpec>>(&upgrades[0].1).unwrap_or_else(|e| panic!("{e}"));
+        for (row, raw) in &upgrades {
+            parse_row_data::<Vec<UpgradeSpec>>(raw).unwrap_or_else(|e| panic!("{row}: {e}"));
+        }
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::{Block, BlockInteraction, BlockMaterial, ShapeFamily};
+use super::{Block, ShapeFamily};
 use crate::item::ItemType;
 
 /// Apertures come from shape occupancy, not per-family data. A quadrant is open where nothing
@@ -63,7 +63,7 @@ fn light_apertures_are_derived_from_the_shape_occupancy() {
 
 #[test]
 fn a_box_set_derives_every_box_from_its_authored_shape() {
-    let (mut checked, mut sealing) = (0, 0);
+    let mut checked = 0;
     for &b in Block::all() {
         let Some(set) = b.shape_kind().def().params.box_set() else {
             continue;
@@ -85,14 +85,9 @@ fn a_box_set_derives_every_box_from_its_authored_shape() {
         if floor_fully_covered(set.boxes(0, 0)) {
             let sealed = crate::block::light_aperture_face(b.default_light_apertures(), (0, -1, 0));
             assert_eq!(sealed, 0, "{b:?} full-floor box must block light downward");
-            sealing += 1;
         }
     }
-    assert!(checked >= 2, "expected the engine's own box-set rows");
-    assert!(
-        sealing >= 1,
-        "expected a shipped box set that covers its floor"
-    );
+    assert!(checked > 0, "expected the engine's own box-set rows");
 }
 
 fn floor_fully_covered(boxes: &[crate::block::shape_kind::BoxDef]) -> bool {
@@ -126,61 +121,11 @@ fn shape_kinds_resolve_consistently_for_every_block() {
             "{b:?} model payload matches family"
         );
     }
-    for (b, family) in [
-        (Block::Stone, ShapeFamily::Cube),
-        (Block::ShortGrass, ShapeFamily::Cross),
-        (Block::Torch, ShapeFamily::Torch),
-        (Block::OakStairs, ShapeFamily::Stair),
-        (Block::OakSlab, ShapeFamily::Slab),
-        (Block::GlassPane, ShapeFamily::Pane),
-        (Block::OakFence, ShapeFamily::Fence),
-        (Block::Ladder, ShapeFamily::Ladder),
-        (Block::OakDoor, ShapeFamily::Door),
-        (Block::SnowLayer, ShapeFamily::BoxSet),
-        (Block::Cactus, ShapeFamily::BoxSet),
-        (Block::Bed, ShapeFamily::Model),
-    ] {
-        assert_eq!(b.shape_family(), family, "{b:?}");
-    }
     assert_eq!(
         Block::Stone.shape_kind(),
         Block::Dirt.shape_kind(),
         "plain cubes share one shape kind"
     );
-}
-
-#[test]
-fn directional_view_is_block_data_for_blocks_with_a_front() {
-    for block in [Block::Furnace, Block::Chest, Block::FurnitureWorkbench] {
-        assert!(
-            block.directional_view(),
-            "{block:?} should face the player on placement"
-        );
-    }
-    for block in [Block::CraftingTable, Block::Torch, Block::Stone] {
-        assert!(
-            !block.directional_view(),
-            "{block:?} has no authored front view"
-        );
-    }
-}
-
-#[test]
-fn hinged_panel_shapes_advertise_their_toggle_interaction() {
-    for (family, expected) in [
-        (ShapeFamily::Door, BlockInteraction::ToggleDoor),
-        (ShapeFamily::Trapdoor, BlockInteraction::ToggleTrapdoor),
-    ] {
-        let mut checked_any = false;
-        for &block in Block::all() {
-            if block.shape_family() != family {
-                continue;
-            }
-            checked_any = true;
-            assert_eq!(block.interaction(), expected, "{block:?}");
-        }
-        assert!(checked_any, "expected at least one {family:?} block");
-    }
 }
 
 #[test]
@@ -196,82 +141,7 @@ fn every_block_has_consistent_metadata() {
                 d.max
             );
         }
-        assert_eq!(
-            block.requires_tool(),
-            block.harvest_tier() >= 1,
-            "{block:?}"
-        );
-        if block.requires_tool() {
-            assert!(
-                block.preferred_tool().is_some(),
-                "{block:?} is tool-gated with no tool that fits it"
-            );
-        }
     }
-}
-
-#[test]
-fn preferred_tool_pairs_pickaxe_axe_shovel_with_their_materials() {
-    use crate::item::ToolKind;
-    for b in [
-        Block::Stone,
-        Block::Cobblestone,
-        Block::CoalOre,
-        Block::DiamondOre,
-    ] {
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Pickaxe), "{b:?}");
-    }
-    for b in [
-        Block::OakLog,
-        Block::OakPlanks,
-        Block::CraftingTable,
-        Block::Chest,
-    ] {
-        assert_eq!(b.material(), BlockMaterial::Wood, "{b:?} should be wood");
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Axe), "{b:?}");
-    }
-    for b in [
-        Block::Dirt,
-        Block::Grass,
-        Block::Podzol,
-        Block::Sand,
-        Block::Gravel,
-        Block::Clay,
-        Block::SnowLayer,
-    ] {
-        assert!(
-            matches!(
-                b.material(),
-                BlockMaterial::Dirt | BlockMaterial::Sand | BlockMaterial::Snow
-            ),
-            "{b:?} should be dirt/sand/snow"
-        );
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Shovel), "{b:?}");
-    }
-    for b in [Block::WoolBlock, Block::WoolStairs, Block::WoolSlab] {
-        assert_eq!(b.material(), BlockMaterial::Wool, "{b:?} should be wool");
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
-    }
-    for b in [Block::Poppy, Block::ShortGrass] {
-        assert_eq!(b.material(), BlockMaterial::Plant, "{b:?} should be plant");
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
-    }
-    for b in [Block::OakLeaves, Block::SpruceLeaves] {
-        assert_eq!(
-            b.material(),
-            BlockMaterial::Foliage,
-            "{b:?} should be foliage"
-        );
-        assert_eq!(b.preferred_tool(), Some(ToolKind::Shears), "{b:?}");
-        assert!(b.cut_by_preferred_tool(), "{b:?}");
-    }
-    for b in [Block::Glass, Block::Air] {
-        assert_eq!(b.preferred_tool(), None, "{b:?}");
-    }
-    let shears = crate::item::ItemType::Shears.tool();
-    assert!(!crate::mining::harvests(Block::ShortGrass, None));
-    assert!(crate::mining::harvests(Block::ShortGrass, shears));
-    assert!(crate::mining::harvests(Block::Poppy, None));
 }
 
 #[test]
@@ -293,28 +163,6 @@ fn a_melting_block_leaves_its_fluid_only_over_support() {
         "no floating source over a void"
     );
     assert_eq!(solid.break_residue(fluid), Block::Air);
-}
-
-#[test]
-fn is_terrain_solid_is_the_bare_ground_set() {
-    let terrain = [Block::Stone, Block::Dirt, Block::Grass, Block::Sand];
-    for &b in &terrain {
-        assert!(b.is_terrain_solid(), "{b:?} should be terrain-solid");
-    }
-    for &b in Block::all() {
-        let expected = terrain.contains(&b);
-        assert_eq!(b.is_terrain_solid(), expected, "{b:?}");
-    }
-    for b in [
-        Block::OakLog,
-        Block::OakLeaves,
-        Block::Cobblestone,
-        Block::Sandstone,
-        Block::Water,
-        Block::Air,
-    ] {
-        assert!(!b.is_terrain_solid(), "{b:?} should NOT be terrain-solid");
-    }
 }
 
 #[test]

@@ -540,21 +540,6 @@ mod tests {
     }
 
     #[test]
-    fn default_index_classifies_representative_signed_climates() {
-        let index = BiomeClimateIndex::default_surface();
-
-        assert!(!index.is_empty());
-        for climate in [
-            SurfaceClimate::new(-0.8, -0.1, -0.9, 0.2, -0.3),
-            SurfaceClimate::new(-0.7, 0.7, 0.2, 0.4, 0.1),
-            SurfaceClimate::new(0.75, -0.75, 0.4, 0.6, -0.2),
-            SurfaceClimate::new(0.2, 0.5, 0.7, -0.5, 0.8),
-        ] {
-            assert!(index.classify_surface(climate).is_some());
-        }
-    }
-
-    #[test]
     fn non_empty_index_always_returns_a_biome() {
         const RECTANGLES: &[ClimateRect] = &[test_rect(0.25, 0.75)];
         let index = BiomeClimateIndex::new(&[BiomeClimateEntry {

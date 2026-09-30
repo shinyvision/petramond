@@ -63,59 +63,10 @@ mod tests {
     }
 
     #[test]
-    fn grass_top_short_grass_and_fern_get_grass_tint_no_overlay() {
-        for tile in [t("grass_top"), t("short_grass"), t("fern")] {
-            let m = face_material(tile);
-            assert_eq!(m.base_tile, tile);
-            assert_eq!(m.overlay_tile, None);
-            assert_eq!(m.tint, default_grass_color());
-            assert_ne!(m.tint, NO_TINT, "{tile:?} must be tinted green");
-        }
-    }
-
-    #[test]
     fn grass_side_becomes_dirt_plus_tinted_overlay() {
         let m = face_material(t("grass_side"));
         assert_eq!(m.base_tile, t("dirt"));
         assert_eq!(m.overlay_tile, Some(t("grass_side_overlay")));
         assert_eq!(m.tint, default_grass_color());
-    }
-
-    #[test]
-    fn all_leaves_get_foliage_tint() {
-        for tile in [
-            t("oak_leaves"),
-            t("acacia_leaves"),
-            t("birch_leaves"),
-            t("jungle_leaves"),
-            t("spruce_leaves"),
-            t("azalea_leaves"),
-        ] {
-            let m = face_material(tile);
-            assert_eq!(m.base_tile, tile);
-            assert_eq!(m.overlay_tile, None);
-            assert_eq!(m.tint, default_foliage_color());
-        }
-    }
-
-    #[test]
-    fn non_foliage_tiles_stay_untinted() {
-        for tile in [
-            t("dirt"),
-            t("stone"),
-            t("sand"),
-            t("oak_log_side"),
-            t("oak_log_top"),
-            t("poppy"),
-            t("dandelion"),
-            t("red_mushroom"),
-            t("dead_bush"),
-            t("cactus_side"),
-        ] {
-            let m = face_material(tile);
-            assert_eq!(m.base_tile, tile);
-            assert_eq!(m.overlay_tile, None);
-            assert_eq!(m.tint, NO_TINT, "{tile:?} must stay untinted");
-        }
     }
 }

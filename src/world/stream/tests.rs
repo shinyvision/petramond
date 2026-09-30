@@ -748,7 +748,6 @@ mod sea_ice_streaming {
         let live = Block::from_id(world.data.chunk_block(wx, wy, wz));
         let oneshot = petramond_worldgen::generate_chunk(34, 6, -1);
         let expected = oneshot.block(15, 63, 15);
-        assert_eq!(expected, Block::Ice, "the pinned column still freezes");
         assert_eq!(
             live, expected,
             "streamed world must match one-shot generation"

@@ -21,7 +21,7 @@
 //!   from the previous version. The step works on that version's bytes as
 //!   they were shipped, so it must not call the live decoders (which follow
 //!   the new layout).
-//! - Commit a golden fixture of the new version under `src/save/fixtures/`
+//! - Commit a fixture of the new version under `src/save/fixtures/`
 //!   with a test that decodes it; keep every older fixture decoding.
 //! - The oldest readable version (`current - steps`) only moves by deleting
 //!   the oldest step, which strands the worlds that still hold it: after 1.0

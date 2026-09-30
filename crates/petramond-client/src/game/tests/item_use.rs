@@ -492,7 +492,7 @@ fn pouring_water_at_a_lava_sea_surface_cools_the_surface_not_the_floor() {
 
 /// Server and client both get this bucket click, straight down onto `aim`. If the server uses
 /// the item, the client should have predicted it, and if not, not.
-fn bucket_click_parity(item: ItemType, aim: IVec3, stage: &[(IVec3, Block)]) -> bool {
+fn bucket_click_agrees(item: ItemType, aim: IVec3, stage: &[(IVec3, Block)]) -> bool {
     let mut game = game_on_empty_chunk();
     game.game.replica.world.insert_chunk_for_test(
         petramond_world::chunk::ChunkPos::new(0, 0),
@@ -529,11 +529,11 @@ fn bucket_click_parity(item: ItemType, aim: IVec3, stage: &[(IVec3, Block)]) -> 
 fn bucket_prediction_matches_the_authoritative_fill() {
     let src = IVec3::new(4, 70, 4);
     assert!(
-        bucket_click_parity(ItemType::WoodenBucket, src, &[(src, Block::Water)]),
+        bucket_click_agrees(ItemType::WoodenBucket, src, &[(src, Block::Water)]),
         "a source under the eye fills on both mirrors"
     );
     assert!(
-        !bucket_click_parity(ItemType::WoodenBucket, src, &[(src, Block::Stone)]),
+        !bucket_click_agrees(ItemType::WoodenBucket, src, &[(src, Block::Stone)]),
         "stone is nothing to scoop on either mirror"
     );
 }
@@ -542,11 +542,11 @@ fn bucket_prediction_matches_the_authoritative_fill() {
 fn bucket_prediction_matches_the_authoritative_pour() {
     let floor = IVec3::new(4, 70, 4);
     assert!(
-        bucket_click_parity(ItemType::WaterBucket, floor, &[(floor, Block::Stone)]),
+        bucket_click_agrees(ItemType::WaterBucket, floor, &[(floor, Block::Stone)]),
         "a pour against the floor lands on both mirrors"
     );
     assert!(
-        !bucket_click_parity(ItemType::WaterBucket, IVec3::new(4, 20, 4), &[]),
+        !bucket_click_agrees(ItemType::WaterBucket, IVec3::new(4, 20, 4), &[]),
         "a pour with nothing in reach lands on neither"
     );
 }

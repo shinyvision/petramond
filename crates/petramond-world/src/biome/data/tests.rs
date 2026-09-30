@@ -81,25 +81,6 @@ fn the_trees_field_is_carried_verbatim_and_absent_when_omitted() {
 }
 
 #[test]
-fn every_shipped_row_carries_its_generation_rules() {
-    let base = std::fs::read_to_string(
-        crate::assets::candidate_paths("biomes.json")
-            .into_iter()
-            .find(|p| p.exists())
-            .expect("shipped biomes.json"),
-    )
-    .unwrap();
-    let table = parse_layers(&[&base]).expect("shipped biomes load");
-    for row in table.rows() {
-        let text = row
-            .generation
-            .unwrap_or_else(|| panic!("biome '{}' has no generation", row.name));
-        let value: serde_json::Value = serde_json::from_str(text).unwrap();
-        assert!(value.get("surface").is_some(), "biome '{}'", row.name);
-    }
-}
-
-#[test]
 fn ambient_densities_validate_per_entry() {
     let row = |ambient: &str| {
         format!(

@@ -6,7 +6,7 @@
 //! - `<carved>`: how many lockable sockets have been carved open.
 //! - one entry per socket cell, in order: augment id (a fit's canonical overlay item name),
 //!   condition in quanta (missing = full, `@0` = broken), mount level (missing = Basic). A record
-//!   before wear and a freshly stamped one are byte-identical. The grayed icon lands in the right
+//!   before wear and a freshly stamped one are the same bytes. The grayed icon lands in the right
 //!   cell because the record tracks cell position.
 //!
 //! If bytes don't re-encode faithfully, [`Record::parse`] returns `None` and we leave them alone.

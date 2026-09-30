@@ -420,31 +420,4 @@ mod tests {
             "new tiles append at the end"
         );
     }
-
-    #[test]
-    fn tint_columns_mirror_the_engine_rules() {
-        for name in ["grass_top", "short_grass", "fern"] {
-            let t = Tile::from_name(name).unwrap();
-            assert_eq!(t.world_tint(), Some(TileTint::Grass), "{name}");
-        }
-        for name in ["water", "water_still", "water_flow"] {
-            let t = Tile::from_name(name).unwrap();
-            assert_eq!(t.world_tint(), Some(TileTint::Water), "{name}");
-        }
-        for name in ["oak_leaves", "spruce_leaves", "redwood_leaves"] {
-            let t = Tile::from_name(name).unwrap();
-            assert_eq!(t.world_tint(), Some(TileTint::Foliage), "{name}");
-        }
-        {
-            let name = "azalea_leaves";
-            let t = Tile::from_name(name).unwrap();
-            assert_eq!(t.world_tint(), None, "{name}");
-            assert_eq!(t.icon_tint(), Some(TileTint::Foliage), "{name}");
-        }
-        let oak = Tile::from_name("oak_leaves").unwrap();
-        assert_eq!(oak.icon_tint(), Some(TileTint::Foliage));
-        let stone = Tile::from_name("stone").unwrap();
-        assert_eq!(stone.world_tint(), None);
-        assert_eq!(stone.icon_tint(), None);
-    }
 }

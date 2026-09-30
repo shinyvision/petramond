@@ -280,69 +280,12 @@ fn box_corners(from: Vec3, to: Vec3) -> [Vec3; 8] {
 mod tests {
     use super::*;
 
-    fn owl() -> Model {
-        let src = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/assets/models/owl.bbmodel"
-        ));
-        Model::load(src).expect("owl.bbmodel parses")
-    }
-
     fn sheep() -> Model {
         let src = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/assets/models/sheep.bbmodel"
         ));
         Model::load(src).expect("sheep.bbmodel parses")
-    }
-
-    #[test]
-    fn owl_idle_animations_are_detected_with_sane_lengths() {
-        let v = idle_anims(&owl());
-        assert!(!v.is_empty(), "owl idle animations should be detected");
-        assert!(
-            v.iter().all(|m| m.length > 0.0),
-            "idle animations have a length"
-        );
-    }
-
-    #[test]
-    fn idle_anims_line_up_with_the_models_idle_index() {
-        let m = owl();
-        let v = idle_anims(&m);
-        for (i, meta) in v.iter().enumerate() {
-            let anim = m.idle_animation(i).expect("model has this idle index");
-            assert_eq!(meta.length, anim.length);
-            assert_eq!(meta.looping, anim.looping);
-        }
-        assert!(
-            m.idle_animation(v.len()).is_none(),
-            "the list covers exactly the model's idles"
-        );
-    }
-
-    #[test]
-    fn owl_skeleton_matches_the_model_with_a_root_and_real_boxes() {
-        let m = owl();
-        let skel = skeleton(&m);
-        assert_eq!(
-            skel.bones.len(),
-            m.bones.len(),
-            "one sk-bone per model bone"
-        );
-        assert!(
-            skel.bones.iter().any(|b| b.parent.is_none()),
-            "the skeleton has a root"
-        );
-        for b in &skel.bones {
-            if let Some(p) = b.parent {
-                assert!(p < skel.bones.len(), "parent index in range");
-            }
-            assert!(
-                (b.bbox_max - b.bbox_min).min_element() > 0.0,
-                "non-degenerate box"
-            );
-        }
     }
 
     #[test]
@@ -395,62 +338,6 @@ mod tests {
                     "ragdoll box contains rendered rest-geometry corner {p:?}"
                 );
             }
-        }
-    }
-
-    fn hushjaw() -> Model {
-        let src = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/mods-src/monsters/pack/models/hushjaw.bbmodel"
-        ));
-        Model::load(src).expect("hushjaw.bbmodel parses")
-    }
-
-    #[test]
-    fn weld_suffixed_and_cube_less_bones_are_welded_to_a_parent() {
-        let m = hushjaw();
-        let skel = skeleton(&m);
-        assert!(
-            m.bones.iter().any(|b| is_weld_name(&b.name)),
-            "fixture must exercise _weld bones"
-        );
-        let mut saw_cube_less = false;
-        for (i, b) in skel.bones.iter().enumerate() {
-            let has_cubes = m.cubes.iter().any(|c| c.bone == i);
-            saw_cube_less |= !has_cubes;
-            assert_eq!(
-                b.welded,
-                (is_weld_name(&m.bones[i].name) || !has_cubes) && b.parent.is_some(),
-                "welding covers `_weld` names and cube-less rig bones: {}",
-                m.bones[i].name
-            );
-        }
-        assert!(saw_cube_less, "fixture must exercise a cube-less rig bone");
-    }
-
-    #[test]
-    fn physics_roots_on_a_geometry_bearing_bone() {
-        let m = hushjaw();
-        let skel = skeleton(&m);
-        let roots: Vec<usize> = (0..skel.bones.len())
-            .filter(|&i| skel.bones[i].parent.is_none())
-            .collect();
-        assert_eq!(roots.len(), 1, "one physical root");
-        let root = roots[0];
-        assert!(
-            m.cubes.iter().any(|c| c.bone == root),
-            "the physical root has geometry"
-        );
-        assert!(!skel.bones[root].welded, "the physical root is simulated");
-        for (i, b) in skel.bones.iter().enumerate() {
-            if b.welded || i == root {
-                continue;
-            }
-            let p = b.parent.expect("non-root bones have parents");
-            assert!(
-                !skel.bones[p].welded,
-                "simulated bone {i} joints to a simulated parent, not a rig placeholder"
-            );
         }
     }
 

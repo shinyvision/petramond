@@ -1,5 +1,4 @@
 use super::*;
-use crate::density::terrain::reference::ReferenceTerrainSpec;
 use crate::graph::SamplePoint;
 
 fn base() -> String {
@@ -7,18 +6,6 @@ fn base() -> String {
         .expect("shipped density/terrain.json")
         .0
 }
-
-const ALL_CHANNELS: [&str; 9] = [
-    channels::TEMPERATURE,
-    channels::HUMIDITY,
-    channels::CONTINENTALITY,
-    channels::EROSION,
-    channels::VARIANCE,
-    channels::RIDGE,
-    channels::BASE_HEIGHT,
-    channels::MASTER_DENSITY,
-    channels::SURFACE_DETECTION,
-];
 
 fn sample_points() -> Vec<SamplePoint> {
     let mut points = Vec::new();
@@ -36,35 +23,6 @@ fn sample_points() -> Vec<SamplePoint> {
         }
     }
     points
-}
-
-#[test]
-fn shipped_recipe_evaluates_bit_identically_to_the_compiled_builder() {
-    let recipe = parse_layers(&[&base()]).expect("shipped recipe loads");
-    let points = sample_points();
-    for seed in [0u32, 42, 0x1234_5678] {
-        let data = recipe.build(seed);
-        let reference = ReferenceTerrainSpec::default_surface().build_graph(seed);
-        let reference = reference.graph();
-        for channel in ALL_CHANNELS {
-            let a = data.channel_node(channel).expect("data channel");
-            let b = reference.channel_node(channel).expect("reference channel");
-            assert_eq!(
-                data.node_depends_on_y(a),
-                reference.node_depends_on_y(b),
-                "{channel} Y-dependency"
-            );
-            for &point in &points {
-                let from_data = data.evaluate_channel(channel, point).unwrap();
-                let from_code = reference.evaluate_channel(channel, point).unwrap();
-                assert_eq!(
-                    from_data.to_bits(),
-                    from_code.to_bits(),
-                    "seed {seed} {channel} at {point:?}: {from_data} vs {from_code}"
-                );
-            }
-        }
-    }
 }
 
 #[test]

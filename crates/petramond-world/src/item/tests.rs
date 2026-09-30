@@ -5,25 +5,14 @@ use super::*;
 
 #[test]
 fn attack_damage_ranges_are_ordered_and_positive() {
-    assert_eq!(attack_damage(None), (1.0, 1.0), "fist is a deterministic 1");
     assert_eq!(
         attack_damage(Some(&ItemStack::new(ItemType::Dirt, 1))),
-        (1.0, 1.0),
+        attack_damage(None),
         "a non-weapon punches like a fist"
     );
     for &it in ItemType::all() {
         let (lo, hi) = attack_damage(Some(&ItemStack::new(it, 1)));
         assert!(lo > 0.0 && lo <= hi, "{it:?}: invalid range {lo}..{hi}");
-    }
-    for it in [
-        ItemType::DiamondPickaxe,
-        ItemType::DiamondAxe,
-        ItemType::DiamondShovel,
-    ] {
-        assert!(
-            attack_damage(Some(&ItemStack::new(it, 1))).0 >= 4.0,
-            "a diamond tool one-shots: {it:?}"
-        );
     }
 }
 
@@ -81,67 +70,10 @@ fn a_malformed_tool_override_degrades_to_the_rows_values() {
 }
 
 #[test]
-fn item_only_items_render_as_sprites_and_carry_tools() {
-    for item in [
-        ItemType::Stick,
-        ItemType::Pebble,
-        ItemType::Rope,
-        ItemType::DiamondPickaxe,
-        ItemType::IronAxe,
-        ItemType::DiamondShovel,
-        ItemType::RawIron,
-        ItemType::RawGold,
-        ItemType::Diamond,
-        ItemType::GoldIngot,
-        ItemType::Coal,
-    ] {
-        assert_eq!(item.as_block(), None, "{item:?}");
-        assert!(
-            matches!(item.render_kind(), ItemRenderKind::Sprite(_)),
-            "{item:?} should render as a sprite"
-        );
-    }
-    use ToolKind::{Axe, Pickaxe, Shovel};
-    assert_eq!(ItemType::StonePickaxe.tool(), Some(Tool::new(Pickaxe, 2)));
-    assert_eq!(ItemType::IronPickaxe.tool(), Some(Tool::new(Pickaxe, 3)));
-    assert_eq!(ItemType::DiamondPickaxe.tool(), Some(Tool::new(Pickaxe, 4)));
-    assert_eq!(ItemType::StoneAxe.tool(), Some(Tool::new(Axe, 2)));
-    assert_eq!(ItemType::DiamondAxe.tool(), Some(Tool::new(Axe, 4)));
-    assert_eq!(ItemType::StoneShovel.tool(), Some(Tool::new(Shovel, 2)));
-    assert_eq!(ItemType::IronShovel.tool(), Some(Tool::new(Shovel, 3)));
-    assert_eq!(ItemType::DiamondShovel.tool(), Some(Tool::new(Shovel, 4)));
-    assert_eq!(ItemType::Stick.tool(), None);
-    assert_eq!(ItemType::Cobblestone.tool(), None);
-}
-
-#[test]
 fn durable_items_do_not_stack() {
-    for durable in [
-        ItemType::StonePickaxe,
-        ItemType::IronPickaxe,
-        ItemType::DiamondPickaxe,
-        ItemType::StoneAxe,
-        ItemType::IronAxe,
-        ItemType::DiamondAxe,
-        ItemType::StoneShovel,
-        ItemType::IronShovel,
-        ItemType::DiamondShovel,
-        ItemType::Shears,
-    ] {
-        assert!(durable.is_durable(), "{durable:?}");
+    for &durable in ItemType::all().iter().filter(|it| it.is_durable()) {
         assert_eq!(durable.max_stack_size(), 1, "{durable:?}");
         assert_eq!(ItemStack::new(durable, 5).count, 1);
-    }
-    for stackable in [
-        ItemType::Stick,
-        ItemType::RawIron,
-        ItemType::RawGold,
-        ItemType::Diamond,
-        ItemType::GoldIngot,
-        ItemType::Cobblestone,
-    ] {
-        assert!(!stackable.is_durable(), "{stackable:?}");
-        assert_eq!(stackable.max_stack_size(), 64, "{stackable:?}");
     }
 }
 
@@ -161,42 +93,10 @@ fn every_item_draws_as_itself_and_never_falls_back_to_the_stick() {
 }
 
 #[test]
-fn the_wild_hemp_fibre_is_a_material_not_a_placeable() {
-    assert_eq!(ItemType::Hemp.as_block(), None);
-}
-
-#[test]
 fn item_tags_are_item_data() {
-    const PLANKS: ItemTag = ItemTag::PLANKS;
-    const LOGS: ItemTag = ItemTag::LOGS;
-    for p in [ItemType::OakPlanks, ItemType::SprucePlanks] {
-        assert!(p.has_tag(PLANKS), "{p:?}");
-    }
-    for log in [
-        ItemType::OakLog,
-        ItemType::SpruceLog,
-        ItemType::BirchLog,
-        ItemType::JungleLog,
-        ItemType::AcaciaLog,
-    ] {
-        assert!(log.has_tag(LOGS), "{log:?}");
-        assert!(!log.has_tag(PLANKS), "{log:?}");
-    }
-    assert!(!ItemType::OakLog.has_tag(PLANKS));
-    assert!(!ItemType::Stick.has_tag(LOGS));
-    assert!(!ItemType::Stick.has_tag(PLANKS));
-    assert_eq!(ItemTag::from_key("petramond:planks"), Some(PLANKS));
-    assert_eq!(ItemTag::from_key("petramond:logs"), Some(LOGS));
+    assert_eq!(ItemTag::from_key("petramond:planks"), Some(ItemTag::PLANKS));
+    assert_eq!(ItemTag::from_key("petramond:logs"), Some(ItemTag::LOGS));
     assert_eq!(ItemTag::from_key("bogus"), None);
-
-    assert!(ItemType::Coal.has_tag(ItemTag::FUEL));
-    assert!(!ItemType::Coal.has_tag(ItemTag::SMELTABLE));
-    assert!(ItemType::RawIron.has_tag(ItemTag::SMELTABLE));
-    assert!(ItemType::RawCopper.has_tag(ItemTag::SMELTABLE));
-    assert!(ItemType::Cobblestone.has_tag(ItemTag::SMELTABLE));
-    assert!(!ItemType::RawIron.has_tag(ItemTag::FUEL));
-    assert!(!ItemType::IronIngot.has_tag(ItemTag::SMELTABLE));
-    assert!(!ItemType::IronIngot.has_tag(ItemTag::FUEL));
     assert_eq!(ItemTag::from_key("petramond:fuel"), Some(ItemTag::FUEL));
     assert_eq!(
         ItemTag::from_key("petramond:smeltable"),

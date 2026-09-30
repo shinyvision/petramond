@@ -1,6 +1,6 @@
 use super::*;
 
-mod parallel_parity_tests {
+mod parallel_tests {
     use super::*;
     use petramond_world::chunk::{Chunk, SectionPos, CHUNK_SX, CHUNK_SY, CHUNK_SZ, SKY_FULL};
     use petramond_world::section::Section;
@@ -41,7 +41,7 @@ mod parallel_parity_tests {
     }
 
     #[test]
-    fn parallel_meshing_is_byte_identical_to_serial() {
+    fn parallel_meshing_matches_serial() {
         let seed = 0x1234_5678u32;
         let coords: Vec<(i32, i32)> = (-2..=2)
             .flat_map(|cz| (-2..=2).map(move |cx| (cx, cz)))

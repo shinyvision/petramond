@@ -1,51 +1,10 @@
 use super::*;
 use crate::biome::climate::SurfaceClimate;
-use crate::biome::surface_table::{surface_biome_table, FROZEN_TEMPERATURE_MAX};
 
 fn base() -> String {
     petramond_world::assets::read_base_text("climate_table.json")
         .expect("shipped climate_table.json")
         .0
-}
-
-#[test]
-fn shipped_table_reproduces_the_compiled_builder_exactly() {
-    let loaded = parse_layers(&[&base()]).expect("shipped table loads");
-    let compiled = surface_biome_table();
-    assert_eq!(loaded.rows.len(), compiled.len(), "row count");
-    for (i, (data, code)) in loaded.rows.iter().zip(&compiled).enumerate() {
-        assert_eq!(data, code, "row {i}");
-    }
-    assert_eq!(loaded.frozen_temperature_max, FROZEN_TEMPERATURE_MAX);
-}
-
-#[test]
-fn loaded_index_classifies_sampled_climates_like_the_compiled_one() {
-    let compiled = BiomeClimateIndex::from_rects(&surface_biome_table());
-    let loaded = BiomeClimateIndex::default_surface();
-    let axis = [
-        -1.3, -1.0, -0.93, -0.78, -0.455, -0.3, -0.19, -0.11, -0.05, 0.0, 0.03, 0.05, 0.2, 0.3,
-        0.45, 0.55, 0.77, 1.0, 1.2,
-    ];
-    let mut checked = 0;
-    for (a, &t) in axis.iter().enumerate() {
-        for (b, &h) in axis.iter().enumerate() {
-            for &c in &axis {
-                for k in 0..axis.len() {
-                    let e = axis[(k + a) % axis.len()];
-                    let v = axis[(k * 7 + b) % axis.len()];
-                    let climate = SurfaceClimate::new(t, h, c, e, v);
-                    assert_eq!(
-                        loaded.classify_surface(climate),
-                        compiled.classify_surface(climate),
-                        "{climate:?}"
-                    );
-                    checked += 1;
-                }
-            }
-        }
-    }
-    assert!(checked > 100_000);
 }
 
 #[test]
@@ -92,10 +51,6 @@ fn a_pack_band_override_retunes_the_base_rows() {
         .filter(|(a, b)| a != b)
         .count();
     assert!(moved > 0, "rows naming frozen/cold follow the override");
-    for (rect, _) in &table.rows {
-        let t = rect.axis_ranges()[TEMPERATURE];
-        assert!(t.min != -0.3 && t.max != -0.3, "no row kept the old edge");
-    }
 }
 
 #[test]

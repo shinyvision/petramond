@@ -37,7 +37,7 @@
 //!
 //! With no hooks installed the whole system is one `Option` on the generator
 //! (checked per stage) plus one atomic epoch load per cached-generator lookup
-//! — no snapshots, no allocation, byte-identical output (the genparity pin).
+//! — no snapshots, no allocation, identical output.
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};

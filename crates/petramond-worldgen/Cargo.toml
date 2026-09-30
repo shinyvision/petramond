@@ -34,9 +34,6 @@ name = "genfeature"
 path = "src/bin/genfeature.rs"
 required-features = ["tools"]
 
-[[bin]]
-name = "genparity"
-path = "src/bin/genparity.rs"
 
 [dev-dependencies]
 petramond-world = { workspace = true, features = ["test-support"] }

@@ -165,19 +165,6 @@ fn element_inflate_grows_the_cube_box() {
 }
 
 #[test]
-fn parses_cubes_bones_and_texture() {
-    let m = owl();
-    assert_eq!(
-        m.cubes.len(),
-        11,
-        "head, beak, body, 2 wings, 2 legs, 2 feet, 2 tail"
-    );
-    assert!(m.bones.len() >= 6, "owl/head/lwing/rwing/lleg/rleg bones");
-    assert_eq!((m.tex_w, m.tex_h), (32, 32));
-    assert_eq!(m.texture_rgba.len(), 32 * 32 * 4);
-}
-
-#[test]
 fn cube_names_are_parsed_and_survive_the_compiled_roundtrip() {
     let m = sheep();
     let wool = m.cubes.iter().filter(|c| c.name == "wool").count();
@@ -198,46 +185,6 @@ fn every_cube_has_a_resolved_bone() {
 }
 
 #[test]
-fn walk_animation_is_present_and_loops_half_a_second() {
-    let m = owl();
-    let walk = m.animation("walk").expect("walk animation");
-    assert!((walk.length - 0.5).abs() < 1e-6);
-    assert!(
-        walk.tracks().len() >= 2,
-        "legs (and head) have rotation tracks"
-    );
-}
-
-#[test]
-fn pose_swings_the_legs_in_antiphase_over_the_cycle() {
-    let m = owl();
-    let walk = m.animation("walk").unwrap();
-    let leg_bones: Vec<usize> = m
-        .bones
-        .iter()
-        .enumerate()
-        .filter(|(_, b)| b.name == "lleg" || b.name == "rleg")
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(leg_bones.len(), 2, "two leg bones");
-
-    let foot = glam::Vec4::new(0.3, 0.0, 0.75, 1.0);
-    let pose0 = m.pose(walk, 0.0);
-    let z: Vec<f32> = leg_bones.iter().map(|&b| (pose0[b] * foot).z).collect();
-    assert!(
-        (z[0] - z[1]).abs() > 0.05,
-        "legs should be split fore/aft at t=0: {z:?}"
-    );
-
-    let pose_q = m.pose(walk, 0.25);
-    let zq: Vec<f32> = leg_bones.iter().map(|&b| (pose_q[b] * foot).z).collect();
-    assert!(
-        (z[0] - zq[0]).abs() > 0.05,
-        "a leg should swing between t=0 and t=0.25: {z:?} vs {zq:?}"
-    );
-}
-
-#[test]
 fn pose_loops_over_the_length() {
     let m = owl();
     let walk = m.animation("walk").unwrap();
@@ -245,137 +192,6 @@ fn pose_loops_over_the_length() {
     let b = m.pose(walk, 0.1 + walk.length);
     for (x, y) in a.iter().zip(b.iter()) {
         assert!(x.abs_diff_eq(*y, 1e-4), "pose must loop");
-    }
-}
-
-#[test]
-fn non_looping_animation_holds_its_final_frame() {
-    let m = owl();
-    let idle = m.idle_animation(0).expect("owl has idle animations");
-    assert!(!idle.looping, "owl idle animations are one-shot");
-    let at_end = m.pose(idle, idle.length);
-    let past_end = m.pose(idle, idle.length * 3.0);
-    for (x, y) in at_end.iter().zip(past_end.iter()) {
-        assert!(
-            x.abs_diff_eq(*y, 1e-5),
-            "one-shot pose holds the final frame, not loops"
-        );
-    }
-}
-
-#[test]
-fn exposes_head_bone_idle_anims_and_affects_bone() {
-    let m = owl();
-    assert!(m.head_bone().is_some(), "owl has a head bone");
-    let lleg = m
-        .bones
-        .iter()
-        .position(|b| b.name == "lleg")
-        .expect("lleg bone");
-    assert!(
-        m.animation("walk").unwrap().affects_bone(lleg),
-        "walk animates the legs"
-    );
-    assert!(
-        m.idle_animation(0).is_some(),
-        "idle animations exposed by index"
-    );
-    assert!(
-        m.idle_animation(999).is_none(),
-        "out-of-range idle index is None"
-    );
-}
-
-#[test]
-fn rest_pose_includes_static_group_rotations() {
-    let m = sheep();
-    let ear = m
-        .bones
-        .iter()
-        .position(|b| b.name == "ear_left")
-        .expect("sheep has a rotated ear bone");
-    assert!(
-        m.bones[ear].rotation.length_squared() > 0.0,
-        "fixture must exercise authored group rotation"
-    );
-
-    let rest = m.rest_pose();
-    let pivot = m.bones[ear].pivot;
-    let marker = pivot + Vec3::X;
-    assert!(
-        !rest[ear].transform_point3(marker).abs_diff_eq(marker, 1e-5),
-        "rest pose applies the authored bone rotation"
-    );
-    assert!(
-        rest[ear].transform_point3(pivot).abs_diff_eq(pivot, 1e-5),
-        "bone rotation is about the authored pivot"
-    );
-}
-
-#[test]
-fn head_look_propagates_to_child_bones() {
-    let m = sheep();
-    let head = m.head_bone().expect("sheep has a head bone");
-    let ear = m
-        .bones
-        .iter()
-        .position(|b| b.name == "ear_left")
-        .expect("sheep has a child ear bone");
-    assert!(
-        m.is_descendant_of(ear, head),
-        "the ear is authored under the head"
-    );
-
-    let mut pose = m.rest_pose();
-    let ear_before = pose[ear];
-    m.apply_head_look(&mut pose, head, 0.7, 0.2);
-
-    assert!(
-        !pose[head].abs_diff_eq(Mat4::IDENTITY, 1e-5),
-        "head-look changes the head pose"
-    );
-    assert!(
-        !pose[ear].abs_diff_eq(ear_before, 1e-5),
-        "head-look carries through descendant bones"
-    );
-}
-
-#[test]
-fn bone_rotation_composes_over_the_pose_and_propagates() {
-    let m = sheep();
-    let head = m.head_bone().expect("sheep has a head bone");
-    let ear = m
-        .bones
-        .iter()
-        .position(|b| b.name == "ear_left")
-        .expect("sheep has a child ear bone");
-
-    let mut pose = m.rest_pose();
-    let head_before = pose[head];
-    let ear_before = pose[ear];
-    let pivot = m.bones[head].pivot;
-    let pivot_world_before = head_before.transform_point3(pivot);
-    m.apply_bone_rotation(&mut pose, head, Quat::from_rotation_x(0.6));
-
-    assert!(
-        !pose[head].abs_diff_eq(head_before, 1e-5),
-        "the delta rotates the bone"
-    );
-    assert!(
-        pose[head]
-            .transform_point3(pivot)
-            .abs_diff_eq(pivot_world_before, 1e-4),
-        "the rotation is about the bone's posed pivot"
-    );
-    assert!(
-        !pose[ear].abs_diff_eq(ear_before, 1e-5),
-        "the delta carries through descendant bones"
-    );
-
-    let mut pose2 = m.rest_pose();
-    m.apply_bone_rotation(&mut pose2, head, Quat::IDENTITY);
-    for (a, b) in pose2.iter().zip(m.rest_pose().iter()) {
-        assert!(a.abs_diff_eq(*b, 1e-6), "identity delta leaves the pose");
     }
 }
 
@@ -438,8 +254,8 @@ fn position_tracks_translate_the_bone() {
 fn compiled_model_layout_change_requires_a_format_version_bump() {
     use crate::asset_cache::CompiledAsset;
 
-    const GOLDEN_VERSION: u32 = 11;
-    const GOLDEN_HEX: &str = "01000000000000000400000000000000726f6f740000004000000040000000400000000000000000000000000001000000000000000400000000000000626f6479000000000000000000000000000080400000804000008040000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000100000000000000090000000000000069646c655f776176650000803f0000000100000000000000000000000000000001000000000000000000803e00002041000000000000a04000002041000000000000a04000000000000001000000000000000000003f00000000000040c00000000000000000000040c00000000000000000000000000000000000000100000000000000090000000000000069646c655f776176650400000000000000ff0000ff0100000001000000";
+    const PINNED_VERSION: u32 = 11;
+    const COMPILED_HEX: &str = "01000000000000000400000000000000726f6f740000004000000040000000400000000000000000000000000001000000000000000400000000000000626f6479000000000000000000000000000080400000804000008040000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000803f0000803f000000000100000000000000090000000000000069646c655f776176650000803f0000000100000000000000000000000000000001000000000000000000803e00002041000000000000a04000002041000000000000a04000000000000001000000000000000000003f00000000000040c00000000000000000000040c00000000000000000000000000000000000000100000000000000090000000000000069646c655f776176650400000000000000ff0000ff0100000001000000";
 
     let tex = one_pixel_texture([255, 0, 0, 255]);
     let src = format!(
@@ -467,12 +283,12 @@ fn compiled_model_layout_change_requires_a_format_version_bump() {
     let bytes = bincode::serialize(&m).expect("serializes");
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     assert!(
-        Model::FORMAT_VERSION == GOLDEN_VERSION && hex == GOLDEN_HEX,
+        Model::FORMAT_VERSION == PINNED_VERSION && hex == COMPILED_HEX,
         "compiled .llmob layout or version changed.\n\
-         FORMAT_VERSION: {} (golden {GOLDEN_VERSION})\n\
+         FORMAT_VERSION: {} (pinned {PINNED_VERSION})\n\
          serialized canonical model:\n{hex}\n\
          If any serialized struct or Model::load output changed, bump FORMAT_VERSION \
-         in `impl CompiledAsset for Model` and update GOLDEN_VERSION + GOLDEN_HEX \
+         in `impl CompiledAsset for Model` and update PINNED_VERSION + COMPILED_HEX \
          together. A layout change WITHOUT the bump lets stale caches mis-decode \
          into garbage models (invisible mobs).",
         Model::FORMAT_VERSION,

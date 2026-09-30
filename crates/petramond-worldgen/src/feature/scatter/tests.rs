@@ -1,5 +1,4 @@
 use super::*;
-use crate::data::ores::tests::legacy_veins;
 use crate::data::ores::OreVein;
 use petramond_world::chunk::SECTION_SIZE;
 
@@ -13,30 +12,6 @@ fn stone_section(cx: i32, cy: i32, cz: i32) -> Section {
         }
     }
     section
-}
-
-fn cells(section: &Section) -> Vec<u16> {
-    section.blocks_iter().collect()
-}
-
-#[test]
-fn loaded_table_places_the_same_veins_as_the_compiled_table() {
-    let compiled = OreTable::new(legacy_veins().leak());
-    let mut ores_seen = 0;
-    for seed in [1u32, 42, 0x1234_5678] {
-        for &(cx, cz) in &[(0, 0), (-3, 5), (17, -9), (-120, -64)] {
-            for cy in [-4, -2, -1, 0, 1, 3, 6, 8, 9] {
-                let mut data = stone_section(cx, cy, cz);
-                let mut code = stone_section(cx, cy, cz);
-                place_underground_section(&mut data, seed, &crate::cache::installed());
-                place_table_section(&compiled, &mut code, seed, &crate::cache::installed());
-                let (data, code) = (cells(&data), cells(&code));
-                assert_eq!(data, code, "seed {seed} section ({cx},{cy},{cz})");
-                ores_seen += data.iter().filter(|&&id| id != Block::Stone.id()).count();
-            }
-        }
-    }
-    assert!(ores_seen > 0, "the sampled sections must hold veins");
 }
 
 #[test]

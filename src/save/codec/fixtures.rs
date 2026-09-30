@@ -57,7 +57,7 @@ fn assert_fixture_content(section: &Section) {
 }
 
 #[test]
-fn every_golden_version_decodes_to_the_same_content() {
+fn every_fixture_version_decodes_to_the_same_content() {
     for (version, blob) in [(19, V19), (20, V20), (21, V21)] {
         let decoded = decode_identity(blob).unwrap_or_else(|e| panic!("v{version}: {e}"));
         assert_fixture_content(&decoded.section);
@@ -67,13 +67,13 @@ fn every_golden_version_decodes_to_the_same_content() {
 }
 
 #[test]
-fn each_step_produces_the_next_golden_bytes() {
-    type GoldenStep<'a> = (
+fn each_step_produces_the_next_fixture_bytes() {
+    type FixtureStep<'a> = (
         &'a [u8],
         &'a [u8],
         fn(&[u8]) -> Result<Vec<u8>, RecordError>,
     );
-    let steps: [GoldenStep<'_>; 4] = [
+    let steps: [FixtureStep<'_>; 4] = [
         (V19, V20, v19::upgrade),
         (V19_ENTITIES, V20_ENTITIES, v19::upgrade),
         (V20, V21, v20::upgrade),
@@ -87,13 +87,13 @@ fn each_step_produces_the_next_golden_bytes() {
 }
 
 #[test]
-fn the_encoder_writes_the_golden_v21_layout() {
+fn the_encoder_writes_the_v21_layout() {
     let pal = palette::Palette::identity();
     let fixtures = [
         ([V19, V20, V21], V21),
         ([V19_ENTITIES, V20_ENTITIES, V21_ENTITIES], V21_ENTITIES),
     ];
-    for (blobs, golden) in fixtures {
+    for (blobs, fixture) in fixtures {
         for blob in blobs {
             let decoded = decode_identity(blob).expect("decodes");
             let mut snap = SectionSnapshot::from_section(&decoded.section);
@@ -101,13 +101,13 @@ fn the_encoder_writes_the_golden_v21_layout() {
             snap.mobs = decoded.mobs;
             snap.kept = decoded.kept;
             let record = encode_snapshot(&snap, &pal);
-            assert_eq!(inflated(&record), inflated(golden));
+            assert_eq!(inflated(&record), inflated(fixture));
         }
     }
 }
 
 #[test]
-fn golden_entities_and_mobs_survive_the_migration() {
+fn fixture_entities_and_mobs_survive_the_migration() {
     for blob in [V19_ENTITIES, V20_ENTITIES, V21_ENTITIES] {
         let decoded = decode_identity(blob).expect("decodes");
         let entities = &decoded.entities;

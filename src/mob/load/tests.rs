@@ -695,6 +695,7 @@ fn spawn_chances_resolve_aligned_and_bad_rows_fail_the_load() {
             .iter_mut()
             .find(|r| r["mob"] == "petramond:owl")
             .unwrap();
+        row["spawn"]["biomes"] = serde_json::json!(["forest", "redwood_forest"]);
         edit(row);
         serde_json::to_string(&value).unwrap()
     };

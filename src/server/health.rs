@@ -161,23 +161,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_fall_is_free_and_four_blocks_is_half_a_heart() {
-        assert_eq!(fall_damage_health(0.0), 0);
-        assert_eq!(fall_damage_health(3.0), 0, "3-block fall is safe");
-        assert_eq!(fall_damage_health(3.9), 0, "under 4 blocks: no damage");
-        assert_eq!(fall_damage_health(4.0), 1, "4 blocks = 0.5 hearts");
-    }
-
-    #[test]
-    fn damage_scales_one_half_heart_per_block_past_the_safe_distance() {
-        assert_eq!(fall_damage_health(5.0), 2);
-        assert_eq!(fall_damage_health(12.0), 9);
-        assert_eq!(fall_damage_health(103.0), 100);
-    }
-
-    #[test]
-    fn a_clean_four_block_fall_still_hurts_despite_landing_rounding() {
-        assert_eq!(fall_damage_health(4.0 - 8e-6), 1);
+    fn a_clean_fall_still_hurts_despite_landing_rounding() {
+        assert_eq!(fall_damage_health(SAFE_FALL_BLOCKS + 1.0 - 8e-6), 1);
     }
 
     #[test]

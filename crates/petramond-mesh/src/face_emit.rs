@@ -27,8 +27,8 @@ use super::vertex::{
 /// sky term without dimming torch light; the shader recombines with a
 /// per-channel `max(sky_term, block_term)`. Because the per-channel quantizer
 /// is monotone non-decreasing, `max(sky6, block6.luminance())` equals
-/// `quantize(max(sum_sky, sum_block))` for colourless light, so white light
-/// remains bit-identical after the sky and block terms are split.
+/// `quantize(max(sum_sky, sum_block))` for colourless light, so splitting the
+/// sky and block terms leaves white light unchanged.
 #[inline]
 pub(super) fn fold_light(sum_sky: u32, sum_block: [u32; 3], denom: u32) -> (u32, BlockLight6) {
     let sky6 = ((sum_sky * 63 + denom / 2) / denom).min(63);
@@ -221,11 +221,7 @@ mod fold_light_tests {
                     assert_eq!(s6.max(b6.luminance()), old, "sky={sky} blk={blk}");
                     assert_eq!(b6, BlockLight6::grey(b6.r()), "white light stays white");
                     let smooth = fold_light_smooth(sky, [blk; 3], cnt);
-                    assert_eq!(
-                        smooth,
-                        (s6, b6),
-                        "smooth arm must stay byte-identical at cnt={cnt}"
-                    );
+                    assert_eq!(smooth, (s6, b6), "smooth arm must match at cnt={cnt}");
                 }
             }
         }

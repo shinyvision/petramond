@@ -193,12 +193,11 @@ pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
         yhi: i32,
     }
     let seed = 0x1234_5678u32;
-    let generator = petramond_worldgen::parity::engine_generator(seed);
     let columns: Rc<HashMap<(i32, i32), LitColumn>> = Rc::new(
         (-1..=1)
             .flat_map(|cz| (-1..=1).map(move |cx| (cx, cz)))
             .map(|(cx, cz)| {
-                let chunk = petramond_worldgen::generate_chunk_with(&generator, cx, cz);
+                let chunk = petramond_worldgen::generate_chunk(seed, cx, cz);
                 let (band, ylo, yhi) = compute_chunk_skylight(&chunk);
                 (
                     (cx, cz),
@@ -266,32 +265,6 @@ pub(super) fn generated_sections() -> Vec<(SectionPos, Section, Scene)> {
                 dyed: Box::new(|_, _, _| false),
             };
             (SectionPos::new(0, cy, 0), section, scene)
-        })
-        .collect()
-}
-
-pub(super) fn catalog_sections() -> Vec<Section> {
-    let slots: Vec<(usize, usize, usize)> = (1..SECTION_SIZE)
-        .step_by(2)
-        .flat_map(|y| {
-            (1..SECTION_SIZE)
-                .step_by(2)
-                .flat_map(move |z| (1..SECTION_SIZE).step_by(2).map(move |x| (x, y, z)))
-        })
-        .collect();
-    let blocks: Vec<Block> = Block::all()
-        .iter()
-        .copied()
-        .filter(|&b| b != Block::Air)
-        .collect();
-    blocks
-        .chunks(slots.len())
-        .map(|chunk| {
-            let mut section = floor_section(Block::Stone);
-            for (&(x, y, z), &block) in slots.iter().zip(chunk) {
-                section.set_block(x, y, z, block);
-            }
-            refined(&section)
         })
         .collect()
 }

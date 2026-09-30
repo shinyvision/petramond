@@ -293,7 +293,7 @@ impl FieldRow {
 pub mod feed;
 
 #[cfg(test)]
-mod shader_parity;
+mod shader_agreement;
 
 #[cfg(test)]
 mod tests {

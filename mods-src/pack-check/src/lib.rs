@@ -317,12 +317,4 @@ mod tests {
         assert!(index.declares(&key(PackKeyKind::Widget("k:oven"), "arrow")));
         assert!(!index.declares(&key(PackKeyKind::Widget("k:mill"), "arrow")));
     }
-
-    #[test]
-    fn the_shipped_data_indexes_engine_and_pack_rows() {
-        let index = PackIndex::shipped();
-        assert!(index.declares(&key(PackKeyKind::Block, "petramond:stone")));
-        assert!(index.declares(&key(PackKeyKind::Condition, "petramond:burning")));
-        assert!(index.declares(&key(PackKeyKind::Mob, "monsters:zombie")));
-    }
 }

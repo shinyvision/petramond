@@ -5,7 +5,7 @@ use petramond_world::block::Block;
 use super::*;
 
 #[test]
-fn slimmed_column_regenerates_sections_byte_identically() {
+fn slimmed_column_regenerates_identical_sections() {
     let generator = ChunkGenerator::new(0xDEAD_BEEF);
     for (cx, cz) in [(0, 0), (3, -2)] {
         let full = generator.generate_column_gen(cx, cz);

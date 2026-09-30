@@ -97,7 +97,7 @@ fn trapping_gen_mod_falls_back_to_the_engine_stage() {
         assert_eq!(
             a.blocks_iter().collect::<Vec<_>>(),
             b.blocks_iter().collect::<Vec<_>>(),
-            "engine fallback must be byte-identical at ({cx},{cy},{cz})"
+            "engine fallback must match at ({cx},{cy},{cz})"
         );
     }
 }

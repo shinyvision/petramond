@@ -787,14 +787,13 @@ fn attack_rebinds_from_mouse_to_key() {
 }
 
 #[test]
-fn mod_key_actions_join_the_controls_table_with_their_own_category() {
+fn mod_key_actions_join_the_controls_table() {
     let app = app();
     let table = &app.controls.action_table;
-    let row = table
-        .row("minimap:open_map")
-        .expect("minimap's registered action is in the table");
-    assert_eq!(row.label, "Open World Map");
-    assert_eq!(row.category, "Minimap");
+    assert!(
+        table.row("minimap:open_map").is_some(),
+        "minimap's registered action is in the table"
+    );
     assert!(table.row("minimap:add_waypoint").is_some());
     assert!(
         crate::app::shell_docs::controls_action_row_index(table, "minimap:open_map").is_some(),

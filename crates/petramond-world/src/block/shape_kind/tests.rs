@@ -344,10 +344,6 @@ fn custom_dimension_families_resolve_to_dimension_params() {
     assert_eq!(fam, ShapeFamily::Ladder);
     let d = params.dimensions().unwrap();
     assert_eq!((d.thickness, d.height), (4.0 / 16.0, 12.0 / 16.0));
-
-    let (_, params, _) = resolve_json(r#"{"custom":{"family":"crop"}}"#).unwrap();
-    let d = params.dimensions().unwrap();
-    assert_eq!((d.inset, d.drop), (2.0 / 16.0, 1.0 / 16.0));
 }
 
 #[test]

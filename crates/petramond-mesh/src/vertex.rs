@@ -305,9 +305,8 @@ mod terrain_vertex_tests {
     /// emitter's colour survives only if every destination is written. This
     /// round-trips the split through the same decode the shaders perform, and
     /// pins the two properties the split rests on: colourless light writes NO
-    /// chroma bits (so a white-lit vertex is bit-identical to the pre-colour
-    /// engine, and a path that drops the chroma degrades to grey rather than
-    /// red), and black has exactly one spelling.
+    /// chroma bits (so a path that drops the chroma degrades to grey rather
+    /// than red), and black has exactly one spelling.
     #[test]
     fn block_light_colour_survives_the_three_way_vertex_split() {
         let cases = [
@@ -413,8 +412,7 @@ pub fn retint(tint_word: u32, rgb: [f32; 3]) -> u32 {
 /// and no single lane has 12 contiguous free bits, so the split is the price of
 /// colour. It is made safe by storing each secondary channel XOR the RED
 /// channel: COLOURLESS light is then exactly zero, which means the canonical
-/// white vertex writes no chroma bits at all (its `packed` word is bit-identical
-/// to the pre-colour engine's), black has one spelling, and a path that carries
+/// white vertex writes no chroma bits at all, black has one spelling, and a path that carries
 /// only part of the split degrades to colourless light rather than a red cast.
 pub const CHROMA_HI_SHIFT: u32 = 27;
 pub const CHROMA_HI_MASK: u32 = 0xF;

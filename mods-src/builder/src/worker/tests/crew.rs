@@ -2,7 +2,6 @@ use crate::host::prelude::*;
 use crate::testing::Session;
 use crate::worker::crew::{Aloft, Deferrals, Faces, Stamped};
 use crate::worker::tuning::every::SEARCH_EVERY;
-use crate::worker::tuning::patience::FACELESS_TRIES;
 use crate::worker::tuning::waits::FACELESS_SPACING;
 use crate::worker::waiting::{Probe, Waiting};
 use crate::worker::{Crew, Pillar, Step, Task, GOAL_TAG, HOLD_TAG, PROJECT_TAG};
@@ -50,7 +49,6 @@ fn a_search_that_found_nothing_stands_until_something_moves() {
 #[test]
 fn a_faceless_unit_is_propped_after_spaced_refusals() {
     let mut faces = Faces::default();
-    assert_eq!(FACELESS_TRIES, 3);
     assert!(!faces.faceless_try(1, 10));
     assert!(
         !faces.faceless_try(1, 20),

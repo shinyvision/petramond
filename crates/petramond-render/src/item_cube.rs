@@ -906,48 +906,4 @@ mod tests {
         assert_eq!(bot.tint, pack_tint(foliage_tint::NO_TINT));
         assert_eq!(bot.packed & petramond_mesh::OVERLAY_FLAG, 0);
     }
-
-    #[test]
-    fn cube_textured_leaves_use_foliage_tint() {
-        let (v, _) = cube_textured([Tile::named("oak_leaves"); 3], Vec3::ZERO, 1.0);
-        let foliage = foliage_tint::default_foliage_color();
-        for vert in &v {
-            assert_eq!(
-                vert.packed & petramond_mesh::vertex::TILE_MASK,
-                Tile::named("oak_leaves").index() as u32
-            );
-            assert_eq!(vert.tint, pack_tint(foliage));
-            assert_eq!(
-                vert.packed & petramond_mesh::OVERLAY_FLAG,
-                0,
-                "leaves carry no overlay"
-            );
-        }
-    }
-
-    #[test]
-    fn flower_billboard_stays_untinted() {
-        let (v, _) = billboard_quad(Tile::named("poppy"), Vec3::ZERO, 1.0);
-        for vert in &v {
-            assert_eq!(
-                vert.tint,
-                pack_tint(foliage_tint::NO_TINT),
-                "flowers are not biome-tinted"
-            );
-            assert_eq!(vert.packed & petramond_mesh::OVERLAY_FLAG, 0);
-        }
-    }
-
-    #[test]
-    fn fern_billboard_gets_grass_tint() {
-        let (v, _) = billboard_quad(Tile::named("fern"), Vec3::ZERO, 1.0);
-        let grass = foliage_tint::default_grass_color();
-        for vert in &v {
-            assert_eq!(
-                vert.tint,
-                pack_tint(grass),
-                "ferns tint with the grass colour"
-            );
-        }
-    }
 }

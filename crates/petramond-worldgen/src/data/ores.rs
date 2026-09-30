@@ -207,4 +207,4 @@ pub fn table() -> &'static OreTable {
 }
 
 #[cfg(test)]
-pub(crate) mod tests;
+mod tests;

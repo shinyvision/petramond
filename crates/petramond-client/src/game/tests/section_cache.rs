@@ -108,7 +108,7 @@ fn return_home(game: &mut TestGame) -> Vec<ServerToClient> {
 }
 
 #[test]
-fn unmoved_sections_repromote_from_the_cache_byte_identically() {
+fn unmoved_sections_repromote_from_the_cache_identically() {
     let mut game = game();
     place_player(&mut game, HOME);
     settle(&mut game, "initial load");

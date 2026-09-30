@@ -8,7 +8,7 @@
 //! than the naive `8 × positions`; if not, it's cut at its longest axis and each half tries again.
 //! Dense batches end up as one lattice, and scattered points cost the same as before.
 //!
-//! Output is byte-identical. Corners sit on `LATTICE_STEP`, so a shared lattice has the same corner
+//! Output is identical. Corners sit on `LATTICE_STEP`, so a shared lattice has the same corner
 //! values a one-voxel lattice would. Dropping a chamber that's zero everywhere in the box is the
 //! one box-dependent filter, and it's value-neutral by contract.
 

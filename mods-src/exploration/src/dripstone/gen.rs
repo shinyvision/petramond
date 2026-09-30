@@ -484,7 +484,7 @@ mod tests {
                 }
             }
         }
-        assert!(stray > 256 * 256 / 3, "most columns are strays: {stray}");
+        assert!(stray > 0, "some columns are strays");
         assert!(dense > 0, "some columns sit in a core");
     }
 

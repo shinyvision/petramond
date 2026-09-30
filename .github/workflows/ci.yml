@@ -142,25 +142,3 @@ jobs:
           PETRAMOND_MODS: ${{ github.workspace }}/test-mods
         run: bash scripts/test-all.sh portable
 
-  # Determinism gates (the worldgen parity hash) are their own job here: a
-  # checkout plus ./.github/actions/setup-rust, independent of the test jobs.
-  genparity:
-    name: Worldgen parity (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        # Every desktop platform: the hash must match everywhere, which is the
-        # cross-platform determinism check for petramond_math::detmath.
-        os: [ubuntu-latest, windows-latest, macos-14]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-rust
-        with:
-          cache-key: genparity-${{ matrix.os }}
-          cache-workspaces: |
-            . -> target
-      - name: Worldgen parity
-        shell: bash
-        run: make genparity

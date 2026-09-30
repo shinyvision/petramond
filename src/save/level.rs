@@ -248,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn golden_level_v8_decodes() {
+    fn fixture_level_v8_decodes() {
         let got = decode(include_bytes!("fixtures/level_v8.bin")).expect("v8 decodes");
         assert_eq!(got.seed, 0x0102_0304);
         assert_eq!(got.tick, 5000);

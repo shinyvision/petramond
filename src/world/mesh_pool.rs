@@ -249,7 +249,7 @@ thread_local! {
 
 /// Assemble the 18³ padded neighbourhood from the cheap field-`Arc` snapshots the request
 /// took — off the render thread. Reads match the live neighbour accessors exactly (air /
-/// open-sky / not-loaded fallbacks), so the off-thread mesh is byte-identical to an inline one.
+/// open-sky / not-loaded fallbacks), so the off-thread mesh equals an inline one.
 ///
 /// Filled a row at a time along X: the 16-wide interior run of each row comes from ONE
 /// neighbour (the centre-X section) and is a contiguous slice copy, not 16 per-cell
