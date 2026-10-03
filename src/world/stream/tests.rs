@@ -754,3 +754,73 @@ mod sea_ice_streaming {
         );
     }
 }
+
+#[test]
+fn sky_cavern_walks_under_an_overhang_and_stops_at_closed_walls() {
+    let mut world = ServerWorld::new(0, 4);
+    let generator = petramond_worldgen::ChunkGenerator::new(0);
+    let shaft = ChunkPos::new(0, 0);
+    let overhang = ChunkPos::new(1, 0);
+    let wall = ChunkPos::new(0, 1);
+    let behind = ChunkPos::new(0, 2);
+    let mut shell_lo = i32::MAX;
+    let mut cols = Vec::new();
+    for cp in [shaft, overhang, wall, behind] {
+        let col = Arc::new(generator.generate_column_gen(cp.cx, cp.cz));
+        shell_lo = shell_lo.min(*ServerWorld::surface_window_for_column(&col, 0).start());
+        world.set_column_gen(cp, Arc::clone(&col));
+        cols.push((cp, col));
+    }
+    let cavern_cy = shell_lo - 1;
+    let section = |cp: ChunkPos, cy: i32, fill: Block| {
+        let mut s = Section::new(cp.cx, cy, cp.cz);
+        s.blocks_mut().fill(fill.id());
+        s.recompute_opaque_count();
+        s
+    };
+    for (cp, col) in &cols {
+        let shell = ServerWorld::surface_window_for_column(col, 0);
+        let top = col.content_top().div_euclid(SECTION_SIZE as i32);
+        for cy in cavern_cy..=top.min(*shell.end()) {
+            let fill = if *cp == shaft {
+                Block::Air
+            } else {
+                Block::Stone
+            };
+            world
+                .insert_section_for_test(SectionPos::new(cp.cx, cy, cp.cz), section(*cp, cy, fill));
+        }
+    }
+    for cp in [overhang, behind] {
+        world.insert_section_for_test(
+            SectionPos::new(cp.cx, cavern_cy, cp.cz),
+            section(cp, cavern_cy, Block::Air),
+        );
+    }
+    for (cp, _) in &cols {
+        world.recompute_column_heightmaps(*cp);
+    }
+
+    let ingested: Vec<SectionPos> = world.data.sections.keys().copied().collect();
+    let columns = cols.iter().map(|(cp, _)| *cp).collect();
+    world.grow_sky_caverns(&ingested, &columns, LoadTarget::new(0, shell_lo + 6, 0, 4));
+
+    let at = |cp: ChunkPos| SectionPos::new(cp.cx, cavern_cy, cp.cz);
+    assert!(
+        world.sky_cavern_contains(at(overhang)),
+        "cavern floor under the neighbouring column's rock is seen through the opening"
+    );
+    assert!(
+        world.sky_cavern_contains(at(wall)),
+        "a closed wall section is seen: its faces are what the sightline hits"
+    );
+    assert!(
+        !world.sky_cavern_contains(at(behind)),
+        "nothing behind a closed wall is seen"
+    );
+    let below = SectionPos::new(shaft.cx, cavern_cy - 1, shaft.cz);
+    assert!(
+        world.side.gen.pending_sections.contains(&below),
+        "the unloaded floor under the open cavern is requested"
+    );
+}

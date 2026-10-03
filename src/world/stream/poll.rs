@@ -436,6 +436,7 @@ impl ServerWorld {
             }
         }
         self.mark_sky_cover_light_dirty_around_many(sky_cover_changed);
+        self.grow_sky_caverns(&ingested, &ingested_columns, target);
 
         let overlaid_set: FxHashSet<SectionPos> = overlaid.iter().copied().collect();
         let mut affected: Vec<SectionPos> = Vec::new();

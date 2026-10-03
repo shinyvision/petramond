@@ -406,7 +406,10 @@ impl ServerWorld {
         );
     }
 
-    fn admit_section_candidates(&mut self, mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)>) {
+    pub(super) fn admit_section_candidates(
+        &mut self,
+        mut wanted: Vec<(i64, SectionPos, Arc<ColumnGen>)>,
+    ) {
         wanted.sort_unstable_by_key(|(key, sp, _)| (*key, sp.cx, sp.cz, sp.cy));
         for (key, sp, col) in wanted {
             self.submit_section_job(key, sp, col);

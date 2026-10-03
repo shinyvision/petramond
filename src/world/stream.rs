@@ -9,6 +9,7 @@ mod priorities;
 mod requests;
 mod settle;
 mod shape;
+mod sky_cavern;
 mod unload;
 
 #[cfg(any(test, feature = "test-support"))]

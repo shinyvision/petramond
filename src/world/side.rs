@@ -196,6 +196,14 @@ impl TerrainRenderState {
     }
 }
 
+/// Per-column cy bitsets of below-shell sections the open sky can see (`stream/sky_cavern.rs`):
+/// `seen` streams/keeps/ships, `entered` is where the walk continues from.
+#[derive(Default, Clone, Copy)]
+pub(in crate::world) struct SkyCavernColumn {
+    pub(in crate::world) seen: u32,
+    pub(in crate::world) entered: u32,
+}
+
 pub(in crate::world) struct WorldgenJobs {
     pub(in crate::world) column_gen: FxHashMap<ChunkPos, Arc<ColumnGen>>,
     pub(in crate::world) pending: FxHashMap<ChunkPos, Option<GenJobHandle>>,
@@ -208,6 +216,7 @@ pub(in crate::world) struct WorldgenJobs {
     pub(in crate::world) disk_primary_sections: FxHashSet<SectionPos>,
     pub(in crate::world) pending_colgen_records: Vec<crate::save::colgen::ColumnGenRecord>,
     pub(in crate::world) populated_columns: BTreeSet<ChunkPos>,
+    pub(in crate::world) sky_caverns: FxHashMap<ChunkPos, SkyCavernColumn>,
     pub(in crate::world) caches: Arc<GenCaches>,
 }
 
@@ -228,6 +237,7 @@ impl WorldgenJobs {
             disk_primary_sections: FxHashSet::default(),
             pending_colgen_records: Vec::new(),
             populated_columns: BTreeSet::new(),
+            sky_caverns: FxHashMap::default(),
             caches,
         }
     }

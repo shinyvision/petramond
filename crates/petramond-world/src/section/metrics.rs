@@ -352,6 +352,11 @@ impl Section {
     }
 
     #[inline]
+    pub fn face_plane_open_cells(&self, dx: i32, dy: i32, dz: i32) -> u16 {
+        (SECTION_SIZE * SECTION_SIZE) as u16 - self.plane_opaque[Self::plane_index(dx, dy, dz)]
+    }
+
+    #[inline]
     pub fn face_plane_open(&self, dx: i32, dy: i32, dz: i32) -> bool {
         !self.face_plane_fully_opaque(dx, dy, dz)
     }

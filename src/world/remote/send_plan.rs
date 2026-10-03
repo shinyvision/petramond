@@ -67,7 +67,8 @@ impl ServerWorld {
     /// LOADED section ships to a connection whose target is `target`, and under what
     /// nearest-first key. Deep sections (below the column's band floor) wait until the
     /// connection's vertical window or 5x5x5 near ring reaches them — the replica's
-    /// park-without-mesh rule — and nothing ships before its light is final.
+    /// park-without-mesh rule — unless the open sky sees them; nothing ships before its light
+    /// is final.
     pub(crate) fn section_send_key(
         &self,
         target: LoadTarget,
@@ -79,7 +80,7 @@ impl ServerWorld {
             return None;
         }
         let band_lo = self.column_band_lo(cp);
-        if sp.cy < band_lo {
+        if sp.cy < band_lo && !self.sky_cavern_contains(sp) {
             let near_xz =
                 (cp.cx - target.center.cx).abs() <= 2 && (cp.cz - target.center.cz).abs() <= 2;
             let near = near_xz && (sp.cy - target.center_cy).abs() <= 2;

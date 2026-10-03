@@ -69,6 +69,11 @@ impl<S: WorldSide> World<S> {
         slack: i32,
     ) -> Vec<i32> {
         let mut out = Self::wanted_section_cys(col, center_cy, slack);
+        crate::world::store::for_each_column_cy(self.sky_cavern_bits(pos), |cy| {
+            if !out.contains(&cy) {
+                out.push(cy);
+            }
+        });
         for &cy in self.data.saved.sections_in_column(pos) {
             if !out.contains(&cy) {
                 out.push(cy);

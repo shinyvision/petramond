@@ -77,6 +77,7 @@ impl<S: WorldSide> World<S> {
         if let Some(server) = self.side.server_mut() {
             let gen = &mut server.gen;
             gen.column_gen.remove(&pos);
+            gen.sky_caverns.remove(&pos);
             if let Some(Some(job)) = gen.pending.remove(&pos) {
                 job.cancel();
             }
@@ -125,6 +126,7 @@ impl<S: WorldSide> World<S> {
         if let Some(server) = self.side.server_mut() {
             let gen = &mut server.gen;
             gen.column_gen.clear();
+            gen.sky_caverns.clear();
             for job in gen.pending.values().flatten() {
                 job.cancel();
             }

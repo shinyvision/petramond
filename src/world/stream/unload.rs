@@ -34,7 +34,7 @@ impl ServerWorld {
                     .column_gen
                     .get(&cp)
                     .is_some_and(|col| Self::surface_window_for_column(col, 2).contains(&cy));
-                if !in_surface {
+                if !in_surface && !self.sky_cavern_contains(SectionPos::new(cp.cx, cy, cp.cz)) {
                     drop_sections.push(SectionPos::new(cp.cx, cy, cp.cz));
                 }
             }
@@ -69,7 +69,7 @@ impl ServerWorld {
                         self.side.gen.column_gen.get(&cp).is_some_and(|col| {
                             Self::surface_window_for_column(col, 2).contains(&cy)
                         });
-                    if !in_surface {
+                    if !in_surface && !self.sky_cavern_contains(SectionPos::new(cp.cx, cy, cp.cz)) {
                         out.push(SectionPos::new(cp.cx, cy, cp.cz));
                     }
                 }
