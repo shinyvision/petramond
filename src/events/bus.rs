@@ -88,9 +88,18 @@ struct PostHandler {
     f: PostFn,
 }
 
+/// How many handler hops an event may be from one emitted outside the bus. A handler loop
+/// re-emits forever while a legitimate burst (a world join streaming thousands of sections) is
+/// wide but shallow, so only depth is bounded, never the count.
+const MAX_CASCADE_DEPTH: u8 = 8;
+
 #[derive(Default)]
 pub struct PostQueue {
-    events: VecDeque<PostEvent>,
+    /// Each event with its cascade depth.
+    events: VecDeque<(PostEvent, u8)>,
+    /// The depth an event emitted now gets: 0 outside a drain, one past the event being handled
+    /// inside one.
+    emit_depth: u8,
     wanted: u32,
     actions: Vec<DeferredAction>,
 }
@@ -99,7 +108,7 @@ impl PostQueue {
     #[inline]
     pub fn emit(&mut self, ev: PostEvent) {
         if self.wanted & (1 << ev.kind() as u32) != 0 {
-            self.events.push_back(ev);
+            self.events.push_back((ev, self.emit_depth));
         }
     }
 
@@ -125,7 +134,7 @@ impl PostQueue {
 
     #[cfg(test)]
     pub fn take_events_for_test(&mut self) -> Vec<PostEvent> {
-        self.events.drain(..).collect()
+        self.events.drain(..).map(|(ev, _)| ev).collect()
     }
 
     #[inline]
@@ -300,19 +309,15 @@ impl EventBus {
         if self.queue.events.is_empty() {
             return;
         }
-        const DRAIN_BOUND: usize = 4096;
         let Self { post, queue, .. } = self;
-        let mut processed = 0usize;
-        while let Some(ev) = queue.events.pop_front() {
-            processed += 1;
-            if processed > DRAIN_BOUND {
-                log::error!(
-                    "post-event drain exceeded {DRAIN_BOUND} events in one tick; dropping {}",
-                    queue.events.len() + 1
-                );
-                queue.events.clear();
-                break;
+        let mut cut: Option<(PostEventKind, usize)> = None;
+        while let Some((ev, depth)) = queue.events.pop_front() {
+            if depth > MAX_CASCADE_DEPTH {
+                let (_, n) = cut.get_or_insert((ev.kind(), 0));
+                *n += 1;
+                continue;
             }
+            queue.emit_depth = depth + 1;
             let actor = ev.actor();
             for h in post[ev.kind() as usize].iter_mut() {
                 let mut ctx = SimCtx {
@@ -324,6 +329,13 @@ impl EventBus {
                 };
                 (h.f)(&mut ctx, &ev);
             }
+        }
+        queue.emit_depth = 0;
+        if let Some((kind, n)) = cut {
+            log::error!(
+                "post handlers kept re-emitting past depth {MAX_CASCADE_DEPTH} \
+                 (first cut: {kind:?}); dropped {n} events"
+            );
         }
     }
 }
@@ -492,6 +504,52 @@ mod tests {
         assert_eq!(
             *seen.lock().unwrap(),
             vec![("placed", 0), ("placed", 1), ("died", -1)]
+        );
+    }
+
+    #[test]
+    fn a_wide_burst_is_delivered_whole_while_a_handler_loop_is_cut_at_depth() {
+        let (mut world, mut feed) = sim();
+        let mut bus = EventBus::default();
+        let placed = Arc::new(AtomicI32::new(0));
+        {
+            let placed = placed.clone();
+            bus.on_post(PostEventKind::BlockPlaced, 0, move |_, _| {
+                placed.fetch_add(1, Ordering::Relaxed);
+            });
+        }
+        let died = Arc::new(AtomicI32::new(0));
+        {
+            let died = died.clone();
+            bus.on_post(PostEventKind::PlayerDied, 0, move |ctx, ev| {
+                died.fetch_add(1, Ordering::Relaxed);
+                ctx.queue.emit(ev.clone());
+            });
+        }
+        for x in 0..20_000 {
+            bus.emit(PostEvent::BlockPlaced {
+                pos: IVec3::new(x, 0, 0),
+                block: Block::Stone,
+                player: None,
+            });
+        }
+        bus.emit(PostEvent::PlayerDied {
+            player: PlayerId(0),
+        });
+        bus.drain_post(&mut world, &mut RosterRefs::empty(), &mut feed);
+        assert_eq!(placed.load(Ordering::Relaxed), 20_000);
+        let looped = i32::from(MAX_CASCADE_DEPTH) + 1;
+        assert_eq!(died.load(Ordering::Relaxed), looped);
+        assert!(!bus.has_queued_posts());
+
+        bus.emit(PostEvent::PlayerDied {
+            player: PlayerId(0),
+        });
+        bus.drain_post(&mut world, &mut RosterRefs::empty(), &mut feed);
+        assert_eq!(
+            died.load(Ordering::Relaxed),
+            2 * looped,
+            "the next drain starts from depth 0 again"
         );
     }
 

@@ -6,8 +6,6 @@ use crate::{
 
 pub(super) const CELLS_PER_TICK: usize = 8192;
 
-const HOOKS_PER_DRAIN: usize = 1024;
-
 impl ServerGame {
     pub(super) fn begin_cell_edit(
         &mut self,
@@ -68,13 +66,8 @@ impl ServerGame {
                 .placed
                 .iter()
                 .map(|&(pos, block)| PostEvent::BlockPlaced { pos, block, player });
-            let mut queued = 0;
             for event in removed.chain(placed) {
                 mods.emit(event);
-                queued += 1;
-                if queued % HOOKS_PER_DRAIN == 0 {
-                    mods.drain_posts(world, sessions, events);
-                }
             }
             mods.drain_posts(world, sessions, events);
         })
