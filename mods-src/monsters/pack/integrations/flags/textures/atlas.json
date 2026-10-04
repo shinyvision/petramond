@@ -1,0 +1,6 @@
+{
+  "tiles": [
+    {"name": "monsters:skull_flag", "file": "skull_flag.png"},
+    {"name": "monsters:skull_flag_item", "file": "skull_flag_item.png"}
+  ]
+}

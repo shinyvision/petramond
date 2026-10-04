@@ -80,6 +80,7 @@ fn camp_at<'a>(families: &'a Families, land: &Land, seed: u32) -> Option<(Box<Ca
     };
     match Camp::survey(site.center, SEA, families, land, GRID.rng(seed, site)) {
         Survey::Camp(mut camp) => {
+            camp.flagged = true;
             let (plan, _) = camp.build();
             Some((camp, plan))
         }
@@ -150,7 +151,7 @@ fn a_site_derives_the_same_plan_every_time() {
         cell: [2, -5],
         center: [800, -1500],
     };
-    let plan = |_| match derive(9, SEA, site, &families, &land, &mut |_| {}) {
+    let plan = |_| match derive(9, SEA, site, &families, true, &land, &mut |_| {}) {
         Derived::Plan(plan) => plan.encode(),
         _ => panic!("no camp"),
     };
@@ -237,7 +238,8 @@ fn every_post_is_a_floor_with_room_that_the_emitted_section_carries() {
                 .filter(|d| d.pos == post.floor && d.key == crate::keys::POST_MARKER)
                 .collect();
             assert_eq!(data.len(), 1, "{ctx}: post {:?} data", post.floor);
-            assert_eq!(data[0].value, [post.role as u8, post.yaw]);
+            let (role, yaw, _) = crate::post_marker::decode(&data[0].value).expect("a marker");
+            assert_eq!((role, yaw), (post.role as u8, post.yaw));
         }
     }
 }
@@ -250,5 +252,47 @@ fn a_post_role_needs_its_structure() {
         let count = |role| camp.posts.iter().filter(|p| p.role == role).count();
         assert!(camp.centre.is_some() || count(PostRole::Centre) == 0);
         assert!(!camp.huts.is_empty() || count(PostRole::Hut) == 0);
+    }
+}
+
+#[test]
+fn every_camp_flies_one_flag_on_a_pole_standing_on_something() {
+    let families = families();
+    let (flag, pole) = (
+        Material::named(crate::keys::SKULL_FLAG).block,
+        Material::named(crate::keys::FLAGPOLE).block,
+    );
+    for (style, seed, camp, plan) in sample_camps(&families) {
+        let ctx = format!("biome {style} seed {seed}");
+        let flags: Vec<[i32; 3]> = plan
+            .cells()
+            .filter(|(_, m)| m.block == flag)
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(flags.len(), 1, "{ctx}: flags {flags:?}");
+        let [x, y, z] = flags[0];
+        let poles = (1..)
+            .take_while(|k| plan.get([x, y - k, z]).is_some_and(|m| m.block == pole))
+            .count() as i32;
+        assert!((1..=4).contains(&poles), "{ctx}: {poles} pole cells");
+        let foot = [x, y - poles - 1, z];
+        match plan.get(foot) {
+            Some(m) => assert!(m.solid_top(), "{ctx}: pole stands on {m:?}"),
+            None => assert_eq!(foot[1], camp.g([x, z]), "{ctx}: pole stands on nothing"),
+        }
+        assert!(
+            camp.camp_box().contains(flags[0]),
+            "{ctx}: flag outside the camp's box"
+        );
+        let statue = camp.centre.as_ref().map(|c| c.kind) == Some(layout::CentreKind::Statue);
+        if statue && !camp.towers.is_empty() {
+            assert!(
+                camp.towers.iter().any(|t| {
+                    let local = [x - t.min[0], z - t.min[1]];
+                    local.iter().all(|&v| v == 0 || v == t.s - 1)
+                }),
+                "{ctx}: a statue camp's flag is not on a tower's corner"
+            );
+        }
     }
 }

@@ -1,3 +1,4 @@
+use crate::post_marker::{self, CampBox};
 use crate::skeleton::posts::{
     may_fill, Marker, Posts, Scan, RESPAWN, RETRY_WINDOW, SETTLE, SIGHT, SPAWN_MAX, SPAWN_MIN,
 };
@@ -6,8 +7,17 @@ const SECTION: [i32; 3] = [2, 4, -1];
 const POST_A: [i32; 3] = [35, 70, -10];
 const POST_B: [i32; 3] = [40, 71, -3];
 
+const CAMP: CampBox = CampBox {
+    min: [-20, 60, -40],
+    max: [50, 95, 30],
+};
+
 fn yard() -> Marker {
-    Marker { role: 0, yaw: None }
+    Marker {
+        role: 0,
+        yaw: None,
+        camp: CAMP,
+    }
 }
 
 fn found(cells: &[[i32; 3]]) -> Scan {
@@ -19,17 +29,22 @@ fn due_cells(posts: &Posts, now: u64) -> Vec<[i32; 3]> {
 }
 
 #[test]
-fn markers_decode_role_and_yaw() {
-    let east = Marker::decode(&[1, 192]).expect("two bytes");
+fn markers_decode_role_yaw_and_camp() {
+    let east = Marker::decode(&post_marker::encode(1, 192, CAMP)).expect("a whole marker");
     assert!(east.watch());
     assert!((east.yaw.unwrap() - 0.75 * std::f32::consts::TAU).abs() < 1e-5);
+    assert_eq!(east.camp, CAMP);
     assert_eq!(
-        Marker::decode(&[0, 0xFF]).unwrap().yaw,
+        Marker::decode(&post_marker::encode(0, 0xFF, CAMP))
+            .unwrap()
+            .yaw,
         None,
         "no preference"
     );
-    assert_eq!(Marker::decode(&[0]), None);
-    assert_eq!(Marker::decode(&[0, 1, 2]), None);
+    assert_eq!(Marker::decode(&[0, 1]), None);
+    let mut long = post_marker::encode(0, 1, CAMP);
+    long.push(2);
+    assert_eq!(Marker::decode(&long), None);
 }
 
 #[test]

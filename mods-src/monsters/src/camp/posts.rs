@@ -1,5 +1,6 @@
-//! Spawn posts: the floor cells a camp's guards stand on. Each one carries `[role, yaw]` cell
-//! data, so whatever populates the camp finds its posts when their section generates.
+//! Spawn posts: the floor cells a camp's guards stand on. Each one carries its role, yaw and the
+//! camp's box as cell data ([`crate::post_marker`]), so whatever populates the camp finds its
+//! posts when their section generates.
 //!
 //! A post is the cell BELOW the feet: something a body stands on centred (a full block, a log, a
 //! top slab or the camp's ground) with two clear cells above it. Posts are picked last, from the
@@ -13,6 +14,12 @@ use super::ground::natural_top;
 use super::layout::HutKind;
 use super::{Camp, Res};
 use crate::keys::POST_MARKER;
+use crate::post_marker::{self, CampBox};
+
+/// How far below the lowest ground and above the highest a camp's box reaches: the arena's pit,
+/// and the towers with a flag on top.
+const BOX_BELOW: i32 = 6;
+const BOX_ABOVE: i32 = 22;
 
 /// The yaw byte of a post whose guard may face any way.
 const NO_YAW: u8 = 0xFF;
@@ -111,8 +118,9 @@ impl Camp<'_> {
             .max(2)
             .min(MAX_POSTS.saturating_sub(posts.len()));
         self.yard_posts(&mut posts, yard);
+        let camp = self.camp_box();
         for post in &posts {
-            self.mark_post(post);
+            self.mark_post(post, camp);
         }
         self.posts = posts;
     }
@@ -465,9 +473,26 @@ impl Camp<'_> {
         }
     }
 
+    /// The cells the camp stands in: the ring's bounds, from under the arena's pit to over the
+    /// towers.
+    pub(super) fn camp_box(&self) -> CampBox {
+        let (lo, hi) = self.field.bounds();
+        let (mut low, mut high) = (i32::MAX, i32::MIN);
+        for z in lo[1]..=hi[1] {
+            for &g in self.ground.row(z, lo[0], hi[0]) {
+                low = low.min(g);
+                high = high.max(g);
+            }
+        }
+        CampBox {
+            min: [lo[0], low - BOX_BELOW, lo[1]],
+            max: [hi[0], high + BOX_ABOVE, hi[1]],
+        }
+    }
+
     /// Writes the post's floor where the camp left natural ground unwritten (data only rides a
     /// cell the plan writes), clears clutter from above it and attaches the data.
-    fn mark_post(&mut self, post: &Post) {
+    fn mark_post(&mut self, post: &Post, camp: CampBox) {
         let [x, y, z] = post.floor;
         let Some(floor) = self.floor_material(post.floor) else {
             return;
@@ -478,7 +503,10 @@ impl Camp<'_> {
         if self.plan.get([x, y + 1, z]).is_some_and(litter) {
             self.plan.unset([x, y + 1, z]);
         }
-        self.plan
-            .data(post.floor, POST_MARKER, vec![post.role as u8, post.yaw]);
+        self.plan.data(
+            post.floor,
+            POST_MARKER,
+            post_marker::encode(post.role as u8, post.yaw, camp),
+        );
     }
 }

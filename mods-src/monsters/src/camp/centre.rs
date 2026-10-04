@@ -1,5 +1,6 @@
 use mod_sdk::build::{gable, Axis, Dir, Draw, Frame, Half, Material, Noise2, RoofStyle};
 
+use super::flag::Seat;
 use super::ground::{Rubble, RubbleKind};
 use super::huts::loot;
 use super::layout::CentreKind;
@@ -98,6 +99,17 @@ impl Camp<'_> {
             &style,
             None,
         );
+        if self.flagged {
+            // The ridge's middle, made a full block so the pole stands on it, not half above it.
+            let ridge = frame.at(ws / 2, (ws - 1) / 2);
+            let top = (base + 4..=base + 4 + ws)
+                .rev()
+                .find(|&y| self.plan.occupied([ridge[0], y, ridge[1]]))
+                .unwrap_or(base + 4 + (ws - 1) / 2);
+            let cap = self.mats.block(wood);
+            self.put_at(ridge, top, &cap);
+            self.standard = Some(Seat::Top(ridge, top, top));
+        }
     }
 
     fn statue(&mut self, at: [i32; 2], face: Dir) {
@@ -148,6 +160,9 @@ impl Camp<'_> {
             self.totem(&frame, base + 1);
         } else {
             self.skeleton_figure(&frame, base + 2);
+        }
+        if self.flagged {
+            self.standard = self.tower_seat().or(Some(Seat::Top(at, base, base + 12)));
         }
     }
 
@@ -422,10 +437,11 @@ impl Camp<'_> {
                 self.put_at(p, y, &decor!("ladder").facing(facing));
             }
         }
+        // The middle stays clear for the flag.
         let open: Vec<[i32; 2]> = pit
             .iter()
             .copied()
-            .filter(|c| !walked.contains(c))
+            .filter(|c| !walked.contains(c) && *c != centre.at)
             .collect();
         for _ in 0..self.rng.int(2, 4) {
             if open.is_empty() {
@@ -460,6 +476,9 @@ impl Camp<'_> {
                     crate::keys::CAMP_ARENA_LOOT,
                 );
             }
+        }
+        if self.flagged {
+            self.standard = Some(Seat::Ground(centre.at));
         }
         self.centre = Some(centre);
     }

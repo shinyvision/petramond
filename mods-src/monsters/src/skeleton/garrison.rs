@@ -1,7 +1,8 @@
 //! Keeping the camps manned. Posts are read from each section the stream announces; once a second
 //! the live skeletons are counted, every post whose guard is gone is refilled out of the players'
-//! sight, and every skeleton this session has not dressed yet is dressed: what its hands hold and
-//! its stances are not saved, its loadout tag is.
+//! sight (while its camp flies its flag, when camps have flags), and every skeleton this session
+//! has not dressed yet is dressed: what its hands hold and its stances are not saved, its loadout
+//! tag is.
 
 use mod_sdk::*;
 
@@ -40,6 +41,9 @@ pub fn tick(sk: &mut Skeletons) {
         .iter()
         .map(|s| [s.pos[0], s.pos[1] + f64::from(s.eye_height), s.pos[2]])
         .collect();
+    if let Some(standards) = &mut sk.standards {
+        standards.follow();
+    }
     refill(sk, now, &eyes);
 }
 
@@ -72,7 +76,12 @@ fn refill(sk: &mut Skeletons, now: u64, eyes: &[[f64; 3]]) {
         } else {
             may_fill(watched, eyes, clear_line)
         };
-        if !allowed {
+        if !allowed
+            || sk
+                .standards
+                .as_mut()
+                .is_some_and(|s| !s.flies(marker.camp, now))
+        {
             continue;
         }
         let roll = splitmix64_mix(rng_u64("skeleton_post") ^ cell_hash(cell));

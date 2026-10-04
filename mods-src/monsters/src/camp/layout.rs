@@ -294,6 +294,8 @@ impl<'a> Camp<'a> {
             wall_h: vec![0; len],
             rubble: Vec::new(),
             posts: Vec::new(),
+            flagged: false,
+            standard: None,
         }))
     }
 
@@ -334,6 +336,7 @@ impl<'a> Camp<'a> {
         self.lay_plateaus();
         self.lay_bridges();
         self.lay_centre();
+        self.lay_flag();
         self.lay_gates();
         self.lay_towers();
         self.lay_fortress();

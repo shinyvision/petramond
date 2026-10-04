@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 use std::f32::consts::TAU;
 
 use super::geometry::distance;
+use crate::post_marker::{self, CampBox};
 
 /// Ticks after a section (re)loads before its posts count as empty.
 pub const SETTLE: u64 = 40;
@@ -32,19 +33,21 @@ pub const SIGHT: f64 = 48.0;
 pub const WATCH_ROLE: u8 = 1;
 const NO_YAW: u8 = 0xFF;
 
-/// A post marker's `[role, yaw]` cell data.
+/// A post marker's cell data.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Marker {
     pub role: u8,
     pub yaw: Option<f32>,
+    pub camp: CampBox,
 }
 
 impl Marker {
     pub fn decode(bytes: &[u8]) -> Option<Marker> {
-        let [role, yaw] = bytes.try_into().ok()?;
+        let (role, yaw, camp) = post_marker::decode(bytes)?;
         Some(Marker {
             role,
             yaw: (yaw != NO_YAW).then(|| f32::from(yaw) / 256.0 * TAU),
+            camp,
         })
     }
 

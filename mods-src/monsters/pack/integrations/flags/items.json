@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "item": "monsters:skull_flag",
+      "key": "monsters:skull_flag",
+      "name": "Skull Flag",
+      "max_stack_size": 16,
+      "sprite": "monsters:skull_flag_item",
+      "block": "monsters:skull_flag"
+    }
+  ]
+}

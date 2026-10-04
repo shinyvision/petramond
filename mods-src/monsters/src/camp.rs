@@ -26,6 +26,7 @@ macro_rules! decor {
 }
 
 mod centre;
+mod flag;
 mod gates;
 mod grid;
 mod ground;
@@ -92,6 +93,8 @@ impl Terrain for HostTerrain {
 
 pub(crate) struct Camps {
     families: Families,
+    /// Whether camps fly a skull flag: the flags pack is loaded alongside.
+    flagged: bool,
     cache: PlanCache,
     ids: FxHashMap<String, Option<BlockId>>,
 }
@@ -103,22 +106,32 @@ impl Camps {
             log(&format!("skeleton camps disabled: {missing}"));
             return None;
         }
+        let flagged = [crate::keys::SKULL_FLAG, crate::keys::FLAGPOLE]
+            .iter()
+            .all(|name| resolve_block(name).is_some());
+        // Plans are memoized per seed across worlds, and a flagged camp is a different plan.
+        let name = if flagged {
+            "skeleton_camp_flagged"
+        } else {
+            "skeleton_camp"
+        };
         Some(Camps {
             families,
-            cache: PlanCache::new("skeleton_camp", 16),
+            flagged,
+            cache: PlanCache::new(name, 16),
             ids: FxHashMap::default(),
         })
     }
 
     pub(crate) fn generate(&mut self, ctx: &GenCtx) -> GenOutput {
-        let derive = derive_logged(ctx.seed(), ctx.sea_level(), &self.families);
+        let derive = derive_logged(ctx.seed(), ctx.sea_level(), &self.families, self.flagged);
         self.cache
             .generate(&GRID, ctx, derive, &mut resolver(&mut self.ids))
             .unwrap_or_else(|_| GenOutput::deferred())
     }
 
     pub(crate) fn claims(&mut self, ctx: &ClaimsCtx) -> GenClaims {
-        let derive = derive_logged(ctx.seed, ctx.sea_level, &self.families);
+        let derive = derive_logged(ctx.seed, ctx.sea_level, &self.families, self.flagged);
         self.cache
             .claims(&GRID, ctx, derive, &mut resolver(&mut self.ids))
             .unwrap_or_else(|_| GenClaims {
@@ -139,26 +152,44 @@ fn resolver(
 }
 
 /// [`derive`] from the host's terrain, logging what each camp built.
-fn derive_logged(seed: u32, sea_level: i32, families: &Families) -> impl Fn(Site) -> Derived + '_ {
+fn derive_logged(
+    seed: u32,
+    sea_level: i32,
+    families: &Families,
+    flagged: bool,
+) -> impl Fn(Site) -> Derived + '_ {
     move |site| {
         let [x, z] = site.center;
         let mut report = |summary: &str| log(&format!("skeleton camp at {x} {z}: {summary}"));
-        derive(seed, sea_level, site, families, &HostTerrain, &mut report)
+        derive(
+            seed,
+            sea_level,
+            site,
+            families,
+            flagged,
+            &HostTerrain,
+            &mut report,
+        )
     }
 }
 
-/// Derives the camp at `site`, telling `report` what it built.
+/// Derives the camp at `site`, telling `report` what it built. A `flagged` camp flies a skull
+/// flag.
 pub(crate) fn derive(
     seed: u32,
     sea_level: i32,
     site: Site,
     families: &Families,
+    flagged: bool,
     terrain: &dyn Terrain,
     report: &mut dyn FnMut(&str),
 ) -> Derived {
     let rng = GRID.rng(seed, site);
     let mut camp = match Camp::survey(site.center, sea_level, families, terrain, rng) {
-        Survey::Camp(camp) => camp,
+        Survey::Camp(mut camp) => {
+            camp.flagged = flagged;
+            camp
+        }
         Survey::Nothing => return Derived::Nothing,
         Survey::Unavailable => return Derived::Unavailable,
     };
@@ -228,6 +259,9 @@ struct Camp<'a> {
     wall_h: Vec<i32>,
     rubble: Vec<ground::Rubble>,
     posts: Vec<posts::Post>,
+    flagged: bool,
+    /// Where the flag stands, once a builder has picked its spot.
+    standard: Option<flag::Seat>,
 }
 
 impl Camp<'_> {
@@ -291,6 +325,7 @@ impl Camp<'_> {
         let families = self.mats.families();
         self.plan.settle_slabs(families, |x, z| ground.get([x, z]));
         self.snow();
+        self.raise_flag();
         self.build_posts(fort_h);
         self.clear_space();
         let summary = self.summary();
@@ -311,7 +346,7 @@ impl Camp<'_> {
             Some(CentreKind::Arena) => "an arena",
         };
         format!(
-            "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges, {} posts",
+            "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges, {} posts{}",
             self.gates.len(),
             self.towers.len(),
             self.huts.len(),
@@ -319,6 +354,7 @@ impl Camp<'_> {
             self.plateaus.len(),
             self.bridges.len(),
             self.posts.len(),
+            if self.standard.is_some() { ", a flag" } else { "" },
         )
     }
 }

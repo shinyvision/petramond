@@ -77,9 +77,18 @@ fn a_camp_post_is_manned_out_of_sight_and_its_guard_fights_inner() {
         &mut server,
         WorldPos::new(bx as f64 + 0.5, by as f64, bz as f64 + 0.5),
     );
+    // `[role, yaw]`, then the camp's box: min and max corners as little-endian i32s.
+    let mut marker = vec![0, 0xFF];
+    for v in [-4, -2, -6, 4, 6, 6]
+        .iter()
+        .zip(post.iter().cycle())
+        .map(|(d, p)| p + d)
+    {
+        marker.extend(v.to_le_bytes());
+    }
     assert!(server
         .world
-        .cell_kv_set(post[0], post[1], post[2], POST_MARKER.into(), vec![0, 0xFF]));
+        .cell_kv_set(post[0], post[1], post[2], POST_MARKER.into(), marker));
     let section = SectionPos::from_world(post[0], post[1], post[2]).expect("in the world");
     server.mods.emit(PostEvent::SectionLoaded { pos: section });
 

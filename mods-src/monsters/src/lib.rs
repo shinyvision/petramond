@@ -1,6 +1,7 @@
 mod camp;
 mod daylight;
 mod keys;
+mod post_marker;
 mod skeleton;
 
 use mod_sdk::*;

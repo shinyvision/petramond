@@ -6,6 +6,8 @@
 //! - [`combat`] runs the fight each tick: sight, then the melee swing or the bow.
 //! - [`guard`] is the shield's raise-and-lower clock, and refuses the hits a raised shield faces.
 //! - [`leash`] is the brain node that walks an idle guard back to its post.
+//! - [`standards`] knows which camps still fly their skull flag, when the flags pack is loaded:
+//!   only those camps' posts fill.
 //!
 //! What a skeleton carries and where it stands are tags (saved with the body); everything else
 //! here is session memory keyed by the mob's id.
@@ -20,6 +22,7 @@ mod kit;
 mod leash;
 mod posts;
 mod presence;
+mod standards;
 
 #[cfg(test)]
 mod tests;
@@ -30,6 +33,7 @@ use combat::Fight;
 use kit::Kits;
 use posts::Posts;
 use presence::Presence;
+use standards::Standards;
 
 const COMBAT_SYSTEM: u32 = 100;
 const GARRISON_SYSTEM: u32 = 101;
@@ -47,6 +51,8 @@ pub struct Skeletons {
     kind: MobId,
     kits: Kits,
     posts: Posts,
+    /// `None` without the flags pack: every camp keeps its garrison.
+    standards: Option<Standards>,
     bodies: FxHashMap<u64, Body>,
     /// Extra shoves owed by hits landed this tick, applied when each hit is seen to go through.
     shoves: Vec<(PlayerId, [f32; 3])>,
@@ -94,15 +100,22 @@ impl Skeletons {
         register_event_handler(EventKind::PlayerDamagePre, i32::MAX, ON_PLAYER_DAMAGE);
         register_ai_node(keys::POST_NODE, POST_NODE_CALLBACK);
         let names: Vec<&str> = kits.loadouts.iter().map(|l| l.name.as_str()).collect();
+        let standards = Standards::init();
         log(&format!(
-            "skeletons: {} loadouts ({})",
+            "skeletons: {} loadouts ({}){}",
             names.len(),
-            names.join(", ")
+            names.join(", "),
+            if standards.is_some() {
+                ", camps hold while their skull flag stands"
+            } else {
+                ""
+            }
         ));
         Some(Skeletons {
             kind,
             kits,
             posts: Posts::default(),
+            standards,
             bodies: FxHashMap::default(),
             shoves: Vec::new(),
         })

@@ -1,0 +1,12 @@
+{
+  "cloths": [
+    {
+      "cloth": "monsters:skull_flag",
+      "tile": "monsters:skull_flag",
+      "uv": [0, 0, 16, 12],
+      "size": [1.5, 1.125],
+      "segments": [12, 9],
+      "anchor": [0.5, 0.9375, 0.5]
+    }
+  ]
+}
