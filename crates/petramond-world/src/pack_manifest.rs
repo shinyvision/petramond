@@ -181,7 +181,7 @@ type RowFilter = (&'static str, &'static str);
 
 type ExtraValidate = fn(&str) -> Result<(), String>;
 
-const CATALOGS: [CatalogSpec; 18] = {
+const CATALOGS: [CatalogSpec; 19] = {
     const fn world(rel: &'static str, array: &'static str, key_field: &'static str) -> CatalogSpec {
         CatalogSpec {
             rel,
@@ -216,6 +216,7 @@ const CATALOGS: [CatalogSpec; 18] = {
         world("effects.json", "effects", "effect"),
         world("conditions.json", "conditions", "condition"),
         presentation("particle_emitters.json", "emitters", "emitter"),
+        presentation("cloth.json", "cloths", "cloth"),
         presentation("textures/atlas.json", "tiles", "name"),
         world("recipes.json", "recipes", "recipe"),
         world("shapes.json", "shapes", "key"),

@@ -17,6 +17,7 @@ pub mod stage {
     pub const EFFECTS: &str = "effects.json";
     pub const BIOMES: &str = "biomes.json";
     pub const PARTICLE_EMITTERS: &str = "particle_emitters.json";
+    pub const CLOTH: &str = "cloth.json";
     pub const CONDITIONS: &str = "conditions.json";
     pub const ANIMATED_MODELS: &str = "animated_models.json";
     pub const SHAPES: &str = "shapes.json";

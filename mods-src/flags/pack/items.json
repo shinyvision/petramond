@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "item": "flags:flagpole",
+      "key": "flags:flagpole",
+      "name": "Flagpole",
+      "max_stack_size": 64,
+      "block": "flags:flagpole"
+    },
+    {
+      "item": "flags:white_flag",
+      "key": "flags:white_flag",
+      "name": "White Flag",
+      "max_stack_size": 16,
+      "sprite": "flags:white_flag_item",
+      "block": "flags:white_flag"
+    }
+  ]
+}

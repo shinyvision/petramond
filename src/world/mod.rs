@@ -9,6 +9,7 @@ mod block_deltas;
 mod cell_change;
 pub(crate) mod cells;
 pub mod chest;
+mod cloth;
 mod column_heightmaps;
 pub mod construction;
 mod container;
@@ -71,6 +72,7 @@ pub use remote::{
 #[cfg(any(test, feature = "test-support"))]
 pub use stream::split_generated_column;
 
+pub use cloth::PlacedCloth;
 pub use mirror::ReplicaMirror;
 pub use particle_emitters::{emitter_envelope, PlacedEmitter};
 pub use petramond_world::world::ladder::Climb;

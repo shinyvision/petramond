@@ -353,6 +353,8 @@ impl ItemEntityPass {
             sprite_verts: Vec::new(),
             sprite_indices: Vec::new(),
             sprite_scratch: Vec::new(),
+            cloths: Vec::new(),
+            cloth_points: Vec::new(),
         }
     }
 }

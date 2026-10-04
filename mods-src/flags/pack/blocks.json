@@ -1,0 +1,36 @@
+{
+  "blocks": [
+    {
+      "block": "flags:flagpole",
+      "shape": {"boxes": [{"from": [7, 0, 7], "to": [9, 16, 9], "uv": {"sides": [5, 0, 7, 16]}}]},
+      "flags": ["solid", "transparent"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "tiles": ["flags:pole", "flags:pole", "flags:pole"],
+      "material": "wood",
+      "hardness": 1,
+      "drops": [{"item": "flags:flagpole", "min": 1, "max": 1, "chance": 1}]
+    },
+    {
+      "block": "flags:white_flag",
+      "shape": {"boxes": [
+        {"from": [7, 0, 7], "to": [9, 15, 9], "uv": {"sides": [5, 1, 7, 16]}},
+        {"from": [6, 15, 6], "to": [10, 16, 10]}
+      ]},
+      "flags": ["solid", "transparent"],
+      "tags": [],
+      "behavior": "inert",
+      "interaction": "none",
+      "collision": [],
+      "emission": 0,
+      "cloth": "flags:white_flag",
+      "tiles": ["flags:pole", "flags:pole", "flags:pole"],
+      "material": "wood",
+      "hardness": 1,
+      "drops": [{"item": "flags:white_flag", "min": 1, "max": 1, "chance": 1}]
+    }
+  ]
+}

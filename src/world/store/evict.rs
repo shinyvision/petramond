@@ -27,7 +27,7 @@ impl<S: WorldSide> World<S> {
         if section_removed {
             self.forget_block_draws_in_section(pos);
         }
-        self.data.particle_emitter_sections.remove(&pos);
+        self.data.presented_sections.remove(&pos);
         self.forget_section_mesh(pos);
         self.data.light_deferred.remove(&pos);
         self.data.deferred_rechecks.remove(&pos);
@@ -54,7 +54,7 @@ impl<S: WorldSide> World<S> {
             }
             self.data.sections.remove(&sp);
             self.data.block_entity_sections.remove(&sp);
-            self.data.particle_emitter_sections.remove(&sp);
+            self.data.presented_sections.remove(&sp);
             self.data.light_deferred.remove(&sp);
             self.data.deferred_rechecks.remove(&sp);
             self.light_bakes.cancel(sp);
@@ -109,7 +109,7 @@ impl<S: WorldSide> World<S> {
         self.data.block_entity_sections.clear();
         self.draws.block_draws.clear();
         self.draws.block_draw_sections.clear();
-        self.data.particle_emitter_sections.clear();
+        self.data.presented_sections.clear();
         self.data.columns.clear();
         self.data.column_payload_revisions.clear();
         self.data.column_summaries.clear();

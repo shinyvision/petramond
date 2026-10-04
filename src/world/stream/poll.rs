@@ -201,7 +201,7 @@ impl ServerWorld {
                     w.data.sections.insert(sp, section);
                     w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
-                    w.refresh_particle_emitter_index(sp);
+                    w.refresh_presented_index(sp);
                     if w.side.stream_events_enabled {
                         w.side.stream_events.push(StreamEvent::Generated(sp));
                     }
@@ -340,7 +340,7 @@ impl ServerWorld {
                     w.data.sections.insert(sp, Arc::new(section));
                     w.note_section_loaded(sp);
                     w.refresh_block_entity_index(sp);
-                    w.refresh_particle_emitter_index(sp);
+                    w.refresh_presented_index(sp);
                     w.side.entities.dropped_items.extend(entities);
                     w.restore_mobs(mobs);
                     if w.side.stream_events_enabled {
@@ -534,7 +534,7 @@ impl ServerWorld {
             self.data.sections.insert(*sp, Arc::new(section));
             self.note_section_loaded(*sp);
             self.refresh_block_entity_index(*sp);
-            self.refresh_particle_emitter_index(*sp);
+            self.refresh_presented_index(*sp);
             self.side.entities.dropped_items.extend(entities);
             self.restore_mobs(mobs);
         }

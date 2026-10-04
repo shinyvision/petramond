@@ -1,0 +1,7 @@
+{
+  "name": "Flags",
+  "id": "flags",
+  "version": "0.1.0",
+  "description": "Flagpoles and cloth flags that stream in the wind and brush aside around anyone who walks through them.",
+  "summary": "Adds wind-blown flags."
+}

@@ -23,7 +23,7 @@ impl<S: WorldSide> World<S> {
         self.data.sections.insert(pos, Arc::new(section));
         self.note_section_loaded(pos);
         self.refresh_block_entity_index(pos);
-        self.refresh_particle_emitter_index(pos);
+        self.refresh_presented_index(pos);
         self.queue_dirty_mesh(pos);
         self.request_fixture_bake(pos);
         self.bump_terrain_revision();
@@ -46,7 +46,7 @@ impl<S: WorldSide> World<S> {
             sums[(cy - SECTION_MIN_CY) as usize] = section.summary();
             self.data.sections.insert(sp, Arc::new(section));
             self.note_section_loaded(sp);
-            self.refresh_particle_emitter_index(sp);
+            self.refresh_presented_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);
         }
@@ -63,7 +63,7 @@ impl<S: WorldSide> World<S> {
                 .sections
                 .insert(sp, Arc::new(Section::new(pos.cx, cy, pos.cz)));
             self.note_section_loaded(sp);
-            self.refresh_particle_emitter_index(sp);
+            self.refresh_presented_index(sp);
             self.queue_dirty_mesh(sp);
             self.request_fixture_bake(sp);
         }

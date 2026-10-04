@@ -9,7 +9,7 @@ const MB_OPAQUE: u16 = 1 << 1;
 const MB_NON_AIR: u16 = 1 << 2;
 const MB_WATER: u16 = 1 << 3;
 const MB_BIOME_TINT: u16 = 1 << 4;
-const MB_PARTICLE_EMITTER: u16 = 1 << 5;
+const MB_PRESENTED: u16 = 1 << 5;
 const MB_LIGHT_EMITTER: u16 = 1 << 6;
 const MB_FLUID: u16 = 1 << 7;
 const MB_QUENCHES: u16 = 1 << 8;
@@ -57,9 +57,8 @@ impl MetricTally {
                 }
             }
         }
-        if changed & MB_PARTICLE_EMITTER != 0 {
-            self.emitters
-                .push((i as u16, new & MB_PARTICLE_EMITTER != 0));
+        if changed & MB_PRESENTED != 0 {
+            self.emitters.push((i as u16, new & MB_PRESENTED != 0));
         }
     }
 }
@@ -91,7 +90,7 @@ fn derive_metrics_bits(_: &crate::content::ContentRegistry) -> Result<Box<[u16]>
             | (u16::from(block.is_fluid()) * MB_FLUID)
             | (u16::from(quench(block).is_some()) * MB_QUENCHES)
             | (u16::from(Section::id_uses_biome_tint(id)) * MB_BIOME_TINT)
-            | (u16::from(Section::id_has_particle_emitter(id)) * MB_PARTICLE_EMITTER)
+            | (u16::from(Section::id_is_presented(id)) * MB_PRESENTED)
             | (u16::from(Section::id_emits_light(id)) * MB_LIGHT_EMITTER);
     }
     Ok(bits)
@@ -152,10 +151,10 @@ impl Section {
             *plane = (*plane as i32 + d) as u16;
         }
         for (cell, on) in tally.emitters {
-            match (self.particle_emitter_cells.binary_search(&cell), on) {
-                (Err(at), true) => self.particle_emitter_cells.insert(at, cell),
+            match (self.presented_cells.binary_search(&cell), on) {
+                (Err(at), true) => self.presented_cells.insert(at, cell),
                 (Ok(at), false) => {
-                    self.particle_emitter_cells.remove(at);
+                    self.presented_cells.remove(at);
                 }
                 _ => {}
             }
@@ -239,8 +238,8 @@ impl Section {
             if b & MB_BIOME_TINT != 0 {
                 out.biome_tint_count += n;
             }
-            if b & MB_PARTICLE_EMITTER != 0 {
-                out.particle_emitter_count += n;
+            if b & MB_PRESENTED != 0 {
+                out.presented_count += n;
             }
             if b & MB_LIGHT_EMITTER != 0 {
                 out.light_emitter_count += n;
@@ -277,19 +276,19 @@ impl Section {
         self.quencher_count = metrics.quencher_count;
         self.biome_tint_count = metrics.biome_tint_count;
         self.light_emitter_count = metrics.light_emitter_count;
-        let mut cells = std::mem::take(&mut self.particle_emitter_cells);
+        let mut cells = std::mem::take(&mut self.presented_cells);
         cells.clear();
-        if metrics.particle_emitter_count > 0 {
-            cells.reserve(metrics.particle_emitter_count as usize);
+        if metrics.presented_count > 0 {
+            cells.reserve(metrics.presented_count as usize);
             cells.extend(
                 self.blocks
                     .iter()
                     .enumerate()
-                    .filter(|&(_, id)| Self::id_has_particle_emitter(id))
+                    .filter(|&(_, id)| Self::id_is_presented(id))
                     .map(|(i, _)| i as u16),
             );
         }
-        self.particle_emitter_cells = cells;
+        self.presented_cells = cells;
     }
 
     pub fn stream_metrics(&self) -> SectionMetrics {
@@ -303,7 +302,7 @@ impl Section {
             quench_count: self.quench_count,
             quencher_count: self.quencher_count,
             biome_tint_count: self.biome_tint_count,
-            particle_emitter_count: self.particle_emitter_cells.len() as u32,
+            presented_count: self.presented_cells.len() as u32,
             light_emitter_count: self.light_emitter_count,
         }
     }
@@ -391,13 +390,13 @@ impl Section {
     }
 
     #[inline]
-    pub fn has_particle_emitters(&self) -> bool {
-        !self.particle_emitter_cells.is_empty()
+    pub fn has_presented_cells(&self) -> bool {
+        !self.presented_cells.is_empty()
     }
 
     #[inline]
-    pub fn particle_emitter_cells(&self) -> &[u16] {
-        &self.particle_emitter_cells
+    pub fn presented_cells(&self) -> &[u16] {
+        &self.presented_cells
     }
 
     #[inline]
@@ -448,9 +447,12 @@ impl Section {
             })
     }
 
+    /// Cells whose block carries client-side presentation of its own (looping
+    /// particles, cloth), so the client finds them without scanning sections.
     #[inline]
-    fn id_has_particle_emitter(id: u16) -> bool {
-        Block::from_id(id).particle_emitter().is_some()
+    fn id_is_presented(id: u16) -> bool {
+        let block = Block::from_id(id);
+        block.particle_emitter().is_some() || block.cloth().is_some()
     }
 
     #[inline]

@@ -165,5 +165,11 @@ host_domain! {
         ClientEngineFacts => legal(CLIENT_SHELL, Any, Read),
         ClientPacks => legal(CLIENT_SHELL, Any, Read),
         ClientWallClock => legal(CLIENT_SHELL, Any, Read),
+        /// The wind every cloth on this client blows in: XZ velocity in blocks per
+        /// second, `None` to release. Among mods that set one, the last in load order
+        /// wins; with none set the engine blows a gentle breeze toward -X (east to west).
+        ClientClothWindSet {
+            wind: Option<[f32; 2]>,
+        } => legal(CLIENT, Any, Write),
     }
 }

@@ -497,6 +497,7 @@ pub(super) const PINS: &[(&str, &str)] = &[
     ("HostCall::ClientEngineFacts", "0d29"),
     ("HostCall::ClientPacks", "0d2a"),
     ("HostCall::ClientWallClock", "0d2b"),
+    ("HostCall::ClientClothWindSet", "0d2c010000c0bf0000803e"),
     ("HostRet::Ticket", "5a04"),
     ("HostRet::ClientStateTicket", "5b03808080808020"),
     ("HostRet::ClientFilePolled", "5c01000128840701a0068c01"),

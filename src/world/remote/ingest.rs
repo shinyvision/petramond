@@ -113,7 +113,7 @@ impl ReplicaWorld {
             self.apply_remote_block_draw(at, prims.clone());
         }
         self.refresh_block_entity_index(pos);
-        self.refresh_particle_emitter_index(pos);
+        self.refresh_presented_index(pos);
         self.classify_deep_on_install(pos);
     }
 

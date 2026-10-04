@@ -105,7 +105,7 @@ impl Section {
             quench_count: 0,
             quencher_count: 0,
             biome_tint_count: 0,
-            particle_emitter_cells: Vec::new(),
+            presented_cells: Vec::new(),
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,
@@ -151,7 +151,7 @@ impl Section {
             quench_count,
             quencher_count,
             biome_tint_count,
-            particle_emitter_cells,
+            presented_cells,
             light_emitter_count,
             shape_render: _,
             light_apertures: _,
@@ -168,7 +168,7 @@ impl Section {
             && *quencher_count == other.quencher_count
             && *biome_tint_count == other.biome_tint_count
             && *light_emitter_count == other.light_emitter_count
-            && *particle_emitter_cells == other.particle_emitter_cells
+            && *presented_cells == other.presented_cells
             && skylight.as_deref() == other.skylight.as_deref()
             && blocklight.as_deref() == other.blocklight.as_deref()
             && *entities == other.entities

@@ -216,6 +216,11 @@ host_fn! {
 }
 
 host_fn! {
+    pub fn client_cloth_wind_set(wind: Option<[f32; 2]>) -> bool
+        => ClientClothWindSet { wind } => Bool
+}
+
+host_fn! {
     pub fn client_mood_set(darken: f32, desaturate: f32) -> bool
         => ClientMoodSet { darken, desaturate } => Bool
 }

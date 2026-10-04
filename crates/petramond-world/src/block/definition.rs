@@ -20,6 +20,7 @@ pub(crate) struct BlockDef {
     pub emission: u8,
     pub emission_rgb: [u8; 3],
     pub particle_emitter: Option<&'static [ParticleEmitter]>,
+    pub cloth: Option<u8>,
     pub tiles: [Tile; 3],
     pub uv_turns: [u8; 3],
     pub front: Option<Tile>,

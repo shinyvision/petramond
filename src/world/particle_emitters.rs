@@ -106,7 +106,7 @@ impl<S: WorldSide> World<S> {
         let biggest = max_emitter_particle();
         let span = Vec3::splat(SECTION_SIZE as f32);
         let sec = SECTION_SIZE as i32;
-        for sp in &self.data.particle_emitter_sections {
+        for sp in &self.data.presented_sections {
             let origin = petramond_math::world_pos::WorldPos::block_min(IVec3::new(
                 sp.cx * sec,
                 sp.cy * sec,
@@ -119,11 +119,11 @@ impl<S: WorldSide> World<S> {
             let Some(section) = self.data.sections.get(sp) else {
                 continue;
             };
-            if !section.has_particle_emitters() {
+            if !section.has_presented_cells() {
                 continue;
             }
             let (ox, oy, oz) = section.origin_world();
-            for &cell_idx in section.particle_emitter_cells() {
+            for &cell_idx in section.presented_cells() {
                 let idx = cell_idx as usize;
                 let block = Block::from_id(section.block_at_idx(idx));
                 let Some(rows) = block.particle_emitter() else {

@@ -55,7 +55,7 @@ pub struct SectionMetrics {
     pub quench_count: u32,
     pub quencher_count: u32,
     pub biome_tint_count: u32,
-    pub particle_emitter_count: u32,
+    pub presented_count: u32,
     pub light_emitter_count: u32,
 }
 
@@ -70,7 +70,7 @@ impl SectionMetrics {
             && self.quench_count <= volume
             && self.quencher_count <= volume
             && self.biome_tint_count <= volume
-            && self.particle_emitter_count <= volume
+            && self.presented_count <= volume
             && self.light_emitter_count <= volume
             && self.plane_opaque.iter().all(|&n| n <= 256)
     }
@@ -101,7 +101,7 @@ pub struct Section {
     quench_count: u32,
     quencher_count: u32,
     biome_tint_count: u32,
-    particle_emitter_cells: Vec<u16>,
+    presented_cells: Vec<u16>,
     light_emitter_count: u32,
     shape_render: Option<Arc<std::collections::HashMap<u16, Box<[crate::block::ShapeRenderBox]>>>>,
     light_apertures: Option<Arc<CellMap<bool>>>,
@@ -170,7 +170,7 @@ impl Section {
             quench_count: 0,
             quencher_count: 0,
             biome_tint_count: 0,
-            particle_emitter_cells: Vec::new(),
+            presented_cells: Vec::new(),
             light_emitter_count: 0,
             shape_render: None,
             light_apertures: None,
@@ -384,7 +384,7 @@ impl Section {
     pub fn memory_parts(&self) -> (Option<usize>, usize, u64, u64, u64) {
         let (fluid_ptr, fluid_len, sparse) = self.states.memory_parts();
         let entities = self.entities.as_ref().map_or(0, |e| e.memory_bytes());
-        let emitters = (self.particle_emitter_cells.capacity() * 2) as u64;
+        let emitters = (self.presented_cells.capacity() * 2) as u64;
         (fluid_ptr, fluid_len, sparse, entities, emitters)
     }
 

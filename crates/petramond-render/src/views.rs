@@ -209,6 +209,25 @@ pub struct EntityShadow {
     pub strength: f32,
 }
 
+/// One cloth to draw: a `cols × rows` point grid stored row-major in the frame's
+/// shared point list from `first`, positioned relative to the owning `cell`.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ClothPresentation {
+    pub cell: IVec3,
+    pub tile: petramond_world::tile::Tile,
+    pub uv: [f32; 4],
+    pub cols: u16,
+    pub rows: u16,
+    pub first: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct ClothPoint {
+    pub pos: Vec3,
+    pub skylight: u8,
+    pub blocklight: petramond_world::light::BlockLight6,
+}
+
 pub struct GamePresentation<'a> {
     pub tick_alpha: f32,
     pub item_entities: &'a [DroppedItemPresentation],
@@ -216,6 +235,8 @@ pub struct GamePresentation<'a> {
     pub particle_emitters: &'a [PlacedEmitter],
     pub block_entities: &'a [BlockEntityPresentation],
     pub block_draws: &'a [petramond::world::draw::BlockDrawInstance],
+    pub cloths: &'a [ClothPresentation],
+    pub cloth_points: &'a [ClothPoint],
     pub mobs: &'a [MobPresentation],
     pub mob_arena: &'a MobArena,
     pub anim_names: &'a AnimNames,

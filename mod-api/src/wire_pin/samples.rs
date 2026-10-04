@@ -1319,6 +1319,7 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::ClientEngineFacts", &HostCall::from(calls::ClientEngineFacts));
     s.pin("HostCall::ClientPacks", &HostCall::from(calls::ClientPacks));
     s.pin("HostCall::ClientWallClock", &HostCall::from(calls::ClientWallClock));
+    s.pin("HostCall::ClientClothWindSet", &HostCall::from(calls::ClientClothWindSet { wind: Some([-1.5, 0.25]) }));
 
     s.pin("HostRet::Ticket", &HostRet::Ticket(4));
     s.pin("HostRet::ClientStateTicket", &HostRet::ClientStateTicket(crate::ClientStateTicketData {

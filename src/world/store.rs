@@ -106,7 +106,7 @@ impl<S: WorldSide> World<S> {
             self.data.sections.insert(pos, Arc::new(section));
             self.note_section_loaded(pos);
             self.refresh_block_entity_index(pos);
-            self.refresh_particle_emitter_index(pos);
+            self.refresh_presented_index(pos);
             self.bump_terrain_revision();
         }
         true

@@ -15,6 +15,7 @@ use crate::particle::ParticleSystem;
 #[derive(Default)]
 pub(super) struct WorldFx {
     pub(super) particles: ParticleSystem,
+    pub(super) cloth: super::cloth::ClothSystem,
     mining_feedback: DigFeedback,
     mob_digging: HashMap<u64, DigFeedback>,
     block_animations: BlockAnimations,
@@ -167,6 +168,7 @@ impl WorldFx {
 
     pub(super) fn clear_moment(&mut self) {
         self.particles.clear();
+        self.cloth.clear();
         self.mining_feedback = Default::default();
         self.mob_digging.clear();
         self.block_animations = Default::default();

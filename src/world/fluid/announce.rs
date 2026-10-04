@@ -49,7 +49,7 @@ impl FluidAnnounce {
             sky_cover,
         } = self;
         for sp in sections {
-            world.refresh_particle_emitter_index(sp);
+            world.refresh_presented_index(sp);
         }
         for ((x, z), change) in sky_cover {
             world.mark_sky_cover_edited_at(x, z, change);

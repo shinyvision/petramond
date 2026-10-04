@@ -1027,6 +1027,15 @@ impl ClientModRuntime {
         mood
     }
 
+    /// The last enabled mod in load order that set a cloth wind decides it.
+    pub fn cloth_wind(&self) -> Option<[f32; 2]> {
+        self.mods
+            .iter()
+            .filter(|m| !m.instance.disabled())
+            .rev()
+            .find_map(|m| m.instance.client_data()?.cloth_wind)
+    }
+
     pub fn take_commands(&mut self) -> Vec<ClientCommand> {
         let mut out = Vec::new();
         for loaded in &mut self.mods {

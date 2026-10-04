@@ -48,7 +48,7 @@ pub struct WorldData {
     pub render_dist: i32,
     pub lighting_revision: u64,
     pub block_entity_sections: FxHashSet<SectionPos>,
-    pub particle_emitter_sections: FxHashSet<SectionPos>,
+    pub presented_sections: FxHashSet<SectionPos>,
     /// Freshly streamed sections that have never produced light or a mesh, parked
     /// until their generation neighbourhood settles (`gen_neighborhood_settled`) so
     /// their FIRST bake and mesh run once, not once per landing neighbour. Without
@@ -89,7 +89,7 @@ impl WorldData {
             render_dist,
             lighting_revision: 0,
             block_entity_sections: FxHashSet::default(),
-            particle_emitter_sections: FxHashSet::default(),
+            presented_sections: FxHashSet::default(),
             light_deferred: FxHashSet::default(),
             deferred_recheck_needed: false,
             deferred_rechecks: FxHashSet::default(),

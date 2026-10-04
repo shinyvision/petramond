@@ -40,7 +40,7 @@ pub(super) const CLIENT_TEXT_SCALE_MAX: u8 = 8;
 pub(super) const CLIENT_COMMAND_MAX: usize = 64;
 pub(super) const CLIENT_CANVAS_SIDE_MAX: u16 = 2048;
 pub(super) const CLIENT_CANVAS_MAX: usize = 8;
-pub(super) const CLIENT_AMBIENT_WIND_MAX: f32 = 64.0;
+pub(super) const CLIENT_WIND_MAX: f32 = 64.0;
 
 pub(super) fn valid_client_key_id(id: &str) -> bool {
     !id.is_empty()

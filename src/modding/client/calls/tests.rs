@@ -74,6 +74,9 @@ fn weather_era_client_calls_validate_and_forgive() {
             darken: f32::NAN,
             desaturate: 0.0,
         }),
+        HostCall::from(calls::ClientClothWindSet {
+            wind: Some([f32::NAN, 0.0]),
+        }),
     ] {
         let ret = handle_host_call(&mut data, bad.clone());
         assert!(
@@ -1310,6 +1313,7 @@ fn a_shell_instance_is_refused_every_world_call_cleanly() {
             darken: 0.1,
             desaturate: 0.1,
         }),
+        HostCall::from(calls::ClientClothWindSet { wind: None }),
         HostCall::from(calls::PlayerState),
         HostCall::from(calls::UndergroundBiomeAt {
             positions: vec![[0, 0, 0]],

@@ -234,6 +234,15 @@ impl Renderer {
         std::mem::swap(&mut self.item_entity.block_draws, v);
     }
 
+    pub fn swap_cloths(
+        &mut self,
+        cloths: &mut Vec<crate::views::ClothPresentation>,
+        points: &mut Vec<crate::views::ClothPoint>,
+    ) {
+        std::mem::swap(&mut self.item_entity.cloths, cloths);
+        std::mem::swap(&mut self.item_entity.cloth_points, points);
+    }
+
     pub fn swap_item_entities(&mut self, v: &mut Vec<ItemEntityInstance>) {
         std::mem::swap(&mut self.item_entity.instances, v);
     }

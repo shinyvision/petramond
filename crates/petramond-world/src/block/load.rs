@@ -36,6 +36,8 @@ pub(super) struct RawBlockDef {
     pub light_color: [f64; 3],
     #[serde(default)]
     pub particle_emitter: Option<RawEmitterRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloth: Option<String>,
     pub tiles: [String; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uv_rotation: Option<std::collections::BTreeMap<String, u16>>,
@@ -839,6 +841,14 @@ fn convert(
             Some(Box::leak(Box::new([**row])))
         }
     };
+    let cloth = match &r.cloth {
+        None => None,
+        Some(key) => Some(
+            crate::cloth::by_key(key)
+                .ok_or_else(|| format!("unknown cloth '{key}'"))?
+                .id,
+        ),
+    };
     let shape_kind = interner.intern(family, params, shape_key)?;
     let data = crate::registry::compile_data_map(
         names.blocks.name(block.id()).unwrap_or(""),
@@ -910,6 +920,7 @@ fn convert(
         emission: r.emission,
         emission_rgb: resolve_emission_rgb(r.emission, r.light_color)?,
         particle_emitter,
+        cloth,
         tiles,
         uv_turns,
         front,

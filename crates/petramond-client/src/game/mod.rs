@@ -26,6 +26,7 @@ pub mod body_pose;
 mod camera_rig;
 mod capture;
 mod client_mods;
+mod cloth;
 mod presented_entities;
 mod view_subject;
 pub use view_subject::SubjectHands;

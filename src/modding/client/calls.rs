@@ -26,9 +26,10 @@ use super::scope as client_scope;
 use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration, ClientStoreData};
 use validate::{
     client_canvas_element_image_key, client_canvas_element_valid, valid_client_key_id,
-    CLIENT_AMBIENT_WIND_MAX, CLIENT_BLOCKS_QUERY_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX,
-    CLIENT_COMMAND_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX,
+    CLIENT_BLOCKS_QUERY_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX,
+    CLIENT_IMAGE_SIDE_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX,
     CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX,
+    CLIENT_WIND_MAX,
 };
 
 fn client_store(data: &mut ModStoreData) -> Result<&mut ClientStoreData, HostRet> {
@@ -204,7 +205,7 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
             if !intensity.is_finite()
                 || !wind
                     .iter()
-                    .all(|w| w.is_finite() && w.abs() <= CLIENT_AMBIENT_WIND_MAX)
+                    .all(|w| w.is_finite() && w.abs() <= CLIENT_WIND_MAX)
             {
                 return HostRet::invalid(
                     "ClientAmbientSet: intensity and wind must be finite (|wind| ≤ 64)".into(),
@@ -236,6 +237,18 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
                 return HostRet::invalid("ClientMoodSet: values must be finite".into());
             }
             client.mood = [darken.clamp(0.0, 0.5), desaturate.clamp(0.0, 0.5)];
+            HostRet::Bool(true)
+        }
+        ClientCall::ClientClothWindSet { wind } => {
+            if wind.is_some_and(|w| {
+                !w.iter()
+                    .all(|c| c.is_finite() && c.abs() <= CLIENT_WIND_MAX)
+            }) {
+                return HostRet::invalid(format!(
+                    "ClientClothWindSet: wind must be finite and within {CLIENT_WIND_MAX}"
+                ));
+            }
+            client.cloth_wind = wind;
             HostRet::Bool(true)
         }
         ClientCall::ClientSurfaceColumns { queries } => {

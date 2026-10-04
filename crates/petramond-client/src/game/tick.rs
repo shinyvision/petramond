@@ -114,6 +114,8 @@ impl Game {
         self.fx
             .tick_mob_digging(world, self.replica.entities.mobs(), dt, &mut events.sounds);
         self.fx.tick_particles(world, dt);
+        self.tick_cloth(dt);
+        let world = &self.replica.world;
         self.fx.advance_block_animations(world, dt);
         self.tick_mesh_budget();
 

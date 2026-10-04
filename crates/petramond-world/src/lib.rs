@@ -12,6 +12,7 @@ pub mod block_state;
 pub mod body;
 pub mod border;
 pub mod chunk;
+pub mod cloth;
 pub mod collision;
 pub mod column;
 #[cfg(any(test, feature = "test-support"))]
@@ -56,4 +57,5 @@ pub mod tile;
 pub mod tile_alpha;
 pub mod torch;
 pub mod trapdoor;
+pub mod verlet;
 pub mod world;

@@ -178,6 +178,8 @@ struct ItemEntityPass {
     sprite_verts: Vec<super::item_model::ItemVertex>,
     sprite_indices: Vec<u32>,
     sprite_scratch: Vec<super::item_model::ItemVertex>,
+    cloths: Vec<crate::views::ClothPresentation>,
+    cloth_points: Vec<crate::views::ClothPoint>,
 }
 
 impl ItemEntityPass {
@@ -187,6 +189,8 @@ impl ItemEntityPass {
         self.sprite_draw.index_count = 0;
         self.instances.clear();
         self.visible.clear();
+        self.cloths.clear();
+        self.cloth_points.clear();
     }
 }
 

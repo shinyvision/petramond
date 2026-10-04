@@ -44,7 +44,7 @@ impl<S: WorldSide> World<S> {
         for c in changes {
             if let Some(sp) = SectionPos::from_world(c.pos.x, c.pos.y, c.pos.z) {
                 if sections.insert(sp) {
-                    self.refresh_particle_emitter_index(sp);
+                    self.refresh_presented_index(sp);
                     self.refresh_block_entity_index(sp);
                 }
             }

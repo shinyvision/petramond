@@ -30,6 +30,7 @@
 use glam::{Mat3, Mat4, Quat};
 
 use petramond_math::math::{voxel_at, IVec3, Vec3};
+use petramond_world::verlet;
 
 use super::model_meta::Skeleton;
 use super::RagdollJoints;
@@ -55,8 +56,6 @@ const BONE_SPIN: f32 = 4.0;
 const SPIN_FRACTION: f32 = 0.25;
 const CORNER_SPIN: f32 = 1.5;
 const SEED_DT: f32 = 0.05;
-const FACE_EPS: f32 = 1e-3;
-const MAX_SWEEP: f32 = 16.0;
 const EPS: f32 = 1e-5;
 
 /// One bone as a rigid body: its 8 box-corner Verlet particles, plus the rest geometry
@@ -332,28 +331,10 @@ impl Ragdoll {
         let ry = Quat::from_rotation_y(yaw);
         let ry_inv = Quat::from_rotation_y(-yaw);
         let world_of = |mp: Vec3| mob_pos + ry * (mp * scale);
-        // Per-axis voxel resolve: sweep model-space `cur` from collision-free `old`,
-        // walking every cell boundary the move crosses on each axis and parking just
-        // outside the face of the first solid cell entered. Endpoint-only tests are not
-        // enough: a corpse falls up to ~2 m per tick by the end of its lifetime, which
-        // skips a one-cell floor entirely. Axis order X, Z, Y so landing is decided
-        // last. A corner that STARTS inside a solid cell (a mob can die with geometry
-        // inside a movement-blocking cell, e.g. standing on a partial block) is healed out of
-        // the nearest open face — never resolved with collision disabled, which would
-        // let the corner (and, through shape matching, its whole limb) fall through the
-        // world. Returns the resolved model position.
+        // Corners resolve in world space; a corpse falls up to ~2 m per tick late in its
+        // lifetime, which is why the resolve walks cell boundaries.
         let resolve = |old: Vec3, cur: Vec3| -> Vec3 {
-            let wo = world_of(old);
-            let w = if solid(voxel_at(wo)) {
-                escape_solid(wo, solid).unwrap_or(wo)
-            } else {
-                let mut w = wo;
-                let wc = world_of(cur);
-                w.x = sweep_axis(w, 0, wc.x, solid);
-                w.z = sweep_axis(w, 2, wc.z, solid);
-                w.y = sweep_axis(w, 1, wc.y, solid);
-                w
-            };
+            let w = verlet::resolve_through_cells(world_of(old), world_of(cur), solid);
             ry_inv * (w - mob_pos) / scale
         };
 
@@ -365,7 +346,7 @@ impl Ragdoll {
                 continue;
             }
             for k in 0..8 {
-                verlet(&mut b.nodes[k], &mut b.nodes_old[k], accel, dt2);
+                verlet::integrate(&mut b.nodes[k], &mut b.nodes_old[k], accel, dt2, VEL_DAMP);
                 if solid(voxel_at(world_of(b.nodes[k] - probe))) {
                     let v = b.nodes[k] - b.nodes_old[k];
                     b.nodes_old[k].x = b.nodes[k].x - v.x * GROUND_FRICTION;
@@ -551,73 +532,9 @@ impl RagBone {
     }
 }
 
-/// Moves corner `w`'s `axis` coordinate (world space) toward `target` one cell boundary at a time
-/// and parks it just outside the first solid cell it hits. We walk instead of checking the end
-/// point, because a fast move could otherwise skip a thin wall or clamp to a face buried in a
-/// deeper solid cell. Returns the resolved coordinate.
-fn sweep_axis(w: Vec3, axis: usize, target: f32, solid: &impl Fn(IVec3) -> bool) -> f32 {
-    let start = w[axis];
-    if !(start.is_finite() && target.is_finite()) {
-        return target;
-    }
-    let target = target.clamp(start - MAX_SWEEP, start + MAX_SWEEP);
-    let mut probe = w;
-    if target > start {
-        let mut face = start.floor() + 1.0;
-        while face <= target {
-            probe[axis] = face + FACE_EPS;
-            if solid(voxel_at(probe)) {
-                return face - FACE_EPS;
-            }
-            face += 1.0;
-        }
-    } else {
-        let mut face = start.floor();
-        while target < face {
-            probe[axis] = face - FACE_EPS;
-            if solid(voxel_at(probe)) {
-                return face + FACE_EPS;
-            }
-            face -= 1.0;
-        }
-    }
-    target
-}
-
-fn escape_solid(w: Vec3, solid: &impl Fn(IVec3) -> bool) -> Option<Vec3> {
-    let cell = voxel_at(w);
-    let lo = cell.as_vec3();
-    let mut best: Option<(f32, Vec3)> = None;
-    for axis in 0..3 {
-        let exits = [
-            (w[axis] - lo[axis], lo[axis] - FACE_EPS, -1),
-            (lo[axis] + 1.0 - w[axis], lo[axis] + 1.0 + FACE_EPS, 1),
-        ];
-        for (dist, coord, step) in exits {
-            let mut neighbour = cell;
-            neighbour[axis] += step;
-            if solid(neighbour) || best.is_some_and(|(d, _)| d <= dist) {
-                continue;
-            }
-            let mut out = w;
-            out[axis] = coord;
-            best = Some((dist, out));
-        }
-    }
-    best.map(|(_, out)| out)
-}
-
 /// Per axis, whichever of `a` and `b` reaches further.
 fn widest(a: Vec3, b: Vec3) -> Vec3 {
     Vec3::select(b.abs().cmpgt(a.abs()), b, a)
-}
-
-#[inline]
-fn verlet(x: &mut Vec3, x_old: &mut Vec3, accel: Vec3, dt2: f32) {
-    let vel = (*x - *x_old) * VEL_DAMP;
-    let next = *x + vel + accel * dt2;
-    *x_old = *x;
-    *x = next;
 }
 
 /// Weights on [`corners`] that reproduce `p` exactly for any affine placement of the box.

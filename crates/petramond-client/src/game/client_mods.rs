@@ -144,4 +144,8 @@ impl Game {
     pub fn client_mod_mood(&self) -> [f32; 2] {
         self.client_mods.mood()
     }
+
+    pub fn client_mod_cloth_wind(&self) -> Option<[f32; 2]> {
+        self.client_mods.cloth_wind()
+    }
 }

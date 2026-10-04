@@ -330,6 +330,11 @@ impl Block {
     }
 
     #[inline]
+    pub fn cloth(self) -> Option<&'static crate::cloth::ClothDef> {
+        crate::cloth::def(self.def().cloth?)
+    }
+
+    #[inline]
     pub fn is_replaceable(self) -> bool {
         self.has_tag(BlockTag::REPLACEABLE)
     }

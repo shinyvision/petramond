@@ -26,20 +26,23 @@ fn biome_tint_hint_tracks_incremental_and_bulk_blocks() {
 }
 
 #[test]
-fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
+fn presented_hint_tracks_incremental_and_bulk_blocks() {
     fn check(section: &Section) {
         let scanned: Vec<u16> = section
             .blocks_iter()
             .collect::<Vec<_>>()
             .iter()
             .enumerate()
-            .filter(|(_, &id)| Block::from_id(id).particle_emitter().is_some())
+            .filter(|(_, &id)| {
+                let block = Block::from_id(id);
+                block.particle_emitter().is_some() || block.cloth().is_some()
+            })
             .map(|(i, _)| i as u16)
             .collect();
-        assert_eq!(section.particle_emitter_cells(), scanned.as_slice());
-        assert_eq!(section.has_particle_emitters(), !scanned.is_empty());
+        assert_eq!(section.presented_cells(), scanned.as_slice());
+        assert_eq!(section.has_presented_cells(), !scanned.is_empty());
         assert_eq!(
-            section.stream_metrics().particle_emitter_count as usize,
+            section.stream_metrics().presented_count as usize,
             scanned.len()
         );
     }
@@ -51,7 +54,7 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     check(&section);
 
     section.set_block(1, 1, 1, Block::Torch);
-    assert!(section.has_particle_emitters());
+    assert!(section.has_presented_cells());
     check(&section);
 
     section.set_block(0, 0, 3, Block::Torch);
@@ -61,12 +64,12 @@ fn particle_emitter_hint_tracks_incremental_and_bulk_blocks() {
     check(&section);
 
     section.set_block(0, 0, 3, Block::Air);
-    assert!(!section.has_particle_emitters());
+    assert!(!section.has_presented_cells());
     check(&section);
 
     section.blocks_mut().set(0, Block::Torch.id());
     section.recompute_opaque_count();
-    assert!(section.has_particle_emitters());
+    assert!(section.has_presented_cells());
     check(&section);
 
     section.blocks_mut().set(0, Block::Stone.id());

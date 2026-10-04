@@ -140,6 +140,12 @@ impl ViewVolume {
         WorldPos::block_min(self.origin) + self.eye
     }
 
+    /// How far from the eye anything is drawn at all.
+    #[inline]
+    pub fn cull_distance(&self) -> f32 {
+        self.cull_dist_sq.sqrt()
+    }
+
     #[inline]
     pub fn aabb_visible(&self, min: WorldPos, max: WorldPos) -> bool {
         let (lo, hi) = (min.relative_to(self.origin), max.relative_to(self.origin));

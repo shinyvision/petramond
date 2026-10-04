@@ -133,6 +133,7 @@ impl Renderer {
             },
         );
         let visible = &self.item_entity.visible;
+        let (cloths, cloth_points) = (&self.item_entity.cloths, &self.item_entity.cloth_points);
         let mut sprite_scratch = std::mem::take(&mut self.item_entity.sprite_scratch);
         self.item_entity.sprite_draw.bake(
             &self.device,
@@ -152,6 +153,14 @@ impl Renderer {
                     draws,
                     env,
                     &mut sprite_scratch,
+                    verts,
+                    indices,
+                );
+                crate::cloth::build_cloths(
+                    cloths,
+                    cloth_points,
+                    render_origin,
+                    env,
                     verts,
                     indices,
                 );

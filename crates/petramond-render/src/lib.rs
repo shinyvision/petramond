@@ -3,6 +3,7 @@ pub mod block_draw;
 pub mod block_entity_model;
 pub mod break_overlay;
 pub mod camera;
+pub mod cloth;
 mod content_limits;
 pub mod crosshair;
 pub mod effect_icons;

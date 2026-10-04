@@ -29,16 +29,16 @@ impl<S: WorldSide> World<S> {
         }
     }
 
-    pub(in crate::world) fn refresh_particle_emitter_index(&mut self, pos: SectionPos) {
+    pub(in crate::world) fn refresh_presented_index(&mut self, pos: SectionPos) {
         let has = self
             .data
             .sections
             .get(&pos)
-            .is_some_and(|s| s.has_particle_emitters());
+            .is_some_and(|s| s.has_presented_cells());
         if has {
-            self.data.particle_emitter_sections.insert(pos);
+            self.data.presented_sections.insert(pos);
         } else {
-            self.data.particle_emitter_sections.remove(&pos);
+            self.data.presented_sections.remove(&pos);
         }
     }
 }

@@ -207,6 +207,7 @@ impl Weather {
             client_ambient_set(keys::SNOW_BUNDLE, 0.0, [0.0, 0.0]);
             client_loop_set(keys::RAIN_LOOP, 0.0);
             client_mood_set(0.0, 0.0);
+            client_cloth_wind_set(None);
             return;
         };
         let flux = read[2].unwrap_or([0.0, 0.0, 0.0, 0.0]);
@@ -232,6 +233,8 @@ impl Weather {
         let poured = intensity.powf(1.4);
         client_ambient_set(keys::RAIN_BUNDLE, poured, wind_v);
         client_ambient_set(keys::SNOW_BUNDLE, poured, wind_v);
+        // Fabric whips harder in a downpour than the clouds drift.
+        client_cloth_wind_set(Some(wind_v.map(|w| w * (1.0 + poured))));
         let rain_i = if snowy { 0.0 } else { poured };
 
         // The rainy-mood grade: a touch darker and greyer exactly where it

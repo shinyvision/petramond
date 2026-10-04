@@ -77,6 +77,8 @@ fn footstep_ground(
 const SHADOW_PROBE_DEPTH: i32 = 6;
 const SHADOW_SINK: f32 = 0.6;
 const SHADOW_MAX_DROP: f32 = 4.0;
+/// No flag is posed farther than this, whatever the view distance.
+const FAR_CLOTH_LIMIT: f32 = 512.0;
 const SHADOW_STRENGTH: f32 = 0.42;
 const MOB_SHADOW_RADIUS_SCALE: f32 = 1.5;
 const PLAYER_SHADOW_RADIUS: f32 = 0.45;
@@ -90,6 +92,10 @@ pub struct GamePresentationScratch {
     particle_emitters: Vec<PlacedEmitter>,
     animated_rows: Vec<petramond::world::animated_block::AnimatedBlock>,
     block_draws: Vec<petramond::world::draw::BlockDrawInstance>,
+    cloths: Vec<petramond_render::views::ClothPresentation>,
+    cloth_points: Vec<petramond_render::views::ClothPoint>,
+    far_cloths: Vec<petramond::world::PlacedCloth>,
+    far_pose: Vec<Vec3>,
     block_entities: Vec<BlockEntityPresentation>,
     mobs: Vec<MobPresentation>,
     mob_arena: MobArena,
@@ -119,6 +125,7 @@ impl GamePresentationScratch {
         self.collect_particle_emitters(game, view);
         self.collect_block_entities(game);
         self.collect_block_draws(game, view);
+        self.collect_cloths(game, view);
         self.collect_mob_draws(game, tick_alpha, view);
         self.collect_mobs(game, tick_alpha);
         if game.fx.particles.count_scale() > 0.0 {
@@ -146,6 +153,8 @@ impl GamePresentationScratch {
                 particle_emitters: &self.particle_emitters,
                 block_entities: &self.block_entities,
                 block_draws: &self.block_draws,
+                cloths: &self.cloths,
+                cloth_points: &self.cloth_points,
                 mobs: &self.mobs,
                 mob_arena: &self.mob_arena,
                 anim_names: game.replica.entities.mobs().anim_names(),
@@ -234,6 +243,82 @@ impl GamePresentationScratch {
         game.replica
             .world
             .collect_particle_emitters(view, &mut self.particle_emitters);
+    }
+
+    fn collect_cloths(&mut self, game: &Game, view: &ViewVolume) {
+        self.cloths.clear();
+        self.cloth_points.clear();
+        let data = game.replica.world.data();
+        let cloth = &game.fx.cloth;
+        let alpha = cloth.alpha();
+        let (lo, hi) = super::cloth::ClothSim::reach();
+        for sim in cloth.sims() {
+            let min = petramond_math::world_pos::WorldPos::block_min(sim.cell);
+            if !view.aabb_visible(min + lo, min + hi) {
+                continue;
+            }
+            let def = sim.def;
+            self.cloths
+                .push(petramond_render::views::ClothPresentation {
+                    cell: sim.cell,
+                    tile: def.tile,
+                    uv: def.uv,
+                    cols: u16::from(def.segments[0]) + 1,
+                    rows: u16::from(def.segments[1]) + 1,
+                    first: self.cloth_points.len() as u32,
+                });
+            self.cloth_points.extend(sim.points(alpha).map(|pos| {
+                let c = sim.cell + petramond_math::math::voxel_at(pos);
+                let (skylight, blocklight) = data.dynamic_light_at_world(c.x, c.y, c.z);
+                petramond_render::views::ClothPoint {
+                    pos,
+                    skylight,
+                    blocklight,
+                }
+            }));
+        }
+
+        // Beyond simulation range a flag is still drawn: posed from the wind on a
+        // coarser grid the farther it is.
+        let eye = view.eye();
+        let radius = view.cull_distance().min(FAR_CLOTH_LIMIT) as i32;
+        game.replica
+            .world
+            .collect_cloths(eye.block(), radius, &mut self.far_cloths);
+        let (time, wind) = cloth.far_clock();
+        for placed in &self.far_cloths {
+            if cloth.simulates(placed.cell) {
+                continue;
+            }
+            let Some(def) = petramond_world::cloth::def(placed.cloth) else {
+                continue;
+            };
+            let min = petramond_math::world_pos::WorldPos::block_min(placed.cell);
+            if !view.aabb_visible(min + lo, min + hi) {
+                continue;
+            }
+            let distance = (min - eye).length();
+            let segments = super::cloth::ClothSystem::far_segments(def, distance);
+            super::cloth::far_pose(def, placed.cell, wind, time, segments, &mut self.far_pose);
+            self.cloths
+                .push(petramond_render::views::ClothPresentation {
+                    cell: placed.cell,
+                    tile: def.tile,
+                    uv: def.uv,
+                    cols: segments[0] as u16 + 1,
+                    rows: segments[1] as u16 + 1,
+                    first: self.cloth_points.len() as u32,
+                });
+            self.cloth_points.extend(self.far_pose.iter().map(|&pos| {
+                let c = placed.cell + petramond_math::math::voxel_at(pos);
+                let (skylight, blocklight) = data.dynamic_light_at_world(c.x, c.y, c.z);
+                petramond_render::views::ClothPoint {
+                    pos,
+                    skylight,
+                    blocklight,
+                }
+            }));
+        }
     }
 
     fn collect_block_draws(&mut self, game: &Game, view: &ViewVolume) {
