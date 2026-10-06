@@ -1,8 +1,8 @@
 use mod_sdk::build::{Axis, Dir, Draw, Half};
 
-use super::Camp;
+use super::build::{Builder, Fortress};
 
-impl Camp<'_> {
+impl Builder<'_> {
     fn clear_above(&mut self, c: [i32; 2], from: i32) {
         for y in from..from + 12 {
             if self.plan.get([c[0], y, c[1]]).is_some() {
@@ -13,15 +13,19 @@ impl Camp<'_> {
 
     /// Openings through the wall (and through fortress sections), framed by posts under a
     /// lintel that has partly fallen in; stone gates get a rough arch.
-    pub(super) fn build_gates(&mut self, fort_h: i32) {
-        for gi in 0..self.gates.len() {
-            let idx = self.gates[gi].idx.clone();
-            let (from, to) = (self.gates[gi].from, self.gates[gi].to);
-            let cells: Vec<[i32; 2]> = idx.iter().map(|&j| self.ring[j]).collect();
+    pub(super) fn build_gates(&mut self, fortress: &Fortress) {
+        let layout = self.layout;
+        for gate in &layout.gates {
+            let (idx, from, to) = (&gate.idx, gate.from, gate.to);
+            let cells: Vec<[i32; 2]> = idx.iter().map(|&j| self.outline.ring[j]).collect();
             let mut inner: Vec<[i32; 2]> = Vec::new();
-            for &j in &idx {
-                if let Some(v) = self.inner_by_src.get(&j) {
-                    inner.extend(v.iter().copied().filter(|&c| self.depth(c) < self.fort[j]));
+            for &j in idx {
+                if let Some(v) = self.layout.inner_by_src.get(&j) {
+                    inner.extend(
+                        v.iter()
+                            .copied()
+                            .filter(|&c| self.outline.depth(c) < self.layout.fort[j]),
+                    );
                 }
             }
             for &c in cells.iter().chain(&inner) {
@@ -30,10 +34,13 @@ impl Camp<'_> {
             }
             let floor_y = cells.iter().map(|&c| self.g(c) + 1).max().unwrap_or(0);
             let lintel_y = floor_y + self.rng.int(3, 4);
-            let fort = idx.iter().any(|&j| self.fort[j] > 0);
-            let (left, right) = (self.wrap(from as i64 - 1), self.wrap(to as i64 + 1));
+            let fort = idx.iter().any(|&j| self.layout.fort[j] > 0);
+            let (left, right) = (
+                self.outline.wrap(from as i64 - 1),
+                self.outline.wrap(to as i64 + 1),
+            );
             let axis = {
-                let (l, r) = (self.ring[left], self.ring[right]);
+                let (l, r) = (self.outline.ring[left], self.outline.ring[right]);
                 if (r[0] - l[0]).abs() >= (r[1] - l[1]).abs() {
                     Axis::X
                 } else {
@@ -43,7 +50,7 @@ impl Camp<'_> {
             let wood = self.mats.wood;
             if !fort {
                 for post in [left, right] {
-                    let c = self.ring[post];
+                    let c = self.outline.ring[post];
                     let base = self.ring_floor(post);
                     let top = lintel_y + 1;
                     self.clear_above(c, base);
@@ -87,7 +94,7 @@ impl Camp<'_> {
             };
             for (k, &c) in cells.iter().enumerate() {
                 if fort {
-                    let (top, _) = self.fortress_top(idx[k], fort_h);
+                    let (top, _) = self.fortress_top(idx[k], fortress);
                     for y in lintel_y..=top {
                         let m = if self.mats.stone {
                             let s = self.mats.stone_at(&mut self.rng, [c[0], y, c[1]]);
@@ -133,8 +140,8 @@ impl Camp<'_> {
             }
             if fort {
                 for c in inner {
-                    let src = self.field.source(c).unwrap_or(idx[0]);
-                    let (_, wy) = self.fortress_top(src, fort_h);
+                    let src = self.outline.field.source(c).unwrap_or(idx[0]);
+                    let (_, wy) = self.fortress_top(src, fortress);
                     for y in lintel_y..=wy {
                         let m = if self.mats.stone {
                             let s = self.mats.stone_at(&mut self.rng, [c[0], y, c[1]]);

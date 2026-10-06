@@ -1,7 +1,9 @@
 use mod_sdk::build::{Axis, Dir, Draw, Half, Name, Noise2};
 
+use super::build::{Builder, Fortress};
 use super::ground::{Rubble, RubbleKind};
-use super::{Camp, Res};
+use super::layout::FortArc;
+use super::Res;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum WoodStyle {
@@ -16,43 +18,46 @@ enum PatchKind {
     Logs,
 }
 
-impl Camp<'_> {
+impl Builder<'_> {
     fn ring_base(&self, i: usize) -> i32 {
-        self.g(self.ring[i]) + 1
+        self.g(self.outline.ring[i]) + 1
     }
 
-    fn col_top(&self, i: usize) -> i32 {
-        self.ring_base(i) + self.wall_h[i] - 1
+    fn col_top(&self, wall_h: &[i32], i: usize) -> i32 {
+        self.ring_base(i) + wall_h[i] - 1
     }
 
     fn tangent(&self, i: usize) -> Dir {
         let (a, b) = (
-            self.ring[self.wrap(i as i64 - 1)],
-            self.ring[self.wrap(i as i64 + 1)],
+            self.outline.ring[self.outline.wrap(i as i64 - 1)],
+            self.outline.ring[self.outline.wrap(i as i64 + 1)],
         );
         Dir::of((b[0] - a[0]) as f32, (b[1] - a[1]) as f32)
     }
 
-    fn lower_neighbour(&mut self, i: usize) -> Option<Dir> {
-        let me = self.col_top(i);
-        let c = self.ring[i];
-        let lower: Vec<usize> = [self.wrap(i as i64 - 1), self.wrap(i as i64 + 1)]
-            .into_iter()
-            .filter(|&j| self.fort[j] == 0 && self.col_top(j) < me)
-            .collect();
+    fn lower_neighbour(&mut self, wall_h: &[i32], i: usize) -> Option<Dir> {
+        let me = self.col_top(wall_h, i);
+        let c = self.outline.ring[i];
+        let lower: Vec<usize> = [
+            self.outline.wrap(i as i64 - 1),
+            self.outline.wrap(i as i64 + 1),
+        ]
+        .into_iter()
+        .filter(|&j| self.layout.fort[j] == 0 && self.col_top(wall_h, j) < me)
+        .collect();
         if lower.is_empty() {
             return None;
         }
         let j = *self.rng.pick(&lower);
         Some(Dir::of(
-            (self.ring[j][0] - c[0]) as f32,
-            (self.ring[j][1] - c[1]) as f32,
+            (self.outline.ring[j][0] - c[0]) as f32,
+            (self.outline.ring[j][1] - c[1]) as f32,
         ))
     }
 
     /// The primitive wall: uneven, breached, patched and crumbling.
     pub(super) fn build_walls(&mut self) {
-        let len = self.ring_len();
+        let len = self.outline.ring_len();
         let noise = Noise2(self.rng.next_u64() as u32);
         let base_h = if self.mats.stone {
             self.rng.int(2, 4)
@@ -63,25 +68,25 @@ impl Camp<'_> {
             .rng
             .weighted(&[(WoodStyle::Palisade, 5.0), (WoodStyle::PostPlank, 4.0)]);
         let post_every = self.rng.int(3, 4) as usize;
-        for i in 0..len {
-            self.wall_h[i] = (base_h + (noise.at(i as f32 / 5.0, 3.3) * 1.3).round() as i32).max(1);
-        }
+        let mut wall_h: Vec<i32> = (0..len)
+            .map(|i| (base_h + (noise.at(i as f32 / 5.0, 3.3) * 1.3).round() as i32).max(1))
+            .collect();
         let breaches = ((len as f32 / self.rng.range(20.0, 32.0)).round() as usize).max(1);
         for _ in 0..breaches {
             let c = self.rng.int(0, len as i32 - 1) as usize;
             let (w, low) = (self.rng.int(1, 4), self.rng.int(0, 1));
-            if self.fort[c] > 0 || self.in_gate[c] {
+            if self.layout.fort[c] > 0 || self.layout.in_gate[c] {
                 continue;
             }
             for j in 0..w {
-                let k = self.wrap(c as i64 + j as i64 - (w >> 1) as i64);
-                if self.fort[k] == 0 {
+                let k = self.outline.wrap(c as i64 + j as i64 - (w >> 1) as i64);
+                if self.layout.fort[k] == 0 {
                     let edge = if j == 0 || j == w - 1 { 1 } else { 0 };
-                    self.wall_h[k] = self.wall_h[k].min(low + edge);
+                    wall_h[k] = wall_h[k].min(low + edge);
                 }
             }
             self.rubble.push(Rubble {
-                at: self.ring[c],
+                at: self.outline.ring[c],
                 r: 2.5,
                 n: self.rng.int(3, 6),
                 kind: RubbleKind::Camp,
@@ -103,28 +108,28 @@ impl Camp<'_> {
                     self.mats.wood
                 };
                 for j in 0..run {
-                    patches[self.wrap((c + j) as i64)] = Some((kind, wood));
+                    patches[self.outline.wrap((c + j) as i64)] = Some((kind, wood));
                 }
             }
         }
         for (i, patch) in patches.into_iter().enumerate() {
-            if self.fort[i] > 0 || self.in_gate[i] {
+            if self.layout.fort[i] > 0 || self.layout.in_gate[i] {
                 continue;
             }
             if self.mats.stone {
-                self.stone_column(i);
+                self.stone_column(&wall_h, i);
             } else if let Some((kind, wood)) = patch {
-                self.patch_column(i, kind, wood);
+                self.patch_column(wall_h[i], i, kind, wood);
             } else {
-                self.wood_column(i, style, i % post_every == 0);
+                self.wood_column(wall_h[i], i, style, i % post_every == 0);
             }
         }
-        self.buttresses();
+        self.buttresses(&wall_h);
     }
 
-    fn stone_column(&mut self, i: usize) {
-        let c = self.ring[i];
-        let (base, h) = (self.ring_base(i), self.wall_h[i]);
+    fn stone_column(&mut self, wall_h: &[i32], i: usize) {
+        let c = self.outline.ring[i];
+        let (base, h) = (self.ring_base(i), wall_h[i]);
         for k in 0..h {
             let y = base + k;
             let s = self.mats.stone_at(&mut self.rng, [c[0], y, c[1]]);
@@ -136,7 +141,9 @@ impl Camp<'_> {
                     continue;
                 }
                 if r < 0.38 {
-                    let facing = self.lower_neighbour(i).unwrap_or_else(|| self.tangent(i));
+                    let facing = self
+                        .lower_neighbour(wall_h, i)
+                        .unwrap_or_else(|| self.tangent(i));
                     let m = self.mats.stairs(s, facing, Half::Bottom);
                     self.put_at(c, y, &m);
                     continue;
@@ -158,9 +165,9 @@ impl Camp<'_> {
         }
     }
 
-    fn patch_column(&mut self, i: usize, kind: PatchKind, wood: Name) {
-        let c = self.ring[i];
-        let (base, h) = (self.ring_base(i), self.wall_h[i]);
+    fn patch_column(&mut self, h: i32, i: usize, kind: PatchKind, wood: Name) {
+        let c = self.outline.ring[i];
+        let base = self.ring_base(i);
         match kind {
             PatchKind::Fence => {
                 for k in 0..self.rng.int(1, 3) {
@@ -188,9 +195,9 @@ impl Camp<'_> {
         }
     }
 
-    fn wood_column(&mut self, i: usize, style: WoodStyle, post: bool) {
-        let c = self.ring[i];
-        let (base, mut h) = (self.ring_base(i), self.wall_h[i]);
+    fn wood_column(&mut self, mut h: i32, i: usize, style: WoodStyle, post: bool) {
+        let c = self.outline.ring[i];
+        let base = self.ring_base(i);
         if style == WoodStyle::Palisade || post {
             if self.rng.roll(0.07) {
                 h = self.rng.int(0, 1);
@@ -234,16 +241,20 @@ impl Camp<'_> {
     }
 
     /// Stairs propped against the inside foot of the wall.
-    fn buttresses(&mut self) {
-        for i in 0..self.ring_len() {
-            if self.fort[i] > 0 || self.in_gate[i] || self.wall_h[i] < 2 || !self.rng.roll(0.07) {
+    fn buttresses(&mut self, wall_h: &[i32]) {
+        for (i, &h) in wall_h.iter().enumerate() {
+            if self.layout.fort[i] > 0 || self.layout.in_gate[i] || h < 2 || !self.rng.roll(0.07) {
                 continue;
             }
-            let c = self.ring[i];
+            let c = self.outline.ring[i];
             for d in Dir::ALL {
                 let n = d.step(c, 1);
-                let r = self.resv.get(n);
-                if !self.inside(n) || self.depth(n) != 1 || r == Res::Gate || r == Res::Path {
+                let r = self.resv(n);
+                if !self.outline.inside(n)
+                    || self.outline.depth(n) != 1
+                    || r == Res::Gate
+                    || r == Res::Path
+                {
                     continue;
                 }
                 let y = self.g(n) + 1;
@@ -261,56 +272,54 @@ impl Camp<'_> {
         }
     }
 
-    fn walk_y(&self, i: usize, fort_h: i32) -> i32 {
-        self.ring_base(i) + fort_h - 1 - self.fort_cut[i]
+    fn walk_y(&self, i: usize, fortress: &Fortress) -> i32 {
+        self.ring_base(i) + fortress.h - 1 - fortress.cut[i]
     }
 
     /// Thick wall sections: stone ramparts with a walkway and merlons, or a tall palisade with a
     /// plank walkway on stilts. Some sections have collapsed into a notch.
-    pub(super) fn build_fortress(&mut self) -> i32 {
-        let len = self.ring_len();
+    pub(super) fn build_fortress(&mut self) -> Fortress {
+        let len = self.outline.ring_len();
         let fort_h = self.rng.int(4, 5);
+        let mut cut = vec![0; len];
         let rail = self.rng.roll(0.4);
-        for a in 0..self.fort_arcs.len() {
-            let (full, center, span) = (
-                self.fort_arcs[a].full,
-                self.fort_arcs[a].center,
-                self.fort_arcs[a].span,
-            );
+        let layout = self.layout;
+        for &FortArc { full, center, span } in &layout.fort_arcs {
             if full || !self.rng.roll(0.45) {
                 continue;
             }
             let shift = self.rng.int(-span + 2, span - 2);
-            let c = self.wrap(center as i64 + shift as i64);
-            if self.in_gate[c] {
+            let c = self.outline.wrap(center as i64 + shift as i64);
+            if self.layout.in_gate[c] {
                 continue;
             }
             for (j, v) in [1, 2, 3, 2, 1].into_iter().enumerate() {
-                let k = self.wrap(c as i64 + j as i64 - 2);
-                let cut = v + self.rng.int(0, 1);
-                self.fort_cut[k] = self.fort_cut[k].max(cut);
+                let k = self.outline.wrap(c as i64 + j as i64 - 2);
+                let fall = v + self.rng.int(0, 1);
+                cut[k] = cut[k].max(fall);
             }
             self.rubble.push(Rubble {
-                at: self.ring[c],
+                at: self.outline.ring[c],
                 r: 3.0,
                 n: self.rng.int(5, 9),
                 kind: RubbleKind::Camp,
             });
         }
+        let fortress = Fortress { h: fort_h, cut };
         for i in 0..len {
-            if self.fort[i] == 0 || self.in_gate[i] {
+            if self.layout.fort[i] == 0 || self.layout.in_gate[i] {
                 continue;
             }
-            let c = self.ring[i];
+            let c = self.outline.ring[i];
             let base = self.ring_base(i);
             if self.mats.stone {
-                let top = base + fort_h - self.fort_cut[i];
+                let top = base + fort_h - fortress.cut[i];
                 for y in base..=top {
                     let s = self.mats.stone_at(&mut self.rng, [c[0], y, c[1]]);
                     let m = self.mats.block(s);
                     self.put_at(c, y, &m);
                 }
-                if i % 2 == 0 && self.fort_cut[i] == 0 {
+                if i % 2 == 0 && fortress.cut[i] == 0 {
                     let r = self.rng.unit();
                     let s = self.mats.stone_at(&mut self.rng, [c[0], top + 1, c[1]]);
                     if r < 0.62 {
@@ -322,7 +331,7 @@ impl Camp<'_> {
                     }
                 }
             } else {
-                let mut top = base + fort_h - self.fort_cut[i];
+                let mut top = base + fort_h - fortress.cut[i];
                 if self.rng.roll(0.3) {
                     top += 1;
                 }
@@ -334,17 +343,22 @@ impl Camp<'_> {
                     let m = self.mats.log(w, Axis::Y);
                     self.put_at(c, y, &m);
                 }
-                if self.fort_cut[i] == 0 && self.rng.roll(0.25) {
+                if fortress.cut[i] == 0 && self.rng.roll(0.25) {
                     let m = self.mats.fence(w);
                     self.put_at(c, top + 1, &m);
                 }
             }
-            let inner = self.inner_by_src.get(&i).cloned().unwrap_or_default();
+            let inner = self
+                .layout
+                .inner_by_src
+                .get(&i)
+                .cloned()
+                .unwrap_or_default();
             for ci in inner {
-                if self.depth(ci) >= self.fort[i] {
+                if self.outline.depth(ci) >= self.layout.fort[i] {
                     continue;
                 }
-                let (own, wy) = (self.g(ci) + 1, self.walk_y(i, fort_h));
+                let (own, wy) = (self.g(ci) + 1, self.walk_y(i, &fortress));
                 if self.mats.stone {
                     for y in own..=wy {
                         if y < wy || !self.rng.roll(0.03) {
@@ -371,25 +385,24 @@ impl Camp<'_> {
                         self.mats.block(w)
                     };
                     self.put_at(ci, wy, &deck);
-                    if rail && self.depth(ci) == self.fort[i] - 1 && self.rng.roll(0.75) {
+                    if rail
+                        && self.outline.depth(ci) == self.layout.fort[i] - 1
+                        && self.rng.roll(0.75)
+                    {
                         let m = self.mats.fence(self.mats.wood);
                         self.put_at(ci, wy + 1, &m);
                     }
                 }
             }
         }
-        self.fortress_ladders(fort_h);
-        fort_h
+        self.fortress_ladders(&fortress);
+        fortress
     }
 
-    fn fortress_ladders(&mut self, fort_h: i32) {
-        let len = self.ring_len();
-        for a in 0..self.fort_arcs.len() {
-            let (full, center, span) = (
-                self.fort_arcs[a].full,
-                self.fort_arcs[a].center,
-                self.fort_arcs[a].span,
-            );
+    fn fortress_ladders(&mut self, fortress: &Fortress) {
+        let len = self.outline.ring_len();
+        let layout = self.layout;
+        for &FortArc { full, center, span } in &layout.fort_arcs {
             let want = if full {
                 ((len as f32 / 30.0).round() as i32).max(2)
             } else {
@@ -404,18 +417,19 @@ impl Camp<'_> {
                     self.rng.int(0, len as i32 - 1) as usize
                 } else {
                     let shift = self.rng.int(-span, span);
-                    self.wrap(center as i64 + shift as i64)
+                    self.outline.wrap(center as i64 + shift as i64)
                 };
-                if self.in_gate[j] || self.fort[j] == 0 || self.fort_cut[j] > 0 {
+                if self.layout.in_gate[j] || self.layout.fort[j] == 0 || fortress.cut[j] > 0 {
                     continue;
                 }
                 let cand: Vec<[i32; 2]> = self
+                    .layout
                     .inner_by_src
                     .get(&j)
                     .map(|v| {
                         v.iter()
                             .copied()
-                            .filter(|&c| self.depth(c) == self.fort[j] - 1)
+                            .filter(|&c| self.outline.depth(c) == self.layout.fort[j] - 1)
                             .collect()
                     })
                     .unwrap_or_default();
@@ -427,13 +441,13 @@ impl Camp<'_> {
                 self.rng.shuffle(&mut dirs);
                 for d in dirs {
                     let n = d.step(f, 1);
-                    if !self.inside(n)
-                        || self.depth(n) != self.fort[j]
-                        || self.resv.get(n) != Res::Free
+                    if !self.outline.inside(n)
+                        || self.outline.depth(n) != self.layout.fort[j]
+                        || self.resv(n) != Res::Free
                     {
                         continue;
                     }
-                    let wy = self.walk_y(j, fort_h);
+                    let wy = self.walk_y(j, fortress);
                     if !self.mats.stone {
                         for y in self.g(f) + 1..wy {
                             let m = self.mats.log(self.mats.wood, Axis::Y);
@@ -443,7 +457,7 @@ impl Camp<'_> {
                     for y in self.g(n) + 1..=wy {
                         self.put_at(n, y, &decor!("ladder").facing(d));
                     }
-                    self.resv.set(n, Res::Access);
+                    self.take_access(n);
                     made += 1;
                     break;
                 }
@@ -451,8 +465,9 @@ impl Camp<'_> {
         }
     }
 
-    pub(super) fn fortress_top(&self, i: usize, fort_h: i32) -> (i32, i32) {
-        (self.ring_base(i) + fort_h, self.walk_y(i, fort_h))
+    /// The top of the fortress wall at ring index `i`, and its walkway's floor.
+    pub(super) fn fortress_top(&self, i: usize, fortress: &Fortress) -> (i32, i32) {
+        (self.ring_base(i) + fortress.h, self.walk_y(i, fortress))
     }
 
     pub(super) fn ring_floor(&self, i: usize) -> i32 {

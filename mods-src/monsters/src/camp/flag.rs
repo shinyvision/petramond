@@ -4,8 +4,9 @@
 
 use mod_sdk::build::{Draw, Material};
 
-use super::layout::disc;
-use super::{Camp, Res};
+use super::build::Builder;
+use super::layout::{disc, Planner};
+use super::Res;
 use crate::keys::{FLAGPOLE, SKULL_FLAG};
 
 /// How many cells the pole stands, the flag's own cell on top included.
@@ -22,54 +23,57 @@ pub(super) enum Seat {
     Top([i32; 2], i32, i32),
 }
 
-impl Camp<'_> {
+impl Planner<'_> {
     /// Keeps open ground near the middle of a camp without a centrepiece for the flag, before
     /// the paths and huts are laid.
     pub(super) fn lay_flag(&mut self) {
-        if !self.flagged || self.centre.is_some() {
+        if !self.layout.flagged || self.layout.centre.is_some() {
             return;
         }
-        let mut spots: Vec<[i32; 2]> = disc(self.center, GROUND_REACH)
+        let center = self.outline.center;
+        let mut spots: Vec<[i32; 2]> = disc(center, GROUND_REACH)
             .filter(|&c| {
                 self.ground.contains(c)
-                    && self.depth(c) >= 3
-                    && self.plateau_at.get(c) == 0
-                    && self.resv.get(c) == Res::Free
+                    && self.outline.depth(c) >= 3
+                    && self.layout.plateau_at.get(c) == 0
+                    && self.layout.resv.get(c) == Res::Free
             })
             .collect();
-        let gap = |c: &[i32; 2]| (c[0] - self.center[0]).pow(2) + (c[1] - self.center[1]).pow(2);
+        let gap = |c: &[i32; 2]| (c[0] - center[0]).pow(2) + (c[1] - center[1]).pow(2);
         spots.sort_by_key(|c| (gap(c), *c));
         let Some(&at) = spots.first() else {
             return;
         };
         for c in disc(at, 1.5) {
-            self.reserve(c, Res::Centre);
+            self.layout.reserve(c, Res::Centre);
         }
-        self.standard = Some(Seat::Ground(at));
+        self.layout.flag_spot = Some(at);
     }
+}
 
-    /// A seat on the outer corner of one of the watch towers, which are built by now.
-    pub(super) fn tower_seat(&mut self) -> Option<Seat> {
-        if self.towers.is_empty() {
+impl Builder<'_> {
+    /// A seat on the outer corner of one of the watch towers; `tower_tops` are their platform
+    /// floors.
+    pub(super) fn tower_seat(&mut self, tower_tops: &[i32]) -> Option<Seat> {
+        let towers = &self.layout.towers;
+        if towers.is_empty() {
             return None;
         }
-        let t = self.rng.int(0, self.towers.len() as i32 - 1) as usize;
-        let (s, min, top) = (self.towers[t].s, self.towers[t].min, self.towers[t].top);
+        let t = self.rng.int(0, towers.len() as i32 - 1) as usize;
+        let (s, min, top) = (towers[t].s, towers[t].min, tower_tops[t]);
         let corners = [0, s - 1].into_iter().flat_map(|dz| {
             [0, s - 1]
                 .into_iter()
                 .map(move |dx| [min[0] + dx, min[1] + dz])
         });
-        let gap = |c: [i32; 2]| (c[0] - self.center[0]).pow(2) + (c[1] - self.center[1]).pow(2);
+        let center = self.outline.center;
+        let gap = |c: [i32; 2]| (c[0] - center[0]).pow(2) + (c[1] - center[1]).pow(2);
         let corner = corners.max_by_key(|&c| (gap(c), c))?;
         Some(Seat::Top(corner, self.g(corner) + 1, top + 8))
     }
 
-    /// Stands the pole and its flag on the seat a builder picked.
-    pub(super) fn raise_flag(&mut self) {
-        let Some(seat) = self.standard else {
-            return;
-        };
+    /// Stands the pole and its flag on `seat`.
+    pub(super) fn raise_flag(&mut self, seat: Seat) {
         let (c, foot) = match seat {
             Seat::Ground(c) => (c, self.g(c) + 1),
             Seat::Top(c, lo, hi) => {

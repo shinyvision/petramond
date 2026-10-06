@@ -5,9 +5,9 @@ use std::f32::consts::TAU;
 use mod_sdk::build::{span, Draw, Noise2};
 
 use super::*;
-use crate::camp::{Camp, Res};
+use crate::camp::Res;
 
-impl Camp<'_> {
+impl Planner<'_> {
     pub(super) fn lay_plateaus(&mut self) {
         let count = *self
             .rng
@@ -23,11 +23,11 @@ impl Camp<'_> {
             }
         }
         for th in angles {
-            let rp = self.rng.range(3.8, 6.5) * (self.radius / 19.0).clamp(0.85, 1.25);
-            let rr = self.radius_at(th) - self.rng.range(0.1, 0.5) * rp;
+            let rp = self.rng.range(3.8, 6.5) * (self.outline.radius / 19.0).clamp(0.85, 1.25);
+            let rr = self.outline.radius_at(th) - self.rng.range(0.1, 0.5) * rp;
             let center = [
-                self.center[0] as f32 + rr * th.cos(),
-                self.center[1] as f32 + rr * th.sin(),
+                self.outline.center[0] as f32 + rr * th.cos(),
+                self.outline.center[1] as f32 + rr * th.sin(),
             ];
             // Per harmonic k = 1, 2, 3: its amplitude and its phase's cosine and sine.
             let shape: [(f32, f32, f32); 3] = std::array::from_fn(|_| {
@@ -59,7 +59,7 @@ impl Camp<'_> {
             }
             let lift = self.rng.int(4, 7);
             let top = (under.iter().sum::<i32>() as f32 / under.len() as f32).round() as i32 + lift;
-            let id = self.plateaus.len() as u8 + 1;
+            let id = self.layout.plateaus.len() as u8 + 1;
             let mut cells = Vec::new();
             for c in box_cells(rp * 1.4).collect::<Vec<_>>() {
                 if !self.ground.contains(c) {
@@ -88,11 +88,11 @@ impl Camp<'_> {
                 };
                 if y > self.g(c) {
                     self.ground.set(c, y);
-                    self.plateau_at.set(c, id);
+                    self.layout.plateau_at.set(c, id);
                     cells.push(c);
                 }
             }
-            self.plateaus.push(Plateau {
+            self.layout.plateaus.push(Plateau {
                 id,
                 center,
                 top,
@@ -103,18 +103,21 @@ impl Camp<'_> {
 
     // Bridges join plateau tops along a minimum spanning tree.
     pub(super) fn lay_bridges(&mut self) {
-        if self.plateaus.len() < 2 {
+        if self.layout.plateaus.len() < 2 {
             return;
         }
         let mut edges = Vec::new();
-        for a in 0..self.plateaus.len() {
-            for b in a + 1..self.plateaus.len() {
-                let (p, q) = (self.plateaus[a].center, self.plateaus[b].center);
+        for a in 0..self.layout.plateaus.len() {
+            for b in a + 1..self.layout.plateaus.len() {
+                let (p, q) = (
+                    self.layout.plateaus[a].center,
+                    self.layout.plateaus[b].center,
+                );
                 edges.push((a, b, (p[0] - q[0]).hypot(p[1] - q[1])));
             }
         }
         edges.sort_by(|x, y| x.2.total_cmp(&y.2));
-        let mut root: Vec<usize> = (0..self.plateaus.len()).collect();
+        let mut root: Vec<usize> = (0..self.layout.plateaus.len()).collect();
         fn find(root: &mut Vec<usize>, i: usize) -> usize {
             if root[i] != i {
                 let r = find(root, root[i]);
@@ -129,17 +132,19 @@ impl Camp<'_> {
             }
             root[ra] = rb;
             if let Some(bridge) = self.plan_bridge(a, b) {
-                self.bridges.push(bridge);
+                self.layout.bridges.push(bridge);
             }
         }
     }
 
     pub(super) fn bridge_end(&self, from: usize, toward: [f32; 2]) -> Option<[i32; 2]> {
-        self.plateaus[from]
+        self.layout.plateaus[from]
             .cells
             .iter()
             .copied()
-            .filter(|&c| self.is_plateau_top(c) && self.inside(c) && self.depth(c) >= 3)
+            .filter(|&c| {
+                self.is_plateau_top(c) && self.outline.inside(c) && self.outline.depth(c) >= 3
+            })
             .min_by(|&p, &q| {
                 let d = |c: [i32; 2]| (c[0] as f32 - toward[0]).hypot(c[1] as f32 - toward[1]);
                 d(p).total_cmp(&d(q)).then(p.cmp(&q))
@@ -147,8 +152,8 @@ impl Camp<'_> {
     }
 
     pub(super) fn plan_bridge(&mut self, a: usize, b: usize) -> Option<Bridge> {
-        let end_a = self.bridge_end(a, self.plateaus[b].center)?;
-        let end_b = self.bridge_end(b, self.plateaus[a].center)?;
+        let end_a = self.bridge_end(a, self.layout.plateaus[b].center)?;
+        let end_b = self.bridge_end(b, self.layout.plateaus[a].center)?;
         let len = ((end_a[0] - end_b[0]) as f32).hypot((end_a[1] - end_b[1]) as f32);
         if len < 4.0 {
             return None;
@@ -162,10 +167,10 @@ impl Camp<'_> {
             spacing,
         );
         for cell in &deck.cells {
-            self.reserve(cell.pos, Res::Bridge);
+            self.layout.reserve(cell.pos, Res::Bridge);
         }
         for &(pos, _) in &deck.supports {
-            self.resv.set(pos, Res::Support);
+            self.layout.resv.set(pos, Res::Support);
         }
         let rails =
             *self

@@ -3,8 +3,8 @@ use mod_sdk::build::{
 };
 use mod_sdk::GenRng;
 
+use super::build::Builder;
 use super::layout::HutKind;
-use super::Camp;
 
 /// Engine cell data naming the loot table a generated chest is stocked from when first opened.
 const LOOT_DATA: &str = "petramond:loot";
@@ -20,15 +20,11 @@ pub(super) fn loot(plan: &mut mod_sdk::build::Plan, pos: [i32; 3], table: &str) 
 
 const DOOR: [[i32; 3]; 2] = [[0, 0, 0], [0, 1, 0]];
 
-impl Camp<'_> {
+impl Builder<'_> {
     pub(super) fn build_huts(&mut self) {
-        for h in 0..self.huts.len() {
-            let (kind, frame, w, d) = (
-                self.huts[h].kind,
-                self.huts[h].frame,
-                self.huts[h].w,
-                self.huts[h].d,
-            );
+        let layout = self.layout;
+        for hut in &layout.huts {
+            let (kind, frame, w, d) = (hut.kind, hut.frame, hut.w, hut.d);
             let mut base = i32::MIN;
             for lz in 0..d {
                 for lx in 0..w {

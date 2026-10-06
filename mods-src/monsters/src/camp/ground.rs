@@ -1,9 +1,10 @@
 use mod_sdk::build::{Dir, Draw, Form, Half, Material, Noise2};
 use mod_sdk::{ColumnBox, ColumnMask, GenRng};
 
+use super::build::Builder;
 use super::layout::disc_rows;
 use super::style::{decor, named, BiomeStyle, Surface};
-use super::Camp;
+use super::Res;
 
 /// The highest a camp builds above its ground.
 const BUILD_HEIGHT: i32 = 32;
@@ -12,7 +13,7 @@ pub(super) const CLEAR_MARGIN: f32 = 5.0;
 /// How far above the natural ground its plants reach.
 const PLANT_HEIGHT: i32 = 2;
 
-/// `Camp::zone_class` bits: the column is the camp's own (wall line, interior or plateau).
+/// `Layout::zone_class` bits: the column is the camp's own (wall line, interior or plateau).
 pub(super) const IN_ZONE: u8 = 1;
 /// Strictly inside the wall.
 pub(super) const INSIDE: u8 = 2;
@@ -64,7 +65,7 @@ pub(super) enum RubbleKind {
     Stone(&'static str),
 }
 
-impl Camp<'_> {
+impl Builder<'_> {
     /// Levels the camp floor, raises the plateaus out of rock and lays the surface.
     pub(super) fn build_ground(&mut self) {
         let surface = Noise2(self.rng.next_u64() as u32);
@@ -73,15 +74,10 @@ impl Camp<'_> {
         let sand = style.surface == Surface::Sand;
         let [stone, sandstone, tuff, gravel, sand_m, dirt] =
             ["stone", "sandstone", "tuff", "gravel", "sand", "dirt"].map(named);
-        let (lo, hi) = self.zone;
+        let (lo, hi) = self.layout.zone;
         let width = (hi[0] - lo[0] + 1) as usize;
-        let Camp {
-            zone_class,
-            ground,
-            natural,
-            plan,
-            ..
-        } = self;
+        let (natural, zone_class) = (&self.outline.natural, &self.layout.zone_class);
+        let Builder { ground, plan, .. } = self;
         for (row, z) in zone_class.chunks(width).zip(lo[1]..) {
             let floor = ground.row(z, lo[0], hi[0]);
             let heights = natural.row(z, lo[0], hi[0]).unwrap_or(floor);
@@ -138,14 +134,11 @@ impl Camp<'_> {
         let [short_grass, dead_bush] = ["short_grass", "dead_bush"].map(decor);
         let pebbles = ["pebbles_small", "pebbles_medium", "pebbles_large"].map(decor);
         let bare = natural_top(style).map(|m| m.block);
-        let (lo, hi) = self.zone;
+        let (lo, hi) = self.layout.zone;
         let width = (hi[0] - lo[0] + 1) as usize;
-        let Camp {
-            zone_class,
-            ground,
-            plan,
-            rng,
-            ..
+        let zone_class = &self.layout.zone_class;
+        let Builder {
+            ground, plan, rng, ..
         } = self;
         for (row, z) in zone_class.chunks(width).zip(lo[1]..) {
             let floor = ground.row(z, lo[0], hi[0]);
@@ -270,12 +263,11 @@ impl Camp<'_> {
                     (spot.at[0] as f32 + self.rng.range(-spot.r, spot.r)).round() as i32,
                     (spot.at[1] as f32 + self.rng.range(-spot.r, spot.r)).round() as i32,
                 ];
-                if !self.ground.contains(c) || self.paths.get(c) {
+                if !self.ground.contains(c) || self.layout.paths.get(c) {
                     continue;
                 }
-                use super::Res;
                 if matches!(
-                    self.resv.get(c),
+                    self.resv(c),
                     Res::Gate | Res::Hut | Res::Access | Res::Centre
                 ) {
                     continue;
@@ -303,13 +295,13 @@ impl Camp<'_> {
             return;
         }
         let mut rng = GenRng::positional(
-            self.center[0] as u32,
+            self.outline.center[0] as u32,
             0x5e0,
-            self.center[0],
+            self.outline.center[0],
             0,
-            self.center[1],
+            self.outline.center[1],
         );
-        let paths = &self.paths;
+        let paths = &self.layout.paths;
         self.plan.cover(&decor!("snow_layer"), &mut rng, |x, z| {
             if paths.get([x, z]) {
                 0.3
@@ -322,14 +314,14 @@ impl Camp<'_> {
     /// Claims the camp's columns (its zone, its paths and a band outside the wall) so no tree
     /// grows in them, and clears the natural ground and plants above the zone's floor.
     pub(super) fn clear_space(&mut self) {
-        let (lo, hi) = self.zone;
+        let (lo, hi) = self.layout.zone;
         let width = (hi[0] - lo[0] + 1) as usize;
         let mut claim = ColumnMask::empty(ColumnBox { min: lo, max: hi });
         // Every path from outside into the ring's area crosses the ring, so the band within
         // CLEAR_MARGIN of that area is the band within it of the ring itself. Ring cells are face
         // neighbours, so every other one with a disc a column wider covers them all.
         let spans = disc_rows(CLEAR_MARGIN + 1.0);
-        for &r in self.ring.iter().step_by(2) {
+        for &r in self.outline.ring.iter().step_by(2) {
             for &(dz, half) in &spans {
                 claim.insert_run(r[1] + dz, r[0] - half, r[0] + half);
             }
@@ -338,10 +330,10 @@ impl Camp<'_> {
         // cleared cells merge into a few boxes. Ranges start at the floor and are raised by that
         // height once it is known.
         let mut above = PLANT_HEIGHT;
-        let mut ranges = Vec::with_capacity(self.zone_class.len());
-        for (row, z) in self.zone_class.chunks(width).zip(lo[1]..) {
+        let mut ranges = Vec::with_capacity(self.layout.zone_class.len());
+        for (row, z) in self.layout.zone_class.chunks(width).zip(lo[1]..) {
             let ground = self.ground.row(z, lo[0], hi[0]);
-            let natural = self.natural.row(z, lo[0], hi[0]).unwrap_or(ground);
+            let natural = self.outline.natural.row(z, lo[0], hi[0]).unwrap_or(ground);
             let mut run = None;
             for (((&class, &g), &n), x) in row.iter().zip(ground).zip(natural).zip(lo[0]..) {
                 match (class & (IN_ZONE | ON_PATH) != 0, run) {

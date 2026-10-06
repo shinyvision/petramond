@@ -1,6 +1,7 @@
-use crate::post_marker::{self, CampBox};
+use crate::post_marker::{CampBox, Facing, PostMarker, PostRole};
 use crate::skeleton::posts::{
-    may_fill, Marker, Posts, Scan, RESPAWN, RETRY_WINDOW, SETTLE, SIGHT, SPAWN_MAX, SPAWN_MIN,
+    may_fill, role_tag, tagged_role, Posts, Scan, RESPAWN, RETRY_WINDOW, SETTLE, SIGHT, SPAWN_MAX,
+    SPAWN_MIN,
 };
 
 const SECTION: [i32; 3] = [2, 4, -1];
@@ -12,10 +13,10 @@ const CAMP: CampBox = CampBox {
     max: [50, 95, 30],
 };
 
-fn yard() -> Marker {
-    Marker {
-        role: 0,
-        yaw: None,
+fn yard() -> PostMarker {
+    PostMarker {
+        role: PostRole::Yard,
+        facing: None,
         camp: CAMP,
     }
 }
@@ -29,22 +30,34 @@ fn due_cells(posts: &Posts, now: u64) -> Vec<[i32; 3]> {
 }
 
 #[test]
-fn markers_decode_role_yaw_and_camp() {
-    let east = Marker::decode(&post_marker::encode(1, 192, CAMP)).expect("a whole marker");
-    assert!(east.watch());
-    assert!((east.yaw.unwrap() - 0.75 * std::f32::consts::TAU).abs() < 1e-5);
-    assert_eq!(east.camp, CAMP);
-    assert_eq!(
-        Marker::decode(&post_marker::encode(0, 0xFF, CAMP))
-            .unwrap()
-            .yaw,
-        None,
-        "no preference"
-    );
-    assert_eq!(Marker::decode(&[0, 1]), None);
-    let mut long = post_marker::encode(0, 1, CAMP);
+fn markers_round_trip_role_facing_and_camp() {
+    let east = PostMarker {
+        role: PostRole::Watch,
+        facing: Facing::along(1.0, 0.0),
+        camp: CAMP,
+    };
+    let bytes = east.encode();
+    assert_eq!(&bytes[..2], [1, 192], "the byte layout saves already carry");
+    let read = PostMarker::decode(&bytes).expect("a whole marker");
+    assert_eq!(read, east);
+    assert!(read.watch());
+    assert!((read.facing.unwrap().yaw() - 0.75 * std::f32::consts::TAU).abs() < 1e-5);
+    let any_way = PostMarker::decode(&yard().encode()).unwrap();
+    assert_eq!(any_way.facing, None, "no preference");
+    assert_eq!(PostMarker::decode(&[0, 1]), None);
+    let mut long = yard().encode();
     long.push(2);
-    assert_eq!(Marker::decode(&long), None);
+    assert_eq!(PostMarker::decode(&long), None);
+    let mut unknown = yard().encode();
+    unknown[0] = 9;
+    assert_eq!(
+        PostMarker::decode(&unknown),
+        None,
+        "a role this pack never wrote"
+    );
+    for role in [PostRole::Yard, PostRole::Watch, PostRole::Hut] {
+        assert_eq!(tagged_role(&role_tag(role)), Some(role));
+    }
 }
 
 #[test]

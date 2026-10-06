@@ -9,10 +9,6 @@ mod_sdk::pack_keys! {
     pub FLAGPOLE: Block = "flags:flagpole";
 }
 
-/// Cell data the camp generator writes on a spawn post's floor cell ([`crate::post_marker`]) and
-/// the skeleton garrison reads back.
-pub const POST_MARKER: &str = "monsters:camp_post";
-
 #[cfg(test)]
 mod tests {
     #[test]

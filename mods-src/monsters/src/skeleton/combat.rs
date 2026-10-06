@@ -9,7 +9,6 @@ mod movement;
 
 use mod_sdk::*;
 
-use super::garrison;
 use super::geometry::{distance, turn_toward, yaw_toward, Upright};
 use super::guard::GuardClock;
 use super::kit::{Hand, Kit};
@@ -171,25 +170,42 @@ pub fn clear_line(from: [f64; 3], to: [f64; 3]) -> bool {
     raycast(from, dir, max, RayFilter::Collidable).is_none_or(|hit| hit.distance >= max - 0.05)
 }
 
-pub fn tick(sk: &mut Skeletons) {
+/// This tick's fight: the players skeletons fight, and the skeletons near enough to them to run.
+pub struct Engagement {
+    roster: Vec<PlayerListEntry>,
+    near: Vec<MobSnapshot>,
+}
+
+impl Engagement {
+    pub fn now(kind: MobId) -> Engagement {
+        let roster: Vec<PlayerListEntry> = players()
+            .into_iter()
+            .filter(|p| !p.state.spectator && p.state.health > 0)
+            .collect();
+        let anchors: Vec<[f64; 3]> = roster.iter().map(|p| p.state.pos).collect();
+        let near = if anchors.is_empty() {
+            Vec::new()
+        } else {
+            mobs_near_any_of(&anchors, ENGAGE_RADIUS, &[kind])
+        };
+        Engagement { roster, near }
+    }
+
+    /// The engaged skeletons missing from `bodies`.
+    pub fn strangers(&self, bodies: &FxHashMap<u64, Body>) -> Vec<u64> {
+        self.near
+            .iter()
+            .map(|m| m.id)
+            .filter(|id| !bodies.contains_key(id))
+            .collect()
+    }
+}
+
+/// Runs every engaged skeleton this session knows; settles the rest at rest.
+pub fn tick(sk: &mut Skeletons, engagement: &Engagement) {
     let now = current_tick();
-    let roster: Vec<PlayerListEntry> = players()
-        .into_iter()
-        .filter(|p| !p.state.spectator && p.state.health > 0)
-        .collect();
-    let anchors: Vec<[f64; 3]> = roster.iter().map(|p| p.state.pos).collect();
-    let near = if anchors.is_empty() {
-        Vec::new()
-    } else {
-        mobs_near_any_of(&anchors, ENGAGE_RADIUS, &[sk.kind])
-    };
+    let Engagement { roster, near } = engagement;
     let nearby_ids: FxHashSet<u64> = near.iter().map(|m| m.id).collect();
-    let strangers: Vec<u64> = near
-        .iter()
-        .map(|m| m.id)
-        .filter(|id| !sk.bodies.contains_key(id))
-        .collect();
-    garrison::enlist(sk, strangers);
     let mut drives = Vec::new();
     let mut anims = Vec::new();
     let Skeletons {
@@ -198,7 +214,7 @@ pub fn tick(sk: &mut Skeletons) {
         shoves,
         ..
     } = sk;
-    for me in &near {
+    for me in near {
         let Some(body) = bodies.get_mut(&me.id) else {
             continue;
         };
@@ -213,7 +229,7 @@ pub fn tick(sk: &mut Skeletons) {
             foe: None,
             plays: Vec::new(),
         };
-        turn.run(body, &roster, shoves);
+        turn.run(body, roster, shoves);
         if turn.hold {
             let yaw = turn
                 .foe

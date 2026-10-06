@@ -1,23 +1,25 @@
 use mod_sdk::build::{Axis, Dir, Draw, Half};
 
+use super::build::Builder;
 use super::layout::Rails;
-use super::{Camp, Res};
+use super::Res;
 
-impl Camp<'_> {
+impl Builder<'_> {
     /// A way up every plateau from inside the camp: a stair run down its face, or a ladder.
     pub(super) fn build_access(&mut self) {
-        for p in 0..self.plateaus.len() {
+        let layout = self.layout;
+        for plateau in &layout.plateaus {
             let mut cand: Vec<(f32, [i32; 2], Dir)> = Vec::new();
-            for &c in &self.plateaus[p].cells {
-                if !self.inside(c) {
+            for &c in &plateau.cells {
+                if !self.outline.inside(c) {
                     continue;
                 }
                 for d in Dir::ALL {
                     let n = d.step(c, 1);
-                    let r = self.resv.get(n);
-                    if self.plateau_at.get(n) > 0
-                        || !self.inside(n)
-                        || self.depth(n) < 2
+                    let r = self.resv(n);
+                    if self.layout.plateau_at.get(n) > 0
+                        || !self.outline.inside(n)
+                        || self.outline.depth(n) < 2
                         || (r != Res::Free && r != Res::Path)
                         || self.g(c) - self.g(n) < 3
                         || self.plan.get([n[0], self.g(n) + 1, n[1]]).is_some()
@@ -25,8 +27,8 @@ impl Camp<'_> {
                     {
                         continue;
                     }
-                    let dist =
-                        ((n[0] - self.center[0]) as f32).hypot((n[1] - self.center[1]) as f32);
+                    let dist = ((n[0] - self.outline.center[0]) as f32)
+                        .hypot((n[1] - self.outline.center[1]) as f32);
                     cand.push((dist, c, d));
                 }
             }
@@ -46,7 +48,7 @@ impl Camp<'_> {
             for y in self.g(n) + 1..=top {
                 self.put_at(n, y, &decor!("ladder").facing(d));
             }
-            self.resv.set(n, Res::Access);
+            self.take_access(n);
         }
     }
 
@@ -61,9 +63,9 @@ impl Camp<'_> {
             if y <= self.g(s) {
                 break;
             }
-            let r = self.resv.get(s);
-            if !self.inside(s)
-                || self.plateau_at.get(s) > 0
+            let r = self.resv(s);
+            if !self.outline.inside(s)
+                || self.layout.plateau_at.get(s) > 0
                 || (r != Res::Free && r != Res::Path)
                 || self.plan.get([s[0], y, s[1]]).is_some()
             {
@@ -94,16 +96,16 @@ impl Camp<'_> {
                 };
                 self.put_at(s, yy, &m);
             }
-            self.resv.set(s, Res::Access);
+            self.take_access(s);
         }
         true
     }
 
     /// Decks between plateau tops, rising in half steps, railed and holed, on posts.
     pub(super) fn build_bridges(&mut self) {
-        let bridges = std::mem::take(&mut self.bridges);
+        let layout = self.layout;
         let wood = self.mats.wood;
-        for br in &bridges {
+        for br in &layout.bridges {
             let mut deck_at = mod_sdk::FxHashMap::default();
             for cell in &br.span.cells {
                 let c = cell.pos;
@@ -114,10 +116,10 @@ impl Camp<'_> {
                     cell.level.floor() as i32
                 };
                 deck_at.insert(c, y);
-                if self.resv.get(c) == Res::Centre && self.plan.get([c[0], y, c[1]]).is_some() {
+                if self.resv(c) == Res::Centre && self.plan.get([c[0], y, c[1]]).is_some() {
                     continue;
                 }
-                let on_plateau = self.plateau_at.get(c) > 0;
+                let on_plateau = self.layout.plateau_at.get(c) > 0;
                 for yy in y..=y + 3 {
                     if !(on_plateau && yy <= self.g(c)) && self.plan.get([c[0], yy, c[1]]).is_some()
                     {
@@ -149,7 +151,8 @@ impl Camp<'_> {
                     Rails::Neither => false,
                 };
                 let on_top = on_plateau
-                    && self.g(c) == self.plateaus[self.plateau_at.get(c) as usize - 1].top;
+                    && self.g(c)
+                        == self.layout.plateaus[self.layout.plateau_at.get(c) as usize - 1].top;
                 if cell.edge && railed && !on_top && self.rng.roll(0.72) {
                     let m = if self.mats.stone {
                         let s = self.mats.stone_at(&mut self.rng, [c[0], y + 1, c[1]]);
@@ -161,7 +164,7 @@ impl Camp<'_> {
                 }
             }
             for &(c, level) in &br.span.supports {
-                let r = self.resv.get(c);
+                let r = self.resv(c);
                 if !self.ground.contains(c) || r == Res::Centre || r == Res::Hut {
                     continue;
                 }
@@ -205,6 +208,5 @@ impl Camp<'_> {
                 }
             }
         }
-        self.bridges = bridges;
     }
 }

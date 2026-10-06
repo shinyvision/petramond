@@ -1,33 +1,35 @@
 use mod_sdk::build::{gable, Axis, Dir, Draw, Frame, Half, Material, Noise2, RoofStyle};
 
+use super::build::Builder;
 use super::flag::Seat;
 use super::ground::{Rubble, RubbleKind};
 use super::huts::loot;
-use super::layout::CentreKind;
+use super::layout::{Centre, CentreKind};
 use super::style::named;
-use super::Camp;
 
-impl Camp<'_> {
-    pub(super) fn build_centre(&mut self) {
-        let Some(kind) = self.centre.as_ref().map(|c| c.kind) else {
-            return;
-        };
-        let at = self.centre.as_ref().unwrap().at;
-        let face = match self.gates.first() {
+impl Builder<'_> {
+    /// Builds the centrepiece, if the camp has one; returns where its flag stands, if it flies
+    /// one. `tower_tops` are the built towers' platform floors.
+    pub(super) fn build_centre(&mut self, tower_tops: &[i32]) -> Option<Seat> {
+        let layout = self.layout;
+        let centre = layout.centre.as_ref()?;
+        let at = centre.at;
+        let face = match layout.gates.first() {
             Some(g) => {
-                let c = self.ring[g.i];
+                let c = self.outline.ring[g.i];
                 Dir::of((c[0] - at[0]) as f32, (c[1] - at[1]) as f32)
             }
             None => *self.rng.pick(&Dir::ALL),
         };
-        match kind {
+        match centre.kind {
             CentreKind::Well => self.well(at, face),
-            CentreKind::Statue => self.statue(at, face),
-            CentreKind::Arena => self.arena(),
+            CentreKind::Statue => self.statue(at, face, tower_tops),
+            CentreKind::Arena => self.arena(centre),
         }
     }
 
-    fn well(&mut self, at: [i32; 2], face: Dir) {
+    /// Returns the flag's seat on the roof's ridge.
+    fn well(&mut self, at: [i32; 2], face: Dir) -> Option<Seat> {
         let ws = if self.rng.roll(0.55) { 4 } else { 3 };
         let frame = Frame::new([at[0] - ws / 2, at[1] - ws / 2], ws, ws, face);
         let mut base = i32::MIN;
@@ -99,20 +101,22 @@ impl Camp<'_> {
             &style,
             None,
         );
-        if self.flagged {
-            // The ridge's middle, made a full block so the pole stands on it, not half above it.
-            let ridge = frame.at(ws / 2, (ws - 1) / 2);
-            let top = (base + 4..=base + 4 + ws)
-                .rev()
-                .find(|&y| self.plan.occupied([ridge[0], y, ridge[1]]))
-                .unwrap_or(base + 4 + (ws - 1) / 2);
-            let cap = self.mats.block(wood);
-            self.put_at(ridge, top, &cap);
-            self.standard = Some(Seat::Top(ridge, top, top));
+        if !self.layout.flagged {
+            return None;
         }
+        // The ridge's middle, made a full block so the pole stands on it, not half above it.
+        let ridge = frame.at(ws / 2, (ws - 1) / 2);
+        let top = (base + 4..=base + 4 + ws)
+            .rev()
+            .find(|&y| self.plan.occupied([ridge[0], y, ridge[1]]))
+            .unwrap_or(base + 4 + (ws - 1) / 2);
+        let cap = self.mats.block(wood);
+        self.put_at(ridge, top, &cap);
+        Some(Seat::Top(ridge, top, top))
     }
 
-    fn statue(&mut self, at: [i32; 2], face: Dir) {
+    /// Returns the flag's seat on a tower's corner, or on the statue without a tower.
+    fn statue(&mut self, at: [i32; 2], face: Dir, tower_tops: &[i32]) -> Option<Seat> {
         let frame = Frame::new([at[0] - 2, at[1] - 2], 5, 5, face);
         let mut base = i32::MIN;
         for lz in 0..5 {
@@ -161,15 +165,17 @@ impl Camp<'_> {
         } else {
             self.skeleton_figure(&frame, base + 2);
         }
-        if self.flagged {
-            self.standard = self.tower_seat().or(Some(Seat::Top(at, base, base + 12)));
+        if !self.layout.flagged {
+            return None;
         }
+        self.tower_seat(tower_tops)
+            .or(Some(Seat::Top(at, base, base + 12)))
     }
 
     fn totem(&mut self, frame: &Frame, y0: i32) {
         let wood = self.mats.wood_at(&mut self.rng, 0.1);
         let h = self.rng.int(7, 9);
-        let set = |camp: &mut Camp<'_>, lx: i32, lz: i32, y: i32, m: &Material| {
+        let set = |camp: &mut Builder<'_>, lx: i32, lz: i32, y: i32, m: &Material| {
             let c = frame.at(lx, lz);
             camp.put_at(c, y, m);
         };
@@ -215,7 +221,7 @@ impl Camp<'_> {
             self.mats.block(fig)
         };
         let lz = 2;
-        let set = |camp: &mut Camp<'_>, lx: i32, dy: i32, m: &Material| {
+        let set = |camp: &mut Builder<'_>, lx: i32, dy: i32, m: &Material| {
             let c = frame.at(lx, lz);
             camp.put_at(c, y + dy, m);
         };
@@ -234,7 +240,7 @@ impl Camp<'_> {
         ] {
             set(self, lx, dy, &body);
         }
-        let rib = |camp: &Camp<'_>, d: Dir| camp.mats.stairs(stairs_family, d, Half::Top);
+        let rib = |camp: &Builder<'_>, d: Dir| camp.mats.stairs(stairs_family, d, Half::Top);
         let (left, right) = (rib(self, frame.left()), rib(self, frame.right()));
         set(self, 1, 3, &left);
         set(self, 3, 3, &right);
@@ -280,8 +286,8 @@ impl Camp<'_> {
         }
     }
 
-    fn arena(&mut self) {
-        let centre = self.centre.take().unwrap();
+    /// Returns the flag's seat in the middle of the pit's floor.
+    fn arena(&mut self, centre: &Centre) -> Option<Seat> {
         let ground_min = centre.pit.iter().map(|&c| self.g(c)).min().unwrap_or(0);
         let floor_y = ground_min - self.rng.int(4, 5);
         let floor_noise = Noise2(self.rng.next_u64() as u32);
@@ -477,9 +483,6 @@ impl Camp<'_> {
                 );
             }
         }
-        if self.flagged {
-            self.standard = Some(Seat::Ground(centre.at));
-        }
-        self.centre = Some(centre);
+        self.layout.flagged.then_some(Seat::Ground(centre.at))
     }
 }

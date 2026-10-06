@@ -9,10 +9,10 @@ use mod_sdk::*;
 use super::combat::{clear_line, wanted, Fight};
 use super::keys::{FACING_TAG, LOADOUT_TAG, POST_TAG, ROLE_TAG, SKELETON};
 use super::kit::pick;
-use super::posts::{may_fill, standing_point, Marker, Scan};
+use super::posts::{may_fill, role_tag, standing_point, tagged_role, Scan};
 use super::presence::{self, Presence};
 use super::{Body, Skeletons};
-use crate::keys::POST_MARKER;
+use crate::post_marker::{self, Facing, PostMarker, PostRole};
 
 const CENSUS: Cadence = Cadence::every(20);
 
@@ -49,16 +49,16 @@ pub fn tick(sk: &mut Skeletons) {
 
 fn scan(sk: &mut Skeletons, now: u64) {
     for section in sk.posts.pending() {
-        let scan = match section_kv_find(section, POST_MARKER) {
+        let scan = match section_kv_find(section, post_marker::KEY) {
             None => Scan::NotReady,
             Some(cells) if cells.is_empty() => Scan::Found(Vec::new()),
             Some(cells) => {
-                let values = section_kv_get_many(POST_MARKER, cells.clone());
+                let values = section_kv_get_many(post_marker::KEY, cells.clone());
                 Scan::Found(
                     cells
                         .into_iter()
                         .zip(values)
-                        .filter_map(|(cell, bytes)| Some((cell, Marker::decode(&bytes?)?)))
+                        .filter_map(|(cell, bytes)| Some((cell, PostMarker::decode(&bytes?)?)))
                         .collect(),
                 )
             }
@@ -86,7 +86,8 @@ fn refill(sk: &mut Skeletons, now: u64, eyes: &[[f64; 3]]) {
         }
         let roll = splitmix64_mix(rng_u64("skeleton_post") ^ cell_hash(cell));
         let yaw = marker
-            .yaw
+            .facing
+            .map(Facing::yaw)
             .unwrap_or_else(|| (roll >> 40) as f32 / (1u64 << 24) as f32 * std::f32::consts::TAU);
         let Some(id) = spawn_mob_checked(SKELETON, feet, yaw) else {
             continue;
@@ -96,10 +97,14 @@ fn refill(sk: &mut Skeletons, now: u64, eyes: &[[f64; 3]]) {
         let mut writes = vec![
             set(id, LOADOUT_TAG, MobTagValue::Str(name.to_owned())),
             set(id, POST_TAG, cell.to_tag()),
-            set(id, ROLE_TAG, MobTagValue::I64(i64::from(marker.role))),
+            set(id, ROLE_TAG, role_tag(marker.role)),
         ];
-        if let Some(yaw) = marker.yaw {
-            writes.push(set(id, FACING_TAG, MobTagValue::F64(f64::from(yaw))));
+        if let Some(facing) = marker.facing {
+            writes.push(set(
+                id,
+                FACING_TAG,
+                MobTagValue::F64(f64::from(facing.yaw())),
+            ));
         }
         mob_tags_write(writes);
         let body = Body {
@@ -128,7 +133,7 @@ pub fn enlist(sk: &mut Skeletons, ids: Vec<u64>) {
         let get = |key: &str| tags.iter().find(|(k, _)| k == key).map(|(_, v)| v);
         let post = get(POST_TAG).and_then(<[i32; 3]>::from_tag);
         let watch = post.and_then(|p| sk.posts.get(&p)).map_or_else(
-            || get(ROLE_TAG) == Some(&MobTagValue::I64(i64::from(super::posts::WATCH_ROLE))),
+            || get(ROLE_TAG).and_then(tagged_role) == Some(PostRole::Watch),
             |p| p.marker.watch(),
         );
         let known = match get(LOADOUT_TAG) {

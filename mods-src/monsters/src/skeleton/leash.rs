@@ -6,7 +6,8 @@
 use mod_sdk::*;
 
 use super::keys::{FACING_TAG, POST_TAG, RETURNING_TAG, ROLE_TAG};
-use super::posts::{standing_point, WATCH_ROLE};
+use super::posts::{standing_point, tagged_role};
+use crate::post_marker::PostRole;
 
 const LEASH: f64 = 6.0;
 const ARRIVE: f64 = 1.2;
@@ -21,7 +22,7 @@ fn tag<'a>(ctx: &'a AiNodeCtx, key: &str) -> Option<&'a MobTagValue> {
 
 pub fn decide(ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
     let post = tag(ctx, POST_TAG).and_then(<[i32; 3]>::from_tag)?;
-    let watch = tag(ctx, ROLE_TAG) == Some(&MobTagValue::I64(i64::from(WATCH_ROLE)));
+    let watch = tag(ctx, ROLE_TAG).and_then(tagged_role) == Some(PostRole::Watch);
     let facing = match tag(ctx, FACING_TAG) {
         Some(MobTagValue::F64(yaw)) if yaw.is_finite() => Some(*yaw as f32),
         _ => None,

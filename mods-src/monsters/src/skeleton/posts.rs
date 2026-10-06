@@ -8,10 +8,11 @@
 //! a post ever gets may appear in view, like the camp itself arriving; a replacement may not.
 
 use std::collections::BTreeMap;
-use std::f32::consts::TAU;
+
+use mod_sdk::MobTagValue;
 
 use super::geometry::distance;
-use crate::post_marker::{self, CampBox};
+use crate::post_marker::{PostMarker, PostRole};
 
 /// Ticks after a section (re)loads before its posts count as empty.
 pub const SETTLE: u64 = 40;
@@ -29,30 +30,16 @@ pub const SPAWN_MIN: f64 = 20.0;
 /// ...and no player within this distance can see it.
 pub const SIGHT: f64 = 48.0;
 
-/// The role byte of a tower-top or wall-walk post.
-pub const WATCH_ROLE: u8 = 1;
-const NO_YAW: u8 = 0xFF;
-
-/// A post marker's cell data.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Marker {
-    pub role: u8,
-    pub yaw: Option<f32>,
-    pub camp: CampBox,
+/// A guard's role tag: its post's role.
+pub fn role_tag(role: PostRole) -> MobTagValue {
+    MobTagValue::I64(i64::from(role.code()))
 }
 
-impl Marker {
-    pub fn decode(bytes: &[u8]) -> Option<Marker> {
-        let (role, yaw, camp) = post_marker::decode(bytes)?;
-        Some(Marker {
-            role,
-            yaw: (yaw != NO_YAW).then(|| f32::from(yaw) / 256.0 * TAU),
-            camp,
-        })
-    }
-
-    pub fn watch(&self) -> bool {
-        self.role == WATCH_ROLE
+/// The role a guard's role tag names.
+pub fn tagged_role(value: &MobTagValue) -> Option<PostRole> {
+    match value {
+        MobTagValue::I64(code) => u8::try_from(*code).ok().and_then(PostRole::from_code),
+        _ => None,
     }
 }
 
@@ -67,7 +54,7 @@ pub fn standing_point(cell: [i32; 3]) -> [f64; 3] {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Post {
-    pub marker: Marker,
+    pub marker: PostMarker,
     section: [i32; 3],
     loaded_at: u64,
     died_at: Option<u64>,
@@ -80,7 +67,7 @@ pub struct Post {
 pub enum Scan {
     /// The section's content is not final yet.
     NotReady,
-    Found(Vec<([i32; 3], Marker)>),
+    Found(Vec<([i32; 3], PostMarker)>),
 }
 
 #[derive(Default)]
@@ -172,7 +159,7 @@ impl Posts {
     }
 
     /// The empty posts that may be filled now, in cell order.
-    pub fn due(&self, now: u64) -> Vec<([i32; 3], Marker)> {
+    pub fn due(&self, now: u64) -> Vec<([i32; 3], PostMarker)> {
         self.posts
             .iter()
             .filter(|(_, p)| {

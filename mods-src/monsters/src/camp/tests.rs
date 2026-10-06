@@ -1,4 +1,4 @@
-use mod_sdk::build::{Derived, Families, Form, Heights, IndexedPlan, Noise2, Site};
+use mod_sdk::build::{Derived, Families, Form, Heights, IndexedPlan, Material, Noise2, Site};
 
 use super::*;
 
@@ -73,17 +73,13 @@ impl Terrain for Land {
 
 const SEA: i32 = 62;
 
-fn camp_at<'a>(families: &'a Families, land: &Land, seed: u32) -> Option<(Box<Camp<'a>>, Plan)> {
+fn camp_at(families: &Families, land: &Land, seed: u32) -> Option<Camp> {
     let site = Site {
         cell: [seed as i32, 3],
         center: [seed as i32 * 320 + 160, 900],
     };
-    match Camp::survey(site.center, SEA, families, land, GRID.rng(seed, site)) {
-        Survey::Camp(mut camp) => {
-            camp.flagged = true;
-            let (plan, _) = camp.build();
-            Some((camp, plan))
-        }
+    match survey(site.center, SEA, families, land, GRID.rng(seed, site)) {
+        Survey::Camp(surveyed) => Some(Camp::raise(*surveyed, true)),
         _ => None,
     }
 }
@@ -97,16 +93,17 @@ fn every_camp_style_builds_within_the_reach_its_sections_consult() {
             amplitude: 2.5,
         };
         for seed in 0..4 {
-            let (camp, plan) = camp_at(&families, &land, seed * 7 + style as u32)
+            let camp = camp_at(&families, &land, seed * 7 + style as u32)
                 .unwrap_or_else(|| panic!("biome {style} seed {seed} built nothing on open land"));
-            let natural = |x: i32, z: i32| camp.natural.get(x, z).unwrap();
+            let natural = |x: i32, z: i32| camp.outline.natural.get(x, z).unwrap();
             let (lo, hi) = (
                 GEN_FILTER.surface_offsets.unwrap()[0],
                 GEN_FILTER.surface_offsets.unwrap()[1],
             );
-            for ([x, y, z], _) in plan.cells() {
+            let center = camp.outline.center;
+            for ([x, y, z], _) in camp.plan.cells() {
                 assert!(
-                    (x - camp.center[0]).abs() <= REACH && (z - camp.center[1]).abs() <= REACH,
+                    (x - center[0]).abs() <= REACH && (z - center[1]).abs() <= REACH,
                     "biome {style} seed {seed}: ({x}, {z}) past the site's reach"
                 );
                 assert!(
@@ -126,14 +123,14 @@ fn gates_keep_two_blocks_of_headroom() {
             biome: style::STYLE_BIOMES[seed as usize % style::STYLE_BIOMES.len()],
             amplitude: 2.0,
         };
-        let Some((camp, plan)) = camp_at(&families, &land, seed) else {
+        let Some(camp) = camp_at(&families, &land, seed) else {
             continue;
         };
-        for gate in &camp.gates {
-            let c = camp.ring[gate.i];
-            let floor = camp.g(c) + 1;
+        for gate in &camp.layout.gates {
+            let c = camp.outline.ring[gate.i];
+            let floor = camp.ground.get(c) + 1;
             for y in [floor, floor + 1] {
-                let blocked = plan.get([c[0], y, c[1]]).is_some_and(|m| m.occupies());
+                let blocked = camp.plan.get([c[0], y, c[1]]).is_some_and(|m| m.occupies());
                 assert!(!blocked, "seed {seed}: gate at {c:?} blocked at y {y}");
             }
         }
@@ -174,15 +171,15 @@ fn water_and_cliffs_turn_a_site_away() {
 }
 
 /// Every camp the invariant tests below look at: each style on open land, several seeds.
-fn sample_camps(families: &Families) -> impl Iterator<Item = (u32, u32, Box<Camp<'_>>, Plan)> + '_ {
+fn sample_camps(families: &Families) -> impl Iterator<Item = (u32, u32, Camp)> + '_ {
     style::STYLE_BIOMES.into_iter().flat_map(move |style| {
         (0..8u32).filter_map(move |seed| {
             let land = Land {
                 biome: style,
                 amplitude: 2.0 + (seed % 3) as f32,
             };
-            let (camp, plan) = camp_at(families, &land, seed)?;
-            Some((style as u32, seed, camp, plan))
+            let camp = camp_at(families, &land, seed)?;
+            Some((style as u32, seed, camp))
         })
     })
 }
@@ -203,8 +200,9 @@ fn stub_ids() -> impl FnMut(&str) -> Option<mod_sdk::BlockId> {
 fn every_post_is_a_floor_with_room_that_the_emitted_section_carries() {
     let families = families();
     let mut ids = stub_ids();
-    for (style, seed, camp, plan) in sample_camps(&families) {
+    for (style, seed, camp) in sample_camps(&families) {
         let ctx = format!("biome {style} seed {seed}");
+        let plan = &camp.plan;
         assert!(!camp.posts.is_empty(), "{ctx}: no posts");
         let mut emitted = IndexedPlan::parse(plan.encode(), 0).expect("the plan parses");
         for post in &camp.posts {
@@ -235,23 +233,23 @@ fn every_post_is_a_floor_with_room_that_the_emitted_section_carries() {
                 .authored
                 .data
                 .iter()
-                .filter(|d| d.pos == post.floor && d.key == crate::keys::POST_MARKER)
+                .filter(|d| d.pos == post.floor && d.key == crate::post_marker::KEY)
                 .collect();
             assert_eq!(data.len(), 1, "{ctx}: post {:?} data", post.floor);
-            let (role, yaw, _) = crate::post_marker::decode(&data[0].value).expect("a marker");
-            assert_eq!((role, yaw), (post.role as u8, post.yaw));
+            let marker = crate::post_marker::PostMarker::decode(&data[0].value).expect("a marker");
+            assert_eq!((marker.role, marker.facing), (post.role, post.facing));
         }
     }
 }
 
 #[test]
 fn a_post_role_needs_its_structure() {
-    use posts::PostRole;
+    use crate::post_marker::PostRole;
     let families = families();
-    for (_, _, camp, _) in sample_camps(&families) {
+    for (_, _, camp) in sample_camps(&families) {
         let count = |role| camp.posts.iter().filter(|p| p.role == role).count();
-        assert!(camp.centre.is_some() || count(PostRole::Centre) == 0);
-        assert!(!camp.huts.is_empty() || count(PostRole::Hut) == 0);
+        assert!(camp.layout.centre.is_some() || count(PostRole::Centre) == 0);
+        assert!(!camp.layout.huts.is_empty() || count(PostRole::Hut) == 0);
     }
 }
 
@@ -262,8 +260,9 @@ fn every_camp_flies_one_flag_on_a_pole_standing_on_something() {
         Material::named(crate::keys::SKULL_FLAG).block,
         Material::named(crate::keys::FLAGPOLE).block,
     );
-    for (style, seed, camp, plan) in sample_camps(&families) {
+    for (style, seed, camp) in sample_camps(&families) {
         let ctx = format!("biome {style} seed {seed}");
+        let plan = &camp.plan;
         let flags: Vec<[i32; 3]> = plan
             .cells()
             .filter(|(_, m)| m.block == flag)
@@ -278,16 +277,21 @@ fn every_camp_flies_one_flag_on_a_pole_standing_on_something() {
         let foot = [x, y - poles - 1, z];
         match plan.get(foot) {
             Some(m) => assert!(m.solid_top(), "{ctx}: pole stands on {m:?}"),
-            None => assert_eq!(foot[1], camp.g([x, z]), "{ctx}: pole stands on nothing"),
+            None => assert_eq!(
+                foot[1],
+                camp.ground.get([x, z]),
+                "{ctx}: pole stands on nothing"
+            ),
         }
         assert!(
-            camp.camp_box().contains(flags[0]),
+            posts::camp_box(&camp.outline, &camp.ground).contains(flags[0]),
             "{ctx}: flag outside the camp's box"
         );
-        let statue = camp.centre.as_ref().map(|c| c.kind) == Some(layout::CentreKind::Statue);
-        if statue && !camp.towers.is_empty() {
+        let statue =
+            camp.layout.centre.as_ref().map(|c| c.kind) == Some(layout::CentreKind::Statue);
+        if statue && !camp.layout.towers.is_empty() {
             assert!(
-                camp.towers.iter().any(|t| {
+                camp.layout.towers.iter().any(|t| {
                     let local = [x - t.min[0], z - t.min[1]];
                     local.iter().all(|&v| v == 0 || v == t.s - 1)
                 }),

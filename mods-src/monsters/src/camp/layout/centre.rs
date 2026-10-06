@@ -6,9 +6,9 @@ use mod_sdk::build::Draw;
 use mod_sdk::{FxHashMap, FxHashSet, GenRng};
 
 use super::*;
-use crate::camp::{Camp, Res};
+use crate::camp::Res;
 
-impl Camp<'_> {
+impl Planner<'_> {
     pub(super) fn lay_centre(&mut self) {
         let mut kind = *self.rng.weighted(&[
             (None, 15.0),
@@ -16,33 +16,37 @@ impl Camp<'_> {
             (Some(CentreKind::Statue), 27.0),
             (Some(CentreKind::Arena), 28.0),
         ]);
-        if kind == Some(CentreKind::Arena) && self.radius < 15.0 {
+        if kind == Some(CentreKind::Arena) && self.outline.radius < 15.0 {
             kind = Some(*self.rng.pick(&[CentreKind::Well, CentreKind::Statue]));
         }
         let Some(kind) = kind else { return };
-        let ra = (self.radius * 0.3).clamp(4.5, 7.5);
+        let ra = (self.outline.radius * 0.3).clamp(4.5, 7.5);
         let need = match kind {
             CentreKind::Well => 3.0,
             CentreKind::Statue => 4.0,
             CentreKind::Arena => ra + 2.0,
         };
         // Only the discs the tries below can test: jittered by up to 0.3 radius off the centre.
-        let (field_lo, field_hi) = self.field.bounds();
-        let span = (self.radius * 0.3).ceil() as i32 + (need + 0.5).ceil() as i32 + 1;
-        let lo = [0, 1].map(|a| (self.center[a] - span).max(field_lo[a]));
-        let hi = [0, 1].map(|a| (self.center[a] + span).min(field_hi[a]));
+        let (field_lo, field_hi) = self.outline.field.bounds();
+        let span = (self.outline.radius * 0.3).ceil() as i32 + (need + 0.5).ceil() as i32 + 1;
+        let lo = [0, 1].map(|a| (self.outline.center[a] - span).max(field_lo[a]));
+        let hi = [0, 1].map(|a| (self.outline.center[a] + span).min(field_hi[a]));
         let (x0, x1) = (
             (lo[0] - field_lo[0]) as usize,
             (hi[0] - field_lo[0]) as usize,
         );
-        let depth_rows = self.field.depth_rows().skip((lo[1] - field_lo[1]) as usize);
+        let depth_rows = self
+            .outline
+            .field
+            .depth_rows()
+            .skip((lo[1] - field_lo[1]) as usize);
         let room = RowCounts::from_rows(
             lo,
             hi,
             depth_rows.zip(lo[1]..=hi[1]).map(|(depths, z)| {
                 let depths = &depths[x0..=x1];
-                let resv = self.resv.row(z, lo[0], hi[0]);
-                let plateau = self.plateau_at.row(z, lo[0], hi[0]);
+                let resv = self.layout.resv.row(z, lo[0], hi[0]);
+                let plateau = self.layout.plateau_at.row(z, lo[0], hi[0]);
                 depths
                     .iter()
                     .zip(resv)
@@ -58,15 +62,17 @@ impl Camp<'_> {
         for t in 0..60 {
             let jitter = |rng: &mut GenRng| if t == 0 { 0.0 } else { rng.range(-1.0, 1.0) };
             let at = [
-                (self.center[0] as f32 + jitter(&mut self.rng) * self.radius * 0.3).round() as i32,
-                (self.center[1] as f32 + jitter(&mut self.rng) * self.radius * 0.3).round() as i32,
+                (self.outline.center[0] as f32 + jitter(self.rng) * self.outline.radius * 0.3)
+                    .round() as i32,
+                (self.outline.center[1] as f32 + jitter(self.rng) * self.outline.radius * 0.3)
+                    .round() as i32,
             ];
             if !room.all_in_disc(at, &rows) {
                 continue;
             }
             for c in disc(at, need + 0.5) {
-                if self.resv.get(c) != Res::Bridge {
-                    self.resv.set(c, Res::Centre);
+                if self.layout.resv.get(c) != Res::Bridge {
+                    self.layout.resv.set(c, Res::Centre);
                 }
             }
             let mut centre = Centre {
@@ -84,7 +90,7 @@ impl Camp<'_> {
             if kind == CentreKind::Arena {
                 self.plan_arena(&mut centre);
             }
-            self.centre = Some(centre);
+            self.layout.centre = Some(centre);
             return;
         }
     }
@@ -122,12 +128,12 @@ impl Camp<'_> {
                             (cp.at[0] as f32 + ux * s - uz * off).round() as i32,
                             (cp.at[1] as f32 + uz * s + ux * off).round() as i32,
                         ];
-                        let r = self.resv.get(c);
+                        let r = self.layout.resv.get(c);
                         if !self.ground.contains(c)
                             || (!cp.pit.contains(&c)
-                                && (!self.inside(c)
-                                    || self.plateau_at.get(c) > 0
-                                    || self.depth(c) < 3
+                                && (!self.outline.inside(c)
+                                    || self.layout.plateau_at.get(c) > 0
+                                    || self.outline.depth(c) < 3
                                     || (r != Res::Free && r != Res::Centre)))
                         {
                             ok = false;
@@ -143,7 +149,7 @@ impl Camp<'_> {
                     let mut cells: Vec<([i32; 2], f32)> = cells.into_iter().collect();
                     cells.sort_by_key(|(c, _)| *c);
                     for (c, _) in &cells {
-                        self.resv.set(*c, Res::Centre);
+                        self.layout.resv.set(*c, Res::Centre);
                     }
                     cp.walkways.push(Walkway {
                         dir: [ux, uz],

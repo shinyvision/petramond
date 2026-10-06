@@ -1,6 +1,11 @@
 //! Skeleton camps: round-ish, walled camps of wood or stone, tattered by design, scattered over
 //! the surface. A site's camp is derived once into a build plan from positional reads only and
 //! clipped into every section it reaches, so sections may generate in any order.
+//!
+//! A camp is derived in three stages, each handing the next what it settled: [`survey()`] decides
+//! whether the site takes a camp and fixes its [`Outline`](survey::Outline), the [`Planner`] lays out where
+//! everything stands, and the [`Builder`] builds that [`Layout`] into the plan without changing
+//! it.
 
 /// `petramond:<block>` as a material, built once per call site: builders use these in their
 /// innermost loops.
@@ -25,6 +30,7 @@ macro_rules! decor {
     }};
 }
 
+mod build;
 mod centre;
 mod flag;
 mod gates;
@@ -35,17 +41,19 @@ mod layout;
 mod plateaus;
 mod posts;
 mod style;
+mod survey;
 mod towers;
 mod walls;
 
 #[cfg(test)]
 mod tests;
 
-use mod_sdk::build::{Derived, Families, Heights, Plan, PlanCache, RingField, Site, SiteGrid};
+use mod_sdk::build::{Derived, Families, Heights, Name, Plan, PlanCache, Site, SiteGrid};
 use mod_sdk::*;
 
-use grid::Grid;
-use style::Mats;
+use build::Builder;
+use layout::{Layout, Planner};
+use survey::{survey, Survey, Surveyed};
 
 /// Sections a camp can write: the arena pit and well shafts reach below the surface, towers on
 /// plateaus above it.
@@ -151,7 +159,7 @@ fn resolver(
     }
 }
 
-/// [`derive`] from the host's terrain, logging what each camp built.
+/// [`derive()`] from the host's terrain, logging what each camp built.
 fn derive_logged(
     seed: u32,
     sea_level: i32,
@@ -185,23 +193,15 @@ pub(crate) fn derive(
     report: &mut dyn FnMut(&str),
 ) -> Derived {
     let rng = GRID.rng(seed, site);
-    let mut camp = match Camp::survey(site.center, sea_level, families, terrain, rng) {
-        Survey::Camp(mut camp) => {
-            camp.flagged = flagged;
-            camp
+    match survey(site.center, sea_level, families, terrain, rng) {
+        Survey::Camp(surveyed) => {
+            let camp = Camp::raise(*surveyed, flagged);
+            report(&camp.summary());
+            Derived::Plan(Box::new(camp.plan))
         }
-        Survey::Nothing => return Derived::Nothing,
-        Survey::Unavailable => return Derived::Unavailable,
-    };
-    let (plan, summary) = camp.build();
-    report(&summary);
-    Derived::Plan(Box::new(plan))
-}
-
-enum Survey<'a> {
-    Camp(Box<Camp<'a>>),
-    Nothing,
-    Unavailable,
+        Survey::Nothing => Derived::Nothing,
+        Survey::Unavailable => Derived::Unavailable,
+    }
 }
 
 /// Reservation of a column during layout, so later features steer around earlier ones.
@@ -216,130 +216,58 @@ enum Res {
     Hut,
     Bridge,
     Support,
+    /// Taken by a ladder or a stair run during the build.
     Access,
 }
 
-/// One camp being laid out and built.
-struct Camp<'a> {
-    rng: GenRng,
-    mats: Mats<'a>,
-    plan: Plan,
-    center: [i32; 2],
-    radius: f32,
-    harmonics: [layout::Harmonic; 4],
-    wobble: mod_sdk::build::Noise2,
-    natural: Heights,
-    ground: Grid<i32>,
-    ring: Vec<[i32; 2]>,
-    field: RingField,
-    /// The columns strictly inside the ring, in [`RingField::interior`] order.
-    interior: Vec<[i32; 2]>,
-    ring_at: Grid<i32>,
-    plateau_at: Grid<u8>,
-    resv: Grid<Res>,
-    plateaus: Vec<layout::Plateau>,
-    bridges: Vec<layout::Bridge>,
-    centre: Option<layout::Centre>,
-    gates: Vec<layout::Gate>,
-    in_gate: Vec<bool>,
-    towers: Vec<layout::Tower>,
-    fort: Vec<i32>,
-    fort_arcs: Vec<layout::FortArc>,
-    fort_cut: Vec<i32>,
-    inner_by_src: FxHashMap<usize, Vec<[i32; 2]>>,
-    paths: Grid<bool>,
-    /// The box every path column lies in, once there is one.
-    path_bounds: Option<([i32; 2], [i32; 2])>,
-    /// [`Camp::zone_box`], settled once the layout is known.
-    zone: ([i32; 2], [i32; 2]),
-    /// What each column of the zone box is to the camp (`ground::IN_ZONE`, ...), row by row
-    /// along x.
-    zone_class: Vec<u8>,
-    huts: Vec<layout::Hut>,
-    wall_h: Vec<i32>,
-    rubble: Vec<ground::Rubble>,
+/// A camp: surveyed, laid out, then built.
+struct Camp {
+    #[cfg(test)]
+    outline: survey::Outline,
+    layout: Layout,
+    /// The floor as built.
+    #[cfg(test)]
+    ground: grid::Grid<i32>,
     posts: Vec<posts::Post>,
-    flagged: bool,
-    /// Where the flag stands, once a builder has picked its spot.
-    standard: Option<flag::Seat>,
+    plan: Plan,
+    stone: bool,
+    wood: Name,
+    flag: bool,
 }
 
-impl Camp<'_> {
-    fn ring_len(&self) -> usize {
-        self.ring.len()
-    }
-
-    fn wrap(&self, i: i64) -> usize {
-        i.rem_euclid(self.ring.len() as i64) as usize
-    }
-
-    fn ring_dist(&self, a: usize, b: usize) -> usize {
-        let d = a.abs_diff(b) % self.ring.len();
-        d.min(self.ring.len() - d)
-    }
-
-    fn inside(&self, c: [i32; 2]) -> bool {
-        self.field.inside(c)
-    }
-
-    fn depth(&self, c: [i32; 2]) -> i32 {
-        self.field.depth(c).unwrap_or(-1)
-    }
-
-    fn g(&self, c: [i32; 2]) -> i32 {
-        self.ground.get(c)
-    }
-
-    fn put_at(&mut self, [x, z]: [i32; 2], y: i32, m: &Material) {
-        self.plan.set([x, y, z], m);
-    }
-
-    fn air(&mut self, [x, z]: [i32; 2], y: i32) {
-        self.plan.set([x, y, z], &Material::air());
-    }
-
-    fn reserve(&mut self, c: [i32; 2], r: Res) {
-        if self.resv.contains(c) && self.resv.get(c) == Res::Free {
-            self.resv.set(c, r);
+impl Camp {
+    fn raise(surveyed: Surveyed<'_>, flagged: bool) -> Camp {
+        let Surveyed {
+            mut rng,
+            mats,
+            outline,
+            ground,
+        } = surveyed;
+        let (layout, ground) = Planner::lay_out(&outline, &mut rng, ground, flagged);
+        let built = Builder::new(rng, mats, &outline, &layout, ground).build();
+        Camp {
+            #[cfg(test)]
+            outline,
+            layout,
+            #[cfg(test)]
+            ground: built.ground,
+            posts: built.posts,
+            plan: built.plan,
+            stone: built.stone,
+            wood: built.wood,
+            flag: built.flag,
         }
-    }
-}
-
-use mod_sdk::build::Material;
-
-impl Camp<'_> {
-    fn build(&mut self) -> (Plan, String) {
-        self.lay_out();
-        self.build_ground();
-        self.build_walls();
-        let fort_h = self.build_fortress();
-        self.build_gates(fort_h);
-        self.build_towers();
-        self.build_centre();
-        self.build_huts();
-        self.build_access();
-        self.build_bridges();
-        self.scatter_rubble();
-        self.wear_and_decorate();
-        let ground = self.ground.clone();
-        let families = self.mats.families();
-        self.plan.settle_slabs(families, |x, z| ground.get([x, z]));
-        self.snow();
-        self.raise_flag();
-        self.build_posts(fort_h);
-        self.clear_space();
-        let summary = self.summary();
-        (std::mem::take(&mut self.plan), summary)
     }
 
     fn summary(&self) -> String {
         use layout::CentreKind;
-        let walls = if self.mats.stone {
+        let walls = if self.stone {
             "stone".to_string()
         } else {
-            format!("{} wood", self.mats.wood)
+            format!("{} wood", self.wood)
         };
-        let centre = match self.centre.as_ref().map(|c| c.kind) {
+        let layout = &self.layout;
+        let centre = match layout.centre.as_ref().map(|c| c.kind) {
             None => "no centrepiece",
             Some(CentreKind::Well) => "a well",
             Some(CentreKind::Statue) => "a statue",
@@ -347,14 +275,14 @@ impl Camp<'_> {
         };
         format!(
             "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges, {} posts{}",
-            self.gates.len(),
-            self.towers.len(),
-            self.huts.len(),
-            self.fort_arcs.len(),
-            self.plateaus.len(),
-            self.bridges.len(),
+            layout.gates.len(),
+            layout.towers.len(),
+            layout.huts.len(),
+            layout.fort_arcs.len(),
+            layout.plateaus.len(),
+            layout.bridges.len(),
             self.posts.len(),
-            if self.standard.is_some() { ", a flag" } else { "" },
+            if self.flag { ", a flag" } else { "" },
         )
     }
 }

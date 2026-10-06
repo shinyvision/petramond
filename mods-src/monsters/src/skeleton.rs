@@ -35,17 +35,7 @@ use posts::Posts;
 use presence::Presence;
 use standards::Standards;
 
-const COMBAT_SYSTEM: u32 = 100;
-const GARRISON_SYSTEM: u32 = 101;
-const SHOVE_RESET_SYSTEM: u32 = 102;
-
-const ON_SECTION_GENERATED: u32 = 100;
-const ON_SECTION_LOADED: u32 = 101;
-const ON_DAMAGE: u32 = 102;
-const ON_DIED: u32 = 103;
-const ON_PLAYER_DAMAGE: u32 = 104;
-
-const POST_NODE_CALLBACK: u32 = 100;
+use crate::routes::{AiNode, Handler, TickSystem};
 
 pub struct Skeletons {
     kind: MobId,
@@ -75,16 +65,30 @@ impl Skeletons {
         }
         let kind = resolve_mob_logged(keys::SKELETON)?;
         let kits = Kits::load(kind);
-        register_tick_system(Stage::Mobs, AttachSide::After, 0, COMBAT_SYSTEM);
+        register_tick_system(
+            Stage::Mobs,
+            AttachSide::After,
+            0,
+            TickSystem::SkeletonCombat.id(),
+        );
         register_tick_system(
             Stage::ItemPhysics,
             AttachSide::Before,
             0,
-            SHOVE_RESET_SYSTEM,
+            TickSystem::ShoveReset.id(),
         );
-        register_tick_system(Stage::Spawning, AttachSide::After, 0, GARRISON_SYSTEM);
-        register_event_handler(EventKind::SectionGenerated, 0, ON_SECTION_GENERATED);
-        register_event_handler(EventKind::SectionLoaded, 0, ON_SECTION_LOADED);
+        register_tick_system(
+            Stage::Spawning,
+            AttachSide::After,
+            0,
+            TickSystem::Garrison.id(),
+        );
+        register_event_handler(
+            EventKind::SectionGenerated,
+            0,
+            Handler::SectionGenerated.id(),
+        );
+        register_event_handler(EventKind::SectionLoaded, 0, Handler::SectionLoaded.id());
         let only_skeletons = EventFilter {
             mobs: vec![kind],
             ..EventFilter::default()
@@ -92,13 +96,22 @@ impl Skeletons {
         register_event_handler_filtered(
             EventKind::MobDamagePre,
             0,
-            ON_DAMAGE,
+            Handler::SkeletonDamaged.id(),
             only_skeletons.clone(),
         );
-        register_event_handler_filtered(EventKind::MobDied, 0, ON_DIED, only_skeletons);
+        register_event_handler_filtered(
+            EventKind::MobDied,
+            0,
+            Handler::SkeletonDied.id(),
+            only_skeletons,
+        );
         // Last, so it only ever sees a hit nothing refused.
-        register_event_handler(EventKind::PlayerDamagePre, i32::MAX, ON_PLAYER_DAMAGE);
-        register_ai_node(keys::POST_NODE, POST_NODE_CALLBACK);
+        register_event_handler(
+            EventKind::PlayerDamagePre,
+            i32::MAX,
+            Handler::PlayerDamaged.id(),
+        );
+        register_ai_node(keys::POST_NODE, AiNode::SkeletonPost.id());
         let names: Vec<&str> = kits.loadouts.iter().map(|l| l.name.as_str()).collect();
         let standards = Standards::init();
         log(&format!(
@@ -121,40 +134,51 @@ impl Skeletons {
         })
     }
 
-    pub fn tick(&mut self, system_id: u32) -> bool {
-        match system_id {
-            COMBAT_SYSTEM => combat::tick(self),
-            GARRISON_SYSTEM => garrison::tick(self),
-            SHOVE_RESET_SYSTEM => self.shoves.clear(),
-            _ => return false,
+    /// Dresses the skeletons near players this session has not met yet, then runs their fight.
+    pub fn tick_combat(&mut self) {
+        let engagement = combat::Engagement::now(self.kind);
+        let strangers = engagement.strangers(&self.bodies);
+        garrison::enlist(self, strangers);
+        combat::tick(self, &engagement);
+    }
+
+    pub fn tick_garrison(&mut self) {
+        garrison::tick(self);
+    }
+
+    /// Forgets the shoves owed by last tick's hits.
+    pub fn reset_shoves(&mut self) {
+        self.shoves.clear();
+    }
+
+    /// Queues a generated or loaded section to be searched for posts.
+    pub fn on_section(&mut self, payload: &EventPayload) {
+        if let EventPayload::SectionGenerated { pos } | EventPayload::SectionLoaded { pos } =
+            payload
+        {
+            self.posts.queue(*pos, current_tick());
         }
-        true
     }
 
-    pub fn handle_event(&mut self, handler_id: u32, payload: &mut EventPayload) -> Option<Outcome> {
-        let outcome = match (handler_id, &*payload) {
-            (ON_SECTION_GENERATED, EventPayload::SectionGenerated { pos })
-            | (ON_SECTION_LOADED, EventPayload::SectionLoaded { pos }) => {
-                self.posts.queue(*pos, current_tick());
-                Outcome::Continue
+    pub fn on_died(&mut self, payload: &EventPayload) {
+        if let EventPayload::MobDied { id, .. } = payload {
+            if let Some(post) = self.bodies.remove(id).and_then(|b| b.post) {
+                self.posts.record_death(post, current_tick());
             }
-            (ON_DIED, EventPayload::MobDied { id, .. }) => {
-                if let Some(post) = self.bodies.remove(id).and_then(|b| b.post) {
-                    self.posts.record_death(post, current_tick());
-                }
-                Outcome::Continue
-            }
-            (ON_DAMAGE, _) => guard::on_damage(self, payload),
-            (ON_PLAYER_DAMAGE, _) => combat::on_player_damage(self, payload),
-            (ON_SECTION_GENERATED | ON_SECTION_LOADED | ON_DIED, _) => Outcome::Continue,
-            _ => return None,
-        };
-        Some(outcome)
+        }
     }
 
-    pub fn ai_node(&self, callback_id: u32, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
-        (callback_id == POST_NODE_CALLBACK)
-            .then(|| leash::decide(ctx))
-            .flatten()
+    /// A raised shield refuses the hits it faces.
+    pub fn on_damage(&mut self, payload: &EventPayload) -> Outcome {
+        guard::on_damage(self, payload)
+    }
+
+    /// Adds a landed hit's extra shove.
+    pub fn on_player_damage(&mut self, payload: &EventPayload) -> Outcome {
+        combat::on_player_damage(self, payload)
+    }
+
+    pub fn post_node(&self, ctx: &AiNodeCtx) -> Option<AiNodeDecision> {
+        leash::decide(ctx)
     }
 }

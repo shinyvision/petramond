@@ -1,12 +1,15 @@
 use mod_sdk::build::{Axis, Draw, Frame, Half};
 
+use super::build::Builder;
 use super::ground::{Rubble, RubbleKind};
-use super::Camp;
 
-impl Camp<'_> {
-    pub(super) fn build_towers(&mut self) {
-        for t in 0..self.towers.len() {
-            let (s, min, dir) = (self.towers[t].s, self.towers[t].min, self.towers[t].dir);
+impl Builder<'_> {
+    /// Builds every tower; returns the y of each one's platform floor, in layout order.
+    pub(super) fn build_towers(&mut self) -> Vec<i32> {
+        let layout = self.layout;
+        let mut tops = Vec::with_capacity(layout.towers.len());
+        for tower in &layout.towers {
+            let (s, min, dir) = (tower.s, tower.min, tower.dir);
             let frame = Frame::new(min, s, s, dir);
             let mut base = i32::MIN;
             for lz in 0..s {
@@ -22,19 +25,20 @@ impl Camp<'_> {
                 }
             }
             let h = self.rng.int(5, 8);
-            self.towers[t].top = base + h;
+            tops.push(base + h);
             if self.mats.stone {
                 self.stone_tower(&frame, s, base, base + h);
             } else {
                 self.wood_tower(&frame, s, base, base + h);
             }
         }
+        tops
     }
 
     fn stone_tower(&mut self, frame: &Frame, s: i32, base: i32, plat: i32) {
         let corner = |lx: i32, lz: i32| (lx == 0 || lx == s - 1) && (lz == 0 || lz == s - 1);
         let perim = |lx: i32, lz: i32| lx == 0 || lz == 0 || lx == s - 1 || lz == s - 1;
-        let stone = |camp: &mut Camp<'_>, c: [i32; 2], y: i32| {
+        let stone = |camp: &mut Builder<'_>, c: [i32; 2], y: i32| {
             let f = camp.mats.stone_at(&mut camp.rng, [c[0], y, c[1]]);
             camp.mats.block(f)
         };

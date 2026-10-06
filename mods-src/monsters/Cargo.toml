@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Hostile-monster mod: light-based zombie spawning driven by petramond time, sunburn, data-driven mob sounds, and chase + melee combat."
+description = "Hostile-monster mod: light-based zombie and hushjaw spawning, sunburn, data-driven mob sounds, and skeleton camps manned by armed skeleton guards."
 
 [lints]
 workspace = true

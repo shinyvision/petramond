@@ -1,6 +1,6 @@
-//! Spawn posts: the floor cells a camp's guards stand on. Each one carries its role, yaw and the
-//! camp's box as cell data ([`crate::post_marker`]), so whatever populates the camp finds its
-//! posts when their section generates.
+//! Spawn posts: the floor cells a camp's guards stand on. Each one carries a
+//! [`PostMarker`] as cell data, so whatever populates the camp finds its posts when their section
+//! generates.
 //!
 //! A post is the cell BELOW the feet: something a body stands on centred (a full block, a log, a
 //! top slab or the camp's ground) with two clear cells above it. Posts are picked last, from the
@@ -10,19 +10,18 @@ use std::f32::consts::TAU;
 
 use mod_sdk::build::{Dir, Draw, Form, Half, Material};
 
+use super::build::{Builder, Fortress};
+use super::grid::Grid;
 use super::ground::natural_top;
-use super::layout::HutKind;
-use super::{Camp, Res};
-use crate::keys::POST_MARKER;
-use crate::post_marker::{self, CampBox};
+use super::layout::{FortArc, Hut, HutKind};
+use super::survey::Outline;
+use super::Res;
+use crate::post_marker::{self, CampBox, Facing, PostMarker, PostRole};
 
 /// How far below the lowest ground and above the highest a camp's box reaches: the arena's pit,
 /// and the towers with a flag on top.
 const BOX_BELOW: i32 = 6;
 const BOX_ABOVE: i32 = 22;
-
-/// The yaw byte of a post whose guard may face any way.
-const NO_YAW: u8 = 0xFF;
 
 /// Most posts a camp gets.
 const MAX_POSTS: usize = 14;
@@ -30,36 +29,11 @@ const MAX_POSTS: usize = 14;
 /// Posts keep this far apart in x/z (squared).
 const MIN_GAP_SQ: i32 = 9;
 
-/// What a guard on a post is for; the discriminant is the first byte of the cell data.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PostRole {
-    Yard = 0,
-    /// A tower top or a fortress wall walk.
-    Watch = 1,
-    /// Just inside a gate.
-    Gate = 2,
-    /// By the well, statue or arena.
-    Centre = 3,
-    /// By a hut's door, or inside it.
-    Hut = 4,
-}
-
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Post {
+pub(super) struct Post {
     pub floor: [i32; 3],
     pub role: PostRole,
-    /// `yaw = yaw / 256 * TAU` (the way mobs face), or [`NO_YAW`].
-    pub yaw: u8,
-}
-
-/// The yaw byte for facing along `(dx, dz)`. Mobs face `(-sin yaw, -cos yaw)`; the byte for a
-/// bearing that would round to [`NO_YAW`] is nudged off it.
-fn yaw_byte(dx: f32, dz: f32) -> u8 {
-    if dx == 0.0 && dz == 0.0 {
-        return NO_YAW;
-    }
-    let turns = ((-dx).atan2(-dz) / TAU).rem_euclid(1.0);
-    ((turns * 256.0).round() as u32 % 256).min(u32::from(NO_YAW) - 1) as u8
+    pub facing: Option<Facing>,
 }
 
 /// Whether a body stands centred on this material with its feet at the cell's top.
@@ -99,13 +73,14 @@ fn litter(m: &Material) -> bool {
         )
 }
 
-impl Camp<'_> {
-    /// Picks the camp's posts and marks them in the plan. `fort_h` is the fortress wall height.
-    pub(super) fn build_posts(&mut self, fort_h: i32) {
-        let target = ((self.radius * 0.5).round() as usize).clamp(6, MAX_POSTS);
+impl Builder<'_> {
+    /// Picks the camp's posts and marks them in the plan. `tower_tops` are the towers' platform
+    /// floors.
+    pub(super) fn build_posts(&mut self, fortress: &Fortress, tower_tops: &[i32]) -> Vec<Post> {
+        let target = ((self.outline.radius * 0.5).round() as usize).clamp(6, MAX_POSTS);
         let mut posts = Vec::with_capacity(MAX_POSTS);
-        self.watch_posts(&mut posts, fort_h);
-        let flanked = target >= 11 && self.gates.len() <= 2;
+        self.watch_posts(&mut posts, fortress, tower_tops);
+        let flanked = target >= 11 && self.layout.gates.len() <= 2;
         self.gate_posts(&mut posts, 1 + usize::from(flanked));
         // What the towers and gates leave, less one post for the yard.
         let room = |posts: &[Post]| (MAX_POSTS - 1).saturating_sub(posts.len());
@@ -118,11 +93,11 @@ impl Camp<'_> {
             .max(2)
             .min(MAX_POSTS.saturating_sub(posts.len()));
         self.yard_posts(&mut posts, yard);
-        let camp = self.camp_box();
+        let camp = camp_box(self.outline, &self.ground);
         for post in &posts {
             self.mark_post(post, camp);
         }
-        self.posts = posts;
+        posts
     }
 
     /// What a body at `floor` would stand on: what the plan builds there, or the natural surface
@@ -133,7 +108,7 @@ impl Camp<'_> {
             Some(m) => Some(*m),
             None if self.ground.contains([x, z])
                 && y == self.g([x, z])
-                && self.natural.get(x, z) == Some(y) =>
+                && self.outline.natural.get(x, z) == Some(y) =>
             {
                 natural_top(self.mats.style)
             }
@@ -169,20 +144,20 @@ impl Camp<'_> {
     /// from it, off the plateaus and not claimed by any other feature.
     fn open_ground(&self, c: [i32; 2], depth: i32) -> Option<[i32; 3]> {
         (self.ground.contains(c)
-            && self.depth(c) >= depth
-            && self.plateau_at.get(c) == 0
-            && matches!(self.resv.get(c), Res::Free | Res::Path))
+            && self.outline.depth(c) >= depth
+            && self.layout.plateau_at.get(c) == 0
+            && matches!(self.resv(c), Res::Free | Res::Path))
         .then(|| [c[0], self.g(c), c[1]])
     }
 
-    /// The yaw byte for a guard at `from` facing `target`.
-    fn face(&self, from: [i32; 2], target: [i32; 2]) -> u8 {
-        yaw_byte((target[0] - from[0]) as f32, (target[1] - from[1]) as f32)
+    /// A guard at `from` facing `target`.
+    fn face(&self, from: [i32; 2], target: [i32; 2]) -> Option<Facing> {
+        Facing::along((target[0] - from[0]) as f32, (target[1] - from[1]) as f32)
     }
 
-    /// The yaw byte for a guard at `from` facing away from the camp's centre.
-    fn face_out(&self, from: [i32; 2]) -> u8 {
-        self.face(self.center, from)
+    /// A guard at `from` facing away from the camp's centre.
+    fn face_out(&self, from: [i32; 2]) -> Option<Facing> {
+        self.face(self.outline.center, from)
     }
 
     /// Adds a post at `floor` if it keeps its distance from the others and has room, and at
@@ -192,7 +167,7 @@ impl Camp<'_> {
         posts: &mut Vec<Post>,
         role: PostRole,
         floor: [i32; 3],
-        yaw: u8,
+        facing: Option<Facing>,
         open_sides: usize,
     ) -> bool {
         let apart = posts.iter().all(|p| {
@@ -202,14 +177,19 @@ impl Camp<'_> {
         if !apart || !self.is_post_floor(floor) || self.open_sides(floor) < open_sides {
             return false;
         }
-        posts.push(Post { floor, role, yaw });
+        posts.push(Post {
+            floor,
+            role,
+            facing,
+        });
         true
     }
 
     /// One post on each tower's platform, and some along the fortress walls' walkways.
-    fn watch_posts(&mut self, posts: &mut Vec<Post>, fort_h: i32) {
-        for t in 0..self.towers.len() {
-            let (s, min, top) = (self.towers[t].s, self.towers[t].min, self.towers[t].top);
+    fn watch_posts(&mut self, posts: &mut Vec<Post>, fortress: &Fortress, tower_tops: &[i32]) {
+        let layout = self.layout;
+        for (tower, &top) in layout.towers.iter().zip(tower_tops) {
+            let (s, min) = (tower.s, tower.min);
             let mut open: Vec<([i32; 2], usize)> = Vec::new();
             for dz in 0..s {
                 for dx in 0..s {
@@ -234,14 +214,10 @@ impl Camp<'_> {
                 );
             }
         }
-        let len = self.ring_len();
+        let len = self.outline.ring_len();
         let mut walls_left = 5usize.saturating_sub(posts.len()).min(2);
-        for a in 0..self.fort_arcs.len() {
-            let (full, center, span) = (
-                self.fort_arcs[a].full,
-                self.fort_arcs[a].center,
-                self.fort_arcs[a].span,
-            );
+        let layout = self.layout;
+        for &FortArc { full, center, span } in &layout.fort_arcs {
             let want = if full { (len / 36).max(2) } else { 1 }.min(walls_left);
             let mut made = 0;
             for _ in 0..30 {
@@ -252,20 +228,23 @@ impl Camp<'_> {
                     self.rng.int(0, len as i32 - 1) as usize
                 } else {
                     let shift = self.rng.int(-span, span);
-                    self.wrap(center as i64 + i64::from(shift))
+                    self.outline.wrap(center as i64 + i64::from(shift))
                 };
-                if self.fort[j] == 0 || self.in_gate[j] || self.fort_cut[j] > 0 {
+                if self.layout.fort[j] == 0 || self.layout.in_gate[j] || fortress.cut[j] > 0 {
                     continue;
                 }
-                let y = self.fortress_top(j, fort_h).1;
+                let y = self.fortress_top(j, fortress).1;
                 let mut walk: Vec<[i32; 2]> = self
+                    .layout
                     .inner_by_src
                     .get(&j)
                     .map(|cells| {
                         cells
                             .iter()
                             .copied()
-                            .filter(|&c| self.depth(c) < self.fort[j] && y - self.g(c) >= 2)
+                            .filter(|&c| {
+                                self.outline.depth(c) < self.layout.fort[j] && y - self.g(c) >= 2
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -292,10 +271,10 @@ impl Camp<'_> {
             (6.0, 3.0),
             (6.0, -3.0),
         ];
-        for gi in 0..self.gates.len() {
-            let c = self.ring[self.gates[gi].i];
-            let out = self.gates[gi].out;
-            let yaw = yaw_byte(out[0], out[1]);
+        let layout = self.layout;
+        for gate in &layout.gates {
+            let (c, out) = (self.outline.ring[gate.i], gate.out);
+            let facing = Facing::along(out[0], out[1]);
             let at = |(back, side): (f32, f32)| {
                 [
                     (c[0] as f32 - out[0] * back - out[1] * side).round() as i32,
@@ -311,7 +290,7 @@ impl Camp<'_> {
                     let Some(floor) = self.open_ground(at(o), 2) else {
                         continue;
                     };
-                    if self.try_post(posts, PostRole::Gate, floor, yaw, 2) {
+                    if self.try_post(posts, PostRole::Gate, floor, facing, 2) {
                         placed += 1;
                         break;
                     }
@@ -322,7 +301,7 @@ impl Camp<'_> {
 
     /// Guards around the well, statue or arena, facing it.
     fn centre_posts(&mut self, posts: &mut Vec<Post>, want: usize) {
-        let Some((at, need)) = self.centre.as_ref().map(|c| (c.at, c.need)) else {
+        let Some((at, need)) = self.layout.centre.as_ref().map(|c| (c.at, c.need)) else {
             return;
         };
         let mut placed = 0;
@@ -348,10 +327,13 @@ impl Camp<'_> {
     /// stands open.
     fn hut_posts(&mut self, posts: &mut Vec<Post>, want: usize) {
         // Huts on a plateau top are up a ladder or a stair run: no way to walk to their door.
-        let mut order: Vec<usize> = (0..self.huts.len())
+        let mut order: Vec<usize> = (0..self.layout.huts.len())
             .filter(|&h| {
-                let hut = &self.huts[h];
-                self.plateau_at.get(hut.frame.at(hut.w / 2, hut.d / 2)) == 0
+                let hut = &self.layout.huts[h];
+                self.layout
+                    .plateau_at
+                    .get(hut.frame.at(hut.w / 2, hut.d / 2))
+                    == 0
             })
             .collect();
         self.rng.shuffle(&mut order);
@@ -369,7 +351,7 @@ impl Camp<'_> {
 
     /// The floor level inside hut `h`: its highest ground.
     fn hut_floor(&self, h: usize) -> i32 {
-        let hut = &self.huts[h];
+        let hut = &self.layout.huts[h];
         (0..hut.d)
             .flat_map(|lz| (0..hut.w).map(move |lx| (lx, lz)))
             .map(|(lx, lz)| self.g(hut.frame.at(lx, lz)))
@@ -380,7 +362,7 @@ impl Camp<'_> {
     /// Whether a body can walk in through hut `h`'s door: a doorway or a door standing open, with
     /// level ground in front of it.
     fn hut_door_open(&self, h: usize) -> bool {
-        let hut = &self.huts[h];
+        let hut = &self.layout.huts[h];
         if hut.kind != HutKind::Hut {
             return false;
         }
@@ -396,7 +378,7 @@ impl Camp<'_> {
     }
 
     fn hut_inside_post(&mut self, posts: &mut Vec<Post>, h: usize) -> bool {
-        let (frame, w, d) = (self.huts[h].frame, self.huts[h].w, self.huts[h].d);
+        let Hut { frame, w, d, .. } = self.layout.huts[h];
         let floor_y = self.hut_floor(h);
         let mut cells: Vec<[i32; 2]> = (1..d - 1)
             .flat_map(|lz| (1..w - 1).map(move |lx| (lx, lz)))
@@ -404,14 +386,14 @@ impl Camp<'_> {
             .collect();
         self.rng.shuffle(&mut cells);
         cells.into_iter().any(|c| {
-            let yaw = self.face(c, self.center);
-            self.try_post(posts, PostRole::Hut, [c[0], floor_y, c[1]], yaw, 1)
+            let facing = self.face(c, self.outline.center);
+            self.try_post(posts, PostRole::Hut, [c[0], floor_y, c[1]], facing, 1)
         })
     }
 
     /// A post on the ground in front of hut `h`'s door, or at its sides.
     fn hut_front_post(&self, posts: &mut Vec<Post>, h: usize) -> bool {
-        let (frame, w, d) = (self.huts[h].frame, self.huts[h].w, self.huts[h].d);
+        let Hut { frame, w, d, .. } = self.layout.huts[h];
         let mid = (w - 1) / 2;
         [(mid, d), (mid - 1, d), (mid + 1, d), (mid, d + 1)]
             .into_iter()
@@ -422,7 +404,7 @@ impl Camp<'_> {
                         posts,
                         PostRole::Hut,
                         [c[0], self.g(c), c[1]],
-                        self.face(c, self.center),
+                        self.face(c, self.outline.center),
                         2,
                     )
             })
@@ -431,14 +413,15 @@ impl Camp<'_> {
     /// Guards scattered over the open yard: each is the best of a few random spots, the one
     /// farthest from every post so far.
     fn yard_posts(&mut self, posts: &mut Vec<Post>, want: usize) {
-        if self.interior.is_empty() {
+        if self.outline.interior.is_empty() {
             return;
         }
         for _ in 0..want {
             let mut best: Option<([i32; 3], i32)> = None;
             for _ in 0..3 {
                 for _ in 0..8 {
-                    let c = self.interior[self.rng.int(0, self.interior.len() as i32 - 1) as usize];
+                    let c = self.outline.interior
+                        [self.rng.int(0, self.outline.interior.len() as i32 - 1) as usize];
                     let Some(floor) = self.open_ground(c, 3) else {
                         continue;
                     };
@@ -463,30 +446,12 @@ impl Camp<'_> {
                 }
             }
             if let Some((floor, _)) = best {
-                let yaw = self.face([floor[0], floor[2]], self.center);
                 posts.push(Post {
                     floor,
                     role: PostRole::Yard,
-                    yaw,
+                    facing: self.face([floor[0], floor[2]], self.outline.center),
                 });
             }
-        }
-    }
-
-    /// The cells the camp stands in: the ring's bounds, from under the arena's pit to over the
-    /// towers.
-    pub(super) fn camp_box(&self) -> CampBox {
-        let (lo, hi) = self.field.bounds();
-        let (mut low, mut high) = (i32::MAX, i32::MIN);
-        for z in lo[1]..=hi[1] {
-            for &g in self.ground.row(z, lo[0], hi[0]) {
-                low = low.min(g);
-                high = high.max(g);
-            }
-        }
-        CampBox {
-            min: [lo[0], low - BOX_BELOW, lo[1]],
-            max: [hi[0], high + BOX_ABOVE, hi[1]],
         }
     }
 
@@ -503,10 +468,28 @@ impl Camp<'_> {
         if self.plan.get([x, y + 1, z]).is_some_and(litter) {
             self.plan.unset([x, y + 1, z]);
         }
-        self.plan.data(
-            post.floor,
-            POST_MARKER,
-            post_marker::encode(post.role as u8, post.yaw, camp),
-        );
+        let marker = PostMarker {
+            role: post.role,
+            facing: post.facing,
+            camp,
+        };
+        self.plan
+            .data(post.floor, post_marker::KEY, marker.encode());
+    }
+}
+
+/// The cells a camp stands in: the ring's bounds, from under the arena's pit to over the towers.
+pub(super) fn camp_box(outline: &Outline, ground: &Grid<i32>) -> CampBox {
+    let (lo, hi) = outline.field.bounds();
+    let (mut low, mut high) = (i32::MAX, i32::MIN);
+    for z in lo[1]..=hi[1] {
+        for &g in ground.row(z, lo[0], hi[0]) {
+            low = low.min(g);
+            high = high.max(g);
+        }
+    }
+    CampBox {
+        min: [lo[0], low - BOX_BELOW, lo[1]],
+        max: [hi[0], high + BOX_ABOVE, hi[1]],
     }
 }
