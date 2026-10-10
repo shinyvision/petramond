@@ -100,6 +100,7 @@ pub(super) fn post_kind(kind: api::EventKind) -> Option<PostEventKind> {
         K::SchematicPositioned => PostEventKind::SchematicPositioned,
         K::Interacted => PostEventKind::Interacted,
         K::ModEvent => PostEventKind::ModEvent,
+        K::ClientEvent => PostEventKind::ClientEvent,
     })
 }
 
@@ -520,6 +521,15 @@ pub(super) fn post_event(ev: &PostEvent) -> api::EventPayload {
             consumed,
         },
         PostEvent::ModEvent { ref key, ref data } => api::EventPayload::ModEvent {
+            key: key.clone(),
+            data: data.clone(),
+        },
+        PostEvent::ClientEvent {
+            player,
+            ref key,
+            ref data,
+        } => api::EventPayload::ClientEvent {
+            player: api::PlayerId(player.0),
             key: key.clone(),
             data: data.clone(),
         },

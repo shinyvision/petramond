@@ -238,9 +238,11 @@ impl Renderer {
         &mut self,
         cloths: &mut Vec<crate::views::ClothPresentation>,
         points: &mut Vec<crate::views::ClothPoint>,
+        texels: &mut Vec<Option<[f32; 3]>>,
     ) {
         std::mem::swap(&mut self.item_entity.cloths, cloths);
         std::mem::swap(&mut self.item_entity.cloth_points, points);
+        std::mem::swap(&mut self.item_entity.cloth_texels, texels);
     }
 
     pub fn swap_item_entities(&mut self, v: &mut Vec<ItemEntityInstance>) {

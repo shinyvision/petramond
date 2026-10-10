@@ -1,0 +1,157 @@
+{
+  "format": 1,
+  "kind": "furniture:painting_table",
+  "class": "container",
+  "root": {
+    "type": "frame",
+    "style": "panel.large",
+    "layout": {"pad": [4, 2, 4, 4], "gap": 6},
+    "children": [
+      {"type": "label", "text": "Painting Table"},
+      {
+        "type": "row",
+        "layout": {"gap": 6},
+        "children": [
+          {
+            "type": "column",
+            "layout": {"gap": 3},
+            "children": [
+              {
+                "type": "slot",
+                "id": "flag",
+                "role": "container",
+                "accepts": [{"data": "furniture:paintable"}]
+              },
+              {
+                "type": "toggle",
+                "id": "pencil",
+                "style": "button.toggle",
+                "icon": "icon.edit",
+                "layout": {"w": 18, "h": 18},
+                "bind": {"value": "furniture:pencil_on"}
+              },
+              {
+                "type": "toggle",
+                "id": "fill",
+                "style": "button.toggle",
+                "icon": "../icons/fill.png",
+                "layout": {"w": 18, "h": 18},
+                "bind": {"value": "furniture:fill_on"}
+              },
+              {
+                "type": "button",
+                "id": "undo",
+                "icon": "../icons/undo.png",
+                "layout": {"w": 18, "h": 18},
+                "bind": {"enabled": "furniture:can_undo"}
+              },
+              {
+                "type": "button",
+                "id": "clear",
+                "icon": "../icons/clear.png",
+                "layout": {"w": 18, "h": 18}
+              }
+            ]
+          },
+          {
+            "type": "frame",
+            "style": "panel.inset",
+            "children": [
+              {
+                "type": "image",
+                "id": "canvas",
+                "image": "",
+                "interactive": true,
+                "layout": {"w": 128, "h": 96},
+                "bind": {"image": "furniture:canvas_image"}
+              }
+            ]
+          },
+          {
+            "type": "column",
+            "layout": {"gap": 2},
+            "children": [
+              {
+                "type": "image",
+                "id": "wheel",
+                "image": "",
+                "interactive": true,
+                "layout": {"w": 64, "h": 64},
+                "bind": {"image": "furniture:wheel_image"}
+              },
+              {
+                "type": "image",
+                "id": "hue",
+                "image": "",
+                "interactive": true,
+                "layout": {"w": 64, "h": 8},
+                "bind": {"image": "furniture:hue_image"}
+              },
+              {
+                "type": "image",
+                "id": "value",
+                "image": "",
+                "interactive": true,
+                "layout": {"w": 64, "h": 8},
+                "bind": {"image": "furniture:value_image"}
+              },
+              {
+                "type": "image",
+                "id": "swatches",
+                "image": "",
+                "interactive": true,
+                "layout": {"w": 64, "h": 16},
+                "bind": {"image": "furniture:swatches_image"}
+              }
+            ]
+          }
+        ]
+      },
+      {"type": "slot_grid", "id": "inventory", "role": "player_inv", "cols": 9, "rows": 3},
+      {
+        "type": "slot_grid",
+        "id": "hotbar",
+        "role": "hotbar",
+        "cols": 9,
+        "rows": 1,
+        "layout": {"margin": [0, 2, 0, 0]}
+      },
+      {
+        "type": "tooltip",
+        "hover": "flag",
+        "style": "panel.inset",
+        "layout": {"max_w": 200, "abs": {"x": 4, "y": 4}, "pad": [3, 2, 3, 3]},
+        "bind": {"visible": "furniture:empty"},
+        "children": [{"type": "label", "small": true, "text": "Your flag goes here"}]
+      },
+      {
+        "type": "tooltip",
+        "hover": "pencil",
+        "style": "panel.inset",
+        "layout": {"max_w": 200, "abs": {"x": 4, "y": 4}, "pad": [3, 2, 3, 3]},
+        "children": [{"type": "label", "small": true, "text": "Draw"}]
+      },
+      {
+        "type": "tooltip",
+        "hover": "fill",
+        "style": "panel.inset",
+        "layout": {"max_w": 200, "abs": {"x": 4, "y": 4}, "pad": [3, 2, 3, 3]},
+        "children": [{"type": "label", "small": true, "text": "Fill"}]
+      },
+      {
+        "type": "tooltip",
+        "hover": "undo",
+        "style": "panel.inset",
+        "layout": {"max_w": 200, "abs": {"x": 4, "y": 4}, "pad": [3, 2, 3, 3]},
+        "children": [{"type": "label", "small": true, "text": "Undo"}]
+      },
+      {
+        "type": "tooltip",
+        "hover": "clear",
+        "style": "panel.inset",
+        "layout": {"max_w": 200, "abs": {"x": 4, "y": 4}, "pad": [3, 2, 3, 3]},
+        "children": [{"type": "label", "small": true, "text": "Clear"}]
+      }
+    ]
+  }
+}

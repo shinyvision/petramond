@@ -6,7 +6,11 @@
       "name": "Skull Flag",
       "max_stack_size": 16,
       "sprite": "monsters:skull_flag_item",
-      "block": "monsters:skull_flag"
+      "block": "monsters:skull_flag",
+      "data": {
+        "furniture:paintable": {"becomes": "flags:flag", "design": {"tile": "monsters:skull_flag", "at": [0, 0]}},
+        "furniture:dyeable": {"becomes": "flags:flag"}
+      }
     }
   ]
 }

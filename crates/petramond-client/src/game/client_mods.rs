@@ -23,6 +23,7 @@ impl Game {
             frame,
             presented_view,
         );
+        self.queue_client_mod_events();
     }
 
     pub fn deliver_client_mod_events(
@@ -43,6 +44,19 @@ impl Game {
                 &ev.data,
             );
         }
+        self.queue_client_mod_events();
+    }
+
+    /// Puts what client instances emitted for the server on the connection. Every dispatch
+    /// into them ends with this, so an event keeps its place among the messages the client
+    /// queues before and after it.
+    pub(super) fn queue_client_mod_events(&mut self) {
+        let events = self.client_mods.take_outbound_events();
+        self.net.queue_all(
+            events.into_iter().map(|(key, data)| {
+                petramond::net::protocol::ClientToServer::ModEvent { key, data }
+            }),
+        );
     }
 
     pub fn bake_client_custom_shapes(&mut self) {
@@ -55,8 +69,11 @@ impl Game {
         pressed: bool,
         at: petramond::modding::client::keys::KeyContext<'_>,
     ) -> bool {
-        self.client_mods
-            .action(Some(&self.replica.world), full_id, pressed, at)
+        let handled = self
+            .client_mods
+            .action(Some(&self.replica.world), full_id, pressed, at);
+        self.queue_client_mod_events();
+        handled
     }
 
     #[cfg(test)]
@@ -75,21 +92,25 @@ impl Game {
 
     pub fn release_client_mod_keys(&mut self) {
         self.client_mods.release_all_keys(Some(&self.replica.world));
+        self.queue_client_mod_events();
     }
 
     pub fn client_mod_ui_event(&mut self, kind_key: &str, event: mod_api::ClientUiEvent) {
         self.client_mods
             .ui_event(Some(&self.replica.world), kind_key, event);
+        self.queue_client_mod_events();
     }
 
     pub fn client_mod_canvas_event(&mut self, canvas_key: &str, event: mod_api::ClientCanvasEvent) {
         self.client_mods
             .canvas_event(Some(&self.replica.world), canvas_key, event);
+        self.queue_client_mod_events();
     }
 
     pub fn client_mod_canvas_scroll(&mut self, canvas_key: &str, x: f32, y: f32, delta: f32) {
         self.client_mods
             .canvas_scroll(Some(&self.replica.world), canvas_key, x, y, delta);
+        self.queue_client_mod_events();
     }
 
     pub fn client_mod_overlays(&self) -> &[petramond::modding::ClientOverlayRegistration] {
@@ -128,6 +149,10 @@ impl Game {
         kind_key: &str,
     ) -> Option<petramond::modding::client::ClientUiView> {
         self.client_mods.view_for(kind_key)
+    }
+
+    pub fn client_mod_drives(&self, kind_key: &str) -> bool {
+        self.client_mods.drives(kind_key)
     }
 
     pub fn take_client_mod_commands(&mut self) -> Vec<petramond::modding::ClientCommand> {

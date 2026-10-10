@@ -107,7 +107,7 @@ impl CellData {
             }
             for stack in slots.iter().flatten() {
                 if stack.item.len() > 256
-                    || stack.data.len() > 1024
+                    || stack.data.len() > variant::MAX_BLOB_BYTES
                     || (!stack.data.is_empty() && variant::decode(&stack.data).is_none())
                 {
                     return Err("Invalid stored item data".into());

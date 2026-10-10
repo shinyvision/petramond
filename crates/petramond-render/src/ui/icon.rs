@@ -1,6 +1,6 @@
 use glam::{Mat4, Vec3};
 
-use super::{pixel_to_ndc, push_solid, UiBuild, UiVertex};
+use super::{pixel_to_ndc, push_solid, IconQuad, UiBuild, UiVertex};
 use petramond::gui::SlotRect;
 use petramond_text::tiny as ui_text;
 
@@ -13,25 +13,22 @@ pub(super) fn push_slot_icon(
     push_stack_quads(&mut build.icon_quads, stack, r);
 }
 
+/// The stack's own icon, then its overlay items' icons over it (never dyed by the stack).
 pub(super) fn push_stack_quads(
-    quads: &mut Vec<(petramond_world::item::ItemType, SlotRect, [f32; 4], bool)>,
+    quads: &mut Vec<IconQuad>,
     stack: &petramond_world::item::ItemStack,
-    r: SlotRect,
+    rect: SlotRect,
 ) {
-    quads.push((stack.item, r, stack_tint(stack), stack_dyed(stack)));
+    let quad = |item, variant| IconQuad {
+        item,
+        variant,
+        rect,
+        clip: None,
+        dim: false,
+    };
+    quads.push(quad(stack.item, stack.variant));
     for overlay in petramond_world::item::variant::overlay_items(stack.variant) {
-        quads.push((overlay, r, [1.0; 4], false));
-    }
-}
-
-pub(super) fn stack_dyed(stack: &petramond_world::item::ItemStack) -> bool {
-    petramond_world::item::variant::tint(stack.variant).is_some()
-}
-
-pub(super) fn stack_tint(stack: &petramond_world::item::ItemStack) -> [f32; 4] {
-    match petramond_world::item::variant::tint(stack.variant) {
-        Some([r, g, b]) => [r, g, b, 1.0],
-        None => [1.0; 4],
+        quads.push(quad(overlay, petramond_world::item::VariantId::NONE));
     }
 }
 

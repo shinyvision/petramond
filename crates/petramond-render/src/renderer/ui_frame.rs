@@ -112,67 +112,17 @@ impl UiLayer {
         let mut verts = std::mem::take(&mut self.icon_quad_verts);
         verts.clear();
         if screen.0 != 0 && screen.1 != 0 {
-            for &(item, r, color, dyed) in &self.build.icon_quads {
-                let [u0, v0, u1, v1] = if dyed {
-                    icon_atlas.cell_uv_dyed(item)
-                } else {
-                    icon_atlas.cell_uv(item)
-                };
-                crate::ui::push_quad_uv(
-                    &mut verts,
-                    screen,
-                    r.x,
-                    r.y,
-                    r.w,
-                    r.h,
-                    [u0, v0],
-                    [u1, v1],
-                    color,
-                );
-            }
-            let push_hooks = |verts: &mut Vec<UiVertex>, icons: &[crate::ui::HookIconQuad]| {
+            let push_icons = |verts: &mut Vec<UiVertex>, icons: &[crate::ui::IconQuad]| {
                 for icon in icons {
-                    let [u0, v0, u1, v1] = icon_atlas.cell_uv(icon.item);
-                    let Some((visible, uv_tl, uv_br)) =
-                        clipped_icon(icon.rect, icon.clip, [u0, v0, u1, v1])
-                    else {
-                        continue;
-                    };
-                    crate::ui::push_quad_uv(
-                        verts,
-                        screen,
-                        visible.x,
-                        visible.y,
-                        visible.w,
-                        visible.h,
-                        uv_tl,
-                        uv_br,
-                        [1.0, 1.0, 1.0, if icon.dim { 0.35 } else { 1.0 }],
-                    );
+                    push_icon(verts, screen, icon_atlas, icon);
                 }
             };
-            push_hooks(&mut verts, &self.build.hook_icon_quads);
+            push_icons(&mut verts, &self.build.icon_quads);
+            push_icons(&mut verts, &self.build.hook_icon_quads);
             let normal_icon_vertex_count = verts.len() as u32;
-            push_hooks(&mut verts, &self.build.overlay_icon_quads);
+            push_icons(&mut verts, &self.build.overlay_icon_quads);
             self.overlay_icon_quad_vertex_count = verts.len() as u32 - normal_icon_vertex_count;
-            for &(item, r, color, dyed) in &self.build.drag_icon_quads {
-                let [u0, v0, u1, v1] = if dyed {
-                    icon_atlas.cell_uv_dyed(item)
-                } else {
-                    icon_atlas.cell_uv(item)
-                };
-                crate::ui::push_quad_uv(
-                    &mut verts,
-                    screen,
-                    r.x,
-                    r.y,
-                    r.w,
-                    r.h,
-                    [u0, v0],
-                    [u1, v1],
-                    color,
-                );
-            }
+            push_icons(&mut verts, &self.build.drag_icon_quads);
             self.icon_quad_vertex_count = normal_icon_vertex_count;
             self.drag_icon_quad_vertex_count =
                 verts.len() as u32 - normal_icon_vertex_count - self.overlay_icon_quad_vertex_count;
@@ -189,6 +139,69 @@ impl UiLayer {
         }
         self.icon_quad_verts = verts;
     }
+}
+
+/// One icon: its atlas cell under the stack's tint (the dyed twin cell when tinted), then
+/// a sprite item's paint as sub-quads of the dyed twin cell over it.
+fn push_icon(
+    verts: &mut Vec<UiVertex>,
+    screen: (u32, u32),
+    icon_atlas: &IconAtlas,
+    icon: &crate::ui::IconQuad,
+) {
+    use petramond_world::item::{variant, ItemRenderKind};
+    let data = (!icon.variant.is_none())
+        .then(|| variant::get(icon.variant))
+        .flatten();
+    let coat = data
+        .as_deref()
+        .map(petramond_world::paint::Coat::of_stack_data)
+        .unwrap_or_default();
+    let alpha = if icon.dim { 0.35 } else { 1.0 };
+    let mut push = |rect: [f32; 4], uv: [f32; 4], [r, g, b]: [f32; 3]| {
+        let rect = petramond::gui::SlotRect {
+            x: rect[0],
+            y: rect[1],
+            w: rect[2] - rect[0],
+            h: rect[3] - rect[1],
+        };
+        if let Some((visible, uv_tl, uv_br)) = clipped_icon(rect, icon.clip, uv) {
+            crate::ui::push_quad_uv(
+                verts,
+                screen,
+                visible.x,
+                visible.y,
+                visible.w,
+                visible.h,
+                uv_tl,
+                uv_br,
+                [r, g, b, alpha],
+            );
+        }
+    };
+    let r = icon.rect;
+    let rect = [r.x, r.y, r.x + r.w, r.y + r.h];
+    let dyed = icon_atlas.cell_uv_dyed(icon.item);
+    match coat.tint {
+        Some(tint) => push(rect, dyed, tint),
+        None => push(rect, icon_atlas.cell_uv(icon.item), [1.0; 3]),
+    }
+    let paint = coat
+        .paint
+        .filter(|_| matches!(icon.item.render_kind(), ItemRenderKind::Sprite(_)));
+    for run in paint.into_iter().flat_map(|paint| paint.runs()) {
+        push(run_span(rect, run), run_span(dyed, run), run.rgb);
+    }
+}
+
+/// The part of `square` (`[x0, y0, x1, y1]`, an image of the whole tile) that a paint
+/// run covers.
+fn run_span(square: [f32; 4], run: petramond_world::paint::PaintRun) -> [f32; 4] {
+    let [x0, y0, x1, y1] = square;
+    let grid = f32::from(petramond_world::paint::GRID);
+    let x = |texel: u8| x0 + (x1 - x0) * f32::from(texel) / grid;
+    let y = |texel: u8| y0 + (y1 - y0) * f32::from(texel) / grid;
+    [x(run.x), y(run.y), x(run.x + run.len), y(run.y + 1)]
 }
 
 fn clipped_icon(
@@ -208,4 +221,21 @@ fn clipped_icon(
         [uv[0] + du * fx0, uv[1] + dv * fy0],
         [uv[0] + du * fx1, uv[1] + dv * fy1],
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paint_run_covers_four_cell_pixels_per_texel() {
+        let run = petramond_world::paint::PaintRun {
+            x: 3,
+            y: 5,
+            len: 2,
+            rgb: [1.0; 3],
+        };
+        let cell = [128.0, 64.0, 192.0, 128.0];
+        assert_eq!(run_span(cell, run), [140.0, 84.0, 148.0, 88.0]);
+    }
 }

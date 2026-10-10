@@ -8,10 +8,12 @@
 //!
 //! Contact treats the sheet as offset by `CONTACT_RADIUS` and keeps it that far from
 //! every collision box through all the pairings two convex shapes meet at (cloth vertex
-//! vs box, box corner vs cloth triangle, box edge vs cloth edge). Every vertex moves at
-//! most `BOUND_RELAX` of its triangles' distance to the nearest box per substep, so no
-//! point of a triangle can reach a box it was clear of: the sheet never passes through
-//! blocks between its vertices, with no continuous collision detection.
+//! vs box, box corner vs cloth triangle or edge, box edge vs cloth edge). Contacts are
+//! found on the clear positions a substep starts from, so each knows which side of its
+//! box the cloth is on. Every triangle near a box gets the plane separating them, and
+//! no vertex may close more than `BOUND_RELAX` of that gap per substep: the sheet slides
+//! along and away from blocks freely but never passes through them between its
+//! vertices, with no continuous collision detection.
 //!
 //! Nothing here is authoritative or deterministic; two clients may flutter a flag
 //! differently. The wind is whatever the client mods set (`ClientClothWindSet`), or
@@ -23,7 +25,7 @@ use petramond_math::world_pos::WorldPos;
 use petramond_world::block::Aabb;
 use petramond_world::cloth::{ClothDef, MAX_EXTENT};
 use petramond_world::verlet::{self, closest};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// East to west, in blocks per second.
 pub(super) const DEFAULT_WIND: [f32; 2] = [-1.5, 0.0];
@@ -42,11 +44,16 @@ const SHEAR: f32 = 0.02;
 const BEND: f32 = 0.005;
 /// The sheet's offset from what it touches; also keeps it off block faces it rests on.
 const CONTACT_RADIUS: f32 = 0.03;
-/// How far a vertex looks for boxes when bounding its move; far from everything it may
-/// move this much times [`BOUND_RELAX`] per substep.
+/// How near a box, on the clear positions, a triangle must be to look for contacts:
+/// from farther it closes only [`BOUND_RELAX`] of the gap in a substep, so it ends
+/// beyond [`CONTACT_RADIUS`] anyway.
+const CONTACT_REACH: f32 = CONTACT_RADIUS * 2.0;
+const _: () = assert!(CONTACT_REACH * (1.0 - BOUND_RELAX) > CONTACT_RADIUS);
+/// How far a triangle looks for boxes when bounding its vertices' moves; far from
+/// everything a vertex may move this much times [`BOUND_RELAX`] per substep.
 const QUERY_RADIUS: f32 = 0.25;
-/// Fraction of the clear distance a vertex may cover per substep; below one half so two
-/// sides closing on each other can never meet.
+/// Fraction of its gap to a box a triangle may close per substep, so a sheet slows as
+/// it nears a block instead of landing on it.
 const BOUND_RELAX: f32 = 0.45;
 /// Clearance kept back from every bound, so a sheet creeping toward a box stops short
 /// of where float rounding could close the last gap.
@@ -80,6 +87,35 @@ pub(super) struct BodyHull {
     pub radius: f32,
 }
 
+/// A triangle's separating plane from one box, found on the clear positions: each of
+/// its vertices may move at most `slack` against `n` this substep, and freely along it.
+#[derive(Copy, Clone, Debug)]
+struct Bound {
+    n: Vec3,
+    slack: f32,
+}
+
+/// A contact found on the clear positions: the point `weights` blend from `points` must
+/// stay [`CONTACT_RADIUS`] out along `n` from the box's supporting plane at `at`.
+#[derive(Copy, Clone, Debug)]
+struct Contact {
+    points: [usize; 3],
+    weights: [f32; 3],
+    n: Vec3,
+    at: f32,
+}
+
+impl Contact {
+    fn new(points: [usize; 3], weights: [f32; 3], n: Vec3, on_box: Vec3) -> Self {
+        Self {
+            points,
+            weights,
+            n,
+            at: n.dot(on_box),
+        }
+    }
+}
+
 /// An axis-aligned collision box relative to the cloth's cell.
 #[derive(Copy, Clone, Debug)]
 struct Obstacle {
@@ -99,11 +135,21 @@ pub(super) struct ClothSim {
     prev: Vec<Vec3>,
     accel: Vec<Vec3>,
     clear: Vec<Vec3>,
-    bound: Vec<f32>,
+    /// Each triangle's bounds this substep: `bounds[tri_bounds[t]..tri_bounds[t + 1]]`.
+    bounds: Vec<Bound>,
+    tri_bounds: Vec<u32>,
+    contacts: Vec<Contact>,
     obstacles: Vec<Obstacle>,
+    /// The obstacles within [`QUERY_RADIUS`] of the whole sheet this substep.
+    nearby: Vec<u32>,
     full: Vec<bool>,
     tris: Box<[[usize; 3]]>,
     edges: Box<[[usize; 2]]>,
+    /// The triangles around each vertex: `vertex_tris[around[i]..around[i + 1]]`.
+    around: Box<[u32]>,
+    vertex_tris: Box<[u32]>,
+    /// Per triangle, the vertices and edges it holds first; see [`first_holds`].
+    holds: Box<[u8]>,
     phase: f32,
     #[cfg(test)]
     furls: u32,
@@ -114,6 +160,9 @@ impl ClothSim {
     /// range carries on from the shape it was just drawn in.
     pub(super) fn new(cell: IVec3, def: &'static ClothDef, wind: [f32; 2], time: f32) -> Self {
         let [cols, rows] = def.segments.map(|s| usize::from(s) + 1);
+        let tris: Box<[[usize; 3]]> = triangles(cols, rows).collect();
+        let (around, vertex_tris) = triangles_around(&tris, cols * rows);
+        let holds = first_holds(&tris, cols * rows);
         let mut sim = Self {
             cell,
             def,
@@ -122,11 +171,17 @@ impl ClothSim {
             prev: Vec::new(),
             accel: Vec::new(),
             clear: Vec::new(),
-            bound: Vec::new(),
+            bounds: Vec::new(),
+            tri_bounds: Vec::new(),
+            contacts: Vec::new(),
             obstacles: Vec::new(),
+            nearby: Vec::new(),
             full: Vec::new(),
-            tris: triangles(cols, rows).collect(),
+            tris,
             edges: edges(cols, rows).collect(),
+            around,
+            vertex_tris,
+            holds,
             phase: phase_of(cell),
             #[cfg(test)]
             furls: 0,
@@ -192,7 +247,7 @@ impl ClothSim {
         let gravity = Vec3::Y * (GRAVITY * def.gravity);
         let damping = def.damping.powf(1.0 / SUBSTEPS as f32);
         for _ in 0..SUBSTEPS {
-            if !self.bound_moves() {
+            if !self.survey() {
                 // A block now cuts the sheet (placed through it, or the cloth spawned
                 // inside one): furl back to the post and unfurl clear of it.
                 self.lay_out(wind, FURLED);
@@ -211,19 +266,17 @@ impl ClothSim {
                 }
             }
             self.solve_links();
-            self.contact_boxes();
+            // Blocks have the last word: fabric squeezed between a body and a block
+            // stays off the block and the body sinks into it instead.
             self.contact_bodies(bodies);
+            self.contact_boxes();
             for i in 0..self.pos.len() {
                 if self.pinned(i) {
                     self.pos[i] = self.pin(i);
                     self.old[i] = self.pos[i];
                     continue;
                 }
-                let moved = self.pos[i] - self.clear[i];
-                let len = moved.length();
-                if len > self.bound[i] {
-                    self.pos[i] = self.clear[i] + moved * (self.bound[i] / len);
-                }
+                self.pos[i] = self.clear[i] + self.allowed_move(i, self.pos[i] - self.clear[i]);
             }
         }
         self.accel = accel;
@@ -345,58 +398,122 @@ impl ClothSim {
         });
     }
 
-    /// Each vertex's allowed move this substep: [`BOUND_RELAX`] of the smallest
-    /// distance from any triangle it belongs to to any box. False when a triangle
-    /// already overlaps a box.
-    fn bound_moves(&mut self) -> bool {
-        self.bound.clear();
-        self.bound
-            .resize(self.pos.len(), QUERY_RADIUS * BOUND_RELAX);
-        let Some((all_lo, all_hi)) = self
-            .obstacles
-            .iter()
-            .map(|o| (o.min, o.max))
-            .reduce(|(lo, hi), (min, max)| (lo.min(min), hi.max(max)))
-        else {
-            return true;
-        };
-        for v in &mut self.bound {
-            *v = QUERY_RADIUS;
+    /// Surveys the clear positions a substep starts from: each triangle's separating
+    /// plane from every box near it, with how much of the gap its vertices may close,
+    /// and every contact the sheet could close (see [`find_contacts`]). False when a
+    /// triangle already overlaps a box, or touches one with no side to part along.
+    fn survey(&mut self) -> bool {
+        self.bounds.clear();
+        self.tri_bounds.clear();
+        self.tri_bounds.push(0);
+        self.contacts.clear();
+        let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+        for p in &self.pos {
+            lo = lo.min(*p);
+            hi = hi.max(*p);
         }
+        self.nearby.clear();
+        self.nearby
+            .extend((0..self.obstacles.len() as u32).filter(|&k| {
+                let o = &self.obstacles[k as usize];
+                closest::box_box_distance(lo, hi, o.min, o.max) < QUERY_RADIUS
+            }));
+        if self.nearby.is_empty() {
+            self.tri_bounds.resize(self.tris.len() + 1, 0);
+            return true;
+        }
+        let cols = self.cols();
         for t in 0..self.tris.len() {
             let [a, b, c] = self.tris[t];
             let (pa, pb, pc) = (self.pos[a], self.pos[b], self.pos[c]);
             let (lo, hi) = (pa.min(pb).min(pc), pa.max(pb).max(pc));
-            if closest::box_box_distance(lo, hi, all_lo, all_hi) >= QUERY_RADIUS {
-                continue;
-            }
-            let mut d = QUERY_RADIUS;
-            for o in &self.obstacles {
-                // The bounds' gap is a lower bound on the true distance, so it bounds
-                // safely on its own; the exact query is only worth it when the gap is
-                // too small to move by, as at a corner the triangle slants across.
-                let gap = closest::box_box_distance(lo, hi, o.min, o.max);
-                if gap >= d {
+            for &k in &self.nearby {
+                let o = &self.obstacles[k as usize];
+                let apart = (lo - o.max).max(Vec3::ZERO) - (o.min - hi).max(Vec3::ZERO);
+                let gap = apart.length();
+                if gap >= QUERY_RADIUS {
                     continue;
                 }
-                d = if gap >= CONTACT_RADIUS * 0.5 {
-                    gap
+                if gap < CONTACT_REACH {
+                    find_contacts(
+                        o,
+                        self.tris[t],
+                        self.holds[t],
+                        &self.pos,
+                        cols,
+                        &mut self.contacts,
+                    );
+                }
+                // Far enough out, the bounds' own separating direction parts them by at
+                // least their gap; closer, as where a triangle slants across a corner,
+                // only the exact nearest pair leaves room to move.
+                let (n, gap) = if gap >= CONTACT_RADIUS * 0.5 {
+                    (apart / gap, gap)
                 } else {
-                    d.min(closest::triangle_box_distance(pa, pb, pc, o.min, o.max))
+                    let nearest = closest::triangle_box_closest(pa, pb, pc, o.min, o.max)
+                        .map_or(Vec3::ZERO, |(x, y)| x - y);
+                    closest::triangle_box_separation(pa, pb, pc, o.min, o.max, nearest)
                 };
+                if gap <= 0.0 {
+                    if self.pinned(a) && self.pinned(b) && self.pinned(c) {
+                        continue;
+                    }
+                    return false;
+                }
+                self.bounds.push(Bound {
+                    n,
+                    slack: BOUND_RELAX * (gap - BOUND_SLACK).max(0.0),
+                });
             }
-            if d <= 0.0 && !(self.pinned(a) && self.pinned(b) && self.pinned(c)) {
-                return false;
-            }
-            let clear = (d - BOUND_SLACK).max(0.0);
-            for i in [a, b, c] {
-                self.bound[i] = self.bound[i].min(clear);
-            }
-        }
-        for b in &mut self.bound {
-            *b *= BOUND_RELAX;
+            self.tri_bounds.push(self.bounds.len() as u32);
         }
         true
+    }
+
+    fn bounds_around(&self, i: usize) -> impl Iterator<Item = &Bound> {
+        let tris = &self.vertex_tris[self.around[i] as usize..self.around[i + 1] as usize];
+        tris.iter().flat_map(|&t| {
+            let t = t as usize;
+            &self.bounds[self.tri_bounds[t] as usize..self.tri_bounds[t + 1] as usize]
+        })
+    }
+
+    /// `want` cut to what vertex `i`'s bounds allow: capped for boxes beyond the query,
+    /// slid along any plane it would close too far on, then shortened if sliding along
+    /// one plane still crosses another. Any move along or away from a box stays allowed,
+    /// so fabric that has come to rest against a block never sticks to it. Sliding never
+    /// lengthens a move (standing still is always allowed), so the cap still holds.
+    fn allowed_move(&self, i: usize, mut want: Vec3) -> Vec3 {
+        let cap = BOUND_RELAX * QUERY_RADIUS;
+        let len = want.length();
+        if len > cap {
+            want *= cap / len;
+        }
+        if self.bounds.is_empty() {
+            return want;
+        }
+        for _ in 0..2 {
+            let mut slid = false;
+            for b in self.bounds_around(i) {
+                let along = b.n.dot(want);
+                if along < -b.slack {
+                    want += b.n * (-b.slack - along);
+                    slid = true;
+                }
+            }
+            if !slid {
+                return want;
+            }
+        }
+        let keep = self.bounds_around(i).fold(1.0f32, |keep, b| {
+            let along = b.n.dot(want);
+            if along < -b.slack {
+                keep.min(b.slack / -along)
+            } else {
+                keep
+            }
+        });
+        want * keep
     }
 
     fn solve_links(&mut self) {
@@ -434,101 +551,35 @@ impl ClothSim {
         }
     }
 
-    /// Projects the sheet out to [`CONTACT_RADIUS`] from every box through the three
-    /// pairings: each correction runs along the separating direction of the closest
-    /// features, orthogonal to the face it acts on.
+    /// Projects each contact's point back out to [`CONTACT_RADIUS`] from its plane,
+    /// split over the points it blends by their weights.
     fn contact_boxes(&mut self) {
-        let r = CONTACT_RADIUS;
-        let weight = |sim: &Self, i: usize| if sim.pinned(i) { 0.0 } else { 1.0 };
-        for oi in 0..self.obstacles.len() {
-            let o = self.obstacles[oi];
-            for i in 0..self.pos.len() {
-                let p = self.pos[i];
-                if self.pinned(i) {
-                    continue;
-                }
-                let c = closest::closest_on_box(p, o.min, o.max);
-                let d = (p - c).length();
-                if d < r && d > 1e-6 {
-                    self.pos[i] = c + (p - c) * (r / d);
-                }
+        for k in 0..self.contacts.len() {
+            let Contact {
+                points,
+                weights,
+                n,
+                at,
+            } = self.contacts[k];
+            let p: Vec3 = (0..3).map(|j| self.pos[points[j]] * weights[j]).sum();
+            let gap = n.dot(p) - at;
+            if gap >= CONTACT_RADIUS {
+                continue;
             }
-            for t in 0..self.tris.len() {
-                let [a, b, c] = self.tris[t];
-                let (pa, pb, pc) = (self.pos[a], self.pos[b], self.pos[c]);
-                let (lo, hi) = (pa.min(pb).min(pc), pa.max(pb).max(pc));
-                if !within(lo, hi, o.min, o.max, r) {
-                    continue;
+            let w = std::array::from_fn::<f32, 3, _>(|j| {
+                if self.pinned(points[j]) {
+                    0.0
+                } else {
+                    weights[j]
                 }
-                if planes_near(lo, hi, &o, r) < 3 {
-                    continue;
-                }
-                let w = [weight(self, a), weight(self, b), weight(self, c)];
-                for q in o.corners {
-                    if !within(lo, hi, q, q, r) {
-                        continue;
-                    }
-                    let (pt, bary) = closest::closest_on_triangle(q, pa, pb, pc);
-                    let d = (pt - q).length();
-                    if d >= r || bary.iter().any(|&x| x <= 1e-4) {
-                        continue;
-                    }
-                    let n = if d > 1e-6 {
-                        (pt - q) / d
-                    } else {
-                        let n = (pb - pa).cross(pc - pa).normalize_or_zero();
-                        let was = (self.clear[a] + self.clear[b] + self.clear[c]) / 3.0;
-                        if n.dot(was - q) < 0.0 {
-                            -n
-                        } else {
-                            n
-                        }
-                    };
-                    let denom: f32 = (0..3).map(|k| w[k] * bary[k] * bary[k]).sum();
-                    if denom <= 1e-8 {
-                        continue;
-                    }
-                    let s = (r - d) / denom;
-                    for (k, i) in [a, b, c].into_iter().enumerate() {
-                        self.pos[i] += n * (s * w[k] * bary[k]);
-                    }
-                }
+            });
+            let denom: f32 = (0..3).map(|j| w[j] * weights[j]).sum();
+            if denom <= 1e-8 {
+                continue;
             }
-            for e in 0..self.edges.len() {
-                let [i, j] = self.edges[e];
-                let (p0, p1) = (self.pos[i], self.pos[j]);
-                if !within(p0.min(p1), p0.max(p1), o.min, o.max, r) {
-                    continue;
-                }
-                let (e_lo, e_hi) = (p0.min(p1), p0.max(p1));
-                if planes_near(e_lo, e_hi, &o, r) < 2 {
-                    continue;
-                }
-                for (k, (ea, eb)) in closest::BOX_EDGES.into_iter().enumerate() {
-                    let (b_lo, b_hi) = o.edge_bounds[k];
-                    if !within(e_lo, e_hi, b_lo, b_hi, r) {
-                        continue;
-                    }
-                    let (q0, q1) = (o.corners[ea], o.corners[eb]);
-                    let (s, t, x, y) = closest::closest_segments(p0, p1, q0, q1);
-                    let d = (x - y).length();
-                    if d >= r
-                        || d <= 1e-6
-                        || !(1e-4..1.0 - 1e-4).contains(&s)
-                        || !(1e-4..1.0 - 1e-4).contains(&t)
-                    {
-                        continue;
-                    }
-                    let n = (x - y) / d;
-                    let (wi, wj) = (weight(self, i) * (1.0 - s), weight(self, j) * s);
-                    let denom = wi * (1.0 - s) + wj * s;
-                    if denom <= 1e-8 {
-                        continue;
-                    }
-                    let k = (r - d) / denom;
-                    self.pos[i] += n * (k * wi);
-                    self.pos[j] += n * (k * wj);
-                }
+            let push = (CONTACT_RADIUS - gap) / denom;
+            for j in 0..3 {
+                self.pos[points[j]] += n * (push * w[j]);
             }
         }
     }
@@ -652,6 +703,135 @@ fn edges(cols: usize, rows: usize) -> impl Iterator<Item = [usize; 2]> {
             [right, down, diag].into_iter().flatten()
         })
     })
+}
+
+/// Each vertex's triangles, flattened: `(around, list)`, vertex `i`'s being
+/// `list[around[i]..around[i + 1]]`.
+fn triangles_around(tris: &[[usize; 3]], points: usize) -> (Box<[u32]>, Box<[u32]>) {
+    let mut around = vec![0u32; points + 1];
+    for &i in tris.iter().flatten() {
+        around[i + 1] += 1;
+    }
+    for i in 0..points {
+        around[i + 1] += around[i];
+    }
+    let mut fill = around.clone();
+    let mut list = vec![0u32; tris.len() * 3];
+    for (t, tri) in tris.iter().enumerate() {
+        for &i in tri {
+            list[fill[i] as usize] = t as u32;
+            fill[i] += 1;
+        }
+    }
+    (around.into(), list.into())
+}
+
+/// Which of each triangle's vertices (bits 0..3) and edges (bits 3..6: `ab`, `bc`,
+/// `ca`) no earlier triangle holds. A feature within reach of a box puts every triangle
+/// holding it within reach too, so contacts found only through the first holder are
+/// found once each.
+fn first_holds(tris: &[[usize; 3]], points: usize) -> Box<[u8]> {
+    let mut seen = vec![false; points];
+    let mut seen_edges = FxHashSet::default();
+    tris.iter()
+        .map(|&[a, b, c]| {
+            let mut holds = 0;
+            for (k, i) in [a, b, c].into_iter().enumerate() {
+                if !std::mem::replace(&mut seen[i], true) {
+                    holds |= 1 << k;
+                }
+            }
+            for (k, (i, j)) in [(a, b), (b, c), (c, a)].into_iter().enumerate() {
+                if seen_edges.insert((i.min(j), i.max(j))) {
+                    holds |= 8 << k;
+                }
+            }
+            holds
+        })
+        .collect()
+}
+
+/// Every contact triangle `tri` brings within [`CONTACT_REACH`] of box `o` on the clear
+/// positions, through the pairings two convex shapes meet at: cloth vertex vs box, box
+/// corner vs cloth triangle, box edge or corner vs cloth edge; vertices and edges only
+/// where `holds` says this triangle holds them first. A pair counts only where the box's
+/// nearest point to the cloth is that feature, so each contact's plane supports the
+/// whole box, and knows the side the cloth is on even after the links drag a point into
+/// a thin post.
+fn find_contacts(
+    o: &Obstacle,
+    tri: [usize; 3],
+    holds: u8,
+    pos: &[Vec3],
+    cols: usize,
+    out: &mut Vec<Contact>,
+) {
+    let reach = CONTACT_REACH;
+    let p = tri.map(|i| pos[i]);
+    for k in 0..3 {
+        if holds & (1 << k) == 0 || tri[k].is_multiple_of(cols) {
+            continue;
+        }
+        let q = closest::closest_on_box(p[k], o.min, o.max);
+        let d = (p[k] - q).length();
+        if d < reach && d > 1e-6 {
+            out.push(Contact::new(
+                [tri[k]; 3],
+                [1.0, 0.0, 0.0],
+                (p[k] - q) / d,
+                q,
+            ));
+        }
+    }
+    let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+    if planes_near(lo, hi, o, reach) >= 3 {
+        for q in o.corners {
+            if !within(lo, hi, q, q, reach) {
+                continue;
+            }
+            let (pt, bary) = closest::closest_on_triangle(q, p[0], p[1], p[2]);
+            let d = (pt - q).length();
+            if d >= reach
+                || d <= 1e-6
+                || bary.iter().any(|&x| x <= 1e-4)
+                || pt.clamp(o.min, o.max) != q
+            {
+                continue;
+            }
+            out.push(Contact::new(tri, bary, (pt - q) / d, q));
+        }
+    }
+    for (k, (i, j)) in [(0, 1), (1, 2), (2, 0)].into_iter().enumerate() {
+        if holds & (8 << k) == 0 {
+            continue;
+        }
+        let (p0, p1) = (p[i], p[j]);
+        let (lo, hi) = (p0.min(p1), p0.max(p1));
+        if !within(lo, hi, o.min, o.max, reach) || planes_near(lo, hi, o, reach) < 2 {
+            continue;
+        }
+        for (e, (ea, eb)) in closest::BOX_EDGES.into_iter().enumerate() {
+            let (b_lo, b_hi) = o.edge_bounds[e];
+            if !within(lo, hi, b_lo, b_hi, reach) {
+                continue;
+            }
+            let (s, _, x, y) = closest::closest_segments(p0, p1, o.corners[ea], o.corners[eb]);
+            let d = (x - y).length();
+            if d >= reach
+                || d <= 1e-6
+                || !(1e-4..1.0 - 1e-4).contains(&s)
+                || (x.clamp(o.min, o.max) - y).length() > 1e-5
+            {
+                continue;
+            }
+            out.push(Contact::new(
+                [tri[i], tri[j], tri[j]],
+                [1.0 - s, s, 0.0],
+                (x - y) / d,
+                y,
+            ));
+        }
+    }
 }
 
 /// Whether two boxes come within `r` of each other along every axis: a cheap superset

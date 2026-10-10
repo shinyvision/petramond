@@ -8,14 +8,18 @@ const FLOOR: Aabb = Aabb {
 };
 
 fn flag() -> &'static ClothDef {
+    sheet([1.5, 1.0], [12, 8], [0.5, 1.0, 0.5])
+}
+
+fn sheet(size: [f32; 2], segments: [u8; 2], anchor: [f32; 3]) -> &'static ClothDef {
     Box::leak(Box::new(ClothDef {
         id: 0,
         key: "test:flag",
         tile: Tile::from_name("grass_top").unwrap(),
         uv: [0.0, 0.0, 1.0, 1.0],
-        size: [1.5, 1.0],
-        segments: [12, 8],
-        anchor: [0.5, 1.0, 0.5],
+        size,
+        segments,
+        anchor,
         stiffness: 0.9,
         damping: 0.985,
         wind: 1.0,
@@ -186,6 +190,66 @@ fn the_far_pose_matches_where_the_sim_settles_so_the_handover_does_not_pop() {
         assert!(
             (settled - posed).length() < 0.2,
             "wind {wind:?}: sim settles its free edge at {settled}, far pose at {posed}"
+        );
+    }
+}
+
+#[test]
+fn a_flag_shoved_around_thin_posts_never_stays_snagged_on_them() {
+    // The flags pack's 2px post, its flag block's post under a finial cap, and its flag.
+    const POST: Aabb = Aabb {
+        min: [0.4375, 0.0, 0.4375],
+        max: [0.5625, 1.0, 0.5625],
+    };
+    const FLAG_POST: [Aabb; 2] = [
+        Aabb {
+            min: [0.4375, 0.0, 0.4375],
+            max: [0.5625, 0.9375, 0.5625],
+        },
+        Aabb {
+            min: [0.375, 0.9375, 0.375],
+            max: [0.625, 1.0, 0.625],
+        },
+    ];
+    let def = sheet([1.5, 1.125], [12, 9], [0.5, 0.9375, 0.5]);
+    let posts = [(0, 0), (-2, 0), (-1, 1), (-1, -1), (-2, 1), (1, -1), (0, 2)];
+    let boxes = move |c: IVec3| -> &'static [Aabb] {
+        if !posts.contains(&(c.x, c.z)) || !(-4..=0).contains(&c.y) {
+            &[]
+        } else if c.y == 0 {
+            &FLAG_POST
+        } else {
+            std::slice::from_ref(&POST)
+        }
+    };
+    // Paths that once pinned fabric against a post until it could never move again.
+    for phase in [4.62f32, 5.39, 6.93] {
+        let mut sim = ClothSim::new(IVec3::ZERO, def, DEFAULT_WIND, 0.0);
+        run(&mut sim, 3.0, DEFAULT_WIND, &boxes, &[]);
+        let rest: Vec<Vec3> = sim.points(1.0).collect();
+        let mut t = 3.0;
+        for _ in 0..600 {
+            let s = t - 3.0;
+            let feet = Vec3::new(
+                -0.7 + 1.3 * (s * 0.9 + phase).sin(),
+                -1.2,
+                0.5 + 1.3 * (s * 1.3 + phase * 1.7).cos(),
+            );
+            sim.step(t, DEFAULT_WIND, &boxes, &[(feet, 1.8, 0.36)]);
+            t += STEP;
+        }
+        for _ in 0..600 {
+            sim.step(t, DEFAULT_WIND, &boxes, &[]);
+            t += STEP;
+        }
+        let snag = rest
+            .iter()
+            .zip(sim.points(1.0))
+            .map(|(a, b)| (*a - b).length())
+            .fold(0.0f32, f32::max);
+        assert!(
+            snag < 0.5,
+            "path {phase}: a point still hangs {snag} from where the flag flew before"
         );
     }
 }

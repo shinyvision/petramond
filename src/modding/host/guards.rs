@@ -46,6 +46,26 @@ pub(in crate::modding) fn key_owned_by_namespace(namespace: &str, key: &str) -> 
         .is_some_and(|name| !name.is_empty())
 }
 
+pub(in crate::modding) fn event_key_guard(
+    call: &str,
+    mod_id: &str,
+    key: &str,
+    len: usize,
+) -> Option<HostRet> {
+    if !key_owned_by_namespace(mod_id, key) {
+        return Some(HostRet::error(
+            ErrorCode::Forbidden,
+            format!("{call} key '{key}' is not in mod '{mod_id}'s namespace"),
+        ));
+    }
+    (len > EVENT_MAX_DATA_BYTES).then(|| {
+        HostRet::error(
+            ErrorCode::LimitExceeded,
+            format!("{call} payload is {len} bytes; the limit is {EVENT_MAX_DATA_BYTES}"),
+        )
+    })
+}
+
 pub(super) fn public_write_key_guard(mod_id: &str, key: &str) -> Option<HostRet> {
     let mod_owned = key_owned_by_namespace(mod_id, key);
     let engine_owned = key_owned_by_namespace(petramond_world::registry::ENGINE_NAMESPACE, key);

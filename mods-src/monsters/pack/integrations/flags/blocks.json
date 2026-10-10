@@ -3,8 +3,8 @@
     {
       "block": "monsters:skull_flag",
       "shape": {"boxes": [
-        {"from": [7, 0, 7], "to": [9, 15, 9], "uv": {"sides": [5, 1, 7, 16]}},
-        {"from": [6, 15, 6], "to": [10, 16, 10]}
+        {"from": [7, 0, 7], "to": [9, 15, 9], "uv": {"sides": [5, 1, 7, 16]}, "dyeable": false},
+        {"from": [6, 15, 6], "to": [10, 16, 10], "dyeable": false}
       ]},
       "flags": ["solid", "transparent"],
       "tags": ["no_grass_decay"],

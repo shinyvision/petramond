@@ -18,3 +18,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 pack-check = { workspace = true }
+serde_json = { workspace = true }

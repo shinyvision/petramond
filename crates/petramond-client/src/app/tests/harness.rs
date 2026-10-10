@@ -58,6 +58,22 @@ impl TestApp {
         ));
     }
 
+    pub(super) fn open_server_menu_for_test(
+        &mut self,
+        kind: petramond_world::gui_state::GuiKind,
+        anchor: petramond::menu::MenuAnchor,
+    ) {
+        self.server
+            .open_registered_gui_screen_for(0, kind, Some(anchor));
+        self.server.sessions_mut()[0]
+            .replication_mut()
+            .request_open_gui = Some((kind, Some(anchor)));
+    }
+
+    pub(super) fn server_world_mut(&mut self) -> &mut petramond::world::ServerWorld {
+        self.server.world_mut()
+    }
+
     pub(super) fn tick_server(&mut self) {
         self.server.game_tick_step(&mut Default::default());
     }

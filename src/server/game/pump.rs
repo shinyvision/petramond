@@ -263,6 +263,7 @@ impl ServerGame {
                     self.world.set_render_dist((chunks as i32).clamp(4, 64));
                 }
             }
+            ClientToServer::ModEvent { key, data } => self.accept_mod_event(s, key, data),
             ClientToServer::KeepAlive => {}
             ClientToServer::Hello { .. }
             | ClientToServer::KeyExchange { .. }
@@ -272,6 +273,29 @@ impl ServerGame {
                 log::warn!("ignoring handshake/lifecycle message on a joined session");
             }
         }
+    }
+
+    /// Queues a client mod event for its owning mod. The budget is spent before the checks, so
+    /// a client sending garbage can make this log no faster than it could send valid events.
+    fn accept_mod_event(&mut self, s: usize, key: String, data: Vec<u8>) {
+        if !self.sessions[s]
+            .input
+            .allow_mod_event(std::time::Instant::now())
+        {
+            return;
+        }
+        if data.len() > mod_api::EVENT_MAX_DATA_BYTES || !self.mods.host().owns_key(&key) {
+            let shown: String = key.chars().take(64).flat_map(char::escape_debug).collect();
+            log::debug!(
+                "dropping client mod event '{shown}' ({} bytes): oversized, or no mod of this \
+                 session owns the key",
+                data.len()
+            );
+            return;
+        }
+        let player = self.sessions[s].id;
+        self.mods
+            .emit(crate::events::PostEvent::ClientEvent { player, key, data });
     }
 
     fn apply_player_update(&mut self, s: usize, u: &PlayerUpdate) {

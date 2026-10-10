@@ -20,6 +20,13 @@
       "cells": [3, 2, 3],
       "orientation": "centered",
       "fit": "centered"
+    },
+    {
+      "key": "furniture:painting_table",
+      "model_file": "models/painting_table.bbmodel",
+      "cells": [2, 2, 1],
+      "orientation": "left_to_right",
+      "fit": "native"
     }
   ]
 }

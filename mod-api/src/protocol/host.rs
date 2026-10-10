@@ -458,6 +458,7 @@ host_rets! {
     /// Heights as little-endian `i32`s, row by row: answers `TerrainHeightsIn`.
     TerrainHeightGrid(#[serde(with = "serde_bytes")] Vec<u8>),
     LeafMask(crate::LeafMask),
+    ClientMenu(Option<crate::ClientMenuData>),
     }
 }
 

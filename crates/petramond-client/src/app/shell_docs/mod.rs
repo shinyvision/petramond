@@ -316,6 +316,7 @@ impl App {
                 }
             }
         }
+        self.overlay_co_driven_view();
         if let Some(Session { game, .. }) = self.session.as_ref() {
             let hover_slot = self.ui.out().hover_slot.clone();
             let images =
@@ -329,7 +330,11 @@ impl App {
         }
         self.ui.frame(kind, screen, now, Some([0.0, 0.0, 0.0, 0.6]));
         let modifier_shift = self.controls.modifiers.shift;
-        for ev in self.ui.take_events() {
+        let events = self.ui.take_events();
+        if let Some(kind_key) = self.co_driven_menu() {
+            self.forward_client_doc_events(kind, kind_key, &events);
+        }
+        for ev in events {
             if is_widget_activation(&ev) && !is_secondary_activation(&ev) {
                 self.sound.play_interface(Sound::UiClick);
             }

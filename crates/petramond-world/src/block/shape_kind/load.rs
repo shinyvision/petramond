@@ -158,7 +158,7 @@ fn box_list_key(boxes: &[BoxDef]) -> String {
                 format!("@{}|{}", q.join(","), o.join(","))
             });
             format!(
-                "{},{},{}-{},{},{}:{faces}{}{}{}{}{tiles}{uv}{pose}",
+                "{},{},{}-{},{},{}:{faces}{}{}{}{}{}{tiles}{uv}{pose}",
                 t(b.aabb.min[0]),
                 t(b.aabb.min[1]),
                 t(b.aabb.min[2]),
@@ -168,7 +168,8 @@ fn box_list_key(boxes: &[BoxDef]) -> String {
                 if b.collides { "c" } else { "" },
                 if b.occludes { "o" } else { "" },
                 if b.double_sided { "d" } else { "" },
-                if b.casts_ao { "" } else { "n" }
+                if b.casts_ao { "" } else { "n" },
+                if b.dyeable { "" } else { "u" }
             )
         })
         .collect::<Vec<_>>()
@@ -275,6 +276,8 @@ pub struct RawBox {
     pub double_sided: bool,
     #[serde(default = "yes")]
     pub casts_ao: bool,
+    #[serde(default = "yes")]
+    pub dyeable: bool,
 }
 
 fn yes() -> bool {
@@ -417,6 +420,7 @@ impl RawBox {
             collides: self.collides,
             double_sided: self.double_sided,
             casts_ao: self.casts_ao,
+            dyeable: self.dyeable,
             art_turns: [0; 6],
             uv,
             uv_turns,

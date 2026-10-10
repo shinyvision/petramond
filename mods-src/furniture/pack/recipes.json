@@ -109,6 +109,26 @@
       "result": { "item": "furniture:lantern", "count": 1 }
     },
     { "patch": "petramond:wool_stairs", "data": { "petramond:inherit": ["petramond:tint"] } },
-    { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } }
+    { "patch": "petramond:wool_slab", "data": { "petramond:inherit": ["petramond:tint"] } },
+    {
+      "type": "crafting",
+      "recipe": "furniture:painting_table",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        { "tag": "petramond:planks", "count": 4 },
+        { "item": "petramond:stick", "count": 4 },
+        { "item": "petramond:poppy", "count": 1 },
+        { "item": "petramond:dandelion", "count": 1 },
+        { "item": "petramond:cornflower", "count": 1 }
+      ],
+      "result": { "item": "furniture:painting_table", "count": 1 },
+      "data": {
+        "petramond:unlock_needs": [
+          { "tag": "petramond:planks" },
+          { "item": "petramond:stick" },
+          { "tag": "petramond:flowers" }
+        ]
+      }
+    }
   ]
 }

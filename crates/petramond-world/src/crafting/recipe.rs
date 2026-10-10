@@ -68,6 +68,7 @@ pub struct CraftingRecipe {
     data: Vec<(String, String)>,
     inherit: Vec<String>,
     unlock_on: crate::item::ItemSet,
+    unlock_needs: Vec<IngredientSelector>,
 }
 
 #[derive(Deserialize)]
@@ -77,6 +78,15 @@ struct UnlockOnData {
     items: Vec<String>,
     #[serde(default)]
     tags: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UnlockNeedData {
+    #[serde(default)]
+    item: Option<String>,
+    #[serde(default)]
+    tag: Option<String>,
 }
 
 impl CraftingRecipe {
@@ -95,6 +105,7 @@ impl CraftingRecipe {
             data: Vec::new(),
             inherit: Vec::new(),
             unlock_on: crate::item::ItemSet::EMPTY,
+            unlock_needs: Vec::new(),
         }
     }
 
@@ -182,6 +193,7 @@ impl CraftingRecipe {
             data: Vec::new(),
             inherit: Vec::new(),
             unlock_on: crate::item::ItemSet::EMPTY,
+            unlock_needs: Vec::new(),
         })
     }
 
@@ -216,6 +228,12 @@ impl CraftingRecipe {
         &self.unlock_on
     }
 
+    /// What the default unlock gate waits for instead of the ingredients
+    /// (`petramond:unlock_needs`): each entry obtained, a tag by any member.
+    pub fn unlock_needs(&self) -> Option<&[IngredientSelector]> {
+        (!self.unlock_needs.is_empty()).then_some(self.unlock_needs.as_slice())
+    }
+
     pub fn row_enabled(data: &[(String, String)]) -> Result<bool, String> {
         crate::registry::row_enabled(data)
     }
@@ -230,39 +248,12 @@ impl CraftingRecipe {
                 keys
             }
         };
-        let mut unlock_on = crate::item::ItemSet::EMPTY;
-        if let Some((_, text)) = data.iter().find(|(k, _)| k == "petramond:unlock_on") {
-            let triggers: UnlockOnData = serde_json::from_str(text)
-                .map_err(|e| format!("malformed 'petramond:unlock_on' data: {e}"))?;
-            if triggers.items.is_empty() && triggers.tags.is_empty() {
-                return Err("'petramond:unlock_on' must name an item or tag".into());
-            }
-            for key in triggers.items {
-                let item = item_by_key(&key)
-                    .filter(|item| *item != ItemType::Air)
-                    .ok_or_else(|| format!("unknown unlock item '{key}'"))?;
-                unlock_on.insert(item);
-            }
-            for key in triggers.tags {
-                let tag =
-                    ItemTag::lookup(&key).ok_or_else(|| format!("unknown unlock tag '{key}'"))?;
-                let members = ItemType::all()
-                    .iter()
-                    .copied()
-                    .filter(|item| item.has_tag(tag));
-                let mut found = false;
-                for item in members {
-                    unlock_on.insert(item);
-                    found = true;
-                }
-                if !found {
-                    return Err(format!("unlock tag '{key}' has no items"));
-                }
-            }
-        }
+        let unlock_on = parse_unlock_on(&data)?;
+        let unlock_needs = parse_unlock_needs(&data)?;
         self.data = data;
         self.inherit = inherit;
         self.unlock_on = unlock_on;
+        self.unlock_needs = unlock_needs;
         Ok(())
     }
 
@@ -500,6 +491,65 @@ impl Recipes {
 
 fn item_by_key(key: &str) -> Option<ItemType> {
     ItemType::by_key(key)
+}
+
+fn parse_unlock_on(data: &[(String, String)]) -> Result<crate::item::ItemSet, String> {
+    let mut unlock_on = crate::item::ItemSet::EMPTY;
+    let Some((_, text)) = data.iter().find(|(k, _)| k == "petramond:unlock_on") else {
+        return Ok(unlock_on);
+    };
+    let triggers: UnlockOnData = serde_json::from_str(text)
+        .map_err(|e| format!("malformed 'petramond:unlock_on' data: {e}"))?;
+    if triggers.items.is_empty() && triggers.tags.is_empty() {
+        return Err("'petramond:unlock_on' must name an item or tag".into());
+    }
+    for key in triggers.items {
+        unlock_on.insert(unlock_item(&key)?);
+    }
+    for key in triggers.tags {
+        let tag = unlock_tag(&key)?;
+        for item in ItemType::all()
+            .iter()
+            .copied()
+            .filter(|item| item.has_tag(tag))
+        {
+            unlock_on.insert(item);
+        }
+    }
+    Ok(unlock_on)
+}
+
+fn parse_unlock_needs(data: &[(String, String)]) -> Result<Vec<IngredientSelector>, String> {
+    let Some((_, text)) = data.iter().find(|(k, _)| k == "petramond:unlock_needs") else {
+        return Ok(Vec::new());
+    };
+    let needs: Vec<UnlockNeedData> = serde_json::from_str(text)
+        .map_err(|e| format!("malformed 'petramond:unlock_needs' data: {e}"))?;
+    if needs.is_empty() {
+        return Err("'petramond:unlock_needs' must name an item or tag".into());
+    }
+    needs
+        .into_iter()
+        .map(|need| match (need.item, need.tag) {
+            (Some(key), None) => unlock_item(&key).map(IngredientSelector::Item),
+            (None, Some(key)) => unlock_tag(&key).map(IngredientSelector::Tag),
+            _ => Err("each 'petramond:unlock_needs' entry names one 'item' or one 'tag'".into()),
+        })
+        .collect()
+}
+
+fn unlock_item(key: &str) -> Result<ItemType, String> {
+    item_by_key(key)
+        .filter(|item| *item != ItemType::Air)
+        .ok_or_else(|| format!("unknown unlock item '{key}'"))
+}
+
+fn unlock_tag(key: &str) -> Result<ItemTag, String> {
+    let tag = ItemTag::lookup(key).ok_or_else(|| format!("unknown unlock tag '{key}'"))?;
+    if !ItemType::all().iter().any(|item| item.has_tag(tag)) {
+        return Err(format!("unlock tag '{key}' has no items"));
+    }
+    Ok(tag)
 }
 
 fn public_tag_key(tag: ItemTag) -> String {

@@ -103,3 +103,17 @@ fn hover_and_list_ranges_are_reported_once_per_change() {
         ]
     );
 }
+
+#[test]
+fn an_engine_menu_is_neither_co_driven_nor_readable_by_mods() {
+    let mut app = app();
+    app.update_frame(SCREEN);
+    app.handle_control(petramond_input::controls::Control::ToggleInventory, true);
+    app.update_frame(SCREEN);
+    assert!(app.screen.inventory_open());
+    assert_eq!(app.co_driven_menu(), None);
+    assert_eq!(
+        call(&mut app, HostCall::from(mod_api::calls::ClientMenu)),
+        HostRet::ClientMenu(None)
+    );
+}

@@ -19,7 +19,7 @@ use mod_api::{
 };
 use petramond_world::item::ItemType;
 
-use crate::modding::host::guards::{key_owned_by_namespace, KV_MAX_KEY_BYTES};
+use crate::modding::host::guards::{event_key_guard, key_owned_by_namespace, KV_MAX_KEY_BYTES};
 use crate::modding::host::ModStoreData;
 
 use super::scope as client_scope;
@@ -27,9 +27,9 @@ use super::state::{ClientCommand, ClientImageData, ClientOverlayRegistration, Cl
 use validate::{
     client_canvas_element_image_key, client_canvas_element_valid, valid_client_key_id,
     CLIENT_BLOCKS_QUERY_MAX, CLIENT_CANVAS_MAX, CLIENT_CANVAS_SIDE_MAX, CLIENT_COMMAND_MAX,
-    CLIENT_IMAGE_SIDE_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX, CLIENT_OVERLAY_MAX,
-    CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX, CLIENT_TEXT_SCALE_MAX,
-    CLIENT_WIND_MAX,
+    CLIENT_EVENT_OUTBOX_MAX, CLIENT_IMAGE_SIDE_MAX, CLIENT_OVERLAY_DISPLAY_SIDE_MAX,
+    CLIENT_OVERLAY_MAX, CLIENT_SURFACE_QUERY_MAX, CLIENT_TEXT_BYTES_MAX, CLIENT_TEXT_RUN_MAX,
+    CLIENT_TEXT_SCALE_MAX, CLIENT_WIND_MAX,
 };
 
 fn client_store(data: &mut ModStoreData) -> Result<&mut ClientStoreData, HostRet> {
@@ -691,6 +691,26 @@ pub(in crate::modding) fn handle_client_call(data: &mut ModStoreData, call: Clie
         ClientCall::ClientWorldMarksSet { set, marks } => {
             world_marks::set(client, &mod_id, set, marks)
         }
+        ClientCall::ClientMenu => HostRet::ClientMenu(client.presented.lock().menu.clone()),
+        ClientCall::ClientEmitEvent { key, data } => {
+            if let Some(bug) = event_key_guard("ClientEmitEvent", &mod_id, &key, data.len()) {
+                return bug;
+            }
+            let heard = match client.presented.lock().context {
+                mod_api::ClientContext::Local { .. } | mod_api::ClientContext::Remote { .. } => {
+                    true
+                }
+                mod_api::ClientContext::Shell | mod_api::ClientContext::Presentation { .. } => {
+                    false
+                }
+            };
+            if !heard || client.outbound_events.len() >= CLIENT_EVENT_OUTBOX_MAX {
+                return HostRet::Bool(false);
+            }
+            client.outbound_events.push((key, data));
+            HostRet::Bool(true)
+        }
+        ClientCall::ClientTilePixels { tile } => facts::tile_pixels(&tile),
     }
 }
 

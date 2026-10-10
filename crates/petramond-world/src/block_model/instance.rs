@@ -2,7 +2,7 @@ mod template;
 use template::bake_cell_template;
 pub use template::model_face_tris;
 
-use glam::{Mat4, Vec3};
+use glam::{IVec3, Mat4, Vec3};
 
 use crate::bbmodel::{euler_quat, face_corners};
 use crate::block::Aabb;
@@ -146,6 +146,17 @@ impl ModelInstance {
         let idx = self.cells.iter().position(|c| c.offset == offset)?;
         let tmpl = &self.oriented_contact[facing.to_u8() as usize][idx];
         (!tmpl.pieces.is_empty()).then_some(tmpl)
+    }
+
+    /// Whole cells the geometry reaches past the footprint, on its farthest axis.
+    fn overhang_cells(&self) -> i32 {
+        (0..3)
+            .map(|a| {
+                let past = (-self.bounds_min[a]).max(self.bounds_max[a] - self.footprint[a] as f32);
+                (past - 1e-4).ceil().max(0.0) as i32
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     fn build(kind: BlockModelKind) -> Self {
@@ -482,32 +493,59 @@ fn bake_contact_piece(
     verts
 }
 
-static INSTANCES: crate::content::Slot<Vec<ModelInstance>> = crate::content::Slot::new(
+struct Instances {
+    models: Vec<ModelInstance>,
+    overhang_sources: Vec<IVec3>,
+}
+
+static INSTANCES: crate::content::Slot<Instances> = crate::content::Slot::new(
     "block model instances",
     &[crate::content::stage::MODELS],
     build_instances,
 );
 
-fn build_instances(
-    registry: &crate::content::ContentRegistry,
-) -> Result<Vec<ModelInstance>, String> {
+fn build_instances(registry: &crate::content::ContentRegistry) -> Result<Instances, String> {
     use rayon::prelude::*;
     let content = crate::content::Content::current();
-    if !std::ptr::eq(content.registry(), registry) {
-        return Ok(all().iter().map(|&k| ModelInstance::build(k)).collect());
-    }
-    Ok(all()
-        .par_iter()
-        .map(|&k| {
-            let _pin = crate::content::pin(content);
-            ModelInstance::build(k)
+    let models: Vec<ModelInstance> = if !std::ptr::eq(content.registry(), registry) {
+        all().iter().map(|&k| ModelInstance::build(k)).collect()
+    } else {
+        all()
+            .par_iter()
+            .map(|&k| {
+                let _pin = crate::content::pin(content);
+                ModelInstance::build(k)
+            })
+            .collect()
+    };
+    let reach = models
+        .iter()
+        .map(ModelInstance::overhang_cells)
+        .max()
+        .unwrap_or(0);
+    let mut overhang_sources: Vec<IVec3> = (-reach..=reach)
+        .flat_map(|z| {
+            (-reach..=reach).flat_map(move |y| (-reach..=reach).map(move |x| IVec3::new(x, y, z)))
         })
-        .collect())
+        .filter(|&o| o != IVec3::ZERO)
+        .collect();
+    overhang_sources.sort_by_key(|o| o.abs().element_sum());
+    Ok(Instances {
+        models,
+        overhang_sources,
+    })
 }
 
 #[inline]
 pub fn instance(kind: BlockModelKind) -> &'static ModelInstance {
-    &INSTANCES.current()[kind.0 as usize]
+    &INSTANCES.current().models[kind.0 as usize]
+}
+
+/// Offsets, nearest first, of every cell whose model could overhang into a
+/// given cell. Empty when no loaded model reaches past its footprint.
+#[inline]
+pub fn overhang_sources() -> &'static [IVec3] {
+    &INSTANCES.current().overhang_sources
 }
 
 #[inline]

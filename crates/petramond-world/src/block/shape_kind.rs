@@ -235,6 +235,7 @@ pub struct BoxDef {
     pub collides: bool,
     pub double_sided: bool,
     pub casts_ao: bool,
+    pub dyeable: bool,
     /// Per face: how many quarter turns the FRAME this face's art was authored
     /// in sits ahead of the box's own frame. `0` everywhere for an authored
     /// box (and for every turn of one, since a turn moves box and art

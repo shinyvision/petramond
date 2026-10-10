@@ -121,6 +121,7 @@ pub(in crate::modding) struct ClientStoreData {
     pub presented: super::presented::PresentedDesk,
     pub world_marks: std::collections::BTreeMap<String, Vec<mod_api::ClientWorldMark>>,
     pub commands: Vec<ClientCommand>,
+    pub outbound_events: Vec<(String, Vec<u8>)>,
 }
 
 impl ClientStoreData {
@@ -152,6 +153,7 @@ impl ClientStoreData {
             presented: Default::default(),
             world_marks: Default::default(),
             commands: Vec::new(),
+            outbound_events: Vec::new(),
         }
     }
 }

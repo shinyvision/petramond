@@ -7,7 +7,7 @@ const MAX_NAME_BYTES: usize = 256;
 const MAX_STATE_IDS: usize = 4;
 const MAX_KV_ENTRIES: usize = 256;
 const MAX_KV_VALUE_BYTES: usize = 65_536;
-const MAX_STACK_DATA_BYTES: usize = 1024;
+const MAX_STACK_DATA_BYTES: usize = petramond_world::item::variant::MAX_BLOB_BYTES;
 const MAX_NAMES_PER_ENTRY: usize =
     1 + MAX_STATE_IDS + MAX_KV_ENTRIES + petramond_world::container::MAX_CONTAINER_SLOTS;
 

@@ -153,8 +153,8 @@ use mod_api::{EventFilter, EventKind, EventPayload, GuestCall, GuestRet, Hostile
 
 use crate::events::tick::TickEvents;
 use crate::events::{
-    EventBus, MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, Outcome, SimCtx,
-    TickSystems,
+    EventBus, MobDamageFeedback, MobDamageFeedbackComponent, MobDamageSound, Outcome, PostEvent,
+    SimCtx, TickSystems,
 };
 use crate::mob::{Mob, MobCategory};
 use crate::player::BonePose;
@@ -254,6 +254,13 @@ impl ModHost {
         self.health.disabled_count()
     }
 
+    /// Whether `key` is a well-formed key in the namespace of one of this session's mods.
+    pub fn owns_key(&self, key: &str) -> bool {
+        self.metas
+            .iter()
+            .any(|meta| host::guards::key_owned_by_namespace(&meta.id, key))
+    }
+
     /// Test helper: one WAT guest under `mod_id`, and its `mod_dispatch` answers `GuestRet::Unit`
     /// to everything. Lets us drive dispatch plumbing like the GUI click drain without a compiled
     /// mod.
@@ -288,11 +295,11 @@ impl ModHost {
     }
 
     #[cfg(test)]
-    fn from_instances(instances: Vec<ModInstance>) -> Self {
+    fn from_instances(mut instances: Vec<ModInstance>) -> Self {
         let metas = instances
-            .iter()
-            .map(|_| ModMeta {
-                id: "hostile".into(),
+            .iter_mut()
+            .map(|inst| ModMeta {
+                id: inst.store_data_mut().mod_id.clone(),
                 module: None,
             })
             .collect();
@@ -403,7 +410,7 @@ impl ModHost {
                         ),
                     },
                     other => {
-                        apply_registration(shared, other, bus, systems);
+                        apply_registration(shared, &meta.id, other, bus, systems);
                     }
                 }
             }
@@ -682,6 +689,7 @@ fn session_wasm_mods(
 
 fn apply_registration(
     shared: &SharedInstance,
+    mod_id: &str,
     registration: Registration,
     bus: &mut EventBus,
     systems: &mut TickSystems,
@@ -704,7 +712,7 @@ fn apply_registration(
             priority,
             handler_id,
             filter,
-        } => wire_event_handler(shared, event, priority, handler_id, filter, bus),
+        } => wire_event_handler(shared, mod_id, event, priority, handler_id, filter, bus),
         Registration::WorldgenFeature { .. }
         | Registration::StageReplacement { .. }
         | Registration::Generator { .. }
@@ -741,8 +749,17 @@ fn call_event(
     }
 }
 
+/// A client event carries a client's untrusted bytes, so only the mod its key names hears it.
+fn addressed_elsewhere(mod_id: &str, ev: &PostEvent) -> bool {
+    matches!(
+        ev,
+        PostEvent::ClientEvent { key, .. } if !host::guards::key_owned_by_namespace(mod_id, key)
+    )
+}
+
 fn wire_event_handler(
     shared: &SharedInstance,
+    mod_id: &str,
     event: EventKind,
     priority: i32,
     handler_id: u32,
@@ -751,7 +768,11 @@ fn wire_event_handler(
 ) {
     if let Some(kind) = convert::post_kind(event) {
         let inst = Arc::clone(shared);
+        let mod_id = mod_id.to_owned();
         bus.on_post(kind, priority, move |ctx, ev| {
+            if addressed_elsewhere(&mod_id, ev) {
+                return;
+            }
             call_event(&inst, &filter, ctx, handler_id, convert::post_event(ev));
         });
         return;

@@ -66,6 +66,7 @@ impl EventKind {
                     | K::MobTagRemoved
                     | K::SchematicChosen
                     | K::SchematicPositioned
+                    | K::ClientEvent
             ),
             L::Region => matches!(
                 self,
@@ -167,7 +168,9 @@ impl EventPayload {
                 key: Some(key),
                 ..none
             },
-            P::ModEvent { key, .. } | P::SchematicChosen { tag: key, .. } => Facts {
+            P::ModEvent { key, .. }
+            | P::SchematicChosen { tag: key, .. }
+            | P::ClientEvent { key, .. } => Facts {
                 key: Some(key),
                 ..none
             },

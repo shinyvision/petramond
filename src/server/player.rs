@@ -13,7 +13,7 @@ mod latches;
 pub use crate::player::PlayerId;
 pub use latches::{
     AttackClick, InputLatches, PendingBreakFinished, PendingMenuAction, PendingUseClick,
-    BREAK_QUEUE_DEPTH, MENU_ACTIONS_PER_TICK, MENU_QUEUE_DEPTH,
+    BREAK_QUEUE_DEPTH, MENU_ACTIONS_PER_TICK, MENU_QUEUE_DEPTH, MOD_EVENT_BURST,
 };
 
 pub use crate::world::placement_types::HeldRotation;

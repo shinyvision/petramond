@@ -167,9 +167,9 @@ pub enum FitMode {
     Fill,
     /// Authored pixels map 1:1 onto the footprint grid — cell `(i,j,k)` IS
     /// authored `16i..16(i+1)`, no scaling, no centring. Geometry outside the
-    /// box OVERHANGS visually (a hopper lip, a tray): it renders (assigned to
-    /// the nearest footprint cell) but never extends collision, selection, or
-    /// placement beyond the footprint — the standard cell clipping applies.
+    /// box OVERHANGS (a hopper lip, a tray): it renders (assigned to the
+    /// nearest footprint cell) and aims like the rest of the model, but never
+    /// extends collision or placement beyond the footprint.
     /// Right for machines whose occupied space is smaller than their
     /// silhouette. Author the model resting at `y = 0` inside `0..16·cells`.
     Native,

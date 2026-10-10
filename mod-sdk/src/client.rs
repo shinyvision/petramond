@@ -1,7 +1,8 @@
 use mod_api::{
     BlockId, ClientCanvasElement, ClientContext, ClientEngineFactsData, ClientKeyContexts,
-    ClientKeyMods, ClientOverlayAnchor, ClientPackInfo, ClientStorageScope, ClientSurfaceColumn,
-    ClientSurfaceQuery, ClientTextRun, ClientWallTime, ClientWorldMark, GuiValue,
+    ClientKeyMods, ClientMenuData, ClientOverlayAnchor, ClientPackInfo, ClientStorageScope,
+    ClientSurfaceColumn, ClientSurfaceQuery, ClientTextRun, ClientWallTime, ClientWorldMark,
+    GuiValue,
 };
 
 #[allow(unused_imports)]
@@ -245,4 +246,28 @@ host_fn! {
 
 host_fn! {
     pub fn client_wall_clock() -> ClientWallTime => ClientWallClock => ClientWallClock
+}
+
+host_fn! {
+    /// The menu the server has open for this player, `None` unless its kind is a
+    /// mod document.
+    pub fn client_menu() -> Option<ClientMenuData> => ClientMenu => ClientMenu
+}
+
+host_fn! {
+    /// Sends one of this mod's own events to its server half, which receives it as
+    /// `EventKind::ClientEvent` with the sending player. `false` when there is no
+    /// server to hear it (playback, no live session) or too many are still waiting to
+    /// be sent. `true` is not delivery: the server treats `data` as untrusted input
+    /// and drops traffic past its per-session bound.
+    pub fn client_emit_event(key: &str, data: Vec<u8>) -> bool
+        => ClientEmitEvent { key: key.into(), data } => Bool
+}
+
+host_fn! {
+    /// The untinted pixels of one atlas tile (`"pack:name"`, or a bare engine name):
+    /// 16×16 RGBA, rows top to bottom, the first frame of an animated tile. `None`
+    /// for a name that is not a tile.
+    pub fn client_tile_pixels(tile: &str) -> Option<Vec<u8>>
+        => ClientTilePixels { tile: tile.into() } => Bytes
 }

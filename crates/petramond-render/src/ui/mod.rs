@@ -29,12 +29,12 @@ const HEART_CELL_U: f32 = 1.0 / 3.0;
 #[derive(Default)]
 pub struct UiBuild {
     pub hearts: Vec<UiVertex>,
-    pub icon_quads: Vec<(ItemType, SlotRect, [f32; 4], bool)>,
-    pub hook_icon_quads: Vec<HookIconQuad>,
+    pub icon_quads: Vec<IconQuad>,
+    pub hook_icon_quads: Vec<IconQuad>,
     pub counts: Vec<UiVertex>,
-    pub overlay_icon_quads: Vec<HookIconQuad>,
+    pub overlay_icon_quads: Vec<IconQuad>,
     pub overlay_counts: Vec<UiVertex>,
-    pub drag_icon_quads: Vec<(ItemType, SlotRect, [f32; 4], bool)>,
+    pub drag_icon_quads: Vec<IconQuad>,
     pub drag_counts: Vec<UiVertex>,
     pub vignette: Vec<UiVertex>,
     pub effects: Vec<UiVertex>,
@@ -55,9 +55,11 @@ impl UiBuild {
     }
 }
 
+/// One item icon to draw in `rect`, wearing the tint and paint of its stack's `variant`.
 #[derive(Copy, Clone, Debug)]
-pub struct HookIconQuad {
+pub struct IconQuad {
     pub item: ItemType,
+    pub variant: petramond_world::item::VariantId,
     pub rect: SlotRect,
     pub clip: Option<SlotRect>,
     pub dim: bool,
@@ -132,20 +134,7 @@ fn push_doc_game_content(
         }
         if slot.raised {
             let tier = build.tier(true);
-            tier.icons.push(HookIconQuad {
-                item: stack.item,
-                rect: r,
-                clip: None,
-                dim: false,
-            });
-            for overlay in petramond_world::item::variant::overlay_items(stack.variant) {
-                tier.icons.push(HookIconQuad {
-                    item: overlay,
-                    rect: r,
-                    clip: None,
-                    dim: false,
-                });
-            }
+            icon::push_stack_quads(tier.icons, &stack, r);
             if stack.count > 1 {
                 icon::push_count(tier.counts, screen, stack.count as u32, r, scale);
             }
@@ -185,7 +174,7 @@ fn push_doc_game_content(
 }
 
 struct HookTier<'a> {
-    icons: &'a mut Vec<HookIconQuad>,
+    icons: &'a mut Vec<IconQuad>,
     counts: &'a mut Vec<UiVertex>,
 }
 
@@ -219,8 +208,9 @@ fn push_recipe_hook_content(
             let Some(clip) = effective_hook_clip(*hook) else {
                 continue;
             };
-            build.tier(hook.overlay).icons.push(HookIconQuad {
+            build.tier(hook.overlay).icons.push(IconQuad {
                 item,
+                variant: petramond_world::item::VariantId::NONE,
                 rect: SlotRect {
                     x: hook.rect.x + (hook.rect.w - side) * 0.5,
                     y: hook.rect.y + (hook.rect.h - side) * 0.5,
@@ -246,8 +236,9 @@ fn push_recipe_hook_content(
                 let Some(clip) = effective_hook_clip(*hook) else {
                     continue;
                 };
-                build.tier(hook.overlay).icons.push(HookIconQuad {
+                build.tier(hook.overlay).icons.push(IconQuad {
                     item: recipe.result,
+                    variant: petramond_world::item::VariantId::NONE,
                     rect: SlotRect {
                         x: hook.rect.x + (hook.rect.w - side) * 0.5,
                         y: hook.rect.y + (hook.rect.h - side) * 0.5,
@@ -292,8 +283,9 @@ fn push_ingredient_strip(
             w: icon_side,
             h: icon_side,
         };
-        tier.icons.push(HookIconQuad {
+        tier.icons.push(IconQuad {
             item: *ingredient,
+            variant: petramond_world::item::VariantId::NONE,
             rect: icon_rect,
             clip,
             dim: !recipe.craftable,
@@ -883,7 +875,7 @@ mod tests {
         s.cursor = Some(petramond_world::item::ItemStack::new(ItemType::Dirt, 12));
         build(&s, Some(&slots), &mut b);
         assert_eq!(b.icon_quads.len(), 1, "only the filled cell draws an icon");
-        let (item, r, _color, _dyed) = b.icon_quads[0];
+        let IconQuad { item, rect: r, .. } = b.icon_quads[0];
         assert_eq!(item, ItemType::Stone);
         let outer = cell(Role::Hotbar, 0).rect;
         assert!(

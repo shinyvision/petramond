@@ -132,6 +132,12 @@ pub enum ClientToServer {
     KeyExchange {
         key_share: crate::net::secure::KeyShare,
     },
+    /// One event from a client mod instance to its server half. Everything in it is the
+    /// client's claim: the server checks the key and size before any mod sees it.
+    ModEvent {
+        key: String,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

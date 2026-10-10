@@ -337,6 +337,23 @@ pub fn tile_uv(tile: Tile) -> [f32; 4] {
     [u0, v0, u1, v1]
 }
 
+/// One tile's ordinary texels (never its dye-base twin): `TILE × TILE` RGBA, rows top to bottom.
+pub fn tile_pixels(tile: Tile) -> Option<Vec<u8>> {
+    let d = data();
+    // A tile resolved before content was replaced can lie outside the atlas read here.
+    if tile.index() >= d.count {
+        return None;
+    }
+    let (col, row) = (tile.id() as u32 % d.cols, tile.id() as u32 / d.cols);
+    let row_bytes = (TILE * 4) as usize;
+    let mut pixels = Vec::with_capacity(row_bytes * TILE as usize);
+    for y in 0..TILE {
+        let start = ((row * TILE + y) * d.cols * TILE + col * TILE) as usize * 4;
+        pixels.extend_from_slice(&d.rgba[start..start + row_bytes]);
+    }
+    Some(pixels)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +431,20 @@ mod tests {
         let li = ((row as usize * level1_tile) * level1_w + col as usize * level1_tile) * 4;
 
         assert_eq!(&mips[1][li..li + 4], &[30, 90, 20, 255]);
+    }
+
+    #[test]
+    fn tile_pixels_are_the_tile_source_art_not_its_dye_twin() {
+        let (cell, art) = petramond_world::tile::cells()
+            .iter()
+            .find_map(|cell| {
+                let art = load_source(&cell.file).ok()?;
+                (art.dimensions() == (TILE, TILE) && dye_base_pixels(&art) != art)
+                    .then_some((cell, art))
+            })
+            .expect("some tile is authored at atlas size with art its dye twin changes");
+        let tile = Tile::from_name(&cell.name).expect("a declared cell is a tile");
+
+        assert_eq!(tile_pixels(tile), Some(art.into_raw()));
     }
 }

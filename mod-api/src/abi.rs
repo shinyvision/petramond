@@ -27,7 +27,7 @@ impl fmt::Display for AbiVersion {
     }
 }
 
-pub const ABI_VERSION: AbiVersion = AbiVersion { major: 7, minor: 2 };
+pub const ABI_VERSION: AbiVersion = AbiVersion { major: 7, minor: 3 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Capabilities(u64);

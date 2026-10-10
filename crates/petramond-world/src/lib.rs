@@ -39,6 +39,7 @@ pub mod light;
 pub mod loot;
 pub mod mining;
 pub mod pack_manifest;
+pub mod paint;
 pub mod pane;
 pub mod particle_emitters;
 pub mod registry;

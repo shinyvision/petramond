@@ -219,6 +219,19 @@ pub struct ClothPresentation {
     pub cols: u16,
     pub rows: u16,
     pub first: u32,
+    pub coat: ClothCoat,
+}
+
+/// The dye a cloth's tile wears, read from its owning cell.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub enum ClothCoat {
+    #[default]
+    None,
+    /// One multiply over the whole tile's dye-base twin.
+    Tint([f32; 3]),
+    /// Per texel: the tile's `GRID × GRID` texels row-major, top row first, in the
+    /// frame's shared texel list from `first`. `None` = that texel is undyed.
+    Painted { first: u32 },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -237,6 +250,7 @@ pub struct GamePresentation<'a> {
     pub block_draws: &'a [petramond::world::draw::BlockDrawInstance],
     pub cloths: &'a [ClothPresentation],
     pub cloth_points: &'a [ClothPoint],
+    pub cloth_texels: &'a [Option<[f32; 3]>],
     pub mobs: &'a [MobPresentation],
     pub mob_arena: &'a MobArena,
     pub anim_names: &'a AnimNames,

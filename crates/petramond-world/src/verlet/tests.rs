@@ -62,3 +62,20 @@ fn triangle_box_distance_is_reached_at_an_edge_edge_pair() {
     assert!(d > 0.0 && d < 0.4 + 1e-4, "{d}");
     assert!((along_edge.2 - along_edge.3).length() >= d - 1e-5);
 }
+
+#[test]
+fn a_triangle_a_hair_off_a_box_edge_still_has_a_side_to_part_along() {
+    // A sheet edge crossing the box's vertical edge 1e-4 out: the nearest points' offset
+    // is all rounding at these coordinates, but the gap along the parting direction
+    // must stay the real one, or a sheet resting there could never be bounded.
+    let d = 1e-4;
+    let out = Vec3::new(1.0, 0.0, -1.0).normalize() * d;
+    let (a, b, c) = (
+        Vec3::new(1.2, 0.5, 0.2) + out,
+        Vec3::new(0.8, 0.5, -0.2) + out,
+        Vec3::new(1.3, 0.8, -0.3),
+    );
+    let (x, y) = closest::triangle_box_closest(a, b, c, Vec3::ZERO, Vec3::ONE).unwrap();
+    let (n, gap) = closest::triangle_box_separation(a, b, c, Vec3::ZERO, Vec3::ONE, x - y);
+    assert!((gap - d).abs() < d * 0.1, "gap {gap} along {n}, want {d}");
+}

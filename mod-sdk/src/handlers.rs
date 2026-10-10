@@ -97,6 +97,7 @@ pub mod event_types {
         SchematicChosen,
         SchematicPositioned,
         CellsEditPre,
+        ClientEvent,
     );
 }
 

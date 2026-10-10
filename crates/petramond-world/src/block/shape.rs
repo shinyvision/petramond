@@ -166,6 +166,9 @@ pub struct ShapeBox {
     pub faces: [Option<ShapeFace>; 6],
     pub ao_strength: f32,
     pub dyed: bool,
+    /// `false` = the cell's `petramond:tint` never reaches this box: a dyed
+    /// flag colours its cloth, not the pole it hangs from.
+    pub dyeable: bool,
     pub part: CellPart,
     /// Whether this box is MATTER — part of the block's body — rather than a
     /// bare carrier for a face. Matter shadows, blocks light, buries a
@@ -190,6 +193,7 @@ impl ShapeBox {
         faces: [None; 6],
         ao_strength: 1.0,
         dyed: false,
+        dyeable: true,
         part: 0,
         occludes: true,
         casts_ao: true,
@@ -226,6 +230,7 @@ impl ShapeBox {
             faces,
             ao_strength: 1.0,
             dyed: false,
+            dyeable: true,
             part: 0,
             occludes: true,
             casts_ao: true,
@@ -265,6 +270,9 @@ impl ShapeBox {
     }
 
     pub fn apply_tint(&mut self, tint: [f32; 3]) {
+        if !self.dyeable {
+            return;
+        }
         self.dyed = true;
         for face in self.faces.iter_mut().flatten() {
             face.tint = [

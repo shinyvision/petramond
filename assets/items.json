@@ -698,7 +698,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:dandelion"
     },
     {
@@ -711,7 +713,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:poppy"
     },
     {
@@ -724,7 +728,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:cornflower"
     },
     {
@@ -737,7 +743,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:allium"
     },
     {
@@ -750,7 +758,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:azure_bluet"
     },
     {
@@ -763,7 +773,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:oxeye_daisy"
     },
     {
@@ -776,7 +788,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "flowers"
+      ],
       "block": "petramond:red_tulip"
     },
     {

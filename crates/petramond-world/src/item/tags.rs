@@ -17,6 +17,7 @@ static ITEM_TAGS: crate::content::Slot<crate::registry::TagTable> =
             "smeltable",
             "shovels",
             "raw_ore",
+            "flowers",
         ]))
     });
 

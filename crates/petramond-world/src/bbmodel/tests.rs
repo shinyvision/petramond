@@ -62,7 +62,7 @@ fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
-fn one_pixel_texture(rgba: [u8; 4]) -> String {
+pub(crate) fn one_pixel_texture(rgba: [u8; 4]) -> String {
     let img = image::RgbaImage::from_pixel(1, 1, image::Rgba(rgba));
     let mut png = std::io::Cursor::new(Vec::new());
     image::DynamicImage::ImageRgba8(img)

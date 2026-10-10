@@ -26,6 +26,7 @@ use petramond_mesh::face::FaceShading;
 use petramond_mesh::SHADES;
 use petramond_world::bbmodel::face_corners;
 use petramond_world::block_model::{self, BlockModelKind};
+use petramond_world::paint::Coat;
 use petramond_world::tile::Tile;
 use petramond_world::tile_alpha::tile_alpha_opaque;
 
@@ -346,14 +347,14 @@ thread_local! {
         std::cell::RefCell::new(rustc_hash::FxHashMap::default());
 }
 
-/// How a `petramond:overlay` slab floats off the base slab it decorates: a
 /// Build the full extruded mesh a STACK shows for its sprite `tile`: the base
 /// sprite with its `petramond:overlay` items COMPOSITED over it, baked at
 /// runtime into ONE slab, then dyed (base texels only — a dyed tool tints its
-/// body, never the augment riding on it). Clears `out`; returns the vertex
-/// count. Every world-space sprite presentation (both hands, dropped
-/// entities) must build through this rather than the bare slab, or augmented
-/// items silently lose their overlay there.
+/// body, never the augment riding on it). A `petramond:paint` dyes the base
+/// texel by texel instead. Clears `out`; returns the vertex count. Every
+/// world-space sprite presentation (both hands, dropped entities) must build
+/// through this rather than the bare slab, or augmented items silently lose
+/// their overlay there.
 ///
 /// WHY a baked composite and not a second slab: any second slab has to float
 /// off the first to avoid z-fighting, and floating means its texels leave the
@@ -377,6 +378,28 @@ pub(super) fn build_extruded_stack_lit(
             _ => None,
         })
         .collect();
+    // A painted slab is the stack's own, so it is built per call, not cached per tile.
+    let data = (!variant.is_none())
+        .then(|| petramond_world::item::variant::get(variant))
+        .flatten();
+    let coat = data.as_deref().map(Coat::of_stack_data).unwrap_or_default();
+    if coat.paint.is_some() {
+        let fold = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
+        out.clear();
+        build_texel_slab(
+            |tx, ty| {
+                let own = owner_tile(tile, &overlay_tiles, tx, ty)?;
+                let dye = if own == tile {
+                    coat.texel(tx as u8, ty as u8)
+                } else {
+                    None
+                };
+                Some(Texel { tile: own, dye })
+            },
+            |texel, corners, uvs, shade| push_texel_quad(out, texel, fold, corners, uvs, shade),
+        );
+        return out.len() as u32;
+    }
     if overlay_tiles.is_empty() {
         let count = build_extruded_item_lit(tile, light, env, out);
         if count == 0 {
@@ -420,119 +443,131 @@ thread_local! {
 }
 
 fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry {
-    let owner = |tx: i32, ty: i32| -> Option<Tile> {
-        if !(0..GRID as i32).contains(&tx) || !(0..GRID as i32).contains(&ty) {
-            return None;
-        }
-        for &o in overlays.iter().rev() {
-            if opaque(o, tx, ty) {
-                return Some(o);
-            }
-        }
-        opaque(tile, tx, ty).then_some(tile)
-    };
     let mut geom = CompositeGeometry {
         base: Vec::new(),
         over: Vec::new(),
     };
+    build_texel_slab(
+        |tx, ty| owner_tile(tile, overlays, tx, ty).map(|tile| Texel { tile, dye: None }),
+        |texel, corners, uvs, shade| {
+            let out = if texel.tile == tile {
+                &mut geom.base
+            } else {
+                &mut geom.over
+            };
+            push_texel_quad(out, texel, [1.0; 3], corners, uvs, shade);
+        },
+    );
+    geom
+}
+
+/// What one texel of a slab shows: the tile that owns it, and the dye it wears there
+/// (`None` = the tile's ordinary texture).
+#[derive(Copy, Clone, PartialEq)]
+struct Texel {
+    tile: Tile,
+    dye: Option<[f32; 3]>,
+}
+
+/// The topmost opaque layer at a texel: the last overlay covering it, else the base.
+fn owner_tile(tile: Tile, overlays: &[Tile], tx: i32, ty: i32) -> Option<Tile> {
+    if !(0..GRID as i32).contains(&tx) || !(0..GRID as i32).contains(&ty) {
+        return None;
+    }
+    for &o in overlays.iter().rev() {
+        if opaque(o, tx, ty) {
+            return Some(o);
+        }
+    }
+    opaque(tile, tx, ty).then_some(tile)
+}
+
+/// `uvs` address the texel's ordinary tile; a dyed texel is moved onto the dye-base twin.
+fn push_texel_quad(
+    out: &mut Vec<ItemVertex>,
+    texel: Texel,
+    light: [f32; 3],
+    corners: [[f32; 3]; 4],
+    mut uvs: [[f32; 2]; 4],
+    shade: f32,
+) {
+    let material = foliage_tint::face_material(texel.tile).tint;
+    let mut tint: [f32; 3] = std::array::from_fn(|c| material[c] * light[c]);
+    if let Some(dye) = texel.dye {
+        tint = std::array::from_fn(|c| tint[c] * dye[c]);
+        for uv in &mut uvs {
+            uv[1] += crate::atlas::DYE_V_OFFSET;
+        }
+    }
+    push_quad(out, corners, uvs, shade, tint);
+}
+
+/// Emit a slab's quads as `quad(texel, corners, uvs, shade)`: the front and back faces
+/// as horizontal runs of equal texels, then a side wall wherever a texel borders an
+/// empty one. `texel` answers `None` for empty and out-of-grid texels.
+fn build_texel_slab(
+    texel: impl Fn(i32, i32) -> Option<Texel>,
+    mut quad: impl FnMut(Texel, [[f32; 3]; 4], [[f32; 2]; 4], f32),
+) {
     let zf = DEPTH * 0.5;
     let zb = -DEPTH * 0.5;
 
     for ty in 0..GRID as i32 {
         let mut tx = 0;
         while tx < GRID as i32 {
-            let Some(own) = owner(tx, ty) else {
+            let Some(own) = texel(tx, ty) else {
                 tx += 1;
                 continue;
             };
             let start = tx;
-            while tx < GRID as i32 && owner(tx, ty) == Some(own) {
+            while tx < GRID as i32 && texel(tx, ty) == Some(own) {
                 tx += 1;
             }
-            let tint = foliage_tint::face_material(own).tint;
-            let out = if own == tile {
-                &mut geom.base
-            } else {
-                &mut geom.over
-            };
-            let [su0, sv0, _, _] = texel_uv_rect(own, start, ty);
-            let [_, _, eu1, ev1] = texel_uv_rect(own, tx - 1, ty);
+            let [su0, sv0, _, _] = texel_uv_rect(own.tile, start, ty);
+            let [_, _, eu1, ev1] = texel_uv_rect(own.tile, tx - 1, ty);
             let (xl, xr) = (px(start), px(tx));
             let (yt, yb) = (py(ty), py(ty + 1));
-            push_quad(
-                out,
+            quad(
+                own,
                 [[xl, yb, zf], [xr, yb, zf], [xr, yt, zf], [xl, yt, zf]],
                 [[su0, ev1], [eu1, ev1], [eu1, sv0], [su0, sv0]],
                 SHADE_FRONT,
-                tint,
             );
-            push_quad(
-                out,
+            quad(
+                own,
                 [[xr, yb, zb], [xl, yb, zb], [xl, yt, zb], [xr, yt, zb]],
                 [[eu1, ev1], [su0, ev1], [su0, sv0], [eu1, sv0]],
                 SHADE_BACK,
-                tint,
             );
         }
     }
 
     for ty in 0..GRID as i32 {
         for tx in 0..GRID as i32 {
-            let Some(own) = owner(tx, ty) else {
+            let Some(own) = texel(tx, ty) else {
                 continue;
             };
-            let tint = foliage_tint::face_material(own).tint;
-            let out = if own == tile {
-                &mut geom.base
-            } else {
-                &mut geom.over
-            };
-            let [tu0, tv0, tu1, tv1] = texel_uv_rect(own, tx, ty);
+            let [tu0, tv0, tu1, tv1] = texel_uv_rect(own.tile, tx, ty);
             let uc = [(tu0 + tu1) * 0.5, (tv0 + tv1) * 0.5];
             let xl = px(tx);
             let xr = px(tx + 1);
             let yt = py(ty);
             let yb = py(ty + 1);
-            if owner(tx - 1, ty).is_none() {
-                push_quad(
-                    out,
-                    [[xl, yb, zb], [xl, yb, zf], [xl, yt, zf], [xl, yt, zb]],
-                    [uc, uc, uc, uc],
-                    SHADE_SIDE,
-                    tint,
-                );
+            let mut wall = |corners| quad(own, corners, [uc, uc, uc, uc], SHADE_SIDE);
+            if texel(tx - 1, ty).is_none() {
+                wall([[xl, yb, zb], [xl, yb, zf], [xl, yt, zf], [xl, yt, zb]]);
             }
-            if owner(tx + 1, ty).is_none() {
-                push_quad(
-                    out,
-                    [[xr, yb, zf], [xr, yb, zb], [xr, yt, zb], [xr, yt, zf]],
-                    [uc, uc, uc, uc],
-                    SHADE_SIDE,
-                    tint,
-                );
+            if texel(tx + 1, ty).is_none() {
+                wall([[xr, yb, zf], [xr, yb, zb], [xr, yt, zb], [xr, yt, zf]]);
             }
-            if owner(tx, ty - 1).is_none() {
-                push_quad(
-                    out,
-                    [[xl, yt, zf], [xr, yt, zf], [xr, yt, zb], [xl, yt, zb]],
-                    [uc, uc, uc, uc],
-                    SHADE_SIDE,
-                    tint,
-                );
+            if texel(tx, ty - 1).is_none() {
+                wall([[xl, yt, zf], [xr, yt, zf], [xr, yt, zb], [xl, yt, zb]]);
             }
-            if owner(tx, ty + 1).is_none() {
-                push_quad(
-                    out,
-                    [[xl, yb, zb], [xr, yb, zb], [xr, yb, zf], [xl, yb, zf]],
-                    [uc, uc, uc, uc],
-                    SHADE_SIDE,
-                    tint,
-                );
+            if texel(tx, ty + 1).is_none() {
+                wall([[xl, yb, zb], [xr, yb, zb], [xr, yb, zf], [xl, yb, zf]]);
             }
         }
     }
-
-    geom
 }
 
 fn build_extruded_item_geometry(tile: Tile) -> Vec<ItemVertex> {
@@ -703,6 +738,52 @@ mod tests {
         assert!(
             geom.over.iter().all(|v| in_rect(v.uv, or)),
             "overlay geometry samples the overlay tile only"
+        );
+    }
+
+    #[test]
+    fn painted_texels_sample_the_twin_in_their_paint_and_the_rest_stay_ordinary() {
+        let tile = Tile::named("poppy");
+        // Paint from the top of the tile down to the sprite's first opaque row.
+        let rows = (0..GRID as i32).find(|&ty| (0..GRID as i32).any(|tx| opaque(tile, tx, ty)));
+        let rows = rows.unwrap() + 1;
+        let mut paint = vec![0, 0, 16, rows as u8];
+        paint.extend([255, 0, 0].repeat(16 * rows as usize));
+        let data = [(petramond_world::paint::PAINT_KEY.to_string(), paint)].into();
+        let variant = petramond_world::item::variant::intern(&data).unwrap();
+        let mut out = Vec::new();
+        build_extruded_stack_lit(tile, variant, DynLight::FULL, LightEnv::IDENTITY, &mut out);
+
+        let [_, v0, _, v1] = tile_uv(tile);
+        let material = foliage_tint::face_material(tile).tint;
+        let (mut painted, mut plain) = (0, 0);
+        for quad in out.chunks_exact(6) {
+            // A wall lying flat on the boundary may belong to either side of it.
+            if quad.iter().all(|v| v.pos[1] == py(rows)) {
+                continue;
+            }
+            let is_painted = quad.iter().map(|v| v.pos[1]).sum::<f32>() / 6.0 > py(rows);
+            for v in quad {
+                let twin_v = v.uv[1] - crate::atlas::DYE_V_OFFSET;
+                if is_painted {
+                    assert!(
+                        twin_v >= v0 - 1e-5 && twin_v <= v1 + 1e-5,
+                        "painted texel off the twin"
+                    );
+                    assert_eq!(v.tint, [material[0], 0.0, 0.0]);
+                } else {
+                    assert!(
+                        v.uv[1] >= v0 - 1e-5 && v.uv[1] <= v1 + 1e-5,
+                        "unpainted texel dyed"
+                    );
+                    assert_eq!(v.tint, material);
+                }
+            }
+            *(if is_painted { &mut painted } else { &mut plain }) += 1;
+        }
+        assert!(
+            painted > 0 && plain > 0,
+            "the paint covers part of the sprite"
         );
     }
 

@@ -34,7 +34,7 @@ impl App {
         self.flush_client_canvas_scroll();
         let open = match self.screen {
             AppScreen::ClientModGui(kind) => petramond_world::gui_state::kind_key(kind),
-            _ => None,
+            _ => self.co_driven_menu(),
         };
         let open_canvas = self
             .client_canvas
@@ -83,21 +83,86 @@ impl App {
         self.ui.set_scenes(&view.scenes);
         let dim = (!Self::doc_presents_world(kind)).then_some([0.0, 0.0, 0.0, 0.55]);
         self.ui.frame(kind, screen, now, dim);
+        let events = self.ui.take_events();
+        self.forward_client_doc_events(kind, kind_key, &events);
+    }
 
-        let mut events: Vec<_> = self
-            .ui
-            .take_events()
-            .into_iter()
+    /// Hands the frame just solved to the instance that drives `kind`: its widget
+    /// events, then what changed under the pointer and in its lists. Stops once
+    /// a command the instance answers with leaves the screen.
+    pub(super) fn forward_client_doc_events(
+        &mut self,
+        kind: GuiKind,
+        kind_key: &str,
+        events: &[petramond_ui::UiEvent],
+    ) {
+        let screen = self.screen;
+        let mut events: Vec<_> = events
+            .iter()
+            .cloned()
             .filter_map(super::client_doc_events::client_ui_event)
             .collect();
         events.extend(self.client_doc_watch.changes(kind, self.ui.out()));
         for event in events {
             self.client_mod_ui_event(kind_key, event);
             self.apply_client_mod_commands();
-            if self.screen != AppScreen::ClientModGui(kind) {
+            if self.screen != screen {
                 break;
             }
         }
+    }
+
+    /// The open game menu's kind key while its pack's client instance drives the
+    /// document alongside the server. Engine kinds never are.
+    pub(super) fn co_driven_menu(&self) -> Option<&'static str> {
+        let kind_key = self.open_mod_menu()?;
+        let session = self.session.as_ref()?;
+        session.game.client_mod_drives(kind_key).then_some(kind_key)
+    }
+
+    fn open_mod_menu(&self) -> Option<&'static str> {
+        match self.screen {
+            AppScreen::Menu(kind) if kind.is_registered() => {
+                petramond_world::gui_state::kind_key(kind)
+            }
+            _ => None,
+        }
+    }
+
+    /// Lays the co-driving instance's view over the menu document about to be
+    /// framed. Its state lands after the server's, so on a shared key the client
+    /// value shows.
+    pub(super) fn overlay_co_driven_view(&mut self) {
+        let Some(view) = self
+            .co_driven_menu()
+            .and_then(|key| self.client_mod_view(key))
+        else {
+            return;
+        };
+        self.ui.overlay_client_state(&view.state);
+        self.ui.set_dynamic_images(view.images);
+        self.ui.set_scenes(&view.scenes);
+    }
+
+    /// Tells a co-driving instance its menu is closing and applies what it answers.
+    /// A notification only: the menu closes whatever the instance does.
+    pub(super) fn dismiss_co_driven_menu(&mut self) {
+        let Some(kind_key) = self.co_driven_menu() else {
+            return;
+        };
+        self.client_mod_ui_event(kind_key, mod_api::ClientUiEvent::Dismiss);
+        self.apply_client_mod_commands();
+    }
+
+    fn published_menu(&self) -> Option<mod_api::ClientMenuData> {
+        let kind_key = self.open_mod_menu()?;
+        let menu = self.session.as_ref()?.game.menu_read_model();
+        let slots = menu.container.map_or(&[][..], |c| &c.slots);
+        Some(petramond::modding::client::presented::menu_data(
+            kind_key,
+            menu.anchor,
+            slots,
+        ))
     }
 
     pub fn publish_device_frame_limits(renderer: &petramond_render::Renderer) {
@@ -109,13 +174,25 @@ impl App {
         .publish();
     }
 
+    pub fn publish_tile_pixels() {
+        petramond::modding::client::presented::publish_tile_pixels(
+            petramond_render::atlas::tile_pixels,
+        );
+    }
+
     fn publish_client_screen(&mut self) {
         let screen = match self.screen {
             AppScreen::ClientModGui(kind) => {
                 petramond_world::gui_state::kind_key(kind).map(str::to_owned)
             }
-            _ => self.client_canvas_key().map(str::to_owned),
+            _ => self
+                .co_driven_menu()
+                .or(self.client_canvas_key())
+                .map(str::to_owned),
         };
+        let menu = self.published_menu();
+        // Only a client-opened document lists its inputs: focus requests are
+        // applied to those alone, so a co-driven menu offers none to ask for.
         let text_inputs = match self.screen {
             AppScreen::ClientModGui(_) => self
                 .ui
@@ -133,6 +210,7 @@ impl App {
             let mut presented = runtime.presented().lock();
             presented.screen = screen;
             presented.text_inputs = text_inputs;
+            presented.menu = menu;
         }
     }
 

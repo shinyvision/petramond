@@ -147,12 +147,14 @@ impl Game {
         payload: mod_api::EventPayload,
     ) -> bool {
         let actor = self.client_actor_snapshot(sneak, Default::default());
-        self.client_mods.predict_claim(
+        let claimed = self.client_mods.predict_claim(
             &self.replica.world,
             &actor,
             &self.replica.self_view.inventory,
             &payload,
-        )
+        );
+        self.queue_client_mod_events();
+        claimed
     }
 
     pub(super) fn predicted_actor(&self) -> PredictedActor<'_> {

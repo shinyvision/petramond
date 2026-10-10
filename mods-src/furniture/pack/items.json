@@ -120,6 +120,15 @@
     { "patch": "petramond:red_tulip", "data": { "furniture:pigment": { "color": [224, 48, 36] } } },
     { "patch": "petramond:wool_block", "data": { "furniture:dyeable": true } },
     { "patch": "petramond:wool_stairs", "data": { "furniture:dyeable": true } },
-    { "patch": "petramond:wool_slab", "data": { "furniture:dyeable": true } }
+    { "patch": "petramond:wool_slab", "data": { "furniture:dyeable": true } },
+    {
+      "item": "furniture:painting_table",
+      "key": "furniture:painting_table",
+      "name": "Painting Table",
+      "max_stack_size": 64,
+      "held_pose": { "pitch": 0, "yaw": 1.8, "roll": 0 },
+      "tags": [],
+      "block": "furniture:painting_table"
+    }
   ]
 }

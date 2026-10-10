@@ -1,7 +1,6 @@
 {
   "tiles": [
     {"name": "flags:pole", "file": "pole.png"},
-    {"name": "flags:white_flag", "file": "white_flag.png"},
-    {"name": "flags:white_flag_item", "file": "white_flag_item.png"}
+    {"name": "flags:flag", "file": "flag.png"}
   ]
 }

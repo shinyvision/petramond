@@ -9,6 +9,7 @@ pub struct MenuReadModel<'a> {
     pub craft_output: Option<ItemStack>,
     pub gui_state: Option<&'a std::sync::Arc<GuiStateMap>>,
     pub container: Option<&'a ContainerView>,
+    pub anchor: Option<petramond::menu::MenuAnchor>,
 }
 
 impl Game {
@@ -167,10 +168,12 @@ impl Game {
             craft_output: view.craft_output,
             gui_state: view.gui_state.as_ref(),
             container: view.container.as_ref(),
+            anchor: self.replica.menu_anchor,
         }
     }
 
     pub fn request_open_inventory(&mut self) {
+        self.replica.menu_anchor = None;
         self.net
             .queue(ClientToServer::Action(PlayerAction::OpenInventory));
     }
@@ -180,10 +183,12 @@ impl Game {
         kind: petramond_world::gui_state::GuiKind,
         anchor: Option<petramond::menu::MenuAnchor>,
     ) {
-        let _ = (kind, anchor);
+        let _ = kind;
+        self.replica.menu_anchor = anchor;
     }
 
     pub fn close_open_menu(&mut self) {
+        self.replica.menu_anchor = None;
         self.net
             .queue(ClientToServer::Action(PlayerAction::CloseMenu));
     }

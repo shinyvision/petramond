@@ -78,7 +78,8 @@ pub(super) fn remap_to_server(map: &IdRemap, msg: &mut ClientToServer) {
         | ClientToServer::SectionCacheMiss { .. }
         | ClientToServer::Pause(_)
         | ClientToServer::KeepAlive
-        | ClientToServer::Disconnect => {}
+        | ClientToServer::Disconnect
+        | ClientToServer::ModEvent { .. } => {}
     }
 }
 

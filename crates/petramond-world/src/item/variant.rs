@@ -19,8 +19,15 @@ pub const INFO_DATA_KEY: &str = "petramond:info";
 
 pub const MAX_KEYS: usize = 4;
 pub const MAX_KEY_BYTES: usize = 64;
-pub const MAX_VALUE_BYTES: usize = 128;
+pub const MAX_VALUE_BYTES: usize = 1024;
 pub const MAX_VARIANTS: usize = u16::MAX as usize;
+pub const MAX_BLOB_BYTES: usize =
+    1 + MAX_KEYS * (1 + MAX_KEY_BYTES + LONG_VALUE_LEN_BYTES + MAX_VALUE_BYTES);
+
+/// A value length below this is its own byte; a longer one is this byte, then
+/// the length as u16 LE.
+const LONG_VALUE: u8 = 0xFF;
+const LONG_VALUE_LEN_BYTES: usize = 3;
 
 pub fn valid(data: &VariantMap) -> bool {
     !data.is_empty()
@@ -33,15 +40,35 @@ pub fn valid(data: &VariantMap) -> bool {
 }
 
 pub fn encode(data: &VariantMap) -> Vec<u8> {
-    let mut out = Vec::with_capacity(16);
+    let entries = data
+        .iter()
+        .map(|(k, v)| 1 + k.len() + LONG_VALUE_LEN_BYTES + v.len());
+    let mut out = Vec::with_capacity(1 + entries.sum::<usize>());
     out.push(data.len() as u8);
     for (k, v) in data {
         out.push(k.len() as u8);
         out.extend_from_slice(k.as_bytes());
-        out.push(v.len() as u8);
+        if v.len() < LONG_VALUE as usize {
+            out.push(v.len() as u8);
+        } else {
+            out.push(LONG_VALUE);
+            out.extend_from_slice(&(v.len() as u16).to_le_bytes());
+        }
         out.extend_from_slice(v);
     }
     out
+}
+
+/// The escaped form of a length that fits the single byte is refused, so one
+/// map has exactly one blob.
+fn value_len(bytes: &[u8]) -> Option<(usize, &[u8])> {
+    let (&short, rest) = bytes.split_first()?;
+    if short != LONG_VALUE {
+        return Some((short as usize, rest));
+    }
+    let (wide, rest) = rest.split_first_chunk::<2>()?;
+    let len = u16::from_le_bytes(*wide) as usize;
+    (len >= LONG_VALUE as usize).then_some((len, rest))
 }
 
 pub fn decode(bytes: &[u8]) -> Option<VariantMap> {
@@ -54,11 +81,11 @@ pub fn decode(bytes: &[u8]) -> Option<VariantMap> {
         }
         let (kb, r) = r.split_at(klen as usize);
         let key = std::str::from_utf8(kb).ok()?.to_owned();
-        let (&vlen, r) = r.split_first()?;
-        if r.len() < vlen as usize {
+        let (vlen, r) = value_len(r)?;
+        if r.len() < vlen {
             return None;
         }
-        let (vb, r) = r.split_at(vlen as usize);
+        let (vb, r) = r.split_at(vlen);
         if let Some((last, _)) = map.last_key_value() {
             if *last >= key {
                 return None;
@@ -296,6 +323,59 @@ mod tests {
         let blob = blob(id).unwrap();
         assert_eq!(decode(&blob).unwrap(), m);
         assert_eq!(intern_blob(&blob).unwrap(), id);
+    }
+
+    #[test]
+    fn long_values_round_trip_through_the_escaped_length() {
+        for len in [254, 255, 256, MAX_VALUE_BYTES] {
+            let value: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let m = map(&[("m:a", &value), ("m:b", &[7])]);
+            let blob = encode(&m);
+            assert!(blob.len() <= MAX_BLOB_BYTES);
+            assert_eq!(decode(&blob), Some(m), "{len}-byte value");
+        }
+        let full: VariantMap = (0..MAX_KEYS)
+            .map(|i| {
+                let key = format!("m:{i}{}", "k".repeat(MAX_KEY_BYTES - 3));
+                (key, vec![i as u8; MAX_VALUE_BYTES])
+            })
+            .collect();
+        assert_eq!(encode(&full).len(), MAX_BLOB_BYTES);
+        assert_eq!(decode(&encode(&full)), Some(full));
+    }
+
+    #[test]
+    fn a_blob_with_only_one_byte_lengths_keeps_its_bytes_and_map() {
+        let (short, edge) = ([9u8, 8, 7], [5u8; 254]);
+        let mut old = vec![2, 3];
+        old.extend(b"m:a");
+        old.push(short.len() as u8);
+        old.extend(short);
+        old.extend([3]);
+        old.extend(b"m:b");
+        old.push(edge.len() as u8);
+        old.extend(edge);
+        let m = map(&[("m:a", &short), ("m:b", &edge)]);
+        assert_eq!(decode(&old), Some(m.clone()));
+        assert_eq!(encode(&m), old);
+    }
+
+    #[test]
+    fn an_escaped_length_that_fits_one_byte_is_refused() {
+        let escaped = |len: u16| {
+            let mut blob = vec![1, 3];
+            blob.extend(b"m:a");
+            blob.push(0xFF);
+            blob.extend(len.to_le_bytes());
+            blob.extend(vec![0u8; len as usize]);
+            blob
+        };
+        assert!(decode(&escaped(255)).is_some());
+        assert_eq!(decode(&escaped(254)), None);
+        assert_eq!(decode(&escaped(3)), None);
+        let mut truncated = escaped(300);
+        truncated.truncate(7);
+        assert_eq!(decode(&truncated), None, "length cut mid-u16");
     }
 
     #[test]

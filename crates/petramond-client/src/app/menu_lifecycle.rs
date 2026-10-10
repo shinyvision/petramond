@@ -34,9 +34,7 @@ impl App {
         }
         if events.player_died {
             if self.screen.ui_open() {
-                if let Some(session) = self.session.as_mut() {
-                    session.game.close_open_menu();
-                }
+                self.request_menu_close();
             }
             self.set_screen(AppScreen::Dead);
         }
@@ -77,8 +75,18 @@ impl App {
     pub(super) fn close_menu(&mut self) {
         if let Some(session) = self.session.as_mut() {
             session.game.cancel_pending_paste();
+        }
+        self.request_menu_close();
+        self.set_screen(AppScreen::Game);
+    }
+
+    /// The one place the app asks the server to close the open menu: a co-driving
+    /// client instance hears of it first, so what it sends in answer is queued
+    /// ahead of the close request.
+    fn request_menu_close(&mut self) {
+        self.dismiss_co_driven_menu();
+        if let Some(session) = self.session.as_mut() {
             session.game.close_open_menu();
         }
-        self.set_screen(AppScreen::Game);
     }
 }

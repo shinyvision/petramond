@@ -148,7 +148,7 @@ fn a_site_derives_the_same_plan_every_time() {
         cell: [2, -5],
         center: [800, -1500],
     };
-    let plan = |_| match derive(9, SEA, site, &families, true, &land, &mut |_| {}) {
+    let plan = |_| match derive(9, SEA, site, &families, true, &land) {
         Derived::Plan(plan) => plan.encode(),
         _ => panic!("no camp"),
     };

@@ -311,3 +311,14 @@ pub enum ClientUiEvent {
         h: u32,
     },
 }
+
+/// The menu the server has open for a player, as that player's client sees it.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ClientMenuData {
+    /// The open menu's GUI kind key.
+    pub kind_key: String,
+    /// The container the menu is anchored to, if any.
+    pub at: Option<crate::ContainerAddress>,
+    /// That container's slots as this client currently sees (and predicts) them.
+    pub slots: Vec<Option<crate::ItemStackData>>,
+}

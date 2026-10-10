@@ -171,5 +171,38 @@ host_domain! {
         ClientClothWindSet {
             wind: Option<[f32; 2]>,
         } => legal(CLIENT, Any, Write),
+        /// Sends one of this mod's own events to the session's server, the client-to-server
+        /// mirror of [`CoreCall::EmitEventTo`] with the same guards: a key in the caller's own
+        /// namespace and at most [`EVENT_MAX_DATA_BYTES`] of data. The server instance of the
+        /// same mod gets an [`EventKind::ClientEvent`] naming the sending player; no other mod
+        /// sees it. Returns [`HostRet::Bool`](crate::HostRet::Bool): true once it is queued
+        /// for the server, false if nobody can hear it (playback, no live session) or this
+        /// instance already holds as many unsent events as the server takes at once.
+        ///
+        /// It carries intent, not state: the bytes come from a client the server doesn't
+        /// trust, so the server half validates them and decides. The server dispatches an
+        /// event at the start of the first tick after it arrives, before the same client's
+        /// queued input (menu clicks, close) is applied in that tick, and one client's events
+        /// keep their send order. The server bounds how many it takes per session and drops
+        /// the excess without an answer, so true is not delivery: send edges, not a
+        /// continuous stream of state.
+        ///
+        /// [`CoreCall::EmitEventTo`]: crate::CoreCall::EmitEventTo
+        /// [`EVENT_MAX_DATA_BYTES`]: crate::EVENT_MAX_DATA_BYTES
+        /// [`EventKind::ClientEvent`]: crate::EventKind::ClientEvent
+        ClientEmitEvent {
+            key: String,
+            #[serde(with = "serde_bytes")]
+            data: Vec<u8>,
+        } => legal(CLIENT, Any, Write),
+        /// The menu the server has open for this player, as this client sees it;
+        /// `None` unless that menu's kind is a mod document. Any mod may read it.
+        ClientMenu => legal(CLIENT, Any, Read),
+        /// The pixels of one atlas tile as the world shows it untinted: 16×16 RGBA, rows
+        /// top to bottom, the first frame of an animated tile. Returns
+        /// [`HostRet::Bytes`](crate::HostRet::Bytes), `None` for a name that is not a tile.
+        ClientTilePixels {
+            tile: String,
+        } => legal(CLIENT_SHELL, Any, Read),
     }
 }

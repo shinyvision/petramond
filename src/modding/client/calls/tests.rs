@@ -1745,3 +1745,133 @@ fn a_chosen_folder_takes_files_only_once_the_player_picked_it() {
     );
     install_chooser(None);
 }
+
+#[test]
+fn the_open_menu_reads_back_with_its_stacks_and_instance_data() {
+    use petramond_world::item::{variant, ItemStack, ItemType};
+
+    let scratch = TestScratchDir::new("client-calls-menu");
+    let mut data = client_data(&scratch);
+    let read = |data: &mut ModStoreData| handle_host_call(data, HostCall::from(calls::ClientMenu));
+    assert_eq!(
+        read(&mut data),
+        HostRet::ClientMenu(None),
+        "no menu is open"
+    );
+
+    let carried = variant::VariantMap::from([("weathertest:k".to_owned(), vec![7, 9])]);
+    let stack = ItemStack::with_variant(ItemType::Stone, 3, variant::intern(&carried).unwrap());
+    let anchor = crate::menu::MenuAnchor::Block(glam::IVec3::new(1, -2, 3));
+    let presented = data.client.as_ref().unwrap().presented.clone();
+    presented.lock().menu = Some(crate::modding::client::presented::menu_data(
+        "other:bench",
+        Some(anchor),
+        &[None, Some(stack)],
+    ));
+
+    let HostRet::ClientMenu(Some(menu)) = read(&mut data) else {
+        panic!("any mod reads the open menu");
+    };
+    assert_eq!(menu.kind_key, "other:bench");
+    assert_eq!(menu.at, Some(mod_api::ContainerAddress::Block([1, -2, 3])));
+    assert_eq!(menu.slots.len(), 2);
+    assert_eq!(menu.slots[0], None);
+    let held = menu.slots[1].as_ref().unwrap();
+    assert_eq!(held.count, 3);
+    assert_eq!(held.data, vec![("weathertest:k".to_owned(), vec![7, 9])]);
+}
+
+#[test]
+fn a_tile_reads_its_pixels_from_the_published_source_and_an_unknown_name_reads_none() {
+    use petramond_world::tile::Tile;
+
+    // The source is process-wide and first-wins: this is the only test that publishes one.
+    fn source(tile: Tile) -> Option<Vec<u8>> {
+        Some(tile.id().to_le_bytes().to_vec())
+    }
+    crate::modding::client::presented::publish_tile_pixels(source);
+
+    let dir = TestScratchDir::new("client-calls-tile-pixels");
+    let mut data = shell_data(&dir);
+    let mut read = |tile: &str| {
+        handle_host_call(
+            &mut data,
+            HostCall::from(calls::ClientTilePixels { tile: tile.into() }),
+        )
+    };
+    let name = &petramond_world::tile::cells()[0].name;
+    let tile = Tile::from_name(name).expect("a declared cell is a tile");
+
+    assert_eq!(read(name), HostRet::Bytes(source(tile)));
+    assert_eq!(read("map:no_such_tile"), HostRet::Bytes(None));
+}
+
+#[test]
+fn an_emitted_event_is_held_for_the_server_only_while_a_session_can_hear_it() {
+    use super::validate::CLIENT_EVENT_OUTBOX_MAX;
+    use mod_api::{ClientContext, ErrorCode, HostError};
+
+    let scratch = TestScratchDir::new("client-calls-emit-event");
+    let mut data = client_data(&scratch);
+    let presented = data.client.as_ref().unwrap().presented.clone();
+    let emit = |data: &mut ModStoreData, key: &str, bytes: Vec<u8>| {
+        handle_host_call(
+            data,
+            HostCall::from(calls::ClientEmitEvent {
+                key: key.into(),
+                data: bytes,
+            }),
+        )
+    };
+    let held = |data: &ModStoreData| data.client.as_ref().unwrap().outbound_events.clone();
+
+    presented.lock().context = ClientContext::Presentation {
+        owner: "weathertest".into(),
+    };
+    assert_eq!(
+        emit(&mut data, "weathertest:picked", vec![1]),
+        HostRet::Bool(false)
+    );
+    assert!(held(&data).is_empty(), "a presented world has no server");
+
+    presented.lock().context = ClientContext::Local {
+        name: "world".into(),
+        shared: false,
+    };
+    for (key, bytes, code) in [
+        ("other:picked", vec![1], ErrorCode::Forbidden),
+        (
+            "weathertest:picked",
+            vec![0; mod_api::EVENT_MAX_DATA_BYTES + 1],
+            ErrorCode::LimitExceeded,
+        ),
+    ] {
+        assert!(
+            matches!(emit(&mut data, key, bytes), HostRet::Err(HostError { code: c, .. }) if c == code),
+            "{key} is the mod's bug"
+        );
+    }
+    assert!(held(&data).is_empty());
+
+    assert_eq!(
+        emit(&mut data, "weathertest:first", vec![1, 2]),
+        HostRet::Bool(true)
+    );
+    assert_eq!(
+        emit(&mut data, "weathertest:second", vec![]),
+        HostRet::Bool(true)
+    );
+    assert_eq!(
+        held(&data),
+        [
+            ("weathertest:first".to_owned(), vec![1, 2]),
+            ("weathertest:second".to_owned(), vec![]),
+        ]
+    );
+
+    let taken = (0..2 * CLIENT_EVENT_OUTBOX_MAX)
+        .filter(|_| emit(&mut data, "weathertest:more", vec![]) == HostRet::Bool(true))
+        .count();
+    assert_eq!(taken + 2, CLIENT_EVENT_OUTBOX_MAX);
+    assert_eq!(held(&data).len(), CLIENT_EVENT_OUTBOX_MAX);
+}

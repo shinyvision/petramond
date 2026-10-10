@@ -93,6 +93,7 @@ dependencies = [
  "mod-sdk",
  "pack-check",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

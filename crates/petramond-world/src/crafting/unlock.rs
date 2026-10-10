@@ -6,7 +6,7 @@ use super::recipe::{CraftingCatalog, IngredientSelector};
 
 struct Gate {
     key: String,
-    ingredients: Vec<ItemSet>,
+    needs: Vec<ItemSet>,
     early: ItemSet,
 }
 
@@ -20,16 +20,19 @@ impl UnlockIndex {
     pub fn build(catalog: &CraftingCatalog) -> Self {
         let mut index = Self::default();
         for recipe in catalog.iter() {
-            let ingredients: Vec<ItemSet> = recipe
-                .ingredients()
-                .iter()
-                .map(|ingredient| satisfying_items(ingredient.selector))
-                .collect();
-            if ingredients.iter().any(ItemSet::is_empty) {
+            let needs: Vec<ItemSet> = match recipe.unlock_needs() {
+                Some(needs) => needs.iter().map(|&need| satisfying_items(need)).collect(),
+                None => recipe
+                    .ingredients()
+                    .iter()
+                    .map(|ingredient| satisfying_items(ingredient.selector))
+                    .collect(),
+            };
+            if needs.iter().any(ItemSet::is_empty) {
                 continue;
             }
             let gate = index.gates.len() as u32;
-            for item in ingredients
+            for item in needs
                 .iter()
                 .flat_map(ItemSet::iter)
                 .chain(recipe.unlock_on().iter())
@@ -41,7 +44,7 @@ impl UnlockIndex {
             }
             index.gates.push(Gate {
                 key: recipe.key().to_owned(),
-                ingredients,
+                needs,
                 early: *recipe.unlock_on(),
             });
         }
@@ -72,11 +75,7 @@ impl UnlockIndex {
 impl Gate {
     #[inline]
     fn satisfied_by(&self, obtained: &ItemSet) -> bool {
-        self.early.intersects(obtained)
-            || self
-                .ingredients
-                .iter()
-                .all(|mask| mask.intersects(obtained))
+        self.early.intersects(obtained) || self.needs.iter().all(|mask| mask.intersects(obtained))
     }
 }
 
@@ -222,6 +221,45 @@ mod tests {
     }
 
     #[test]
+    fn unlock_needs_replace_the_ingredient_gate() {
+        let mut row = recipe(
+            "test:easel",
+            vec![
+                tagged(ItemTag::PLANKS),
+                exact(ItemType::Stick),
+                exact(ItemType::Diamond),
+            ],
+            ItemType::CraftingTable,
+        );
+        row.set_data(vec![(
+            "petramond:unlock_needs".into(),
+            r#"[{"tag":"petramond:planks"},{"item":"petramond:stick"}]"#.into(),
+        )])
+        .unwrap();
+        let index = UnlockIndex::build(&CraftingCatalog::new(vec![row]));
+
+        let spruce_only: ItemSet = [ItemType::SprucePlanks].into_iter().collect();
+        assert!(index.opened_by_all(&spruce_only).next().is_none());
+        let needs: ItemSet = [ItemType::SprucePlanks, ItemType::Stick]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            index.opened_by(ItemType::Stick, &needs),
+            vec!["test:easel"],
+            "the needs open the recipe although the diamond was never seen"
+        );
+        let without_stick: ItemSet = [ItemType::OakPlanks, ItemType::Diamond]
+            .into_iter()
+            .collect();
+        assert!(
+            index
+                .opened_by(ItemType::Diamond, &without_stick)
+                .is_empty(),
+            "an ingredient the needs leave out no longer gates the recipe"
+        );
+    }
+
+    #[test]
     fn invalid_early_unlock_policy_rejects_the_recipe_row() {
         let mut row = recipe(
             "test:station",
@@ -238,6 +276,16 @@ mod tests {
             .is_err());
         assert!(row
             .set_data(data(r#"{"items":["petramond:diamond"],"typo":1}"#))
+            .is_err());
+        let needs = |value: &str| vec![("petramond:unlock_needs".into(), value.into())];
+        assert!(row.set_data(needs("[]")).is_err());
+        assert!(row
+            .set_data(needs(
+                r#"[{"item":"petramond:stick","tag":"petramond:planks"}]"#
+            ))
+            .is_err());
+        assert!(row
+            .set_data(needs(r#"[{"item":"petramond:missing"}]"#))
             .is_err());
     }
 }

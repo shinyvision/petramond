@@ -4,7 +4,7 @@
 //!
 //! A camp is derived in three stages, each handing the next what it settled: [`survey()`] decides
 //! whether the site takes a camp and fixes its [`Outline`](survey::Outline), the [`Planner`] lays out where
-//! everything stands, and the [`Builder`] builds that [`Layout`] into the plan without changing
+//! everything stands, and the [`Builder`] builds that [`Layout`](layout::Layout) into the plan without changing
 //! it.
 
 /// `petramond:<block>` as a material, built once per call site: builders use these in their
@@ -48,11 +48,11 @@ mod walls;
 #[cfg(test)]
 mod tests;
 
-use mod_sdk::build::{Derived, Families, Heights, Name, Plan, PlanCache, Site, SiteGrid};
+use mod_sdk::build::{Derived, Families, Heights, Plan, PlanCache, Site, SiteGrid};
 use mod_sdk::*;
 
 use build::Builder;
-use layout::{Layout, Planner};
+use layout::Planner;
 use survey::{survey, Survey, Surveyed};
 
 /// Sections a camp can write: the arena pit and well shafts reach below the surface, towers on
@@ -132,14 +132,14 @@ impl Camps {
     }
 
     pub(crate) fn generate(&mut self, ctx: &GenCtx) -> GenOutput {
-        let derive = derive_logged(ctx.seed(), ctx.sea_level(), &self.families, self.flagged);
+        let derive = derive_on_host(ctx.seed(), ctx.sea_level(), &self.families, self.flagged);
         self.cache
             .generate(&GRID, ctx, derive, &mut resolver(&mut self.ids))
             .unwrap_or_else(|_| GenOutput::deferred())
     }
 
     pub(crate) fn claims(&mut self, ctx: &ClaimsCtx) -> GenClaims {
-        let derive = derive_logged(ctx.seed, ctx.sea_level, &self.families, self.flagged);
+        let derive = derive_on_host(ctx.seed, ctx.sea_level, &self.families, self.flagged);
         self.cache
             .claims(&GRID, ctx, derive, &mut resolver(&mut self.ids))
             .unwrap_or_else(|_| GenClaims {
@@ -159,30 +159,17 @@ fn resolver(
     }
 }
 
-/// [`derive()`] from the host's terrain, logging what each camp built.
-fn derive_logged(
+/// [`derive()`] from the host's terrain.
+fn derive_on_host(
     seed: u32,
     sea_level: i32,
     families: &Families,
     flagged: bool,
 ) -> impl Fn(Site) -> Derived + '_ {
-    move |site| {
-        let [x, z] = site.center;
-        let mut report = |summary: &str| log(&format!("skeleton camp at {x} {z}: {summary}"));
-        derive(
-            seed,
-            sea_level,
-            site,
-            families,
-            flagged,
-            &HostTerrain,
-            &mut report,
-        )
-    }
+    move |site| derive(seed, sea_level, site, families, flagged, &HostTerrain)
 }
 
-/// Derives the camp at `site`, telling `report` what it built. A `flagged` camp flies a skull
-/// flag.
+/// Derives the camp at `site`. A `flagged` camp flies a skull flag.
 pub(crate) fn derive(
     seed: u32,
     sea_level: i32,
@@ -190,15 +177,10 @@ pub(crate) fn derive(
     families: &Families,
     flagged: bool,
     terrain: &dyn Terrain,
-    report: &mut dyn FnMut(&str),
 ) -> Derived {
     let rng = GRID.rng(seed, site);
     match survey(site.center, sea_level, families, terrain, rng) {
-        Survey::Camp(surveyed) => {
-            let camp = Camp::raise(*surveyed, flagged);
-            report(&camp.summary());
-            Derived::Plan(Box::new(camp.plan))
-        }
+        Survey::Camp(surveyed) => Derived::Plan(Box::new(Camp::raise(*surveyed, flagged).plan)),
         Survey::Nothing => Derived::Nothing,
         Survey::Unavailable => Derived::Unavailable,
     }
@@ -224,15 +206,14 @@ enum Res {
 struct Camp {
     #[cfg(test)]
     outline: survey::Outline,
-    layout: Layout,
+    #[cfg(test)]
+    layout: layout::Layout,
     /// The floor as built.
     #[cfg(test)]
     ground: grid::Grid<i32>,
+    #[cfg(test)]
     posts: Vec<posts::Post>,
     plan: Plan,
-    stone: bool,
-    wood: Name,
-    flag: bool,
 }
 
 impl Camp {
@@ -248,41 +229,13 @@ impl Camp {
         Camp {
             #[cfg(test)]
             outline,
+            #[cfg(test)]
             layout,
             #[cfg(test)]
             ground: built.ground,
+            #[cfg(test)]
             posts: built.posts,
             plan: built.plan,
-            stone: built.stone,
-            wood: built.wood,
-            flag: built.flag,
         }
-    }
-
-    fn summary(&self) -> String {
-        use layout::CentreKind;
-        let walls = if self.stone {
-            "stone".to_string()
-        } else {
-            format!("{} wood", self.wood)
-        };
-        let layout = &self.layout;
-        let centre = match layout.centre.as_ref().map(|c| c.kind) {
-            None => "no centrepiece",
-            Some(CentreKind::Well) => "a well",
-            Some(CentreKind::Statue) => "a statue",
-            Some(CentreKind::Arena) => "an arena",
-        };
-        format!(
-            "{walls} walls, {} gates, {} towers, {} huts, {centre}, {} fortress sections, {} plateaus, {} bridges, {} posts{}",
-            layout.gates.len(),
-            layout.towers.len(),
-            layout.huts.len(),
-            layout.fort_arcs.len(),
-            layout.plateaus.len(),
-            layout.bridges.len(),
-            self.posts.len(),
-            if self.flag { ", a flag" } else { "" },
-        )
     }
 }

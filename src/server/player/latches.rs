@@ -15,6 +15,12 @@ pub const BREAK_QUEUE_DEPTH: usize = 16;
 pub const CHAT_BURST: f64 = 6.0;
 pub const CHAT_PER_SECOND: f64 = 1.0;
 
+/// Client mod events one session may have accepted at once: a mod UI sends one per frame
+/// while a control is dragged, and a network hitch delivers a second of them in one pump.
+pub const MOD_EVENT_BURST: f64 = 128.0;
+/// Sustained client mod events per second per session: one per frame at 60 fps.
+pub const MOD_EVENT_PER_SECOND: f64 = 64.0;
+
 #[derive(Copy, Clone, Debug)]
 pub struct PendingBreakFinished {
     pub request_id: ClientRequestId,
@@ -166,6 +172,7 @@ pub struct InputLatches {
     pub wake_requested: bool,
     pub respawn_requested: bool,
     chat: crate::net::rate::TokenBucket,
+    mod_events: crate::net::rate::TokenBucket,
 }
 
 impl InputLatches {
@@ -200,11 +207,20 @@ impl InputLatches {
                 CHAT_PER_SECOND,
                 std::time::Instant::now(),
             ),
+            mod_events: crate::net::rate::TokenBucket::new(
+                MOD_EVENT_BURST,
+                MOD_EVENT_PER_SECOND,
+                std::time::Instant::now(),
+            ),
         }
     }
 
     pub fn allow_chat(&mut self, now: std::time::Instant) -> bool {
         self.chat.try_take(1.0, now)
+    }
+
+    pub fn allow_mod_event(&mut self, now: std::time::Instant) -> bool {
+        self.mod_events.try_take(1.0, now)
     }
 
     pub fn latch_attack(&mut self, click: AttackClick) {
@@ -334,6 +350,16 @@ mod tests {
         assert_eq!(sent, CHAT_BURST as usize);
         let later = now + std::time::Duration::from_secs_f64(1.5 / CHAT_PER_SECOND);
         assert!(latches.allow_chat(later), "the budget refills");
+    }
+
+    #[test]
+    fn mod_events_are_rate_limited_after_their_burst() {
+        let mut latches = InputLatches::new(WorldPos::new(0.0, 64.0, 0.0));
+        let now = std::time::Instant::now();
+        let sent = (0..1000).filter(|_| latches.allow_mod_event(now)).count();
+        assert_eq!(sent, MOD_EVENT_BURST as usize);
+        let later = now + std::time::Duration::from_secs_f64(1.5 / MOD_EVENT_PER_SECOND);
+        assert!(latches.allow_mod_event(later), "the budget refills");
     }
 
     #[test]

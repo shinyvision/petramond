@@ -2051,3 +2051,66 @@ fn the_tab_under_the_pointer_is_the_hovered_item() {
     }]);
     assert_eq!(h.out.hover_item, Some(("tabs".into(), 1)));
 }
+
+#[test]
+fn an_id_carrying_slot_node_is_the_hover_widget_and_keeps_its_slot_hover() {
+    let doc = Arc::new(
+        Document::from_json(
+            r#"{
+                "format": 1, "kind": "petramond:test_chest", "class": "container",
+                "root": { "type": "column", "children": [
+                    { "type": "slot_grid", "id": "grid", "role": "storage", "cols": 3, "rows": 2 },
+                    { "type": "slot", "id": "single", "role": "storage" },
+                    { "type": "slot", "role": "storage" }
+                ] }
+            }"#,
+        )
+        .unwrap(),
+    );
+    let rt = UiRuntime::new(doc, Arc::new(Theme::placeholder()));
+    let mut fs = FrameState::new();
+    let mut out = FrameOutput::default();
+    let state = UiState::new();
+    let mut hover = |at: Option<u32>| {
+        let input: Vec<InputEvent> = at
+            .map(|index| {
+                let r = out.slots.iter().find(|s| s.index == index).unwrap().rect;
+                InputEvent::PointerMove {
+                    x: (r.x + r.w / 2) as f32,
+                    y: (r.y + r.h / 2) as f32,
+                }
+            })
+            .into_iter()
+            .collect();
+        rt.frame(
+            FrameArgs {
+                screen: (300, 300),
+                scale: 2,
+                now: 0.0,
+                state: &state,
+                input: &input,
+                clipboard: None,
+                images: &NoImages,
+                dim: None,
+                preview: None,
+            },
+            &mut fs,
+            &mut out,
+        );
+        (
+            out.hover_widget.as_ref().map(|k| (k.id.clone(), k.item)),
+            out.hover_slot.clone(),
+        )
+    };
+    hover(None);
+    assert_eq!(
+        hover(Some(4)),
+        (Some(("grid".into(), None)), Some(("storage".into(), 4))),
+        "a grid reports its id, never the cell"
+    );
+    assert_eq!(
+        hover(Some(6)),
+        (Some(("single".into(), None)), Some(("storage".into(), 6)))
+    );
+    assert_eq!(hover(Some(7)), (None, Some(("storage".into(), 7))));
+}

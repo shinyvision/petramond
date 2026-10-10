@@ -1,0 +1,21 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "flags:flagpole",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [{"item": "petramond:stick", "count": 2}],
+      "result": {"item": "flags:flagpole", "count": 1}
+    },
+    {
+      "type": "crafting",
+      "recipe": "flags:flag",
+      "station": "petramond:furniture_workbench",
+      "ingredients": [
+        {"item": "petramond:stick", "count": 2},
+        {"item": "petramond:wool", "count": 4}
+      ],
+      "result": {"item": "flags:flag", "count": 1}
+    }
+  ]
+}

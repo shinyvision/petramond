@@ -59,6 +59,13 @@ pub enum EventKind {
     SchematicChosen,
     SchematicPositioned,
     CellsEditPre,
+    /// POST — one event a player's client instance sent with
+    /// [`ClientCall::ClientEmitEvent`]. Reaches only the server instance of the mod that owns
+    /// the key's namespace. The bytes are whatever that client chose to send: validate them
+    /// like any other input.
+    ///
+    /// [`ClientCall::ClientEmitEvent`]: crate::ClientCall::ClientEmitEvent
+    ClientEvent,
 }
 
 #[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq)]
@@ -358,6 +365,12 @@ pub enum EventPayload {
         cells: u64,
         actor: EntityRef,
     },
+    ClientEvent {
+        player: PlayerId,
+        key: String,
+        #[serde(with = "serde_bytes")]
+        data: Vec<u8>,
+    },
 }
 
 impl EventPayload {
@@ -395,6 +408,7 @@ impl EventPayload {
             EventPayload::SchematicChosen { .. } => EventKind::SchematicChosen,
             EventPayload::SchematicPositioned { .. } => EventKind::SchematicPositioned,
             EventPayload::CellsEditPre { .. } => EventKind::CellsEditPre,
+            EventPayload::ClientEvent { .. } => EventKind::ClientEvent,
         }
     }
 }

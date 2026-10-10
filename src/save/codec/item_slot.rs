@@ -11,6 +11,9 @@ pub struct DiskSlot {
 }
 wire_struct!(DiskSlot { item, count, blob });
 
+// `Blob16` cuts a longer blob short.
+const _: () = assert!(petramond_world::item::variant::MAX_BLOB_BYTES <= u16::MAX as usize);
+
 impl DiskSlot {
     pub fn is_empty(&self) -> bool {
         self.item == 0 || self.count == 0

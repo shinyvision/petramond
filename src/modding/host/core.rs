@@ -2,7 +2,9 @@ use mod_api::{CoreCall, ErrorCode, HostRet};
 
 use crate::modding::scope;
 
-use super::guards::{key_owned_by_namespace, public_write_key_guard, sim_call, sim_query};
+use super::guards::{
+    event_key_guard, key_owned_by_namespace, public_write_key_guard, sim_call, sim_query,
+};
 use super::{ModStoreData, Registration};
 
 pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostRet {
@@ -124,24 +126,6 @@ pub(super) fn handle_core_call(data: &mut ModStoreData, call: CoreCall) -> HostR
             })
         }
     }
-}
-
-fn event_key_guard(call: &str, mod_id: &str, key: &str, len: usize) -> Option<HostRet> {
-    if !key_owned_by_namespace(mod_id, key) {
-        return Some(HostRet::error(
-            ErrorCode::Forbidden,
-            format!("{call} key '{key}' is not in mod '{mod_id}'s namespace"),
-        ));
-    }
-    (len > super::guards::EVENT_MAX_DATA_BYTES).then(|| {
-        HostRet::error(
-            ErrorCode::LimitExceeded,
-            format!(
-                "{call} payload is {len} bytes; the limit is {}",
-                super::guards::EVENT_MAX_DATA_BYTES
-            ),
-        )
-    })
 }
 
 #[cfg(test)]

@@ -868,6 +868,9 @@ pub(super) fn samples() -> Samples {
     s.pin("EventPayload::ModEvent", &EventPayload::ModEvent {
         key: "m:e".into(), data: vec![1, 2],
     });
+    s.pin("EventPayload::ClientEvent", &EventPayload::ClientEvent {
+        player: PlayerId(6), key: "m:e".into(), data: vec![1, 2],
+    });
 
     s.pin("Outcome::*", &vec![Outcome::Continue, Outcome::Cancel]);
     s.pin("Stage::*", &vec![
@@ -892,7 +895,7 @@ pub(super) fn samples() -> Samples {
         EventKind::Interacted, EventKind::ModEvent,
             EventKind::UseUnclaimed, EventKind::AttackAttempt, EventKind::ProjectileHit,
             EventKind::ActorActed, EventKind::SchematicChosen, EventKind::SchematicPositioned,
-            EventKind::CellsEditPre,
+            EventKind::CellsEditPre, EventKind::ClientEvent,
     ]);
     s.pin("DamageSource::*", &vec![
         DamageSource::Fall,
@@ -1320,6 +1323,18 @@ pub(super) fn samples() -> Samples {
     s.pin("HostCall::ClientPacks", &HostCall::from(calls::ClientPacks));
     s.pin("HostCall::ClientWallClock", &HostCall::from(calls::ClientWallClock));
     s.pin("HostCall::ClientClothWindSet", &HostCall::from(calls::ClientClothWindSet { wind: Some([-1.5, 0.25]) }));
+    s.pin("HostCall::ClientEmitEvent", &HostCall::from(calls::ClientEmitEvent {
+        key: "m:e".into(), data: vec![1, 2],
+    }));
+    s.pin("HostCall::ClientMenu", &HostCall::from(calls::ClientMenu));
+    s.pin("HostRet::ClientMenu", &HostRet::ClientMenu(Some(crate::ClientMenuData {
+        kind_key: "m:bench".into(),
+        at: Some(crate::ContainerAddress::Block([1, -2, 3])),
+        slots: vec![None, Some(crate::ItemStackData {
+            item: "m:ore".into(), count: 3, data: vec![("m:k".into(), vec![7])],
+        })],
+    })));
+    s.pin("HostCall::ClientTilePixels", &HostCall::from(calls::ClientTilePixels { tile: "m:t".into() }));
 
     s.pin("HostRet::Ticket", &HostRet::Ticket(4));
     s.pin("HostRet::ClientStateTicket", &HostRet::ClientStateTicket(crate::ClientStateTicketData {

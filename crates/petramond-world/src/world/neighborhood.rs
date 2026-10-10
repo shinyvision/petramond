@@ -44,10 +44,17 @@ impl WorldData {
             )
             .and_then(|v| <[u8; 3]>::try_from(v).ok())
         };
-        match self.cell_parts(pos) {
-            Some(parts) => parts.into_iter().find_map(|(part, _)| read(part)),
-            None => read(0),
-        }
+        let (part, tint) = match self.cell_parts(pos) {
+            Some(parts) => parts
+                .into_iter()
+                .find_map(|(part, _)| Some((part, read(part)?))),
+            None => Some((0, read(0)?)),
+        }?;
+        // Bursts wear the block's own tiles, so they take the tint only where
+        // the body does: a dyed flag's pole breaks into undyed chips.
+        let mut boxes = Vec::new();
+        self.shape_draw_boxes(pos, &mut boxes);
+        (boxes.is_empty() || boxes.iter().any(|b| b.part == part && b.dyeable)).then_some(tint)
     }
 }
 

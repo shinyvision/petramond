@@ -291,6 +291,12 @@ pub enum PostEvent {
         origin: IVec3,
         turns: u8,
     },
+    /// Sent by `player`'s client mod instance; `key` and `data` are that client's claim.
+    ClientEvent {
+        player: crate::player::PlayerId,
+        key: String,
+        data: Vec<u8>,
+    },
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -317,10 +323,11 @@ pub enum PostEventKind {
     ActorActed,
     SchematicChosen,
     SchematicPositioned,
+    ClientEvent,
 }
 
 impl PostEventKind {
-    pub const COUNT: usize = 22;
+    pub const COUNT: usize = 23;
 }
 
 impl PostEvent {
@@ -348,6 +355,7 @@ impl PostEvent {
             PostEvent::ActorActed { .. } => PostEventKind::ActorActed,
             PostEvent::SchematicChosen { .. } => PostEventKind::SchematicChosen,
             PostEvent::SchematicPositioned { .. } => PostEventKind::SchematicPositioned,
+            PostEvent::ClientEvent { .. } => PostEventKind::ClientEvent,
         }
     }
 
@@ -366,7 +374,8 @@ impl PostEvent {
             | PostEvent::ItemObtained { player, .. }
             | PostEvent::Interacted { player, .. }
             | PostEvent::SchematicChosen { player, .. }
-            | PostEvent::SchematicPositioned { player, .. } => Some(*player),
+            | PostEvent::SchematicPositioned { player, .. }
+            | PostEvent::ClientEvent { player, .. } => Some(*player),
             PostEvent::ActorActed { actor, .. } => actor.player(),
             PostEvent::MobDied { .. }
             | PostEvent::MobSpawned { .. }

@@ -179,12 +179,15 @@ fn walk<'a>(
                 issue("list cols must be >= 1".into());
             }
         }
-        NodeKind::Tooltip { .. } => {
+        NodeKind::Tooltip { hover } => {
             if node.children.is_empty() {
                 issue("tooltip needs at least one child".into());
             }
-            if node.bind.visible.is_none() {
-                issue("tooltip needs a 'visible' binding (the host shows it)".into());
+            if node.bind.visible.is_none() && hover.is_none() {
+                issue(
+                    "tooltip needs a 'visible' binding or a 'hover' anchor (or it never hides)"
+                        .into(),
+                );
             }
         }
         NodeKind::Slot { role, .. } | NodeKind::SlotGrid { role, .. } if role.is_empty() => {

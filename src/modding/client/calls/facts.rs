@@ -13,6 +13,10 @@ fn vocabulary() -> u64 {
     })
 }
 
+pub(super) fn tile_pixels(tile: &str) -> HostRet {
+    HostRet::Bytes(crate::modding::client::presented::tile_pixels(tile))
+}
+
 pub(super) fn handle(client: &ClientStoreData, guest_memory_max: u64, call: ClientCall) -> HostRet {
     match call {
         ClientCall::ClientEngineFacts => {

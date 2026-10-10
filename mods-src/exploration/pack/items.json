@@ -90,7 +90,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "petramond:flowers"
+      ],
       "block": "exploration:cave_flower_pink"
     },
     {
@@ -103,7 +105,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "petramond:flowers"
+      ],
       "block": "exploration:cave_flower_blue"
     },
     {
@@ -116,7 +120,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "petramond:flowers"
+      ],
       "block": "exploration:cave_flower_magenta"
     },
     {
@@ -129,7 +135,9 @@
         "yaw": 1.8,
         "roll": 0
       },
-      "tags": [],
+      "tags": [
+        "petramond:flowers"
+      ],
       "block": "exploration:cave_flower_purple"
     },
     {

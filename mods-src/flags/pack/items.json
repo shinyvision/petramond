@@ -8,12 +8,16 @@
       "block": "flags:flagpole"
     },
     {
-      "item": "flags:white_flag",
-      "key": "flags:white_flag",
-      "name": "White Flag",
+      "item": "flags:flag",
+      "key": "flags:flag",
+      "name": "Flag",
       "max_stack_size": 16,
-      "sprite": "flags:white_flag_item",
-      "block": "flags:white_flag"
+      "sprite": "flags:flag",
+      "block": "flags:flag",
+      "data": {
+        "furniture:paintable": {"canvas": [0, 2, 16, 12]},
+        "furniture:dyeable": true
+      }
     }
   ]
 }

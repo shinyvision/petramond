@@ -38,6 +38,9 @@ pub(super) const CLIENT_TEXT_RUN_MAX: usize = 256;
 pub(super) const CLIENT_TEXT_BYTES_MAX: usize = 16 << 10;
 pub(super) const CLIENT_TEXT_SCALE_MAX: u8 = 8;
 pub(super) const CLIENT_COMMAND_MAX: usize = 64;
+/// Events one instance may hold for the server between two sends: what the server takes
+/// from a session at once, since it would drop anything past that.
+pub(super) const CLIENT_EVENT_OUTBOX_MAX: usize = crate::server::player::MOD_EVENT_BURST as usize;
 pub(super) const CLIENT_CANVAS_SIDE_MAX: u16 = 2048;
 pub(super) const CLIENT_CANVAS_MAX: usize = 8;
 pub(super) const CLIENT_WIND_MAX: f32 = 64.0;

@@ -10,6 +10,7 @@ mod harness;
 use harness::TestApp;
 
 mod client_docs;
+mod co_driven;
 mod connect;
 mod controls;
 mod creative;

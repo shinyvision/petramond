@@ -145,12 +145,11 @@ where
 /// [`ray_vs_model_cubes`] with an optional FOOTPRINT-space acceptance box: a
 /// face crossing counts only when its surface point lies inside `within`.
 /// This exists for per-cell attribution over a model whose geometry OVERHANGS
-/// its footprint (`fit: native`): the DDA tests the whole model from each
-/// footprint cell and must take the nearest crossing INSIDE that cell — with
-/// only a global first-crossing, an out-of-footprint horn met first would
-/// veto the in-cell body behind it, selecting a block beyond the model.
-/// The overhang itself stays
-/// deliberately unselectable (selection never extends beyond the footprint).
+/// its footprint (`fit: native`): the DDA asks one cell at a time and must
+/// take the nearest crossing INSIDE that cell — with only a global
+/// first-crossing, an out-of-footprint horn met first would veto the in-cell
+/// body behind it, selecting a block beyond the model. The overhang is asked
+/// for from the cells it lies in.
 fn ray_vs_model_cubes_within<F>(
     eye: Vec3,
     dir: Vec3,

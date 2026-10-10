@@ -89,15 +89,32 @@ const DYE_USES: u8 = 8;
 
 const DYEABLE_KEY: &str = keys::DYEABLE;
 
+/// A `furniture:dyeable` entry: `true` keeps the item it is on, `{"becomes": "<item>"}` hands back
+/// another item wearing the dye, for an item whose own look a dye would not show through.
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+enum DyeableSpec {
+    Itself(bool),
+    Becomes { becomes: String },
+}
+
+/// Every dyeable item with the name of the item a dip gives back for it.
 pub(super) fn load_dyeables() -> Vec<(ItemId, String)> {
-    let ids: Vec<ItemId> = items_with_data(DYEABLE_KEY)
-        .into_iter()
-        .map(|(item, _)| item)
-        .collect();
-    let names = item_names(ids.clone());
-    ids.into_iter()
+    let rows = items_with_data_as::<DyeableSpec>(DYEABLE_KEY);
+    let names = item_names(rows.iter().map(|(item, _)| *item).collect());
+    rows.into_iter()
         .zip(names)
-        .filter_map(|(id, name)| Some((id, name?)))
+        .filter_map(|((item, spec), name)| {
+            let dyed = match spec {
+                DyeableSpec::Itself(true) => name?,
+                DyeableSpec::Itself(false) => return None,
+                DyeableSpec::Becomes { becomes } => {
+                    resolve_item_logged(&becomes)?;
+                    becomes
+                }
+            };
+            Some((item, dyed))
+        })
         .collect()
 }
 
@@ -284,13 +301,13 @@ impl Furniture {
                 let Some(color) = dye else {
                     return false;
                 };
-                let Some((held_id, held_name)) = self.dyeables.get(dyeable) else {
+                let Some((held_id, dyed_name)) = self.dyeables.get(dyeable) else {
                     return false;
                 };
                 if !consume_held(*held_id, count as u32) {
                     return false;
                 }
-                give_item_data(held_name, count, &[(TINT_KEY, &color)]);
+                give_item_data(dyed_name, count, &[(TINT_KEY, &color)]);
                 let uses = section_kv_get(pos, USES_KEY)
                     .and_then(|v| v.first().copied())
                     .unwrap_or(DYE_USES);

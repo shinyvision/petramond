@@ -4,11 +4,13 @@ mod cauldron;
 mod chains;
 mod keys;
 mod lanterns;
+mod painting;
 mod seats;
 
 use cauldron::{resolve_cauldron, Cauldron};
 use chains::{resolve_chains, Chains};
 use lanterns::{resolve_lanterns, Lanterns};
+use painting::Painting;
 use seats::{release_broken_piece_sitters, ResolvedPiece};
 
 fn is_strut(b: &ShapeAabb) -> bool {
@@ -127,6 +129,7 @@ fn ray_enters(from: [f32; 3], dir: [f32; 3], b: &ShapeAabb) -> bool {
 
 const ON_INTERACT: u32 = 1;
 const ON_BLOCK_BROKEN: u32 = 2;
+const ON_CLIENT_EVENT: u32 = 3;
 
 #[derive(Default)]
 struct Furniture {
@@ -137,6 +140,7 @@ struct Furniture {
     buckets: Option<WaterBuckets>,
     dyeables: Vec<(ItemId, String)>,
     pigments: Vec<(ItemId, [u8; 3], bool)>,
+    painting: Option<Painting>,
     client: bool,
 }
 
@@ -150,9 +154,11 @@ impl Mod for Furniture {
         self.buckets = WaterBuckets::resolve();
         self.dyeables = cauldron::load_dyeables();
         self.pigments = cauldron::load_pigments();
+        self.painting = Some(Painting::init(self.client));
         register_event_handler(EventKind::InteractAttempt, 0, ON_INTERACT);
         if !self.client {
             register_event_handler(EventKind::BlockBroken, 0, ON_BLOCK_BROKEN);
+            register_event_handler(EventKind::ClientEvent, 0, ON_CLIENT_EVENT);
         }
     }
 
@@ -180,6 +186,12 @@ impl Mod for Furniture {
                     Outcome::Continue
                 }
             }
+            (ON_CLIENT_EVENT, EventPayload::ClientEvent { player, key, data }) => {
+                if let Some(painting) = &self.painting {
+                    painting.on_client_event(*player, key, data);
+                }
+                Outcome::Continue
+            }
             (ON_BLOCK_BROKEN, EventPayload::BlockBroken { pos, block, .. }) => {
                 if let Some(resolved) = self.pieces.iter().find(|p| p.block == *block) {
                     release_broken_piece_sitters(resolved.block, &resolved.piece, *pos);
@@ -187,6 +199,18 @@ impl Mod for Furniture {
                 Outcome::Continue
             }
             _ => Outcome::Continue,
+        }
+    }
+
+    fn client_frame(&mut self, frame: &ClientFrameData) {
+        if let Some(painting) = &mut self.painting {
+            painting.client_frame(frame);
+        }
+    }
+
+    fn client_ui(&mut self, kind_key: &str, event: &ClientUiEvent) {
+        if let Some(painting) = &mut self.painting {
+            painting.client_ui(kind_key, event);
         }
     }
 

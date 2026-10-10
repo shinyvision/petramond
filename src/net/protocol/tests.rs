@@ -116,6 +116,10 @@ fn representative_messages_roundtrip_through_postcard() {
     roundtrip(&ClientToServer::ChatSend {
         text: "hello server".into(),
     });
+    roundtrip(&ClientToServer::ModEvent {
+        key: "fixture:picked".into(),
+        data: vec![0, 255, 7],
+    });
     roundtrip(&ActionOutcome {
         id: 1,
         accepted: false,

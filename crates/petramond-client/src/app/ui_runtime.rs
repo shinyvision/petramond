@@ -90,6 +90,7 @@ pub(super) struct AppUi {
     active: Option<GuiKind>,
     extra_images: Vec<documents::DocImageRef>,
     dynamic_images: Vec<petramond::modding::ClientImageData>,
+    overlaid_keys: Vec<String>,
     scenes: std::collections::BTreeMap<String, (u64, petramond_ui::SceneView)>,
     image_sources: Vec<petramond::gui::DocImageSource>,
     viewport_generation: u64,
@@ -139,6 +140,7 @@ impl AppUi {
             active: None,
             extra_images: Vec::new(),
             dynamic_images: Vec::new(),
+            overlaid_keys: Vec::new(),
             scenes: Default::default(),
             image_sources: Vec::new(),
             viewport_generation: 0,
@@ -216,10 +218,26 @@ impl AppUi {
         state: &std::collections::BTreeMap<String, mod_api::GuiValue>,
     ) {
         self.state.clear();
+        self.overlaid_keys.clear();
+        self.overlay_client_state(state);
+    }
+
+    /// Lays a client instance's UI state over what the screen already holds, and
+    /// withdraws the keys a previous overlay set that this one no longer carries.
+    pub fn overlay_client_state(
+        &mut self,
+        state: &std::collections::BTreeMap<String, mod_api::GuiValue>,
+    ) {
+        for key in self.overlaid_keys.drain(..) {
+            if !state.contains_key(&key) {
+                self.state.remove(&key);
+            }
+        }
         for (key, value) in state {
             let value = super::gui_value::from_api(value);
             self.state.set(key.clone(), value);
         }
+        self.overlaid_keys.extend(state.keys().cloned());
     }
 
     pub fn image_sources(&self) -> &[petramond::gui::DocImageSource] {
@@ -263,6 +281,7 @@ impl AppUi {
     fn reset_screen_state(&mut self) {
         self.fs.reset();
         self.state.clear();
+        self.overlaid_keys.clear();
         self.extra_images.clear();
         self.dynamic_images.clear();
         self.scenes.clear();

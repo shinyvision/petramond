@@ -14,6 +14,7 @@ use super::ModHost;
 use petramond_math::world_pos::WorldPos;
 
 mod abi;
+mod client_events;
 mod conditions;
 mod guest_features;
 

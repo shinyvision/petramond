@@ -969,6 +969,11 @@ impl ClientModRuntime {
         })
     }
 
+    /// Whether the pack owning `kind_key` has a live client instance.
+    pub fn drives(&self, kind_key: &str) -> bool {
+        self.owner_index(kind_key).is_some()
+    }
+
     pub fn view_for(&self, kind_key: &str) -> Option<ClientUiView> {
         let data = self.owner_mod(kind_key)?.instance.client_data()?;
         Some(ClientUiView {
@@ -1047,6 +1052,22 @@ impl ClientModRuntime {
             }
             if let Some(data) = loaded.instance.client_data_mut() {
                 out.append(&mut data.commands);
+            }
+        }
+        out
+    }
+
+    /// The events instances emitted for the session's server, in emit order.
+    pub fn take_outbound_events(&mut self) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        for loaded in &mut self.mods {
+            let disabled = loaded.instance.disabled();
+            if let Some(data) = loaded.instance.client_data_mut() {
+                if disabled {
+                    data.outbound_events.clear();
+                } else {
+                    out.append(&mut data.outbound_events);
+                }
             }
         }
         out

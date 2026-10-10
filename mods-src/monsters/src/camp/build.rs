@@ -2,14 +2,13 @@
 //! earlier one is handed to it ([`Fortress`], the tower tops, the flag's [`Seat`]), so the order
 //! below is the order the passes' inputs allow.
 
-use mod_sdk::build::{Material, Name, Plan};
+use mod_sdk::build::{Material, Plan};
 use mod_sdk::GenRng;
 
 use super::flag::Seat;
 use super::grid::Grid;
 use super::ground::Rubble;
 use super::layout::Layout;
-use super::posts::Post;
 use super::style::Mats;
 use super::survey::Outline;
 use super::Res;
@@ -28,10 +27,8 @@ pub(super) struct Built {
     /// The floor as built: the arena's pit floor where one was dug.
     #[cfg(test)]
     pub ground: Grid<i32>,
-    pub posts: Vec<Post>,
-    pub stone: bool,
-    pub wood: Name,
-    pub flag: bool,
+    #[cfg(test)]
+    pub posts: Vec<super::posts::Post>,
 }
 
 /// A camp being built from its layout, which the passes only read.
@@ -88,16 +85,16 @@ impl<'a> Builder<'a> {
         if let Some(seat) = seat {
             self.raise_flag(seat);
         }
+        // The posts are marked into the plan; the list itself only tells tests where.
+        #[cfg_attr(not(test), allow(unused_variables))]
         let posts = self.build_posts(&fortress, &tower_tops);
         self.clear_space();
         Built {
             plan: self.plan,
             #[cfg(test)]
             ground: self.ground,
+            #[cfg(test)]
             posts,
-            stone: self.mats.stone,
-            wood: self.mats.wood,
-            flag: seat.is_some(),
         }
     }
 

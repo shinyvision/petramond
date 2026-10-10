@@ -146,33 +146,101 @@ pub fn triangle_overlaps_box(a: Vec3, b: Vec3, c: Vec3, min: Vec3, max: Vec3) ->
     !separated(e[0].cross(e[1]))
 }
 
-/// Exact distance from triangle `abc` to the box; 0 when they overlap. Box corners
-/// and edges farther from the triangle's bounds than the best pair so far are skipped.
+/// Exact distance from triangle `abc` to the box; 0 when they overlap.
 pub fn triangle_box_distance(a: Vec3, b: Vec3, c: Vec3, min: Vec3, max: Vec3) -> f32 {
+    triangle_box_closest(a, b, c, min, max).map_or(0.0, |(x, y)| (x - y).length())
+}
+
+/// The nearest points of triangle `abc` and the box, on the triangle then on the box;
+/// `None` when they overlap. Box corners and edges farther from the triangle's bounds
+/// than the best pair so far are skipped.
+pub fn triangle_box_closest(
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    min: Vec3,
+    max: Vec3,
+) -> Option<(Vec3, Vec3)> {
     if triangle_overlaps_box(a, b, c, min, max) {
-        return 0.0;
+        return None;
     }
-    let mut best = f32::INFINITY;
+    let mut best = (f32::INFINITY, a, a);
     for p in [a, b, c] {
-        best = best.min((p - closest_on_box(p, min, max)).length());
+        let q = closest_on_box(p, min, max);
+        let d = (p - q).length();
+        if d < best.0 {
+            best = (d, p, q);
+        }
     }
     let (lo, hi) = (a.min(b).min(c), a.max(b).max(c));
     let corners = box_corners(min, max);
     for q in corners {
-        if box_box_distance(lo, hi, q, q) < best {
-            best = best.min((q - closest_on_triangle(q, a, b, c).0).length());
+        if box_box_distance(lo, hi, q, q) < best.0 {
+            let p = closest_on_triangle(q, a, b, c).0;
+            let d = (p - q).length();
+            if d < best.0 {
+                best = (d, p, q);
+            }
         }
     }
     for (i, j) in BOX_EDGES {
         let (q0, q1) = (corners[i], corners[j]);
-        if box_box_distance(lo, hi, q0.min(q1), q0.max(q1)) >= best {
+        if box_box_distance(lo, hi, q0.min(q1), q0.max(q1)) >= best.0 {
             continue;
         }
         for (p0, p1) in [(a, b), (b, c), (c, a)] {
             let (_, _, x, y) = closest_segments(p0, p1, q0, q1);
-            best = best.min((x - y).length());
+            let d = (x - y).length();
+            if d < best.0 {
+                best = (d, x, y);
+            }
         }
     }
+    Some((best.1, best.2))
+}
+
+/// A unit direction parting triangle `abc` from the box, pointing from the box to the
+/// triangle, and how far apart the two project along it; the gap is not positive when
+/// nothing parts them. Tries `hint` (say, the nearest points' offset, which loses its
+/// direction to rounding as they touch) and the 13 separating-axis directions, which
+/// stay exact for face and edge-edge contact however close, and keeps the widest gap.
+pub fn triangle_box_separation(
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    min: Vec3,
+    max: Vec3,
+    hint: Vec3,
+) -> (Vec3, f32) {
+    let centre = (min + max) * 0.5;
+    let half = (max - min) * 0.5;
+    let v = [a - centre, b - centre, c - centre];
+    let mut best = (Vec3::ZERO, f32::NEG_INFINITY);
+    let mut try_axis = |axis: Vec3| {
+        let Some(n) = axis.try_normalize() else {
+            return;
+        };
+        let p = v.map(|x| n.dot(x));
+        let r = half.dot(n.abs());
+        let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+        let side = if lo - r >= -r - hi {
+            (n, lo - r)
+        } else {
+            (-n, -r - hi)
+        };
+        if side.1 > best.1 {
+            best = side;
+        }
+    };
+    try_axis(hint);
+    let e = [v[1] - v[0], v[2] - v[1], v[0] - v[2]];
+    for unit in [Vec3::X, Vec3::Y, Vec3::Z] {
+        try_axis(unit);
+        for edge in e {
+            try_axis(unit.cross(edge));
+        }
+    }
+    try_axis(e[0].cross(e[1]));
     best
 }
 

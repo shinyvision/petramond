@@ -79,6 +79,28 @@ const SHADOW_SINK: f32 = 0.6;
 const SHADOW_MAX_DROP: f32 = 4.0;
 /// No flag is posed farther than this, whatever the view distance.
 const FAR_CLOTH_LIMIT: f32 = 512.0;
+
+/// The coat the cloth owned by `cell` wears this frame, read from the cell's own data.
+/// A painted coat's per-texel dyes go into the frame's shared `texels` list.
+fn cloth_coat(
+    data: &petramond_world::world::WorldData,
+    cell: IVec3,
+    texels: &mut Vec<Option<[f32; 3]>>,
+) -> petramond_render::views::ClothCoat {
+    use petramond_render::views::ClothCoat;
+    use petramond_world::paint::{Coat, GRID};
+    let coat = Coat::read(|key| data.cell_kv_get(cell.x, cell.y, cell.z, key));
+    match (coat.paint, coat.tint) {
+        (Some(_), _) => {
+            let first = texels.len() as u32;
+            texels.extend((0..GRID).flat_map(|ty| (0..GRID).map(move |tx| coat.texel(tx, ty))));
+            ClothCoat::Painted { first }
+        }
+        (None, Some(tint)) => ClothCoat::Tint(tint),
+        (None, None) => ClothCoat::None,
+    }
+}
+
 const SHADOW_STRENGTH: f32 = 0.42;
 const MOB_SHADOW_RADIUS_SCALE: f32 = 1.5;
 const PLAYER_SHADOW_RADIUS: f32 = 0.45;
@@ -94,6 +116,7 @@ pub struct GamePresentationScratch {
     block_draws: Vec<petramond::world::draw::BlockDrawInstance>,
     cloths: Vec<petramond_render::views::ClothPresentation>,
     cloth_points: Vec<petramond_render::views::ClothPoint>,
+    cloth_texels: Vec<Option<[f32; 3]>>,
     far_cloths: Vec<petramond::world::PlacedCloth>,
     far_pose: Vec<Vec3>,
     block_entities: Vec<BlockEntityPresentation>,
@@ -155,6 +178,7 @@ impl GamePresentationScratch {
                 block_draws: &self.block_draws,
                 cloths: &self.cloths,
                 cloth_points: &self.cloth_points,
+                cloth_texels: &self.cloth_texels,
                 mobs: &self.mobs,
                 mob_arena: &self.mob_arena,
                 anim_names: game.replica.entities.mobs().anim_names(),
@@ -248,6 +272,7 @@ impl GamePresentationScratch {
     fn collect_cloths(&mut self, game: &Game, view: &ViewVolume) {
         self.cloths.clear();
         self.cloth_points.clear();
+        self.cloth_texels.clear();
         let data = game.replica.world.data();
         let cloth = &game.fx.cloth;
         let alpha = cloth.alpha();
@@ -266,6 +291,7 @@ impl GamePresentationScratch {
                     cols: u16::from(def.segments[0]) + 1,
                     rows: u16::from(def.segments[1]) + 1,
                     first: self.cloth_points.len() as u32,
+                    coat: cloth_coat(data, sim.cell, &mut self.cloth_texels),
                 });
             self.cloth_points.extend(sim.points(alpha).map(|pos| {
                 let c = sim.cell + petramond_math::math::voxel_at(pos);
@@ -308,6 +334,7 @@ impl GamePresentationScratch {
                     cols: segments[0] as u16 + 1,
                     rows: segments[1] as u16 + 1,
                     first: self.cloth_points.len() as u32,
+                    coat: cloth_coat(data, placed.cell, &mut self.cloth_texels),
                 });
             self.cloth_points.extend(self.far_pose.iter().map(|&pos| {
                 let c = placed.cell + petramond_math::math::voxel_at(pos);

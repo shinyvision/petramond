@@ -1066,6 +1066,20 @@
     {"patch": "furniture:lantern_wall_north", "data": {"petramond:rotate_y": "furniture:lantern_wall_east"}},
     {"patch": "furniture:lantern_wall_east", "data": {"petramond:rotate_y": "furniture:lantern_wall_south"}},
     {"patch": "furniture:lantern_wall_south", "data": {"petramond:rotate_y": "furniture:lantern_wall_west"}},
-    {"patch": "furniture:lantern_wall_west", "data": {"petramond:rotate_y": "furniture:lantern_wall_north"}}
+    {"patch": "furniture:lantern_wall_west", "data": {"petramond:rotate_y": "furniture:lantern_wall_north"}},
+    {
+      "block": "furniture:painting_table",
+      "shape": {"model": "furniture:painting_table"},
+      "flags": ["solid", "directional_view"],
+      "tags": ["no_grass_decay"],
+      "behavior": "inert",
+      "interaction": {"open_gui": "furniture:painting_table"},
+      "collision": [],
+      "emission": 0,
+      "tiles": ["oak_planks", "oak_planks", "oak_planks"],
+      "material": "wood",
+      "hardness": 2.0,
+      "drops": [{"item": "furniture:painting_table", "min": 1, "max": 1, "chance": 1.0}]
+    }
   ]
 }

@@ -14,7 +14,7 @@ mod parse;
 mod pose;
 mod self_ao;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 mod texture;
 
 pub use anim::{

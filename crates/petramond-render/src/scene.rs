@@ -19,6 +19,7 @@ pub struct Scene {
     block_draws: Vec<crate::BlockDrawInstance>,
     cloths: Vec<crate::views::ClothPresentation>,
     cloth_points: Vec<crate::views::ClothPoint>,
+    cloth_texels: Vec<Option<[f32; 3]>>,
     shadows: Vec<EntityShadow>,
     mobs: Vec<MobRenderInstance>,
     mob_arena: crate::MobArena,
@@ -44,6 +45,7 @@ impl Scene {
         self.block_draws.clear();
         self.cloths.clear();
         self.cloth_points.clear();
+        self.cloth_texels.clear();
         self.mobs.clear();
         self.mob_arena.clear();
         self.anim_names = crate::AnimNames::default();
@@ -62,8 +64,11 @@ impl Scene {
         self.cloths.clear();
         self.cloths.extend_from_slice(presentation.cloths);
         self.cloth_points.clear();
+        self.cloth_texels.clear();
         self.cloth_points
             .extend_from_slice(presentation.cloth_points);
+        self.cloth_texels
+            .extend_from_slice(presentation.cloth_texels);
         bake_particles(
             presentation.particles,
             &mut self.particles,
@@ -108,7 +113,11 @@ impl Scene {
         renderer.swap_item_entities(&mut self.item_entities);
         renderer.swap_block_entities(&mut self.block_entities);
         renderer.swap_block_draws(&mut self.block_draws);
-        renderer.swap_cloths(&mut self.cloths, &mut self.cloth_points);
+        renderer.swap_cloths(
+            &mut self.cloths,
+            &mut self.cloth_points,
+            &mut self.cloth_texels,
+        );
         renderer.swap_mobs(&mut self.mobs, &mut self.mob_arena, &self.anim_names);
         renderer.swap_shadows(&mut self.shadows);
         renderer.swap_particles(&mut self.particles);
@@ -120,6 +129,7 @@ impl Scene {
         self.block_draws.clear();
         self.cloths.clear();
         self.cloth_points.clear();
+        self.cloth_texels.clear();
         self.mobs.clear();
         self.mob_arena.clear();
         self.shadows.clear();
