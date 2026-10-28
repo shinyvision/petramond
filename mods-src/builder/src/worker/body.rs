@@ -56,13 +56,14 @@ pub(super) fn standing_cell(pos: [f64; 3]) -> [i32; 3] {
 pub(super) fn unwedge(body: &Body) -> bool {
     const HEIGHT: f64 = 1.5;
     let top = body.pos[1] + HEIGHT - 0.05;
-    let head = cell_of([body.pos[0], top, body.pos[2]]);
-    if head[1] == body.cell[1] {
+    // The feet's upward rounding can put the head cell above the actual top.
+    let head_y = top.floor() as i32;
+    if head_y == body.cell[1] {
         return false;
     }
     let half = f64::from(crate::content::GOLEM_HALF_WIDTH) - 0.02;
     let head_box = (
-        [body.pos[0] - half, f64::from(head[1]), body.pos[2] - half],
+        [body.pos[0] - half, f64::from(head_y), body.pos[2] - half],
         [body.pos[0] + half, top, body.pos[2] + half],
     );
     let wedged = boxes_clear(vec![head_box]).first() == Some(&false);

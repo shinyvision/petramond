@@ -31,3 +31,19 @@ fn a_body_wedged_under_a_block_is_set_down_on_free_ground_beside() {
     assert!(at_work(&mut session, id, |_, _, _| unwedge(&body)));
     assert_eq!(session.world.mob_pos(golem), Some(feet_of([3, 0, 4])));
 }
+
+#[test]
+fn unwedge_checks_the_head_just_below_a_cell_boundary() {
+    let (mut session, id, golem) = working([4, 0, 4]);
+    let mut body = session.body(golem);
+    body.pos[1] = 0.54999972227961;
+    body.on_ground = false;
+    session.world.state_mut().mobs.get_mut(&golem).unwrap().pos = body.pos;
+
+    assert!(!at_work(&mut session, id, |_, _, _| unwedge(&body)));
+    assert_eq!(session.world.mob_pos(golem), Some(body.pos));
+
+    session.world.set([4, 1, 4], STONE);
+    assert!(at_work(&mut session, id, |_, _, _| unwedge(&body)));
+    assert_eq!(session.world.mob_pos(golem), Some(feet_of([3, 0, 4])));
+}

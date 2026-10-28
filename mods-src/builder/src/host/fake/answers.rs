@@ -402,6 +402,10 @@ impl Host for Fake {
     fn boxes_clear(&self, boxes: Vec<([f64; 3], [f64; 3])>) -> Vec<bool> {
         let state = self.state();
         let collides = |(lo, hi): ([f64; 3], [f64; 3])| {
+            assert!(
+                (0..3).all(|i| lo[i].is_finite() && hi[i].is_finite() && lo[i] <= hi[i]),
+                "BoxesClear: bad box {lo:?}..{hi:?}"
+            );
             let span = |i: usize| (lo[i].floor() as i32)..=((hi[i] - 1e-6).floor() as i32);
             span(1).any(|y| {
                 span(2).any(|z| {
