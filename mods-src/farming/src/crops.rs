@@ -4,15 +4,8 @@
 //! Growth model. Stage is the block id, no separate age store. Planting/advancing schedules the
 //! next attempt after a delay jittered by position and stage (see [`STAGE_DELAY_MIN`]).
 //! Hydrated soil advances a stage when due. Dry soil retries on a short interval without
-//! resetting the delay, so it picks up right where it left off once watered. Crops never regress
-//! or die.
-//!
-//! Re-arming. Scheduled work doesn't survive an unload, and there's no offline catch-up. The armed
-//! set is just an optimization: random ticks re-arm any growable crop that's missing or overdue, so
-//! a reload never freezes a crop. We check the ledger's due tick before acting, to ignore a stale
-//! fire racing a re-arm.
-
-use std::collections::HashMap;
+//! resetting the delay, so it picks up right where it left off once watered. The engine persists
+//! pending growth ticks with their remaining delay and cancels them when the crop is replaced.
 
 use mod_sdk::*;
 use weather_core::FieldParams;
@@ -32,13 +25,7 @@ const FERTILE_BONUS_IN: u64 = 10;
 
 const MIN_GROW_LIGHT: u8 = 36;
 const DRY_RETRY: u64 = 100;
-const REARM_GRACE: u64 = 200;
 const JITTER_SALT: u64 = 0x00FA_3417_6A0B_11ED;
-
-#[derive(Default)]
-pub struct Growth {
-    pending: HashMap<[i32; 3], u64>,
-}
 
 /// Only a fresh planting (stage 0) is placed, and only where it gets light to grow; the engine's
 /// support rule (`roots_on` farmland) already refuses any other ground.
@@ -72,13 +59,16 @@ fn too_dark(pos: [i32; 3]) -> bool {
     light_at(pos).is_some_and(|l| l.combined < MIN_GROW_LIGHT)
 }
 
-pub fn on_placed(content: &Content, growth: &mut Growth, pos: [i32; 3], block: BlockId) {
+pub fn on_placed(content: &Content, pos: [i32; 3], block: BlockId) {
     if let Some((_, stage @ 0..=2)) = content.crop_stage(block) {
-        arm(growth, pos, stage, soil_is_fertile(content, pos));
+        arm(pos, stage, soil_is_fertile(content, pos));
     }
 }
 
-pub fn harvest(content: &Content, growth: &mut Growth, pos: [i32; 3], def: &CropDef) -> Outcome {
+pub fn harvest(content: &Content, pos: [i32; 3], def: &CropDef) -> Outcome {
+    if !set_block(pos, def.stages[0]) {
+        return Outcome::Continue;
+    }
     let center = [
         pos[0] as f64 + 0.5,
         pos[1] as f64 + 0.4,
@@ -90,8 +80,7 @@ pub fn harvest(content: &Content, growth: &mut Growth, pos: [i32; 3], def: &Crop
     if let Some(emitter) = &def.harvest_emitter {
         emitter_burst(emitter, center, 1.0);
     }
-    set_block(pos, def.stages[0]);
-    arm(growth, pos, 0, fertile);
+    arm(pos, 0, fertile);
     Outcome::Cancel
 }
 
@@ -161,27 +150,21 @@ pub fn on_block_broken(content: &Content, pos: [i32; 3], block: BlockId, harvest
 
 pub fn on_hook(
     content: &Content,
-    growth: &mut Growth,
     rests: &mut Rests,
     sky: Option<&FieldParams>,
     kind: BlockHookKind,
     pos: [i32; 3],
 ) {
     match kind {
-        BlockHookKind::ScheduledTick => attempt(content, growth, sky, pos),
-        BlockHookKind::RandomTick => rearm_if_lost(content, growth, rests, pos),
+        BlockHookKind::ScheduledTick => attempt(content, sky, pos),
+        BlockHookKind::RandomTick => random_tick(content, rests, pos),
         _ => {}
     }
 }
 
-fn attempt(content: &Content, growth: &mut Growth, sky: Option<&FieldParams>, pos: [i32; 3]) {
-    match growth.pending.get(&pos) {
-        Some(&due) if current_tick() >= due => {}
-        _ => return,
-    }
-    growth.pending.remove(&pos);
+fn attempt(content: &Content, sky: Option<&FieldParams>, pos: [i32; 3]) {
     let Some(block) = get_block(pos) else {
-        retry(growth, pos);
+        retry(pos);
         return;
     };
     let Some((def, stage @ 0..=2)) = content.crop_stage(block) else {
@@ -192,50 +175,45 @@ fn attempt(content: &Content, growth: &mut Growth, sky: Option<&FieldParams>, po
         Some(b) if content.is_farmland(b) => content.is_fertile(b),
         Some(_) => return,
         None => {
-            retry(growth, pos);
+            retry(pos);
             return;
         }
     };
     if too_dark(pos) {
-        retry(growth, pos);
+        retry(pos);
         return;
     }
     match farmland::probe(content, sky, below) {
         Hydration::Hydrated => {
             let next = stage + 1;
-            set_block(pos, def.stages[next as usize]);
-            if next <= 2 {
-                arm(growth, pos, next, fertile);
+            if !set_block(pos, def.stages[next as usize]) {
+                retry(pos);
+            } else if next <= 2 {
+                arm(pos, next, fertile);
             }
         }
-        Hydration::Dry | Hydration::Unknown => retry(growth, pos),
+        Hydration::Dry | Hydration::Unknown => retry(pos),
     }
 }
 
-fn rearm_if_lost(content: &Content, growth: &mut Growth, rests: &mut Rests, pos: [i32; 3]) {
+fn random_tick(content: &Content, rests: &mut Rests, pos: [i32; 3]) {
     let Some(block) = get_block(pos) else {
         return;
     };
-    let Some((def, stage)) = content.crop_stage(block) else {
+    let Some((def, _)) = content.crop_stage(block) else {
         return;
     };
     if too_dark(pos) {
-        pop_planting_stock(growth, def, pos);
+        pop_planting_stock(def, pos);
         return;
     }
     crate::attract::on_random_tick(content, rests, pos, block);
-    if let Some(&due) = growth.pending.get(&pos) {
-        if current_tick() <= due + REARM_GRACE {
-            return;
-        }
-    }
-    if stage <= 2 {
-        arm(growth, pos, stage, soil_is_fertile(content, pos));
-    }
 }
 
-fn pop_planting_stock(growth: &mut Growth, def: &CropDef, pos: [i32; 3]) {
-    set_block(pos, BlockId::AIR);
+fn pop_planting_stock(def: &CropDef, pos: [i32; 3]) {
+    if !set_block(pos, BlockId::AIR) {
+        return;
+    }
     spawn_item(
         &def.planting_stock,
         1,
@@ -245,25 +223,22 @@ fn pop_planting_stock(growth: &mut Growth, def: &CropDef, pos: [i32; 3]) {
             pos[2] as f64 + 0.5,
         ],
     );
-    growth.pending.remove(&pos);
 }
 
-fn arm(growth: &mut Growth, pos: [i32; 3], stage: u8, fertile: bool) {
+fn arm(pos: [i32; 3], stage: u8, fertile: bool) {
     let mut delay = stage_delay(pos, stage);
     if fertile {
         delay = delay * FERTILE_DELAY_NUM / FERTILE_DELAY_DEN;
     }
     schedule_tick(pos, delay);
-    growth.pending.insert(pos, current_tick() + delay);
 }
 
 fn soil_is_fertile(content: &Content, pos: [i32; 3]) -> bool {
     get_block([pos[0], pos[1] - 1, pos[2]]).is_some_and(|b| content.is_fertile(b))
 }
 
-fn retry(growth: &mut Growth, pos: [i32; 3]) {
+fn retry(pos: [i32; 3]) {
     schedule_tick(pos, DRY_RETRY);
-    growth.pending.insert(pos, current_tick() + DRY_RETRY);
 }
 
 fn stage_delay(pos: [i32; 3], stage: u8) -> u64 {

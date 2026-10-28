@@ -1,7 +1,8 @@
 use std::cmp::Reverse;
+use std::collections::hash_map::Entry;
 use std::collections::{BinaryHeap, VecDeque};
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::mathh::IVec3;
 
@@ -11,55 +12,78 @@ type ScheduledTick = Reverse<(u64, u64, i32, i32, i32)>;
 pub struct ScheduledQueue {
     heap: BinaryHeap<ScheduledTick>,
     seq: u64,
-    pending: FxHashSet<IVec3>,
+    pending: FxHashMap<IVec3, (u64, u64)>,
 }
 
 impl ScheduledQueue {
     pub fn schedule(&mut self, pos: IVec3, due: u64) -> bool {
-        if !self.pending.insert(pos) {
+        let Entry::Vacant(pending) = self.pending.entry(pos) else {
             return false;
-        }
+        };
         let seq = self.seq;
         self.seq += 1;
+        pending.insert((due, seq));
         self.heap.push(Reverse((due, seq, pos.x, pos.y, pos.z)));
         true
     }
 
     pub fn pop_due(&mut self, now: u64) -> Option<IVec3> {
-        let &Reverse((due, _, x, y, z)) = self.heap.peek()?;
-        if due > now {
-            return None;
+        while let Some(&Reverse((due, seq, x, y, z))) = self.heap.peek() {
+            if due > now {
+                return None;
+            }
+            self.heap.pop();
+            let pos = IVec3::new(x, y, z);
+            if let Entry::Occupied(pending) = self.pending.entry(pos) {
+                if *pending.get() == (due, seq) {
+                    pending.remove();
+                    return Some(pos);
+                }
+            }
         }
-        self.heap.pop();
-        let pos = IVec3::new(x, y, z);
-        self.pending.remove(&pos);
-        Some(pos)
+        None
+    }
+
+    pub fn cancel(&mut self, pos: IVec3) {
+        // Bound stale heap entries without scanning the queue on every block replacement.
+        if self.pending.remove(&pos).is_some()
+            && self.heap.len() > self.pending.len().saturating_mul(2).saturating_add(256)
+        {
+            self.compact();
+        }
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(IVec3) -> bool) {
+        self.pending.retain(|&pos, _| keep(pos));
+        self.compact();
+    }
+
+    fn compact(&mut self) {
+        let pending = &self.pending;
+        self.heap.retain(|&Reverse((due, seq, x, y, z))| {
+            pending.get(&IVec3::new(x, y, z)) == Some(&(due, seq))
+        });
     }
 
     pub fn contains(&self, pos: IVec3) -> bool {
-        self.pending.contains(&pos)
+        self.pending.contains_key(&pos)
     }
 
     pub fn len(&self) -> usize {
-        self.heap.len()
+        self.pending.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.heap.is_empty()
+        self.pending.is_empty()
     }
 
     /// Every pending tick as (cell, due tick), in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (IVec3, u64)> + '_ {
-        self.heap
-            .iter()
-            .map(|Reverse((due, _, x, y, z))| (IVec3::new(*x, *y, *z), *due))
+        self.pending.iter().map(|(&pos, &(due, _))| (pos, due))
     }
 
     pub fn due_count(&self, now: u64) -> usize {
-        self.heap
-            .iter()
-            .filter(|Reverse((due, ..))| *due <= now)
-            .count()
+        self.pending.values().filter(|(due, _)| *due <= now).count()
     }
 }
 

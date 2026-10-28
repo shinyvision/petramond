@@ -2,7 +2,7 @@ use mod_sdk::*;
 use weather_core::FieldParams;
 
 use crate::content::{Content, CropDef};
-use crate::crops::{self, Growth};
+use crate::crops;
 use crate::fertilize::{self, Target};
 use crate::trough::{self, TroughUse};
 use crate::{compost, tilling};
@@ -73,15 +73,9 @@ pub enum InteractPlan<'c> {
 }
 
 impl InteractPlan<'_> {
-    pub fn execute(
-        self,
-        content: &Content,
-        growth: &mut Growth,
-        player: PlayerId,
-        pos: [i32; 3],
-    ) -> Outcome {
+    pub fn execute(self, content: &Content, player: PlayerId, pos: [i32; 3]) -> Outcome {
         match self {
-            InteractPlan::Harvest(def) => crops::harvest(content, growth, pos, def),
+            InteractPlan::Harvest(def) => crops::harvest(content, pos, def),
             InteractPlan::CompostCollect => compost::collect(content, pos),
             InteractPlan::TroughTakeOut => trough::take_out(content, player, pos),
         }

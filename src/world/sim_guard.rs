@@ -25,10 +25,10 @@
 //! materializes exactly that base). Absent `Mixed`/`Unknown` (reads lie) and
 //! any in-flight state are not final.
 //!
-//! Gated work is not lost: work blocked on an IN-FLIGHT state retries
-//! [`SIM_RETRY_DELAY`] ticks later (in-flight states resolve within ticks);
-//! work blocked on genuinely unloaded terrain is dropped and re-armed by the
-//! on-load fluid kick when that terrain streams in
+//! Scheduled block ticks retry while their owning section is loaded, including when a neighbour
+//! is genuinely unloaded. Eviction saves their remaining delay and removes them from the live
+//! queue. Fluid checks blocked on in-flight terrain retry after [`SIM_RETRY_DELAY`]; checks
+//! blocked on genuinely unloaded terrain are dropped and re-armed by the on-load fluid kick
 //! (`world::stream::queue_loaded_section_fluid_updates`).
 
 use crate::world::{ServerWorld, World, WorldSide};
@@ -46,8 +46,8 @@ pub(super) enum SimReadiness {
     Ready,
     /// Blocked on an in-flight section (gen/overlay); resolves within ticks.
     Wait,
-    /// Blocked on terrain that is not coming under the current load target.
-    /// The on-load fluid kick re-arms the flow if it ever streams in.
+    /// Blocked on terrain that is not coming under the current load target. Fluids drop and
+    /// re-arm on load; scheduled block ticks retry while their owning section stays loaded.
     Drop,
 }
 

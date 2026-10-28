@@ -34,7 +34,6 @@ use mod_sdk::*;
 use weather_core::feed::FieldFeed;
 
 use content::Content;
-use crops::Growth;
 
 const ON_ITEM_USE_PRE: u32 = 1;
 const ON_BLOCK_PLACE_PRE: u32 = 2;
@@ -62,7 +61,6 @@ const TICK_WEATHER_FEED: u32 = 3;
 struct Farming {
     content: Option<Content>,
     client: bool,
-    growth: Growth,
     rests: rest::Rests,
     weather: FieldFeed,
 }
@@ -168,7 +166,7 @@ impl Mod for Farming {
                 crops::on_place_pre(content, *pos, *block)
             }
             (ON_BLOCK_PLACED, EventPayload::BlockPlaced { pos, block }) => {
-                crops::on_placed(content, &mut self.growth, *pos, *block);
+                crops::on_placed(content, *pos, *block);
                 farmland::on_block_placed_above(content, *pos, *block);
                 Outcome::Continue
             }
@@ -181,9 +179,8 @@ impl Mod for Farming {
                 },
             ) => {
                 let (pos, player) = (*pos, *player);
-                let growth = &mut self.growth;
                 claims::interact(content, player, pos, |plan| {
-                    plan.execute(content, growth, player, pos)
+                    plan.execute(content, player, pos)
                 })
             }
             (ON_PLAYER_DAMAGE_PRE, EventPayload::PlayerDamagePre { player, amount, .. }) => {
@@ -224,14 +221,7 @@ impl Mod for Farming {
         };
         let sky = self.weather.params();
         match callback_id {
-            HOOK_CROP => crops::on_hook(
-                content,
-                &mut self.growth,
-                &mut self.rests,
-                sky.as_ref(),
-                kind,
-                pos,
-            ),
+            HOOK_CROP => crops::on_hook(content, &mut self.rests, sky.as_ref(), kind, pos),
             HOOK_FARMLAND => farmland::on_hook(content, sky.as_ref(), kind, pos),
             HOOK_SPREAD => spread::on_hook(content, kind, pos),
             _ => {}

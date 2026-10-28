@@ -113,7 +113,8 @@ host_fn! {
 
 host_fn! {
     /// Runs each cell's block behaviors' scheduled tick after `delay` ticks; pending ticks are
-    /// saved with their section.
+    /// saved with their section and pause while unloaded. The first pending tick wins; replacing
+    /// the block cancels it, while `SwapBlock` preserves it.
     pub fn schedule_ticks(ticks: Vec<([i32; 3], u64)>) => ScheduleTicks { ticks }
 }
 

@@ -61,6 +61,7 @@ impl<S: WorldSide> World<S> {
                 self.refresh_block_draw_placement(c.pos);
             } else {
                 self.forget_block_draw(c.pos);
+                self.data.sim.scheduled.cancel(c.pos);
             }
         }
 

@@ -280,10 +280,14 @@ impl ServerWorld {
             due.push(pos);
         }
         for pos in due.drain(..) {
+            if self.data.chunk_at_world(pos.x, pos.y, pos.z).is_none() {
+                continue;
+            }
             match self.sim_readiness_at(pos) {
                 SimReadiness::Ready => self.run_scheduled_tick(pos),
-                SimReadiness::Wait => self.schedule_block_tick(pos, SIM_RETRY_DELAY),
-                SimReadiness::Drop => {}
+                SimReadiness::Wait | SimReadiness::Drop => {
+                    self.schedule_block_tick(pos, SIM_RETRY_DELAY);
+                }
             }
         }
 

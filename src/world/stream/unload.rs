@@ -1,6 +1,7 @@
 use crate::world::store::for_each_column_cy;
 use crate::world::ServerWorld;
 use petramond_world::chunk::{ChunkPos, SectionPos};
+use rustc_hash::FxHashSet;
 
 use crate::world::store::LoadTarget;
 
@@ -116,6 +117,16 @@ impl ServerWorld {
         }
 
         let dropped_any = !drop_columns.is_empty() || !drop_sections.is_empty();
+        if dropped_any {
+            let columns: FxHashSet<_> = drop_columns.iter().copied().collect();
+            let sections: FxHashSet<_> = drop_sections.iter().copied().collect();
+            let keep = |pos: petramond_math::math::IVec3| {
+                SectionPos::from_world(pos.x, pos.y, pos.z)
+                    .is_some_and(|sp| !columns.contains(&sp.chunk_pos()) && !sections.contains(&sp))
+            };
+            self.data.sim.scheduled.retain(keep);
+            self.data.sim.fluid.retain(keep);
+        }
         for pos in drop_columns {
             self.remove_column(pos);
             self.drop_overlays_for_column(pos);
