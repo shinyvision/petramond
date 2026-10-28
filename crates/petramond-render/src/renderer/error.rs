@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
 pub enum RenderInitError {
+    Content(String),
     CreateSurface(wgpu::CreateSurfaceError),
     NoAdapter(wgpu::RequestAdapterError),
     RequestDevice(wgpu::RequestDeviceError),
@@ -16,6 +17,7 @@ pub enum RenderInitError {
 impl fmt::Display for RenderInitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Content(error) => write!(f, "couldn't prepare content: {error}"),
             Self::CreateSurface(e) => write!(f, "cannot create a rendering surface: {e}"),
             Self::NoAdapter(e) => write!(f, "no compatible GPU adapter: {e}"),
             Self::RequestDevice(e) => write!(f, "the GPU refused the renderer's device: {e}"),
@@ -43,6 +45,7 @@ impl std::error::Error for RenderInitError {
             Self::NoAdapter(e) => Some(e),
             Self::RequestDevice(e) => Some(e),
             Self::SurfaceUnsupported
+            | Self::Content(_)
             | Self::UnreadableFormat(_)
             | Self::PassGraph(_)
             | Self::ContentLimits(_) => None,

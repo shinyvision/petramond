@@ -1,29 +1,37 @@
 use super::super::{create_model_texture, MobGpu, PlayerGpu, SkinnedModel};
+use crate::mob_model::MobRig;
+use crate::skinned::SkinMesh;
+use petramond_world::bbmodel::Model;
 
 const MOB_CULL_SLACK: f32 = 0.5;
+
+struct MobBake {
+    model: &'static Model,
+    rig: MobRig,
+    mesh: SkinMesh,
+}
+
+fn bake_mobs() -> Vec<MobBake> {
+    // The rig's self-AO bake is the whole cost of this function and each mob's is independent.
+    petramond_world::content::parallel_map(petramond::mob::defs(), |d| {
+        let model = petramond::mob::model(d.mob);
+        let rig = MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
+            .with_self_ao(model, d.scale, d.self_ao);
+        let mesh = rig.mesh(model, d.scale);
+        MobBake { model, rig, mesh }
+    })
+}
 
 pub(super) fn build_mob_gpu(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     atlas_bgl: &wgpu::BindGroupLayout,
 ) -> Vec<MobGpu> {
-    use rayon::prelude::*;
-    // The rig's self-AO bake is the whole cost of this function and each mob's is independent.
-    let rigs: Vec<_> = petramond::mob::defs()
-        .par_iter()
-        .map(|d| {
-            let model = petramond::mob::model(d.mob);
-            let rig = crate::mob_model::MobRig::resolve(model, d.hands, d.shear.map(|s| s.coat.0))
-                .with_self_ao(model, d.scale, d.self_ao);
-            let mesh = rig.mesh(model, d.scale);
-            (rig, mesh)
-        })
-        .collect();
+    let rigs = bake_mobs();
     petramond::mob::defs()
         .iter()
         .zip(rigs)
-        .map(|(d, (rig, mesh))| {
-            let model = petramond::mob::model(d.mob);
+        .map(|(d, MobBake { model, rig, mesh })| {
             let (_texture, view, sampler) =
                 create_model_texture(device, queue, &model.texture_rgba, model.tex_w, model.tex_h);
             let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -101,3 +109,6 @@ pub(super) fn build_player_gpu(
         drawn: 0..0,
     }
 }
+
+#[cfg(test)]
+mod tests;

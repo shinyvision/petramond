@@ -4,6 +4,10 @@ use petramond_ui::{NavKey, UiEvent, UiState, UiValue};
 
 pub(super) fn populate(ctx: &ScreenCtx, state: &mut UiState) {
     state.set(
+        "failure_title",
+        UiValue::Str(ctx.shell.disconnect_title().to_owned()),
+    );
+    state.set(
         "disconnect_message",
         UiValue::Str(ctx.shell.disconnect_message().to_owned()),
     );

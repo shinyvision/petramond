@@ -222,7 +222,8 @@ mod tests {
             "",
             1,
             1,
-        );
+        )
+        .unwrap();
         game.replica.world.clear_world();
         game.replica
             .world
@@ -268,7 +269,8 @@ mod tests {
             "",
             1,
             1,
-        );
+        )
+        .unwrap();
         game.replica.world.clear_world();
         game.replica
             .world

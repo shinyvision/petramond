@@ -203,6 +203,7 @@ fn play_after_rename_opens_the_original_save_directory() {
     assert_eq!(app.shell.worlds()[idx].name, "Renamed Display Name");
     app.shell.select_world(Some(idx));
     app.play_selected_world();
+    app.update_frame((1280, 720));
     assert!(app.has_session(), "world opened");
     app.save_on_exit();
     drop(app);
@@ -302,6 +303,7 @@ fn create_world_writes_buffered_settings_at_create() {
 
     click_doc_id(&mut app, "create");
     app.drive_doc_ui(GuiKind::CreateWorld, screen, 0.5);
+    app.update_frame(screen);
     assert!(app.has_session(), "Create started the world");
     let settings = petramond::save::read_world_settings(&dir_name);
     assert!(

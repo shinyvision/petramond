@@ -11,10 +11,11 @@ use super::game::ServerGame;
 use super::remote::RemoteHub;
 
 pub fn spawn(server: ServerGame) -> ServerHandle {
+    let content = server.content();
     ServerHandle::spawn_with(move |end: ServerEnd, crash_flag| {
         std::thread::Builder::new()
             .name("petramond-server".to_string())
-            .spawn(move || {
+            .spawn(content.task(move || {
                 let result = catch_unwind(AssertUnwindSafe(move || {
                     server_main(server, end.inbox, end.outbox, end.control)
                 }));
@@ -25,7 +26,7 @@ pub fn spawn(server: ServerGame) -> ServerHandle {
                          (mid-tick state may be corrupt; autosave bounds the loss)"
                     );
                 }
-            })
+            }))
             .expect("spawn server thread")
     })
 }

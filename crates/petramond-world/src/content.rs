@@ -8,8 +8,10 @@ use std::sync::{OnceLock, PoisonError, RwLock};
 use crate::assets::{PackRefusal, PackRoots, PackSet};
 
 mod load;
+mod tasks;
 
 pub use load::{ContentLoader, Stage};
+pub use tasks::parallel_map;
 
 pub mod stage {
     pub const TILES: &str = "textures/atlas.json";

@@ -82,7 +82,7 @@ fn pending_connections_are_capped_per_address() {
 fn oversize_pre_join_frames_drop_the_connection() {
     let mut hub = RemoteHub::default();
     let port = hub.open_to_lan(0).expect("bind an ephemeral port");
-    let mut server = crate::server::session_build::build_headless_session("", 5, 2);
+    let mut server = crate::server::session_build::build_headless_session("", 5, 2).unwrap();
     let mut socket = connect(port);
     let mut header = ((PRE_JOIN_MAX_FRAME + 1) as u32).to_le_bytes().to_vec();
     header.push(0);
@@ -205,7 +205,7 @@ fn a_display_name_never_unlocks_another_identitys_save() {
     )
     .expect("player file");
 
-    let mut server = crate::server::session_build::build_headless_session("", 5, 2);
+    let mut server = crate::server::session_build::build_headless_session("", 5, 2).unwrap();
     let opened = crate::save::open_at(dir.clone()).expect("temp save opens");
     server.world.attach_save(opened.save, opened.saved);
 

@@ -8,6 +8,12 @@ use petramond_render::{HeldItemFrame, Renderer};
 
 impl App {
     pub fn render(&mut self, renderer: &mut Renderer) -> bool {
+        if !renderer
+            .content()
+            .same(petramond_world::content::Content::current())
+        {
+            return false;
+        }
         let now = self.now();
         let dt = ((now - self.last_render) as f32).clamp(0.0, 0.1);
         self.last_render = now;

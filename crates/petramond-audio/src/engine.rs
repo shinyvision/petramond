@@ -16,6 +16,7 @@ const EAR_HALF_SPACING: f32 = 0.18;
 
 const MUSIC_FADE_SECONDS: f32 = 1.5;
 
+mod content;
 mod muffle;
 mod offline;
 mod tap;
@@ -162,30 +163,7 @@ impl Audio {
             sink.mixer().add(source);
             submix
         });
-        let buffers = sound_defs()
-            .iter()
-            .map(|def| {
-                def.variants
-                    .iter()
-                    .filter_map(|&rel| {
-                        let Some((bytes, _)) = petramond_world::assets::read_bytes(rel) else {
-                            log::warn!("sound {:?} clip '{rel}' not found (skipped)", def.sound);
-                            return None;
-                        };
-                        match decode(bytes) {
-                            Ok(d) => Some(d),
-                            Err(e) => {
-                                log::warn!(
-                                    "sound {:?} variant failed to decode (skipped): {e}",
-                                    def.sound
-                                );
-                                None
-                            }
-                        }
-                    })
-                    .collect()
-            })
-            .collect();
+        let buffers = content::load_buffers();
         Self {
             device,
             submix,

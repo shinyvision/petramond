@@ -63,7 +63,7 @@ fn load_settings() -> ServerSettings {
 }
 
 fn install_world_content(world_name: &str) -> Result<(), petramond_world::content::ContentErrors> {
-    crate::content::install_from_env(&[])?;
+    crate::content::install_shell_from_env(&[])?;
     let dir = crate::save::world_dir(world_name);
     let disabled = crate::save::settings::load(&dir).disabled_mods;
     let scoped = crate::content::for_world(&disabled)?;
@@ -106,7 +106,15 @@ pub fn run() {
         .and_then(|s| s.parse().ok())
         .unwrap_or(crate::net::DEFAULT_PORT);
 
-    let mut server = crate::server::session_build::build_headless_session(&world_name, seed, rd);
+    let mut server =
+        match crate::server::session_build::build_headless_session(&world_name, seed, rd) {
+            Ok(server) => server,
+            Err(error) => {
+                log::error!("{error}");
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        };
     server.set_sim_distance(settings.simulation_distance);
     server.set_max_players(settings.max_players);
     if !settings.online_mode && std::env::var("PETRAMOND_ONLINE_MODE").is_err() {

@@ -3,10 +3,15 @@ use std::sync::{Arc, Mutex};
 
 const THEME_JSON: &str = "ui/theme/theme.json";
 
-static THEME: Mutex<Option<Arc<Theme>>> = Mutex::new(None);
+static THEME: Mutex<Option<(u64, Arc<Theme>)>> = Mutex::new(None);
 
 pub fn theme() -> Arc<Theme> {
-    THEME.lock().unwrap().get_or_insert_with(load).clone()
+    let serial = petramond_world::content::current().serial();
+    let mut theme = THEME.lock().unwrap();
+    if theme.as_ref().is_none_or(|(built, _)| *built != serial) {
+        *theme = Some((serial, load()));
+    }
+    theme.as_ref().unwrap().1.clone()
 }
 
 pub fn reload() {

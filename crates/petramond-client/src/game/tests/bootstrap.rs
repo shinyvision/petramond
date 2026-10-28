@@ -39,7 +39,8 @@ fn build_session_with_pool(
 ) -> (ServerGame, ClientBootstrap) {
     let (key, name) = local_player();
     let (mut server, session) =
-        petramond::local_host::build_in_process(world_name, new_seed, render_dist, key, name, pool);
+        petramond::local_host::build_in_process(world_name, new_seed, render_dist, key, name, pool)
+            .unwrap();
     server.set_account_policy(petramond::account::AccountPolicy::Offline);
     (
         server,

@@ -24,14 +24,12 @@ use std::time::Duration;
 use super::shell_docs::ShellCommand;
 use super::ui_runtime::AppUi;
 use super::{App, AppScreen};
-use crate::game::Game;
 use petramond::account::{self, AccountError};
 use petramond::net::handle::ServerHandle;
 use petramond::net::handshake::{
     client_handshake, installed_mod_ids, HandshakeError, HandshakeJoin, ServerOffer,
 };
 use petramond::net::protocol::{JoinCredential, ModEntry};
-use petramond_render::camera::Camera;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -232,7 +230,7 @@ impl App {
             .unwrap_or_default();
         std::thread::Builder::new()
             .name("petramond-connect".to_owned())
-            .spawn(move || {
+            .spawn(petramond_world::content::Content::current().task(move || {
                 let outcome = run_connect(
                     &host,
                     port,
@@ -245,7 +243,7 @@ impl App {
                     },
                 );
                 let _ = tx.send((gen, outcome));
-            })
+            }))
             .expect("spawn connect thread");
     }
 
@@ -257,20 +255,7 @@ impl App {
     }
 
     pub(super) fn start_remote_game(&mut self, join: HandshakeJoin, handle: ServerHandle) {
-        let cam = Camera::new(
-            petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
-            self.shell_camera.aspect.max(0.01),
-        );
-        let retained_cache = self.retained_section_cache.take();
-        self.adopt_game(Game::new_remote(
-            cam,
-            join.join,
-            handle,
-            self.render_dist,
-            &self.shell.connect.addr,
-            &join.server_mods,
-            retained_cache,
-        ));
+        self.stage_remote_start(join, handle);
     }
 }
 
@@ -377,6 +362,17 @@ fn run_connect(
     if cancelled() {
         return ConnectOutcome::Failed("Cancelled".to_owned());
     }
+    let mut enabled = join.server_mods.clone();
+    if join.join.client_policy.presentation_packs {
+        enabled.extend(petramond::modding::client::presentation_only_packs());
+    }
+    let content = match petramond::content::for_enabled(&enabled) {
+        Ok(content) => content,
+        Err(error) => {
+            return ConnectOutcome::Failed(format!("Couldn't load server content: {error}"))
+        }
+    };
+    let _content = petramond_world::content::pin(content);
     let remap = petramond::net::remap::IdRemap::build(&join.join.tables);
     let conn = match petramond::net::connection::TcpClientConn::spawn(stream, remap, channel) {
         Ok(conn) => conn,

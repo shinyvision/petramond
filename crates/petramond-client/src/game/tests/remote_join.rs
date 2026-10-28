@@ -58,7 +58,8 @@ fn new_remote_seeds_the_client_from_join_data() {
         "test-server",
         &std::collections::BTreeSet::new(),
         None,
-    );
+    )
+    .unwrap();
 
     assert!(matches!(
         game.client_mods.presented().lock().context,

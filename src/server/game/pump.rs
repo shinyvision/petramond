@@ -20,6 +20,7 @@ impl ServerGame {
         inbox: &mut Vec<(PlayerId, ClientToServer)>,
         headroom: &[(PlayerId, usize)],
     ) -> PumpOutput {
+        let _content = petramond_world::content::pin(self.content());
         for (id, msg) in inbox.drain(..) {
             let Some(s) = self.sessions.index_of(id) else {
                 continue;

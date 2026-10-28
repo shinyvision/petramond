@@ -173,7 +173,8 @@ pub mod sim {
                 name: "sim".into(),
             };
             let (server, ..) =
-                crate::server::session_build::build_server("", seed, render_dist, Some(local));
+                crate::server::session_build::build_server("", seed, render_dist, Some(local))
+                    .expect("build simulation session");
             Sim { server }
         }
 

@@ -74,6 +74,7 @@ pub(super) struct ShellState {
     pub(super) account: AccountSession,
     pub(super) missing_world: Option<MissingWorld>,
     disconnect_message: String,
+    disconnect_title: String,
 }
 
 fn pack_rows() -> Vec<ModPackRow> {
@@ -150,8 +151,21 @@ impl ShellState {
         &self.disconnect_message
     }
 
-    pub(super) fn set_disconnect_message(&mut self, reason: String) {
+    pub(super) fn disconnect_title(&self) -> &str {
+        if self.disconnect_title.is_empty() {
+            "Disconnected"
+        } else {
+            &self.disconnect_title
+        }
+    }
+
+    pub(super) fn set_session_failure(&mut self, title: String, reason: String) {
+        self.disconnect_title = title;
         self.disconnect_message = reason;
+    }
+
+    pub(super) fn set_disconnect_message(&mut self, reason: String) {
+        self.set_session_failure("Disconnected".into(), reason);
     }
 
     pub(super) fn world_settings(&self) -> Option<&WorldSettingsSession> {

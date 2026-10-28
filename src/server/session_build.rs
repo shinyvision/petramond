@@ -36,8 +36,12 @@ impl Default for OpenedSession {
     }
 }
 
-pub fn build_headless_session(world_name: &str, new_seed: u32, render_dist: i32) -> ServerGame {
-    build_server(world_name, new_seed, render_dist, None).0
+pub fn build_headless_session(
+    world_name: &str,
+    new_seed: u32,
+    render_dist: i32,
+) -> Result<ServerGame, String> {
+    build_server(world_name, new_seed, render_dist, None).map(|built| built.0)
 }
 
 pub struct LocalPlayer {
@@ -59,6 +63,7 @@ pub fn build_server_inline(world_name: &str, new_seed: u32, render_dist: i32) ->
         }),
         Arc::new(JobPool::inline()),
     )
+    .unwrap()
     .0;
     server.account_policy = crate::account::AccountPolicy::Offline;
     server
@@ -77,7 +82,7 @@ pub fn build_server(
     new_seed: u32,
     render_dist: i32,
     local_player: Option<LocalPlayer>,
-) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
+) -> Result<(ServerGame, Arc<JobPool>, SurfaceDensitySystem), String> {
     build_server_with_pool(
         world_name,
         new_seed,
@@ -93,9 +98,20 @@ pub fn build_server_with_pool(
     render_dist: i32,
     local_player: Option<LocalPlayer>,
     pool: Arc<JobPool>,
-) -> (ServerGame, Arc<JobPool>, SurfaceDensitySystem) {
+) -> Result<(ServerGame, Arc<JobPool>, SurfaceDensitySystem), String> {
     let mut perf = JoinPerf::start();
-    let opened = open_session(world_name);
+    let content = if world_name.is_empty() {
+        petramond_world::content::Content::current()
+    } else {
+        let disabled = crate::save::read_world_settings(world_name).disabled_mods;
+        crate::content::for_world(&disabled)
+            .map_err(|error| format!("Couldn't load world content: {error}"))?
+    };
+    let _content = petramond_world::content::pin(content);
+    let recipes = load_recipes_for(content.packs().disabled())
+        .map_err(|error| format!("Couldn't load crafting recipes: {error}"))?;
+    perf.mark("recipes");
+    let opened = open_session(world_name)?;
     perf.mark("save_open");
     let seed = opened.level.as_ref().map(|l| l.seed).unwrap_or(new_seed);
     let fallback_world = SurfaceDensitySystem::new(seed);
@@ -109,7 +125,8 @@ pub fn build_server_with_pool(
         (session, claim.first_seen)
     });
     perf.mark("player_restore_or_spawn");
-    let disabled_mods = opened.disabled_mods;
+    let mut disabled_mods = opened.disabled_mods;
+    disabled_mods.extend(content.packs().disabled().iter().cloned());
 
     if let Some((local, _)) = &local {
         let feet = local.player.pos;
@@ -151,12 +168,9 @@ pub fn build_server_with_pool(
     });
     perf.mark("save_attach");
 
-    let recipes = load_recipes_for(&disabled_mods)
-        .unwrap_or_else(|error| panic!("failed to load crafting recipes: {error}"));
     let shared = std::sync::Arc::new(recipes.clone());
     crate::modding::install_recipes(shared.clone());
     let catalog = RecipeCatalog::new(recipes);
-    perf.mark("recipes");
     let mods = crate::modding::ModHost::load(seed, &disabled_mods);
     perf.mark("mod_wasm_load");
     let mut server = ServerGame::assemble(ServerParts {
@@ -186,7 +200,7 @@ pub fn build_server_with_pool(
     perf.mark("stream_kick");
     perf.finish("build_server");
 
-    (server, pool, fallback_world)
+    Ok((server, pool, fallback_world))
 }
 
 struct JoinPerf {
@@ -231,24 +245,20 @@ impl JoinPerf {
     }
 }
 
-fn open_session(world_name: &str) -> OpenedSession {
+fn open_session(world_name: &str) -> Result<OpenedSession, String> {
     if world_name.is_empty() {
-        return OpenedSession::default();
+        return Ok(OpenedSession::default());
     }
 
-    match crate::save::open(world_name) {
-        Ok(opened) => OpenedSession {
+    crate::save::open(world_name)
+        .map(|opened| OpenedSession {
             save: Some((opened.save, opened.saved)),
             level: opened.level,
             disabled_mods: opened.disabled_mods,
             keep_inventory: opened.keep_inventory,
             day_minutes: opened.day_minutes,
-        },
-        Err(e) => {
-            log::warn!("save disabled: could not open world '{world_name}': {e}");
-            OpenedSession::default()
-        }
-    }
+        })
+        .map_err(|error| format!("Couldn't open world '{world_name}': {error}"))
 }
 
 pub fn spawn_player(seed: u32) -> Player {

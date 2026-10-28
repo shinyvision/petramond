@@ -225,9 +225,13 @@ fn opaque(tile: Tile, tx: i32, ty: i32) -> bool {
 }
 
 pub(crate) fn grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
-    static GRIPS: std::sync::LazyLock<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
-        std::sync::LazyLock::new(|| Tile::all().map(|_| Default::default()).collect());
-    match GRIPS.get(tile.index()) {
+    static GRIPS: petramond_world::content::Slot<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
+        petramond_world::content::Slot::new(
+            "sprite grips",
+            &[petramond_world::content::stage::TILES],
+            |_| Ok(Tile::all().map(|_| Default::default()).collect()),
+        );
+    match GRIPS.current().get(tile.index()) {
         Some(grips) => *grips[usize::from(tool)].get_or_init(|| find_grip_point(tile, tool)),
         None => find_grip_point(tile, tool),
     }
@@ -236,8 +240,12 @@ pub(crate) fn grip_point(tile: Tile, tool: bool) -> glam::Vec3 {
 /// The far end of a held sprite: its opaque texel farthest from the grip (a rod's tip), where a
 /// line the item trails starts.
 pub(crate) fn tip_point(tile: Tile, tool: bool) -> glam::Vec3 {
-    static TIPS: std::sync::LazyLock<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
-        std::sync::LazyLock::new(|| Tile::all().map(|_| Default::default()).collect());
+    static TIPS: petramond_world::content::Slot<Box<[[std::sync::OnceLock<glam::Vec3>; 2]]>> =
+        petramond_world::content::Slot::new(
+            "sprite tips",
+            &[petramond_world::content::stage::TILES],
+            |_| Ok(Tile::all().map(|_| Default::default()).collect()),
+        );
     let find = || {
         let grip = grip_point(tile, tool).truncate();
         (0..GRID as i32)
@@ -251,7 +259,7 @@ pub(crate) fn tip_point(tile: Tile, tool: bool) -> glam::Vec3 {
             .unwrap_or(grip)
             .extend(0.0)
     };
-    match TIPS.get(tile.index()) {
+    match TIPS.current().get(tile.index()) {
         Some(tips) => *tips[usize::from(tool)].get_or_init(find),
         None => find(),
     }
@@ -358,6 +366,8 @@ pub(super) fn build_extruded_item_lit(
     SPRITE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         let geom = cache
+            .current()
+            .sprites
             .entry(tile)
             .or_insert_with(|| build_extruded_item_geometry(tile));
         out.clear();
@@ -374,12 +384,27 @@ pub(super) fn build_extruded_item_lit(
 }
 
 thread_local! {
-    /// Per-tile extruded sprite geometry, white-tinted. Thread-local rather
-    /// than shared: only the render thread builds these, so this costs no lock.
-    /// Never invalidated, and does not need to be: `Tile` indexes the
-    /// process-wide atlas, which is a `LazyLock` built once.
-    static SPRITE_CACHE: std::cell::RefCell<rustc_hash::FxHashMap<Tile, Vec<ItemVertex>>> =
-        std::cell::RefCell::new(rustc_hash::FxHashMap::default());
+    static SPRITE_CACHE: std::cell::RefCell<SpriteCache> =
+        std::cell::RefCell::new(SpriteCache::default());
+}
+
+#[derive(Default)]
+struct SpriteCache {
+    content: u64,
+    sprites: rustc_hash::FxHashMap<Tile, Vec<ItemVertex>>,
+    composites: rustc_hash::FxHashMap<(Tile, Vec<Tile>), CompositeGeometry>,
+}
+
+impl SpriteCache {
+    fn current(&mut self) -> &mut Self {
+        let content = petramond_world::content::current().serial();
+        if self.content != content {
+            self.content = content;
+            self.sprites.clear();
+            self.composites.clear();
+        }
+        self
+    }
 }
 
 /// Build the full extruded mesh a STACK shows for its sprite `tile`: the base
@@ -446,9 +471,11 @@ pub(super) fn build_extruded_stack_lit(
 
     let fold = lighting::fold_tint([1.0, 1.0, 1.0], light, env);
     out.clear();
-    COMPOSITE_CACHE.with(|cache| {
+    SPRITE_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         let geom = cache
+            .current()
+            .composites
             .entry((tile, overlay_tiles.clone()))
             .or_insert_with(|| build_composited_geometry(tile, &overlay_tiles));
         let lit = |v: &ItemVertex| ItemVertex {
@@ -469,12 +496,6 @@ pub(super) fn build_extruded_stack_lit(
 struct CompositeGeometry {
     base: Vec<ItemVertex>,
     over: Vec<ItemVertex>,
-}
-
-thread_local! {
-    static COMPOSITE_CACHE: std::cell::RefCell<
-        rustc_hash::FxHashMap<(Tile, Vec<Tile>), CompositeGeometry>,
-    > = std::cell::RefCell::new(rustc_hash::FxHashMap::default());
 }
 
 fn build_composited_geometry(tile: Tile, overlays: &[Tile]) -> CompositeGeometry {

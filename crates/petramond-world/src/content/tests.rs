@@ -163,6 +163,10 @@ fn for_world_drops_a_disabled_packs_ids_and_reuses_registries() {
                 "blocks.json",
                 format!(r#"{{"blocks": [{}]}}"#, fluid_row("fx:tar", "fx_tar")),
             ),
+            (
+                "models.json",
+                r#"{"models":[{"key":"fx:model","model_file":"not-loaded.bbmodel","cells":[1,1,1]}]}"#.into(),
+            ),
         ],
     );
     let base = test_support::with_mods(&fx.mods());
@@ -172,6 +176,14 @@ fn for_world_drops_a_disabled_packs_ids_and_reuses_registries() {
     let scoped = for_world(&off, &[]).unwrap();
     assert!(!scoped.same(base));
     assert_eq!(scoped.names().blocks.id("fx:tar"), None);
+    assert_eq!(scoped.names().items.id("petramond:creative/fx:tar"), None);
+    {
+        let _scoped = pin(scoped);
+        assert!(crate::tile::Tile::from_name("fx_tar_still").is_none());
+        assert!(!crate::block_model::all()
+            .iter()
+            .any(|kind| crate::block_model::def(*kind).key == "fx:model"));
+    }
     assert_eq!(
         scoped.names().blocks.len() + 1,
         base.names().blocks.len(),
@@ -183,7 +195,7 @@ fn for_world_drops_a_disabled_packs_ids_and_reuses_registries() {
 }
 
 #[test]
-fn enabled_views_cascade_to_dependents_and_keep_asset_layers() {
+fn enabled_views_exclude_dependents_assets_and_catalogs() {
     let fx = Fixture::new("cascade");
     fx.pack("base_mod", "", &[])
         .pack("dependent", r#", "dependencies": ["base_mod"]"#, &[])
@@ -201,8 +213,8 @@ fn enabled_views_cascade_to_dependents_and_keep_asset_layers() {
     assert_eq!(scoped.installed().len(), 3);
     assert_eq!(
         scoped.layers().len(),
-        3,
-        "asset layers span every installed pack"
+        1,
+        "asset layers exclude disabled packs and their dependents"
     );
     assert_eq!(scoped.catalog_layers().len(), 1);
 }
@@ -215,4 +227,25 @@ fn refused_packs_are_listed_on_the_pack_set() {
     assert!(set.packs().is_empty());
     assert_eq!(set.refused().len(), 1);
     assert_eq!(set.refused()[0].dir_name, "needy");
+}
+
+#[test]
+fn disabled_packs_do_not_parse_their_model_definitions() {
+    let fx = Fixture::new("disabled-models");
+    fx.pack("fx", "", &[(
+        "models.json",
+        r#"{"models":[{"key":"fx:bad","model_file":"unused.bbmodel","cells":[1,1,1],"parts":["duplicate","duplicate"]}]}"#.into(),
+    )]);
+    let discovered = packs(&fx.mods());
+    assert!(discovered
+        .installed()
+        .iter()
+        .any(|pack| pack.id.as_deref() == Some("fx")));
+    let disabled = discovered.enabled(&["fx".to_owned()].into());
+    ContentRegistry::load(disabled).expect("disabled definitions are never parsed");
+    let error = ContentRegistry::load(discovered).unwrap_err();
+    assert!(error
+        .errors
+        .iter()
+        .any(|error| error.stage == stage::MODELS));
 }

@@ -125,7 +125,7 @@ fn write_loop<T: serde::Serialize>(
 fn spawn_writer(stream: &TcpStream, body: impl FnOnce() + Send + 'static) -> io::Result<()> {
     std::thread::Builder::new()
         .name("petramond-conn-write".to_string())
-        .spawn(body)
+        .spawn(petramond_world::content::Content::current().task(body))
         .map(drop)
         .inspect_err(|_| {
             let _ = stream.shutdown(Shutdown::Both);
@@ -215,7 +215,7 @@ impl TcpServerConn {
         let reader_peer = peer.clone();
         std::thread::Builder::new()
             .name("petramond-conn-read".to_string())
-            .spawn(move || {
+            .spawn(petramond_world::content::Content::current().task(move || {
                 let shutdown = reader.try_clone();
                 let mut r = BufReader::new(reader);
                 let mut meter = InboundMeter::new(&limits, std::time::Instant::now());
@@ -238,7 +238,7 @@ impl TcpServerConn {
                     }
                 }
                 flag.store(true, Ordering::SeqCst);
-            })?;
+            }))?;
 
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&dead);
@@ -344,7 +344,7 @@ impl TcpClientConn {
         let map = Arc::clone(&remap);
         std::thread::Builder::new()
             .name("petramond-conn-read".to_string())
-            .spawn(move || {
+            .spawn(petramond_world::content::Content::current().task(move || {
                 let mut r = BufReader::new(reader);
                 let mut delta = TickDelta::default();
                 while let Ok((mut msg, _)) =
@@ -364,7 +364,7 @@ impl TcpClientConn {
                     }
                 }
                 flag.store(true, Ordering::SeqCst);
-            })?;
+            }))?;
 
         let writer = stream.try_clone()?;
         let flag = Arc::clone(&lost);
@@ -410,6 +410,8 @@ impl Drop for TcpClientConn {
 
 #[cfg(test)]
 mod tests {
+    mod content;
+
     use super::*;
     use crate::net::secure::channels_for_test;
     use std::net::TcpListener;

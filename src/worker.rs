@@ -210,19 +210,16 @@ impl JobPool {
     pub fn submit<F: FnOnce() + Send + 'static>(&self, key: i64, f: F) -> JobTicket {
         let seq = NEXT_JOB.fetch_add(1, Ordering::Relaxed);
         let ticket = JobTicket(seq);
+        let task = petramond_world::content::Content::current().task(f);
         if self.is_inline() {
-            run_contained(Box::new(f));
+            run_contained(Box::new(task));
             return ticket;
         }
-        let content = petramond_world::content::Content::current();
-        self.shared.queue.lock().unwrap().push(
-            key,
-            seq,
-            Box::new(move || {
-                let _pin = petramond_world::content::pin(content);
-                f()
-            }),
-        );
+        self.shared
+            .queue
+            .lock()
+            .unwrap()
+            .push(key, seq, Box::new(task));
         self.shared.available.notify_one();
         ticket
     }

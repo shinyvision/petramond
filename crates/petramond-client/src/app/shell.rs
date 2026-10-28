@@ -1,7 +1,6 @@
 use super::session::Session;
 use super::{App, AppScreen};
 use petramond_input::controls::{text_shortcut_from_key_code, TextKey, TextShortcut};
-use petramond_render::camera::Camera;
 
 impl App {
     pub fn handle_text_key(&mut self, key: TextKey) -> bool {
@@ -179,19 +178,7 @@ impl App {
     }
 
     pub fn start_game(&mut self, world_dir_name: &str, seed: u32) {
-        let cam = Camera::new(
-            petramond_math::world_pos::WorldPos::new(8.0, 90.0, 8.0),
-            self.shell_camera.aspect.max(0.01),
-        );
-        self.adopt_game(crate::game::Game::new(
-            cam,
-            world_dir_name,
-            seed,
-            self.render_dist,
-        ));
-        if petramond::save::read_world_settings(world_dir_name).auto_open_lan {
-            self.open_lan();
-        }
+        self.stage_local_start(world_dir_name, seed);
     }
 
     pub fn adopt_game(&mut self, game: crate::game::Game) {

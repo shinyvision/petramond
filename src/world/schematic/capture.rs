@@ -16,6 +16,7 @@ enum SnapshotSection {
 }
 
 pub(crate) struct Capture {
+    content: petramond_world::content::Content,
     name: String,
     regions: Vec<SelectionBox>,
     include_air: bool,
@@ -94,6 +95,7 @@ impl Capture {
             }
         }
         Ok(Self {
+            content: petramond_world::content::Content::current(),
             name,
             regions,
             include_air,
@@ -126,6 +128,10 @@ impl Capture {
     }
 
     pub(crate) fn run(self) -> Result<Schematic, String> {
+        self.content.scope(|| self.capture())
+    }
+
+    fn capture(self) -> Result<Schematic, String> {
         let mut cells = SchematicBuilder::default();
         let mut visited = FxHashSet::default();
         for r in &self.regions {

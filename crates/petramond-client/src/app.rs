@@ -5,6 +5,7 @@ pub(crate) mod client_doc_events;
 mod client_mod_ui;
 mod connect;
 mod content;
+mod content_registry;
 mod crafting_browser;
 mod creative;
 mod exit;
@@ -32,6 +33,7 @@ mod schematic_library;
 mod screen;
 mod screen_flow;
 mod session;
+mod session_start;
 mod shell;
 mod shell_docs;
 mod shell_state;
@@ -52,6 +54,7 @@ use petramond_render::camera::Camera;
 
 pub struct App {
     session: Option<Session>,
+    pending_start: Option<session_start::PendingStart>,
     shell_camera: Camera,
     render_dist: i32,
     sound: client_audio::ClientAudio,
@@ -88,6 +91,7 @@ pub struct App {
     content_report: petramond::content::ApplyReport,
     start_route: Option<content::StartRoute>,
     content: content::ContentSession,
+    content_serial: u64,
     content_apply_requested: bool,
     renderer_world_clear_pending: bool,
     renderer_moment_clear_pending: bool,
@@ -109,6 +113,7 @@ impl App {
         );
         let base_fov_y = cam.fov_y;
         let mut app = Self {
+            pending_start: None,
             session: None,
             shell_camera: cam,
             render_dist,
@@ -160,6 +165,7 @@ impl App {
             content_report: Default::default(),
             start_route: content::StartRoute::take_from_env(),
             content: Default::default(),
+            content_serial: petramond_world::content::current().serial(),
             content_apply_requested: false,
             renderer_world_clear_pending: true,
             renderer_moment_clear_pending: false,

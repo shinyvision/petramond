@@ -62,7 +62,8 @@ impl ScriptedServer {
             "scripted-server",
             &std::collections::BTreeSet::new(),
             None,
-        );
+        )
+        .unwrap();
         Self { game, pipe }
     }
 

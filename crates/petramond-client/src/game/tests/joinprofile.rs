@@ -47,7 +47,7 @@ fn join_profile() {
     let world = std::env::var("PETRAMOND_JOIN_WORLD").unwrap_or_else(|_| "joinprofile".into());
     let t_click = Instant::now();
     let cam = Camera::new(WorldPos::new(8.0, 90.0, 8.0), 16.0 / 9.0);
-    let mut game = Game::new(cam, &world, 0x312, rd);
+    let mut game = Game::new(cam, &world, 0x312, rd).unwrap();
     let t_new = t_click.elapsed();
 
     let input = GameInput::default();

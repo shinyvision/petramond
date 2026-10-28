@@ -13,6 +13,13 @@ pub(super) struct LaunchedShell {
     screen: AppScreen,
     canvas: Option<ClientCanvasState>,
     opening: Option<(Request, Receiver<Result<NameTables, String>>)>,
+    _content: Option<petramond_world::content::PinGuard>,
+}
+
+impl LaunchedShell {
+    pub(super) fn set_content(&mut self, content: petramond_world::content::PinGuard) {
+        self._content = Some(content);
+    }
 }
 
 pub(super) fn launch_entries(
@@ -27,10 +34,7 @@ impl App {
         if self.session.is_some() {
             return;
         }
-        match ClientModRuntime::launch(pack_id) {
-            Ok(runtime) => self.host_launched(runtime, screen),
-            Err(e) => log::error!("launch '{pack_id}': {e}"),
-        }
+        self.stage_launch(pack_id, screen);
     }
 
     pub(super) fn host_launched(&mut self, runtime: ClientModRuntime, screen: (u32, u32)) {
@@ -40,6 +44,7 @@ impl App {
             screen: AppScreen::Title,
             canvas: None,
             opening: None,
+            _content: None,
         });
         self.drive_client_mod_frame(0.0, 0.0, petramond::gui::UiViewport::new(screen, 0), true);
         if self.launched.is_none() {

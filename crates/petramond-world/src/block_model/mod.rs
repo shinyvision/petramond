@@ -42,7 +42,7 @@ mod query;
 mod tests;
 
 pub use ao::{bake_box_ao, AoBox};
-pub use atlas::{atlas, particle_patch};
+pub use atlas::{atlas, particle_patch, prepare_atlas};
 pub use compiled::*;
 pub use defs::*;
 pub use display::*;

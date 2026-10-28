@@ -56,6 +56,11 @@ impl Default for SessionSounds {
 }
 
 impl ClientAudio {
+    pub(super) fn reload_content(&mut self) {
+        self.audio.reload_content();
+        self.music = MusicDirector::new();
+    }
+
     pub(super) fn new(master: f32, sound: f32, music: f32) -> Self {
         let mut audio = Audio::new();
         audio.set_volumes(master, sound, music);

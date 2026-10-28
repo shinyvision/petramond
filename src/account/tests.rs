@@ -78,7 +78,7 @@ fn live_sign_in_mints_a_ticket_an_online_server_redeems() {
         "a ticket is worthless at another server"
     );
 
-    let mut server = crate::server::session_build::build_headless_session("", 21, 4);
+    let mut server = crate::server::session_build::build_headless_session("", 21, 4).unwrap();
     server.set_account_policy(AccountPolicy::Online);
     let mut host = crate::server::handle::spawn(server);
     host.unthrottle_for_test();

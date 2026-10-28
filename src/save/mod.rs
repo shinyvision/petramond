@@ -640,6 +640,7 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
     let reads = ReadQueues::new(read::reader_count());
     let held_writes = Arc::new(AtomicU64::new(0));
     let writer_handle = {
+        let content = petramond_world::content::Content::current();
         let (dir, reads, held, palette) = (
             dir.clone(),
             reads.clone(),
@@ -648,7 +649,7 @@ pub fn open_at(dir: PathBuf) -> std::io::Result<OpenedWorld> {
         );
         std::thread::Builder::new()
             .name("petramond-save".to_string())
-            .spawn(move || write_thread(dir, rx, reads, held, palette))
+            .spawn(content.task(move || write_thread(dir, rx, reads, held, palette)))
             .expect("spawn save writer")
     };
     let reader_handles =

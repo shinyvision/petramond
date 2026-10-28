@@ -207,16 +207,8 @@ pub struct Layer {
 
 /// One discovery's packs, and the subset a world enables.
 ///
-/// Two views, on purpose:
-///
-/// - **Asset layers** ([`layers`](Self::layers): point files, the tile and
-///   block-model manifests, UI documents) span every INSTALLED pack. The
-///   client bakes those into GPU atlases once, so they must not change when a
-///   world switches mods off — and a reskin pack never needed an id anyway.
-/// - **Catalog layers** ([`catalog_layers`](Self::catalog_layers): the id
-///   and row catalogs — blocks, items, loot, mobs, ...) span only the ENABLED
-///   packs, so a disabled mod registers no ids, no shape kinds and no rows in
-///   a world that switched it off.
+/// Asset and catalog layers include only enabled packs. Installed pack metadata
+/// stays available for world settings and choosing another session's pack set.
 ///
 /// A fresh discovery enables everything; [`enabled`](Self::enabled) derives a
 /// world's view from it.
@@ -284,7 +276,7 @@ impl PackSet {
             base_roots: self.base_roots.clone(),
             installed: self.installed.clone(),
             refused: self.refused.clone(),
-            layers: self.layers.clone(),
+            layers: layers_of(&enabled),
             catalog_layers: layers_of(&enabled),
             enabled,
             disabled: off,

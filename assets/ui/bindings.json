@@ -775,6 +775,11 @@
   },
   "petramond:connection_lost": {
    "state": {
+    "failure_title": {
+     "type": "str",
+     "longest": "Couldn't connect",
+     "doc": "short title for a session-start failure or disconnection"
+    },
     "disconnect_message": {
      "type": "str",
      "doc": "why the session ended (server closed / connection lost / world stopped)"

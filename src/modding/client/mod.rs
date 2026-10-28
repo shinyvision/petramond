@@ -18,7 +18,7 @@ pub(in crate::modding) use calls::{
     handle_presentation_call, world_read,
 };
 pub use runtime::{
-    bake_installed_custom_item_geometry, delete_local_world_storage, local_session_key,
+    bake_custom_item_geometry, delete_local_world_storage, local_session_key,
     presentation_only_packs, remote_session_key, ClientCanvasElementView, ClientCanvasView,
     ClientModRuntime, ClientUiView,
 };

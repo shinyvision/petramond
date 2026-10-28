@@ -27,6 +27,7 @@ pub struct DocRef {
 }
 
 struct Registry {
+    content: u64,
     entries: Vec<DocEntry>,
     sources: Vec<(PathBuf, Option<SystemTime>)>,
     last_check: Instant,
@@ -48,6 +49,9 @@ pub fn doc_for(kind: GuiKind) -> Option<DocRef> {
 fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
     let mut guard = REGISTRY.lock().unwrap();
     let registry = guard.get_or_insert_with(load);
+    if registry.content != petramond_world::content::current().serial() {
+        *registry = load();
+    }
     if cfg!(debug_assertions) && registry.last_check.elapsed() > Duration::from_secs(1) {
         let changed = registry
             .sources
@@ -72,6 +76,9 @@ fn doc_entry_for(kind: GuiKind) -> Option<DocRef> {
 pub fn loaded_documents() -> Vec<(&'static str, usize)> {
     let mut guard = REGISTRY.lock().expect("gui document registry");
     let registry = guard.get_or_insert_with(load);
+    if registry.content != petramond_world::content::current().serial() {
+        *registry = load();
+    }
     let mut out: Vec<(&'static str, usize)> = registry
         .entries
         .iter()
@@ -260,6 +267,7 @@ fn load() -> Registry {
         }
     }
     Registry {
+        content: petramond_world::content::current().serial(),
         entries,
         sources,
         last_check: Instant::now(),

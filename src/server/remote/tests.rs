@@ -31,7 +31,8 @@ pub(super) fn headless(
     render_dist: i32,
 ) -> crate::server::game::ServerGame {
     let mut server =
-        crate::server::session_build::build_headless_session(world_name, new_seed, render_dist);
+        crate::server::session_build::build_headless_session(world_name, new_seed, render_dist)
+            .unwrap();
     server.account_policy = crate::account::AccountPolicy::Offline;
     server
 }
@@ -236,7 +237,7 @@ fn full_lan_join_place_pause_gate_and_leave() {
         name: crate::save::client::resolve_player_name(&crate::save::client::load()),
     };
     let (mut server, _, _) =
-        crate::server::session_build::build_server("", 7, 2, Some(host_player));
+        crate::server::session_build::build_server("", 7, 2, Some(host_player)).unwrap();
     server.account_policy = crate::account::AccountPolicy::Offline;
     let opened = crate::save::open_at(dir.to_path_buf()).expect("temp save opens");
     server.world.attach_save(opened.save, opened.saved);

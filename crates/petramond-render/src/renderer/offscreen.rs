@@ -36,12 +36,14 @@ pub async fn new_offscreen_renderer(
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
         view_formats: vec![],
     };
+    let health = DeviceHealth::watch(&device);
     super::construct::new_renderer_inner(
         None,
         device,
         queue,
         config,
         super::construct::max_scene_samples(&adapter, format),
+        health,
     )
 }
 

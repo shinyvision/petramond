@@ -99,6 +99,7 @@ pub struct Game {
     anchor_missing: bool,
     presenting: presenting::Presenting,
     world_capture: capture::WorldCapture,
+    _content: Option<petramond_world::content::PinGuard>,
 }
 
 impl Game {

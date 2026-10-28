@@ -13,6 +13,16 @@ fn world() -> ServerWorld {
 
 #[test]
 fn sparse_capture_skips_large_air_volume_and_keeps_the_save_time_snapshot() {
+    use petramond_world::{content, item::variant};
+    let worker_content = content::Content::current();
+    let scratch = petramond_util::test_dirs::TestScratchDir::new("capture-content");
+    let own = content::test_support::with_mods(&scratch.join("no-mods"));
+    let _content = content::pin(own);
+    let variant = variant::intern(&std::collections::BTreeMap::from([(
+        "fixture:capture".into(),
+        b"snapshot item data".to_vec(),
+    )]))
+    .unwrap();
     let mut world = world();
     for x in 0..4 {
         for z in 0..4 {
@@ -32,7 +42,10 @@ fn sparse_capture_skips_large_air_volume_and_keeps_the_save_time_snapshot() {
         15,
         15,
         Container {
-            slots: vec![Some(ItemStack::new(ItemType::Stone, 7)), None],
+            slots: vec![
+                Some(ItemStack::with_variant(ItemType::Stone, 7, variant)),
+                None,
+            ],
         },
     );
     s.cell_kv_restore(
@@ -49,7 +62,12 @@ fn sparse_capture_skips_large_air_volume_and_keeps_the_save_time_snapshot() {
         .section_at_world_mut_for_test(pos[0], pos[1], pos[2])
         .unwrap()
         .set_block(15, 15, 15, Block::Dirt);
-    let saved = capture.run().unwrap();
+    let saved = std::thread::spawn(move || {
+        let _worker = content::pin(worker_content);
+        capture.run().unwrap()
+    })
+    .join()
+    .unwrap();
     assert_eq!(saved.cell_count(), 1);
     assert_eq!(saved.cells().next().unwrap().data, &before);
     assert_eq!(saved.size, [1; 3]);

@@ -35,6 +35,7 @@ pub(in crate::modding) fn clear() {
 }
 
 pub fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
+    let content = petramond_world::content::Content::current();
     for path in paths {
         {
             let cache = CACHE.lock().unwrap();
@@ -44,9 +45,9 @@ pub fn prewarm(paths: impl IntoIterator<Item = PathBuf>) {
         }
         let spawned = std::thread::Builder::new()
             .name("mod-prewarm".into())
-            .spawn(move || {
+            .spawn(content.task(move || {
                 let _ = module_for(&path);
-            });
+            }));
         if spawned.is_err() {
             return;
         }

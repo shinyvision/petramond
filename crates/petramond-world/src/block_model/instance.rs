@@ -505,18 +505,11 @@ static INSTANCES: crate::content::Slot<Instances> = crate::content::Slot::new(
 );
 
 fn build_instances(registry: &crate::content::ContentRegistry) -> Result<Instances, String> {
-    use rayon::prelude::*;
     let content = crate::content::Content::current();
     let models: Vec<ModelInstance> = if !std::ptr::eq(content.registry(), registry) {
         all().iter().map(|&k| ModelInstance::build(k)).collect()
     } else {
-        all()
-            .par_iter()
-            .map(|&k| {
-                let _pin = crate::content::pin(content);
-                ModelInstance::build(k)
-            })
-            .collect()
+        crate::content::parallel_map(all(), |&k| ModelInstance::build(k))
     };
     let reach = models
         .iter()

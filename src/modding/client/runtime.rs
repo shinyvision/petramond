@@ -1074,14 +1074,12 @@ impl ClientModRuntime {
     }
 }
 
-pub fn bake_installed_custom_item_geometry() {
+pub fn bake_custom_item_geometry() {
     use petramond_world::block::Block;
 
-    let all: BTreeSet<String> = petramond_world::assets::packs()
-        .iter()
-        .filter_map(|p| p.id.clone())
-        .collect();
-    for (id, path) in session_client_mods(petramond_world::assets::packs(), &all) {
+    let packs = petramond_world::content::current().packs().packs();
+    let all: BTreeSet<String> = packs.iter().filter_map(|p| p.id.clone()).collect();
+    for (id, path) in session_client_mods(packs, &all) {
         let blocks: Vec<Block> = Block::all()
             .iter()
             .copied()
@@ -1134,7 +1132,7 @@ fn load_mods(
     media: &super::media::MediaDesk,
     presented: &super::presented::PresentedDesk,
 ) -> Vec<ClientMod> {
-    let chosen = session_client_mods(petramond_world::assets::packs(), enabled);
+    let chosen = session_client_mods(petramond_world::content::current().packs().packs(), enabled);
     crate::modding::host::module_cache::prewarm(chosen.iter().map(|(_, path)| path.clone()));
     chosen
         .into_iter()

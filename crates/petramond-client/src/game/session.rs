@@ -28,6 +28,7 @@ pub struct ClientBootstrap {
     crafting: CraftingCatalog,
     remote: bool,
     identity: super::capture::SessionIdentity,
+    content: Option<petramond_world::content::PinGuard>,
 }
 
 impl ClientBootstrap {
@@ -61,6 +62,7 @@ impl ClientBootstrap {
             crafting: CraftingCatalog::from_data(join.crafting_recipes),
             remote,
             identity,
+            content: None,
         }
     }
 
@@ -85,10 +87,12 @@ impl ClientBootstrap {
             crafting,
             remote: false,
             identity: Default::default(),
+            content: None,
         }
     }
 
     pub(super) fn local(world_name: &str, render_dist: i32, session: LocalSession) -> Self {
+        let content = petramond_world::content::pin(session.content);
         let t_client = std::time::Instant::now();
         let join = *session.join;
         let client_mods = petramond::modding::client::ClientModRuntime::load(
@@ -100,7 +104,7 @@ impl ClientBootstrap {
                 shared: false,
             },
         );
-        let bootstrap = Self::from_join(
+        let mut bootstrap = Self::from_join(
             join,
             session.jobs,
             render_dist,
@@ -109,6 +113,7 @@ impl ClientBootstrap {
             &session.enabled_mods,
             false,
         );
+        bootstrap.content = Some(content);
         log::debug!(
             target: "petramond::join::perf",
             "client bootstrap (replica + client mods): {:.1} ms",
@@ -123,11 +128,16 @@ impl Game {
         &self.jobs
     }
 
-    pub fn new(cam: Camera, world_name: &str, new_seed: u32, render_dist: i32) -> Self {
+    pub fn new(
+        cam: Camera,
+        world_name: &str,
+        new_seed: u32,
+        render_dist: i32,
+    ) -> Result<Self, String> {
         let t0 = std::time::Instant::now();
         let (key, name) = local_player();
         let (handle, session) =
-            petramond::local_host::launch(world_name, new_seed, render_dist, key, name);
+            petramond::local_host::launch(world_name, new_seed, render_dist, key, name)?;
         let bootstrap = ClientBootstrap::local(world_name, render_dist, session);
         let mut game = Self::assemble(cam, handle, bootstrap);
         game.replica
@@ -140,7 +150,7 @@ impl Game {
             "Game::new: {:.1} ms",
             t0.elapsed().as_secs_f64() * 1e3
         );
-        game
+        Ok(game)
     }
 
     pub fn new_remote(
@@ -151,8 +161,8 @@ impl Game {
         server_identity: &str,
         server_mods: &BTreeSet<String>,
         retained_section_cache: Option<crate::game::section_cache::SectionCache>,
-    ) -> Self {
-        let join = *join;
+    ) -> Result<Self, String> {
+        let mut join = *join;
         let registry_key = section_cache_registry_key(&join.tables);
         let pool = Arc::new(JobPool::new(JobPool::default_threads()));
         let policy = join.client_policy;
@@ -160,6 +170,10 @@ impl Game {
         if policy.presentation_packs {
             enabled.extend(petramond::modding::client::presentation_only_packs());
         }
+        let scoped = petramond::content::for_enabled(&enabled)
+            .map_err(|error| format!("Couldn't load server content: {error}"))?;
+        let content = petramond_world::content::pin(scoped);
+        petramond::net::remap::IdRemap::build(&join.tables).apply(&mut join);
         let client_mods = petramond::modding::client::ClientModRuntime::load(
             join.seed,
             &petramond::modding::client::remote_session_key(server_identity),
@@ -170,7 +184,7 @@ impl Game {
             },
         );
         let fallback_world = SurfaceDensitySystem::new(join.seed);
-        let bootstrap = ClientBootstrap::from_join(
+        let mut bootstrap = ClientBootstrap::from_join(
             join,
             pool,
             render_dist,
@@ -179,6 +193,7 @@ impl Game {
             &enabled,
             true,
         );
+        bootstrap.content = Some(content);
         let mut game = Self::assemble(cam, handle, bootstrap);
         // A retained cache only re-promotes under the same id vocabulary, since its block ids
         // are client-local and this session's remap tables define them. `adopt_session` clears
@@ -187,7 +202,7 @@ impl Game {
         let mut cache = retained_section_cache.unwrap_or_default();
         cache.adopt_session(registry_key);
         game.replica.section_cache = cache;
-        game
+        Ok(game)
     }
 
     pub fn take_section_cache(&mut self) -> crate::game::section_cache::SectionCache {
@@ -218,6 +233,7 @@ impl Game {
             anchor_missing: false,
             presenting: Default::default(),
             world_capture: super::capture::WorldCapture::new(&bootstrap.identity),
+            _content: bootstrap.content,
         }
     }
 }

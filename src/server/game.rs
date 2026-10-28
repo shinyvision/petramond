@@ -53,6 +53,7 @@ pub struct SharedTickRows {
 }
 
 pub struct ServerGame {
+    content: petramond_world::content::Content,
     pub(in crate::server) world: ServerWorld,
     pub(in crate::server) sessions: SessionRegistry,
     pub(in crate::server) admissions: Admissions,
@@ -87,6 +88,7 @@ impl ServerGame {
     pub(in crate::server) fn assemble(parts: ServerParts) -> Self {
         let remote_from_boot = parts.local.is_none();
         Self {
+            content: petramond_world::content::Content::current(),
             world: parts.world,
             sessions: SessionRegistry::new(parts.local),
             admissions: Admissions::new(parts.jobs),
@@ -109,6 +111,10 @@ impl ServerGame {
 
     pub fn world(&self) -> &ServerWorld {
         &self.world
+    }
+
+    pub fn content(&self) -> petramond_world::content::Content {
+        self.content
     }
 
     #[cfg(any(test, feature = "test-support"))]

@@ -3,6 +3,8 @@ use super::{MusicTrack, Sound, SpatialListener, SpatialSoundSource};
 pub struct Audio;
 
 impl Audio {
+    pub fn reload_content(&mut self) {}
+
     pub fn new() -> Self {
         Audio
     }

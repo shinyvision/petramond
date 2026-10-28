@@ -76,7 +76,7 @@ feels like yours.
   just take in the world.
 - Play with a mod-ready content system designed for new blocks, items, mobs,
   recipes, sounds, GUIs, and world behavior.
-- There's technically multiplayer.
+- There's multiplayer and servers that should be stable.
 
 ## Crafting recipes
 
@@ -91,7 +91,7 @@ Petramond is in development. It's here for those who want to try it out, but don
 I want the base game to be a game engine with some sandbox features, but add content packs like combat, farming and cooking through mods.
 The mods will be first-class curated packs but there will also be an API to add your own content.
 
-There is also something that looks like multiplayer that does work, but don't expect it to be amazing.
+Multiplayer should be quite stable now. If you run into issues, please report them here in GitHub.
 
 I am using AI assistance and a very strong preference about how I want the code to be architected to build this game.
 

@@ -89,11 +89,12 @@ impl Decoders {
             .expect("spawn load publisher");
         let mut workers: Vec<_> = (0..count)
             .map(|i| {
+                let content = petramond_world::content::Content::current();
                 let (rx, completed, dir, palette) =
                     (rx.clone(), completed.clone(), dir.clone(), palette.clone());
                 std::thread::Builder::new()
                     .name(format!("petramond-decode-{i}"))
-                    .spawn(move || {
+                    .spawn(content.task(move || {
                         crate::worker::lower_current_thread_priority();
                         loop {
                             let job = rx.lock().unwrap().recv();
@@ -115,7 +116,7 @@ impl Decoders {
                             };
                             let _ = completed.send((seq, value));
                         }
-                    })
+                    }))
                     .expect("spawn save decoder")
             })
             .collect();

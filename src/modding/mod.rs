@@ -27,17 +27,20 @@ pub fn active_recipes() -> Option<std::sync::Arc<petramond_world::crafting::Reci
 }
 
 pub fn prewarm_modules() {
+    let content = petramond_world::content::Content::current();
     let spawned = std::thread::Builder::new()
         .name("mod-prewarm".into())
-        .spawn(|| {
-            let paths: Vec<PathBuf> = petramond_world::assets::packs()
+        .spawn(content.task(move || {
+            let paths: Vec<PathBuf> = content
+                .packs()
+                .packs()
                 .iter()
                 .flat_map(|p| [p.wasm.clone(), p.client_wasm.clone()])
                 .flatten()
                 .collect();
             host::module_cache::prewarm(paths);
             let _ = petramond_world::crafting::load_recipes_for(&Default::default());
-        });
+        }));
     if let Err(e) = spawned {
         log::warn!("mod prewarm thread failed to spawn: {e}");
     }
@@ -65,15 +68,16 @@ pub fn precompile_module(wasm: &std::path::Path, target: Option<&str>) -> Result
 /// took; a fresh `PETRAMOND_MODCACHE_DIR` measures compiling, a warm one loading.
 #[cfg(feature = "tools")]
 pub fn load_modules_timed(paths: &[PathBuf]) -> Vec<(PathBuf, std::time::Duration, bool)> {
+    let content = petramond_world::content::Content::current();
     let handles: Vec<_> = paths
         .iter()
         .cloned()
         .map(|path| {
-            std::thread::spawn(move || {
+            std::thread::spawn(content.task(move || {
                 let t = std::time::Instant::now();
                 let ok = host::module_for(&path).is_ok();
                 (path, t.elapsed(), ok)
-            })
+            }))
         })
         .collect();
     handles.into_iter().map(|h| h.join().unwrap()).collect()
@@ -189,7 +193,10 @@ pub struct ModHost {
 
 impl ModHost {
     pub fn load(world_seed: u32, disabled: &std::collections::BTreeSet<String>) -> Self {
-        let mods = session_wasm_mods(petramond_world::assets::packs(), disabled);
+        let mods = session_wasm_mods(
+            petramond_world::content::current().packs().packs(),
+            disabled,
+        );
         Self::from_wasm_list(world_seed, &mods)
     }
 

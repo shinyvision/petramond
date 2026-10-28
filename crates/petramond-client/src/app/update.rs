@@ -3,8 +3,14 @@ use super::{App, AppScreen};
 use petramond_render::Renderer;
 
 impl App {
-    pub fn update(&mut self, renderer: &mut Renderer) {
+    pub fn update(
+        &mut self,
+        renderer: &mut Renderer,
+    ) -> Result<(), petramond_render::RenderInitError> {
+        self.drive_pending_start(renderer);
+        self.refresh_renderer_content(renderer)?;
         self.update_in_viewport(renderer.window_ui_viewport(), Some(renderer));
+        self.refresh_renderer_content(renderer)
     }
 
     pub fn game_menu_open(&self) -> bool {
@@ -24,6 +30,9 @@ impl App {
 
     #[cfg(test)]
     pub fn update_frame(&mut self, screen_size: (u32, u32)) {
+        if let Some((started, ())) = self.prepare_pending(|_| Ok(())) {
+            self.activate_start(started);
+        }
         self.update_in_viewport(petramond::gui::UiViewport::unversioned(screen_size), None);
     }
 
@@ -32,6 +41,7 @@ impl App {
         viewport: petramond::gui::UiViewport,
         renderer: Option<&mut Renderer>,
     ) {
+        self.sync_content();
         let screen_size = viewport.size;
         self.ui.set_viewport_generation(viewport.generation);
         let step = self.step_media_clock();

@@ -3,6 +3,8 @@ use super::*;
 mod actors;
 mod hud;
 mod passes;
+#[cfg(test)]
+mod tests;
 use passes::{HandParts, SkyParts};
 
 pub async fn new_renderer_from_target(
@@ -21,7 +23,8 @@ pub async fn new_renderer_from_target(
         .ok_or(RenderInitError::SurfaceUnsupported)?;
     surface.configure(&device, &config);
     let samples = max_scene_samples(&adapter, config.format);
-    new_renderer_inner(Some(surface), device, queue, config, samples)
+    let health = DeviceHealth::watch(&device);
+    new_renderer_inner(Some(surface), device, queue, config, samples, health)
 }
 
 pub(crate) fn instance_descriptor() -> wgpu::InstanceDescriptor {
@@ -69,9 +72,8 @@ pub(super) async fn request_device(
     let mut required_limits = wgpu::Limits::default().using_alignment(adapter.limits());
     required_limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d;
     required_limits.max_buffer_size = adapter.limits().max_buffer_size;
-    required_limits.max_texture_array_layers = (2 * petramond_world::tile::Tile::count() as u32)
-        .max(required_limits.max_texture_array_layers)
-        .min(adapter.limits().max_texture_array_layers);
+    // A later world can enable more tiles than the title screen uses.
+    required_limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
     crate::content_limits::check(&required_limits).map_err(RenderInitError::ContentLimits)?;
     let mut required_features =
         adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
@@ -98,8 +100,13 @@ pub(super) fn new_renderer_inner(
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     max_samples: u32,
+    health: DeviceHealth,
 ) -> Result<Renderer, RenderInitError> {
-    let health = DeviceHealth::watch(&device);
+    crate::atlas::stage()
+        .build(petramond_world::content::current())
+        .map_err(RenderInitError::Content)?;
+    petramond_world::block_model::prepare_atlas().map_err(RenderInitError::Content)?;
+    crate::content_limits::check(&device.limits()).map_err(RenderInitError::ContentLimits)?;
     let graph =
         super::passes::frame_graph().map_err(|e| RenderInitError::PassGraph(e.to_string()))?;
     let (width, height) = (config.width, config.height);
@@ -147,7 +154,7 @@ pub(super) fn new_renderer_inner(
         &atlas_view,
         &atlas_sampler,
     );
-    petramond::modding::client::bake_installed_custom_item_geometry();
+    petramond::modding::client::bake_custom_item_geometry();
     // Bake all item icons into the atlas once here at init. Cube/sprite icons use the depthless
     // `model3d_pipe`, bbmodel-block icons the depth-tested `model_icon_pipe`, and only this bake
     // uses them (see `icon_atlas`). The atlas format has to match the surface (sRGB) or we get
@@ -263,6 +270,7 @@ pub(super) fn new_renderer_inner(
     };
 
     Ok(Renderer {
+        content: petramond_world::content::Content::current(),
         ghosts: Default::default(),
         selection: Default::default(),
         gpu_timer: gpu_timer::GpuTimer::new(&device, &queue),
@@ -296,6 +304,57 @@ pub(super) fn new_renderer_inner(
         player_view,
         last_stats: RenderStats::default(),
     })
+}
+
+pub struct PreparedContent(Renderer);
+
+impl Renderer {
+    pub fn content(&self) -> petramond_world::content::Content {
+        self.content
+    }
+
+    pub fn prepare_content(
+        &self,
+        content: petramond_world::content::Content,
+    ) -> Result<Option<PreparedContent>, RenderInitError> {
+        if self.content.same(content) {
+            return Ok(None);
+        }
+        self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let built = content.scope(|| {
+            new_renderer_inner(
+                None,
+                self.device.clone(),
+                self.queue.clone(),
+                self.config.clone(),
+                self.targets.max_samples,
+                self.health.clone(),
+            )
+        });
+        let mut errors = Vec::new();
+        for _ in 0..3 {
+            if let Some(error) = pollster::block_on(self.device.pop_error_scope()) {
+                errors.push(error.to_string());
+            }
+        }
+        if !errors.is_empty() {
+            return Err(RenderInitError::Content(errors.join("\n")));
+        }
+        let renderer = built?;
+        if let Some(error) = renderer.failure() {
+            return Err(RenderInitError::Content(error.to_string()));
+        }
+        Ok(Some(PreparedContent(renderer)))
+    }
+
+    pub fn commit_content(&mut self, prepared: PreparedContent) {
+        let PreparedContent(mut next) = prepared;
+        next.surface = self.surface.take();
+        next.captures = std::mem::take(&mut self.captures);
+        *self = next;
+    }
 }
 
 fn create_uniform_buffer(device: &wgpu::Device, (fog_start, fog_end): (f32, f32)) -> wgpu::Buffer {

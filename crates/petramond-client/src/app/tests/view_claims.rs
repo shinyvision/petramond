@@ -26,7 +26,7 @@ fn renderer() -> Option<petramond_render::Renderer> {
 
 fn present(app: &mut crate::app::App, renderer: &mut petramond_render::Renderer) {
     for _ in 0..4 {
-        app.update(renderer);
+        app.update(renderer).unwrap();
         if app.render(renderer) {
             return;
         }

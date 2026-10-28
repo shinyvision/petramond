@@ -21,6 +21,7 @@ mod media;
 mod overlays;
 mod perf;
 mod session_flow;
+mod session_start;
 mod sounds;
 mod view_claims;
 

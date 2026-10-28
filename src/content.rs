@@ -105,6 +105,37 @@ pub fn install_from_env(extra: &[&'static dyn Stage]) -> Result<Content, Content
     petramond_world::content::install_from_env(&all)
 }
 
+pub fn install_shell_from_env(extra: &[&'static dyn Stage]) -> Result<Content, ContentErrors> {
+    use petramond_world::{
+        assets::{PackRoots, PackSet},
+        content::ContentLoader,
+    };
+    let packs = PackSet::discover(&PackRoots::from_env());
+    let disabled = packs
+        .installed()
+        .iter()
+        .filter(|pack| pack.touches_world)
+        .filter_map(|pack| pack.id.clone())
+        .collect();
+    let mut all = stages();
+    all.extend_from_slice(extra);
+    let content = ContentLoader::new(packs.enabled(&disabled))
+        .stages(&all)
+        .load()?;
+    petramond_world::content::install(content);
+    Ok(content)
+}
+
 pub fn for_world(disabled: &BTreeSet<String>) -> Result<Content, ContentErrors> {
     petramond_world::content::for_world(disabled, &stages())
+}
+
+pub fn for_enabled(enabled: &BTreeSet<String>) -> Result<Content, ContentErrors> {
+    let disabled = petramond_world::assets::packs()
+        .iter()
+        .filter_map(|pack| pack.id.as_ref())
+        .filter(|id| !enabled.contains(*id))
+        .cloned()
+        .collect();
+    for_world(&disabled)
 }

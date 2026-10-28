@@ -36,7 +36,7 @@ fn client_content_stages() -> [&'static dyn petramond_world::content::Stage; 3] 
 pub fn run() {
     petramond::platform::init_logging();
     let (content_report, content_lock) = petramond::content::apply_pending();
-    if let Err(e) = petramond::content::install_from_env(&client_content_stages()) {
+    if let Err(e) = petramond::content::install_shell_from_env(&client_content_stages()) {
         eprintln!("{e}");
         std::process::exit(1);
     }
@@ -148,7 +148,8 @@ impl NativeHost {
         };
         let report = petramond::content::install::apply_pending_live(&dirs, lock);
         if !report.applied.is_empty() {
-            if let Err(error) = petramond::content::install_from_env(&client_content_stages()) {
+            if let Err(error) = petramond::content::install_shell_from_env(&client_content_stages())
+            {
                 log::error!("installed content failed to load: {error}");
                 eprintln!("Petramond cannot load the installed content: {error}");
                 event_loop.exit();
@@ -503,7 +504,10 @@ impl ApplicationHandler for NativeHost {
         // drain-to-present on every round trip.
         if now >= self.next_update {
             let update_start = Instant::now();
-            app.update(renderer);
+            if let Err(error) = app.update(renderer) {
+                fatal_render_error(event_loop, &error);
+                return;
+            }
             if app.take_quit_requested() {
                 event_loop.exit();
                 return;

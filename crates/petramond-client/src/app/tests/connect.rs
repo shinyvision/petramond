@@ -218,7 +218,8 @@ fn pause_menu_shows_disconnect_for_remote_and_hides_save_quit() {
         "test-server",
         &std::collections::BTreeSet::new(),
         None,
-    );
+    )
+    .unwrap();
     assert!(game.is_remote());
 
     let mut app = shell_app();
@@ -326,6 +327,7 @@ fn end_to_end_connect_through_the_ui_joins_a_lan_server() {
     let deadline = std::time::Instant::now() + petramond_util::test_time::TEST_HARD_DEADLINE;
     loop {
         app.poll_connect_worker();
+        app.update_frame(SCREEN);
         if app.screen == AppScreen::Game {
             break;
         }

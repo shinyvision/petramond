@@ -53,7 +53,7 @@ mod world_marks;
 pub use capture::{CaptureRequest, CaptureSource, Captured};
 #[cfg(test)]
 pub(crate) use construct::instance_descriptor;
-pub use construct::new_renderer_from_target;
+pub use construct::{new_renderer_from_target, PreparedContent};
 use dynamic_draw::{DynamicDraw, DynamicInstanceDraw, DynamicVertexDraw};
 use icon_atlas::IconAtlas;
 use lod::far_leaf_lod_active;
@@ -464,6 +464,7 @@ struct ViewState {
 }
 
 pub struct Renderer {
+    content: petramond_world::content::Content,
     ghosts: ghosts::GhostPass,
     selection: selection::SelectionPass,
     surface: Option<wgpu::Surface<'static>>,

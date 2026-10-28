@@ -15,7 +15,7 @@ pub struct ModelAtlas {
 }
 
 impl ModelAtlas {
-    fn build() -> Self {
+    fn build() -> Result<Self, String> {
         let mut hashes: HashMap<u64, Vec<usize>> = HashMap::new();
         let mut unique: Vec<usize> = Vec::new();
         let mut entries = Vec::with_capacity(models().len());
@@ -44,7 +44,7 @@ impl ModelAtlas {
             .iter()
             .map(|&i| [models()[i].tex_w.max(1), models()[i].tex_h.max(1)])
             .collect();
-        let layout = packing::pack(&sizes, 8192).expect("block model atlas");
+        let layout = packing::pack(&sizes, 8192)?;
         let [w, h] = layout.size;
         let mut rgba = vec![0u8; (w * h * 4) as usize];
         for (&i, &[x_off, y_off]) in unique.iter().zip(&layout.origins) {
@@ -76,7 +76,7 @@ impl ModelAtlas {
                 .iter()
                 .map(|surface| {
                     let Some(a) = surface.animation else {
-                        return 0;
+                        return Ok(0);
                     };
                     let value = super::TextureAnimation {
                         stride: (surface.rect[3] - surface.rect[1]) * transform[3]
@@ -93,19 +93,20 @@ impl ModelAtlas {
                             animations.push(value);
                             id
                         });
-                    u8::try_from(id).expect("model atlas exceeds 255 distinct flipbooks")
+                    u8::try_from(id)
+                        .map_err(|_| "model atlas exceeds 255 distinct flipbooks".to_owned())
                 })
-                .collect();
+                .collect::<Result<Vec<_>, String>>()?;
             surface_animations.push(slots);
         }
-        ModelAtlas {
+        Ok(ModelAtlas {
             animations,
             surface_animations,
             rgba,
             w,
             h,
             xform,
-        }
+        })
     }
 
     pub fn animations(&self) -> &[super::TextureAnimation] {
@@ -199,7 +200,11 @@ static ATLAS: crate::content::Slot<ModelAtlas> = crate::content::Slot::new(
 );
 
 fn build_atlas(_: &crate::content::ContentRegistry) -> Result<ModelAtlas, String> {
-    Ok(ModelAtlas::build())
+    ModelAtlas::build()
+}
+
+pub fn prepare_atlas() -> Result<(), String> {
+    crate::content::Stage::build(&ATLAS, crate::content::current())
 }
 
 pub fn atlas() -> &'static ModelAtlas {

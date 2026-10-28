@@ -89,8 +89,11 @@
           "children": [
             {
               "type": "label",
-              "text": "Disconnected",
-              "scale": 2
+              "text": "",
+              "scale": 2,
+              "bind": {
+                "text": "failure_title"
+              }
             },
             {
               "id": "message_scroll",
@@ -207,6 +210,9 @@
   "editor": {
     "sample_state": {
       "disconnect_message": {
+        "str": "Sample text"
+      },
+      "failure_title": {
         "str": "Sample text"
       }
     },
