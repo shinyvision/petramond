@@ -423,6 +423,7 @@ impl ApplicationHandler for NativeHost {
                 app.release_input_bindings();
             }
             WindowEvent::MouseWheel { delta, .. } => {
+                // Use only window wheel events; raw wheel deltas can differ in sign and scale.
                 app.add_scroll_delta(-wheel_notches(delta));
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -470,16 +471,10 @@ impl ApplicationHandler for NativeHost {
         let Some(app) = self.app.as_mut() else {
             return;
         };
-        match event {
-            DeviceEvent::MouseMotion { delta: (dx, dy) } => {
-                if self.cursor_policy.is_some_and(|cursor| cursor.grabbed) {
-                    app.add_pointer_motion(dx as f32, dy as f32);
-                }
+        if let DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
+            if self.cursor_policy.is_some_and(|cursor| cursor.grabbed) {
+                app.add_pointer_motion(dx as f32, dy as f32);
             }
-            DeviceEvent::MouseWheel { delta } => {
-                app.add_scroll_delta(-wheel_notches(delta));
-            }
-            _ => {}
         }
     }
 
