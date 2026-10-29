@@ -28,7 +28,7 @@ pub(in crate::mob) fn foothold_in_hazard(
     let feet_y = if cur.fluid_cell(floor) {
         floor.y as f32
     } else {
-        floor.y as f32 + super::floor_top(cur, floor)
+        floor.y as f32 + super::floor_top(cur, floor, params.half_width)
     };
     let hw = f64::from(params.half_width);
     let (cx, cz) = (f64::from(cell.x) + 0.5, f64::from(cell.z) + 0.5);
@@ -180,7 +180,10 @@ impl super::Navigator {
                     .max(max_step)
                     .min(remaining.max(max_step));
                 let floor = wp - IVec3::Y;
-                (wish * reach, floor.y as f32 + super::floor_top(cur, floor))
+                (
+                    wish * reach,
+                    floor.y as f32 + super::floor_top(cur, floor, size.half_width),
+                )
             }
             None => (
                 wish * super::STEER_LOOKAHEAD.max(max_step),

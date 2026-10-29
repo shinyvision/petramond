@@ -9,6 +9,9 @@ use crate::mob::path::{self, PathParams};
 use crate::world::SectionCursor;
 use petramond_world::collision;
 
+#[cfg(test)]
+mod tests;
+
 fn nav_partial_boxes(cur: &SectionCursor<'_>, c: IVec3) -> &'static [Aabb] {
     let boxes = cur.collision_boxes(c);
     match classify_boxes(boxes) {
@@ -17,14 +20,16 @@ fn nav_partial_boxes(cur: &SectionCursor<'_>, c: IVec3) -> &'static [Aabb] {
     }
 }
 
-pub(super) fn floor_top(cur: &SectionCursor<'_>, floor: IVec3) -> f32 {
+pub(super) fn floor_top(cur: &SectionCursor<'_>, floor: IVec3, half_width: f32) -> f32 {
     let boxes = cur.collision_boxes(floor);
-    if boxes.is_empty() {
-        return 1.0;
-    }
+    let lo = 0.5 - half_width.max(0.0);
+    let hi = 0.5 + half_width.max(0.0);
     boxes
         .iter()
-        .fold(0.0f32, |acc, b| acc.max(b.max[1]))
+        .filter(|b| b.min[0] < hi && b.max[0] > lo && b.min[2] < hi && b.max[2] > lo)
+        .map(|b| b.max[1])
+        .reduce(f32::max)
+        .unwrap_or(1.0)
         .clamp(0.0, 1.0)
 }
 
@@ -139,8 +144,8 @@ pub(super) fn navigation_step_gate_on<'c, 'w, M: path::CellCache>(
         }
 
         let (hw, h) = (f64::from(half_width), f64::from(height));
-        let feet = f64::from(from.y - 1) + f64::from(floor_top(cur, from - IVec3::Y));
-        let dest_feet = f64::from(to.y - 1) + f64::from(floor_top(cur, to - IVec3::Y));
+        let feet = f64::from(from.y - 1) + f64::from(floor_top(cur, from - IVec3::Y, half_width));
+        let dest_feet = f64::from(to.y - 1) + f64::from(floor_top(cur, to - IVec3::Y, half_width));
         let cx = f64::from(from.x) + 0.5;
         let cz = f64::from(from.z) + 0.5;
         if dest_feet - feet > f64::from(path::CLIMB_CELLS) + 1e-3 {
@@ -157,8 +162,9 @@ pub(super) fn navigation_step_gate_on<'c, 'w, M: path::CellCache>(
         let sweep_feet = if climb { dest_feet + 1e-3 } else { feet };
         let min = [cx - hw, sweep_feet, cz - hw];
         let max = [cx + hw, sweep_feet + h, cz + hw];
-        let (moved, _, _) =
-            collision::step_horizontal(min, max, dx, dz, collision::STEP_HEIGHT, boxes_at);
+        // Auto-stepping requires ground contact; it cannot add height to a jump.
+        let step_height = if climb { 0.0 } else { collision::STEP_HEIGHT };
+        let (moved, _, _) = collision::step_horizontal(min, max, dx, dz, step_height, boxes_at);
         if (moved[0] - dx).abs() >= 1e-3 || (moved[2] - dz).abs() >= 1e-3 {
             return false;
         }

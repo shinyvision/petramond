@@ -194,7 +194,7 @@ fn a_partial_block_bridge_does_not_trip_the_live_guard() {
     let mut nav = route(&world, start, goal, 0.3, 1.8);
     assert_eq!(nav.path().last(), Some(&goal));
     let cursor = world.cursor();
-    let floor_y = 64.0 + super::super::floor_top(&cursor, start - IVec3::Y);
+    let floor_y = 64.0 + super::super::floor_top(&cursor, start - IVec3::Y, nav.half_width);
     let pos = WorldPos::new(5.5, f64::from(floor_y), 8.5);
     assert_eq!(
         nav.avoid_hazards(pos, 0.0, body(), Vec3::X, false, 0.2, &cursor),
