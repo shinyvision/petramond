@@ -1,0 +1,55 @@
+{
+  "blocks": [
+    {
+      "block": "relay:relay",
+      "shape": "cube",
+      "behaviors": [
+        "relay:relay"
+      ],
+      "flags": [
+        "solid",
+        "opaque",
+        "ao_occluder"
+      ],
+      "tags": [
+        "no_grass_decay"
+      ],
+      "collision": [
+        {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "emission": 0,
+      "tiles": [
+        "relay:relay",
+        "relay:relay",
+        "relay:relay"
+      ],
+      "material": "stone",
+      "data": {
+        "relay:transfer": {
+          "interval": 8,
+          "stack": 16
+        }
+      },
+      "hardness": 2.0,
+      "drops": [
+        {
+          "item": "relay:relay",
+          "min": 1,
+          "max": 1,
+          "chance": 1.0
+        }
+      ]
+    }
+  ]
+}

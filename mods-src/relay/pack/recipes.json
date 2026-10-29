@@ -1,0 +1,27 @@
+{
+  "recipes": [
+    {
+      "type": "crafting",
+      "recipe": "relay:relay",
+      "station": "petramond:crafting_table",
+      "ingredients": [
+        {
+          "item": "petramond:cobblestone",
+          "count": 4
+        },
+        {
+          "item": "petramond:iron_ingot",
+          "count": 1
+        },
+        {
+          "item": "petramond:chest",
+          "count": 1
+        }
+      ],
+      "result": {
+        "item": "relay:relay",
+        "count": 1
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "tiles": [
+    {"name": "relay:relay", "file": "relay.png"}
+  ]
+}

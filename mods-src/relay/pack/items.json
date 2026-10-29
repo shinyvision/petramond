@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "item": "relay:relay",
+      "key": "relay:relay",
+      "name": "Item Relay",
+      "max_stack_size": 64,
+      "tags": [],
+      "block": "relay:relay"
+    }
+  ]
+}

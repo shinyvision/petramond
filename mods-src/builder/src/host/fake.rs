@@ -57,6 +57,9 @@ pub struct State {
     pub mobs: BTreeMap<u64, Mob>,
     next_mob: u64,
     pub containers: HashMap<ContainerAddress, Vec<Option<ItemStackData>>>,
+    /// Block cells that can hold a container the engine has not created yet: it makes one on the
+    /// first write (a transfer into it), never on a read.
+    pub latent: HashMap<ContainerAddress, usize>,
     pub schematics: HashMap<SchematicId, Schematic>,
     pub lookups: HashMap<SchematicId, SchematicLookup>,
     pub kv: BTreeMap<String, Vec<u8>>,
@@ -213,6 +216,7 @@ impl Fake {
                 mobs: BTreeMap::new(),
                 next_mob: 100,
                 containers: HashMap::default(),
+                latent: HashMap::default(),
                 schematics: HashMap::default(),
                 lookups: HashMap::default(),
                 kv: BTreeMap::new(),
@@ -280,6 +284,14 @@ impl Fake {
         state
             .containers
             .insert(ContainerAddress::Block(cell), vec![None; slots]);
+    }
+
+    /// A chest the engine has not lazily created a container for yet (never opened, nothing
+    /// inserted): reads see no container, the first write makes one with `slots` empty slots.
+    pub fn unopened_chest(&self, cell: [i32; 3], slots: usize) {
+        let mut state = self.state_mut();
+        state.set(cell, rows::CHEST);
+        state.latent.insert(ContainerAddress::Block(cell), slots);
     }
 
     pub fn give(&self, at: ContainerAddress, item: &str, count: u8) {
@@ -424,5 +436,43 @@ mod bridge {
             }
             other => panic!("the builder called the SDK directly, around its host seam: {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::Host;
+
+    #[test]
+    fn a_transfer_into_a_never_opened_chest_creates_its_container() {
+        let world = Rc::new(Fake::new());
+        let _installed = world.install();
+        let (from, to) = ([0, 1, 0], [0, -1, 0]);
+        world.chest(from, 2);
+        world.give(ContainerAddress::Block(from), "petramond:stone", 5);
+        world.unopened_chest(to, 2);
+
+        let (from, to) = (ContainerAddress::Block(from), ContainerAddress::Block(to));
+        assert_eq!(world.container_get(to), None, "reads never create it");
+        let moved = world.container_transfer(from, 0, to, 3);
+        assert_eq!(moved.map(|m| m.count), Some(3));
+        assert_eq!(world.container(to)[0].as_ref().map(|s| s.count), Some(3));
+        assert_eq!(world.container(from)[0].as_ref().map(|s| s.count), Some(2));
+    }
+
+    #[test]
+    fn a_transfer_into_a_cell_that_holds_no_container_moves_nothing() {
+        let world = Rc::new(Fake::new());
+        let _installed = world.install();
+        world.chest([0, 1, 0], 2);
+        world.give(ContainerAddress::Block([0, 1, 0]), "petramond:stone", 5);
+        let moved = world.container_transfer(
+            ContainerAddress::Block([0, 1, 0]),
+            0,
+            ContainerAddress::Block([0, -1, 0]),
+            3,
+        );
+        assert_eq!(moved, None);
     }
 }

@@ -1,0 +1,20 @@
+[package]
+name = "relay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Item relay: a block that moves stacks from the container above it into the container below it on a timer. Speed and batch size are block data rows."
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+mod-sdk = { workspace = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+pack-check = { workspace = true }

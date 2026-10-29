@@ -16,6 +16,7 @@ members = [
     "monsters",
     "pack-check",
     "post-marker",
+    "relay",
     "vehicles",
     "weather",
     "weather-core",

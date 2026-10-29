@@ -1,0 +1,8 @@
+{
+  "name": "Item Relay",
+  "id": "relay",
+  "version": "0.1.0",
+  "description": "A craftable relay block that moves items from the container above it into the container below it, one stack at a time. Place it between two chests.",
+  "summary": "Adds a block that moves items from one chest to another.",
+  "wasm": "mod.wasm"
+}

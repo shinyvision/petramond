@@ -638,8 +638,12 @@ impl Host for Fake {
     ) -> Option<ItemStackData> {
         let mut state = self.state_mut();
         let taken = state.containers.get(&from)?.get(slot as usize)?.clone()?;
+        // The engine resolves the target for writing first and creates a latent container
+        // (`insert_specs`), so a never-opened chest still receives; only a cell that cannot
+        // hold one refuses.
         if !state.containers.contains_key(&to) {
-            return None;
+            let slots = state.latent.remove(&to)?;
+            state.containers.insert(to, vec![None; slots]);
         }
         let asked = count.min(taken.count);
         let left = state.stow(

@@ -207,6 +207,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "relay"
+version = "0.1.0"
+dependencies = [
+ "mod-sdk",
+ "pack-check",
+ "serde",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
