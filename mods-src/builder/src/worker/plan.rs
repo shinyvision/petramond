@@ -7,6 +7,7 @@ use super::Ctx;
 use crate::project::{Note, Phase, Project, Projects};
 use crate::survey::Known;
 use crate::worker::Job;
+mod choice;
 mod climb;
 mod gather;
 mod glazing;
@@ -57,11 +58,13 @@ struct Round {
     walks: Vec<Option<u32>>,
     wants_perch: Vec<(Task, bool)>,
     spots: Vec<stances::Spot>,
+    future: Vec<(Task, [i32; 3])>,
+    supplies: supply::Requests,
 }
 
 type Stage = fn(&mut Ctx, &mut Projects, &mut Job, &Body, &mut Round) -> Flow;
 
-const STAGES: [Stage; 22] = [
+const STAGES: [Stage; 20] = [
     upkeep::reconcile_scaffolds,
     upkeep::check_home,
     upkeep::grounded,
@@ -70,11 +73,9 @@ const STAGES: [Stage; 22] = [
     upkeep::way_out,
     home::go_home,
     upkeep::surveyed,
-    supply::full_hands,
     gather::weigh_work,
     perch::aloft,
-    supply::scaffold_blocks,
-    supply::tools,
+    supply::consider,
     here::from_here,
     stances::rank_by_walk,
     stances::stance_spots,
@@ -100,6 +101,8 @@ pub fn plan(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body) 
         walks: Vec::new(),
         wants_perch: Vec::new(),
         spots: Vec::new(),
+        future: Vec::new(),
+        supplies: supply::Requests::default(),
     };
     for stage in STAGES {
         match stage(ctx, projects, job, body, &mut round) {

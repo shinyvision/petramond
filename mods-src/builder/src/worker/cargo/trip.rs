@@ -1,10 +1,10 @@
 use crate::host::prelude::*;
 
-use super::wants::{digs_ahead, keeps, tool_kind, wanted};
+use super::wants::{keeps, wanted};
 use crate::content::BLUEPRINT;
 use crate::geometry::{feet_of, manhattan, reach_to, reaches};
 use crate::project::{Hold, Note, Project, Projects};
-use crate::survey::{key_of, ItemKey};
+use crate::survey::ItemKey;
 use crate::worker::plan::Mode;
 use crate::worker::route::{self, Hubs};
 use crate::worker::stance::{self, Search};
@@ -26,43 +26,20 @@ pub fn resupply(
         job.crew.why(Waiting::ChestsUnread);
         return Step::Plan;
     }
-    let (need, kinds) = wanted(ctx, job, &body.slots, stock.read.then_some(&stock.totals));
-    let tool_in_stock = |ctx: &mut Ctx| {
-        !kinds.is_empty()
-            && stock
-                .slots
-                .iter()
-                .flatten()
-                .flatten()
-                .any(|s| tool_kind(ctx, &s.item).is_some_and(|(k, _)| kinds.contains(&k)))
-    };
-    if need.is_empty() && !tool_in_stock(ctx) {
-        short_of_bill(ctx, projects, job, &stock, waiting);
-        return Step::Plan;
-    }
-    let useful = stock
-        .containers
-        .iter()
-        .zip(&stock.slots)
-        .filter(|(_, slots)| {
-            slots.iter().flatten().any(|s| {
-                need.contains_key(&key_of(s))
-                    || tool_kind(ctx, &s.item).is_some_and(|(k, _)| kinds.contains(&k))
-            })
-        })
-        .map(|(c, _)| *c)
-        .min_by_key(|c| manhattan(*c, body.cell));
-    let Some(container) = useful else {
+    let load = wanted(ctx, job, &body.slots, &stock.totals);
+    let Some(container) = load.container(ctx, body, &stock) else {
         short_of_bill(ctx, projects, job, &stock, waiting);
         return Step::Plan;
     };
     if TRACE {
-        let load: Vec<String> = need
+        let items: Vec<String> = load
+            .missing(&body.slots)
             .iter()
             .map(|((item, _), n)| format!("{n}x{}", item.trim_start_matches("petramond:")))
             .collect();
         log(&format!(
-            "TRACE a trip to {container:?} for {load:?} and tools {kinds:?} (hands hold {})",
+            "TRACE a trip to {container:?} for {items:?} and tools {:?} (hands hold {})",
+            load.tools,
             body.slots.iter().flatten().count()
         ));
     }
@@ -130,40 +107,8 @@ pub(super) fn go_to_container(
     container: [i32; 3],
     then: Then,
 ) -> Step {
-    if at_container(body, container) {
-        return match then {
-            Then::Fetch(_) | Then::Deposit(_) => Step::Walk {
-                to: body.cell,
-                goal: body.cell,
-                then,
-                best: 0,
-                progress: ctx.now,
-            },
-            _ => Step::Plan,
-        };
-    }
-    let trail = job.crew.trail.clone();
-    let hubs = Hubs::new(home, &trail);
-    let close = |s: [i32; 3]| reach_to(feet_of(s), container) <= CHEST_REACH;
-    match stance::find(
-        ctx,
-        body,
-        hubs,
-        &[container],
-        &sight::Work::Touch,
-        false,
-        close,
-    ) {
-        Search::Found(to) => match route::leg(ctx, hubs, body, to) {
-            Some(Some(cell)) => Step::Walk {
-                to: cell,
-                goal: to,
-                then,
-                best: i32::MAX,
-                progress: ctx.now,
-            },
-            _ => Step::Plan,
-        },
+    match approach(ctx, job, body, home, container, then) {
+        Search::Found(step) => step,
         Search::Busy => Step::Plan,
         Search::None | Search::Unseen if body.cell != home => Step::Walk {
             to: home,
@@ -179,34 +124,71 @@ pub(super) fn go_to_container(
     }
 }
 
-pub fn unload(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> Option<Step> {
-    let junk = body
-        .slots
-        .iter()
-        .flatten()
-        .any(|s| !keeps(ctx, job, &body.slots, s));
-    if !junk && !digs_ahead(job) {
-        return None;
+pub(super) fn approach(
+    ctx: &mut Ctx,
+    job: &Job,
+    body: &Body,
+    home: [i32; 3],
+    container: [i32; 3],
+    then: Then,
+) -> Search<Step> {
+    if at_container(body, container) {
+        return Search::Found(Step::Walk {
+            to: body.cell,
+            goal: body.cell,
+            then,
+            best: 0,
+            progress: ctx.now,
+        });
     }
-    unload_all(ctx, job, body, project)
+    let trail = job.crew.trail.clone();
+    let hubs = Hubs::new(home, &trail);
+    let close = |s: [i32; 3]| reach_to(feet_of(s), container) <= CHEST_REACH;
+    match stance::find(
+        ctx,
+        body,
+        hubs,
+        &[container],
+        &sight::Work::Touch,
+        false,
+        close,
+    ) {
+        Search::Found(to) => match route::leg(ctx, hubs, body, to) {
+            Some(Some(cell)) => Search::Found(Step::Walk {
+                to: cell,
+                goal: to,
+                then,
+                best: i32::MAX,
+                progress: ctx.now,
+            }),
+            Some(None) => Search::Found(Step::Plan),
+            None => Search::Busy,
+        },
+        Search::Busy => Search::Busy,
+        Search::None | Search::Unseen => Search::None,
+    }
 }
 
 pub fn unload_all(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> Option<Step> {
     let stock = ctx.supplies.stock(project.table);
-    let nearest = stock
-        .containers
-        .iter()
-        .zip(&stock.slots)
-        .min_by_key(|(c, slots)| (slots.iter().all(Option::is_some), manhattan(**c, body.cell)))
-        .map(|(c, _)| c)?;
+    let nearest = deposit_container(&stock, body)?;
     Some(go_to_container(
         ctx,
         job,
         body,
         project.home,
-        *nearest,
-        Then::Deposit(*nearest),
+        nearest,
+        Then::Deposit(nearest),
     ))
+}
+
+pub(super) fn deposit_container(stock: &crate::supplies::Stock, body: &Body) -> Option<[i32; 3]> {
+    stock
+        .containers
+        .iter()
+        .zip(&stock.slots)
+        .min_by_key(|(c, slots)| (slots.iter().all(Option::is_some), manhattan(**c, body.cell)))
+        .map(|(c, _)| *c)
 }
 
 pub fn returns_anything(ctx: &mut Ctx, job: &Job, body: &Body, project: &Project) -> bool {

@@ -2,27 +2,35 @@ use std::collections::BTreeMap;
 
 use crate::host::prelude::*;
 
+use super::load::Load;
 use super::trip::{at_container, go_to_container, hands_in_everything, short_of_bill};
-use super::wants::{dig_room, digs_ahead, keeps, needed_at, tool_kind, wanted};
+use super::wants::{keeps, tool_kind, wanted};
 use crate::content::BLUEPRINT;
 use crate::project::{Hold, Note, Phase, Projects};
 use crate::survey::key_of;
 use crate::worker::tuning::hands::{LID_UP, LINGER};
+use crate::worker::waiting::Waiting;
 use crate::worker::Job;
 use crate::worker::{scaffold, Body, Ctx, Step, Then};
 
-pub fn fetch(
+fn fetch(
     ctx: &mut Ctx,
     projects: &mut Projects,
     job: &mut Job,
     body: &Body,
     from: [i32; 3],
+    load: Load,
 ) -> Step {
     let Some(project) = projects.get(job.id).cloned() else {
         return Step::Plan;
     };
     let stock = ctx.supplies.stock(project.table);
-    let (mut need, mut kinds) = wanted(ctx, job, &body.slots, stock.read.then_some(&stock.totals));
+    if !stock.read {
+        job.crew.why(Waiting::ChestsUnread);
+        return Step::Plan;
+    }
+    let mut need = load.missing(&body.slots);
+    let mut kinds = load.tools;
     let mut moved_any = false;
     let wanted_at_first = need.clone();
     let mut best_tools: BTreeMap<String, ([i32; 3], u32, f32)> = BTreeMap::new();
@@ -162,15 +170,15 @@ pub fn rummage(
     moved: bool,
 ) -> Step {
     if !moved && ctx.now >= since + LID_UP {
-        let next = if deposit {
-            self::deposit(ctx, projects, job, body)
-        } else {
-            self::deposit(ctx, projects, job, body);
+        let load = self::deposit(ctx, projects, job, body, deposit);
+        let next = if let Some(load) = load.filter(|_| !deposit) {
             let emptied = Body {
                 slots: container_get(ContainerAddress::Entity(body.id)).unwrap_or_default(),
                 ..*body
             };
-            fetch(ctx, projects, job, &emptied, container)
+            fetch(ctx, projects, job, &emptied, container, load)
+        } else {
+            Step::Plan
         };
         job.crew.presence.jab(body.id);
         if next != Step::Plan {
@@ -197,45 +205,41 @@ pub fn rummage(
     }
 }
 
-pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body) -> Step {
-    let Some(project) = projects.get(job.id).cloned() else {
-        return Step::Plan;
-    };
-    let everything = hands_in_everything(&project);
-    let containers: Vec<[i32; 3]> = ctx
-        .supplies
-        .chain(project.table)
-        .into_iter()
+fn deposit(
+    ctx: &mut Ctx,
+    projects: &mut Projects,
+    job: &mut Job,
+    body: &Body,
+    only_deposit: bool,
+) -> Option<Load> {
+    let project = projects.get(job.id)?.clone();
+    let everything = only_deposit && hands_in_everything(&project);
+    let stock = ctx.supplies.stock(project.table);
+    if !stock.read {
+        job.crew.why(Waiting::ChestsUnread);
+        return None;
+    }
+    let containers: Vec<[i32; 3]> = stock
+        .containers
+        .iter()
+        .copied()
         .filter(|c| at_container(body, *c))
         .collect();
-    let mut back = Vec::new();
-    let mut kept = Vec::new();
-    for (slot, stack) in body.slots.iter().enumerate() {
-        let Some(stack) = stack else { continue };
-        if stack.item == BLUEPRINT {
-            continue;
-        }
-        if everything || !keeps(ctx, job, &body.slots, stack) {
-            back.push(slot);
-        } else if tool_kind(ctx, &stack.item).is_none()
-            && !scaffold::keeps(ctx, job, &body.slots, stack)
-        {
-            kept.push((slot, needed_at(job, stack)));
-        }
-    }
-    let free = body.slots.iter().filter(|s| s.is_none()).count() + back.len();
-    let junk = back.len();
-    let dig_room = dig_room(job);
-    if !everything && free < dig_room && digs_ahead(job) {
-        kept.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
-        back.extend(kept.iter().take(dig_room - free).map(|(slot, _)| *slot));
-    }
+    let load = (!everything).then(|| wanted(ctx, job, &body.slots, &stock.totals));
+    let back: Vec<(usize, u8)> = if let Some(load) = &load {
+        load.returns(ctx, &body.slots)
+    } else {
+        body.slots
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, stack)| {
+                let stack = stack.as_ref()?;
+                (stack.item != BLUEPRINT).then_some((slot, stack.count))
+            })
+            .collect()
+    };
     let mut stuck = false;
-    for (n, slot) in back.into_iter().enumerate() {
-        let Some(stack) = &body.slots[slot] else {
-            continue;
-        };
-        let mut left = stack.count;
+    for (slot, mut left) in back {
         for container in &containers {
             if left == 0 {
                 break;
@@ -249,7 +253,7 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
                 left -= moved.count;
             }
         }
-        stuck |= left > 0 && n < junk;
+        stuck |= left > 0;
     }
     if stuck && project.phase() == Phase::Returning {
         job.crew.cargo.chests_full = true;
@@ -259,5 +263,9 @@ pub fn deposit(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Bod
     } else if stuck {
         projects.update(job.id, |p| p.hold_for(Hold::Storage, Note::ChestsFull));
     }
-    Step::Plan
+    if stuck {
+        None
+    } else {
+        load
+    }
 }

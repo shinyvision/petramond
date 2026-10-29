@@ -1,9 +1,15 @@
 mod chest;
+mod load;
+mod preview;
 mod trip;
 mod wants;
 
+#[cfg(test)]
+mod tests;
+
 pub use chest::{open, rummage};
-pub use trip::{resupply, returns_anything, unload, unload_all};
+pub use preview::{preview, Trip};
+pub use trip::{resupply, returns_anything, unload_all};
 pub use wants::{tool_slot, tools_waiting};
 
 use std::collections::BTreeMap;

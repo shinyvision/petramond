@@ -288,7 +288,7 @@ pub(super) fn nearest_spot(
                         let trail = job.crew.trail.clone();
                         let hubs = Hubs::new(project.home, &trail);
                         if let Some(flow) =
-                            climb_toward(ctx, job, project, hubs, body, task, &cells, found)
+                            climb_toward(ctx, job, round, hubs, body, task, &cells, found)
                         {
                             return flow;
                         }
@@ -301,6 +301,11 @@ pub(super) fn nearest_spot(
             }
         }
         let spot = &spots[n];
+        if let Some(flow) =
+            super::choice::before_work(ctx, job, body, round, spot.task, spot.to, spot.ticks)
+        {
+            return flow;
+        }
         return Flow::Go(walk_via(ctx, spot.leg, spot.to, Then::Task(spot.task)));
     }
     Flow::Pass

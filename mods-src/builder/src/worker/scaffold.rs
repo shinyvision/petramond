@@ -42,6 +42,18 @@ pub fn in_hand(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>]) -> u32 {
         .sum()
 }
 
+pub fn reserve(ctx: &Ctx, job: &Job, slots: &[Option<ItemStackData>]) -> BTreeMap<ItemKey, u32> {
+    let mut left = SCAFFOLD_STOCK.max(job.crew.scaffolding.want);
+    carried(ctx, slots)
+        .into_iter()
+        .filter_map(|(kind, held)| {
+            let keep = spare(job, kind, held).min(left);
+            left -= keep;
+            (keep > 0).then(|| (key(kind), keep))
+        })
+        .collect()
+}
+
 fn spoken_for(job: &Job) -> Vec<ItemKey> {
     let task = job
         .crew

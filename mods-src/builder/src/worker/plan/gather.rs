@@ -23,6 +23,7 @@ use crate::worker::{cargo, support, Body, Ctx, Task};
 #[derive(Default)]
 pub(super) struct Candidates {
     pub(super) list: Vec<(Task, [i32; 3])>,
+    pub(super) unheld: Vec<(Task, [i32; 3])>,
     pub(super) wants_items: bool,
     pub(super) waiting: bool,
 }
@@ -266,6 +267,7 @@ fn offer_placement(
     }
     if !cargo::holds(judging.carried, missing) {
         found.wants_items = true;
+        found.unheld.push((Task::Unit(i), design.units[i].pos));
         return true;
     }
     let pos = design.units[i].pos;
@@ -494,6 +496,7 @@ pub(super) fn weigh_work(
     };
     let Candidates {
         list: mut candidates,
+        mut unheld,
         wants_items,
         waiting,
     } = gather(ctx, job, body, project, round.mode, ceiling);
@@ -517,11 +520,15 @@ pub(super) fn weigh_work(
         candidates.retain(|(task, c)| {
             urgent(task) || stalled || c[1] <= top || beside_the_perch(&job.crew, body, *c)
         });
+        unheld.retain(|(_, c)| stalled || c[1] <= top || beside_the_perch(&job.crew, body, *c));
     }
     let late = |task: &Task| task.late(&job.design);
     candidates.sort_by_key(|(task, c)| (!urgent(task), manhattan(*c, body.cell)));
     candidates.truncate(WINDOW);
     candidates.sort_by_key(|(task, c)| (!urgent(task), late(task), manhattan(*c, body.cell)));
+    unheld.sort_by_key(|(_, c)| manhattan(*c, body.cell));
+    unheld.truncate(WINDOW);
+    round.future = unheld;
     round.candidates = candidates;
     round.wants_items = wants_items;
     round.waiting = waiting;

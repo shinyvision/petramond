@@ -121,7 +121,13 @@ pub(super) fn from_here(
         })
         .copied()
         .collect();
-    here.sort_by_key(|(task, c)| (!urgent(task), manhattan(*c, body.cell)));
+    here.sort_by_key(|(task, c)| {
+        (
+            !urgent(task),
+            !(places(job, *task) || matches!(task, Task::Support { .. })),
+            manhattan(*c, body.cell),
+        )
+    });
     for (task, _) in here.iter().take(HERE) {
         let cells = task_cells(job, *task);
         if job.crew.deferrals.blind(*task, body.cell) || !sees_from_here(job, *task, body, &cells) {
@@ -135,6 +141,11 @@ pub(super) fn from_here(
         match sealed_by(ctx, job, project, body.cell, *task, &cells) {
             Some(false) => {
                 let task = behind(ctx, job, project, round.mode, body, *task).unwrap_or(*task);
+                if let Some(flow) =
+                    super::choice::before_work(ctx, job, body, round, task, body.cell, 0)
+                {
+                    return flow;
+                }
                 return Flow::Go(Step::Centre {
                     task,
                     since: ctx.now,

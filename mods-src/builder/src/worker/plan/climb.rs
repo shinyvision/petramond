@@ -4,6 +4,7 @@ use super::verdict::waits_there;
 use super::{defer_task, places, task_cells, walk_via, Flow, Round};
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
+use crate::worker::tuning::price::{LEVEL_TICKS, MOUNT_TICKS, MOVE_TICKS};
 use crate::worker::tuning::waits::{FOOT_UNWALKED, SCAFFOLD_WAIT, SEALED_WAIT};
 use crate::worker::waiting::{Probe, Waiting};
 use crate::worker::Job;
@@ -13,13 +14,14 @@ use crate::worker::{pillar, scaffold, stance, Body, Ctx, Task, Then};
 pub(super) fn climb_toward(
     ctx: &mut Ctx,
     job: &mut Job,
-    project: &crate::project::Project,
+    round: &Round,
     hubs: Hubs,
     body: &Body,
     task: Task,
     cells: &[[i32; 3]],
     pillar: pillar::Pillar,
 ) -> Option<Flow> {
+    let project = &round.project;
     if waits_there(ctx, job, body, task, pillar.top_cell()) {
         return None;
     }
@@ -43,6 +45,14 @@ pub(super) fn climb_toward(
     let foot = pillar.foot_cell();
     match route::leg(ctx, hubs, body, foot) {
         Some(Some(cell)) => {
+            let ticks = MOVE_TICKS * route::moves_or_guess(ctx, body.cell, foot)
+                + LEVEL_TICKS * levels as i32
+                + MOUNT_TICKS;
+            if let Some(flow) =
+                super::choice::before_work(ctx, job, body, round, task, pillar.top_cell(), ticks)
+            {
+                return Some(flow);
+            }
             job.crew.aloft.climbed_for = Some((task, 0));
             job.crew.aloft.raises = 0;
             Some(Flow::Go(walk_via(ctx, cell, foot, Then::Climb(pillar))))
@@ -76,7 +86,7 @@ pub(super) fn pillars(
         let open: Vec<[i32; 3]> = candidates.iter().map(|(_, c)| *c).collect();
         match pillar::find(ctx, job, project, body, *task, &cells, &open) {
             stance::Search::Found(pillar) => {
-                match climb_toward(ctx, job, project, hubs, body, *task, &cells, pillar) {
+                match climb_toward(ctx, job, round, hubs, body, *task, &cells, pillar) {
                     Some(flow) => return flow,
                     None => continue,
                 }
@@ -89,7 +99,7 @@ pub(super) fn pillars(
         let onward = pillar::find_onward(ctx, job, project, body, *task, &cells);
         match onward {
             stance::Search::Found(pillar) => {
-                match climb_toward(ctx, job, project, hubs, body, *task, &cells, pillar) {
+                match climb_toward(ctx, job, round, hubs, body, *task, &cells, pillar) {
                     Some(flow) => return flow,
                     None => continue,
                 }

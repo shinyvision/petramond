@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::host::prelude::*;
 
+use super::load::{fill, slots_used, Load};
 use super::totals;
 use crate::content::BLUEPRINT;
 use crate::project::Project;
@@ -84,7 +85,7 @@ fn wanted_tools(
     job: &Job,
     slots: &[Option<ItemStackData>],
     scaffold: Option<&ItemKey>,
-) -> (BTreeSet<String>, usize) {
+) -> BTreeSet<String> {
     let mut kinds = dig_kinds(ctx, job);
     if let Some(survey) = job.survey.as_ref() {
         let mut asked: Option<BlockId> = None;
@@ -116,39 +117,52 @@ fn wanted_tools(
         }
     }
     kinds.extend(scaffold::tools(ctx, slots, scaffold));
-    let mut tools = 0;
     for stack in slots.iter().flatten() {
         if let Some((kind, _)) = tool_kind(ctx, &stack.item) {
             kinds.remove(&kind);
-            tools += 1;
         }
     }
-    (kinds, tools)
+    kinds
 }
 
 pub(super) fn wanted(
     ctx: &mut Ctx,
     job: &Job,
     slots: &[Option<ItemStackData>],
-    have: Option<&BTreeMap<ItemKey, u32>>,
-) -> (BTreeMap<ItemKey, u32>, BTreeSet<String>) {
+    have: &BTreeMap<ItemKey, u32>,
+) -> Load {
     let mut need: BTreeMap<ItemKey, u32> = BTreeMap::new();
-    let scaffold = have.and_then(|have| scaffold::to_fetch(ctx, job, slots, have));
-    let (kinds, tools) = wanted_tools(ctx, job, slots, scaffold.as_ref().map(|(k, _)| k));
+    let scaffold = scaffold::to_fetch(ctx, job, slots, have);
+    let kinds = wanted_tools(ctx, job, slots, scaffold.as_ref().map(|(k, _)| k));
     let Some(survey) = job.survey.as_ref() else {
-        return (need, kinds);
+        return Load {
+            items: totals(slots),
+            tools: kinds,
+        };
     };
     let carried = totals(slots);
-    let mut left = carried.clone();
-    if let Some(have) = have {
-        for (key, n) in have {
-            *left.entry(key.clone()).or_default() += n;
-        }
+    let mut available = carried.clone();
+    for (key, n) in have {
+        *available.entry(key.clone()).or_default() += n;
     }
-    let room = slots
-        .len()
-        .saturating_sub(tools + kinds.len() + dig_room(job) + 1)
-        .max(1);
+    let room = slots.len().saturating_sub(kinds.len() + dig_room(job));
+    let mut scaffolds = scaffold::reserve(ctx, job, slots);
+    if let Some((key, n)) = scaffold {
+        *scaffolds.entry(key).or_default() += n;
+    }
+    let mut reserve = BTreeMap::new();
+    for (key, count) in scaffolds {
+        fill(ctx, slots, &mut reserve, key, count, room);
+    }
+    let load = |need: &BTreeMap<ItemKey, u32>| {
+        let mut items = need.clone();
+        for (key, n) in &reserve {
+            let count = items.entry(key.clone()).or_default();
+            *count = (*count + n).min(available.get(key).copied().unwrap_or(0));
+        }
+        items
+    };
+    let mut left = available.clone();
     let mut seen = 0;
     for (i, known) in survey.known.iter().enumerate().skip(job.crew.pace.cursor) {
         if seen == LOOKAHEAD {
@@ -168,31 +182,25 @@ pub(super) fn wanted(
         match (missing, known) {
             (Some(missing), _) => {
                 seen += 1;
-                if have.is_some() {
-                    let short = missing.iter().any(|stack| {
-                        left.get(&key_of(stack)).copied().unwrap_or(0) < u32::from(stack.count)
-                    });
-                    if short {
-                        continue;
-                    }
-                    for stack in missing {
-                        let key = key_of(stack);
-                        let n = left.entry(key).or_default();
-                        *n = n.saturating_sub(u32::from(stack.count));
-                    }
+                let mut cost: BTreeMap<ItemKey, u32> = BTreeMap::new();
+                for stack in missing {
+                    *cost.entry(key_of(stack)).or_default() += u32::from(stack.count);
+                }
+                if cost
+                    .iter()
+                    .any(|(key, n)| left.get(key).copied().unwrap_or(0) < *n)
+                {
+                    continue;
                 }
                 let mut next = need.clone();
-                for stack in missing {
-                    *next.entry(key_of(stack)).or_default() += u32::from(stack.count);
+                for (key, n) in &cost {
+                    *next.entry(key.clone()).or_default() += n;
                 }
-                let slots_used: usize = next
-                    .iter()
-                    .map(|((item, _), n)| {
-                        (*n as usize).div_ceil(ctx.caches.max_stack(item) as usize)
-                    })
-                    .sum();
-                if slots_used > room && !need.is_empty() {
+                if slots_used(ctx, slots, &load(&next)) > room {
                     break;
+                }
+                for (key, n) in cost {
+                    *left.entry(key).or_default() -= n;
                 }
                 need = next;
             }
@@ -205,40 +213,20 @@ pub(super) fn wanted(
             _ => {}
         }
     }
-    if let (Some(summary), Some(have)) = (job.summary(), have) {
-        let slots_used = |need: &BTreeMap<ItemKey, u32>, ctx: &mut Ctx| -> usize {
-            need.iter()
-                .map(|((item, _), n)| (*n as usize).div_ceil(ctx.caches.max_stack(item) as usize))
-                .sum()
-        };
+    let mut items = load(&need);
+    if let Some(summary) = job.summary() {
         let mut bill: Vec<(ItemKey, u32)> = summary.bill.clone().into_iter().collect();
         bill.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         for (key, owed) in bill {
-            let held =
-                need.get(&key).copied().unwrap_or(0) + carried.get(&key).copied().unwrap_or(0);
-            let spare = have.get(&key).copied().unwrap_or(0);
-            let want = owed.saturating_sub(held).min(spare);
-            if want == 0 {
-                continue;
-            }
-            let mut next = need.clone();
-            *next.entry(key).or_default() += want;
-            if slots_used(&next, ctx) > room {
-                continue;
-            }
-            need = next;
+            let count = (owed + reserve.get(&key).copied().unwrap_or(0))
+                .min(available.get(&key).copied().unwrap_or(0));
+            fill(ctx, slots, &mut items, key, count, room);
         }
     }
-    for (key, count) in carried {
-        if let Some(n) = need.get_mut(&key) {
-            *n = n.saturating_sub(count);
-        }
+    Load {
+        items,
+        tools: kinds,
     }
-    need.retain(|_, n| *n > 0);
-    if let Some((key, n)) = scaffold {
-        *need.entry(key).or_default() += n;
-    }
-    (need, kinds)
 }
 
 pub fn tools_waiting(ctx: &mut Ctx, job: &Job, body: &Body, project: &Project) -> BTreeSet<String> {
@@ -247,7 +235,7 @@ pub fn tools_waiting(ctx: &mut Ctx, job: &Job, body: &Body, project: &Project) -
         .read
         .then(|| scaffold::to_fetch(ctx, job, &body.slots, &stock.totals))
         .flatten();
-    let (kinds, _) = wanted_tools(ctx, job, &body.slots, scaffold.as_ref().map(|(k, _)| k));
+    let kinds = wanted_tools(ctx, job, &body.slots, scaffold.as_ref().map(|(k, _)| k));
     if kinds.is_empty() {
         return kinds;
     }
@@ -298,39 +286,4 @@ fn wants<'a>(job: &'a Job, i: usize, known: &'a Known) -> &'a [ItemStackData] {
         } => job.design.cost(job.design.units[i]),
         _ => &[],
     }
-}
-
-pub(super) fn digs_ahead(job: &Job) -> bool {
-    !job.crew.access.reopen.is_empty()
-        || job.survey.as_ref().is_some_and(|survey| {
-            survey
-                .known
-                .iter()
-                .skip(job.crew.pace.cursor)
-                .take(LOOKAHEAD)
-                .any(|k| {
-                    matches!(
-                        k,
-                        Known::Clear {
-                            holds_items: false,
-                            ..
-                        }
-                    )
-                })
-        })
-}
-
-pub(super) fn needed_at(job: &Job, stack: &ItemStackData) -> usize {
-    let key = key_of(stack);
-    job.survey
-        .as_ref()
-        .and_then(|survey| {
-            survey
-                .known
-                .iter()
-                .enumerate()
-                .skip(job.crew.pace.cursor)
-                .position(|(i, k)| wants(job, i, k).iter().any(|m| key_of(m) == key))
-        })
-        .unwrap_or(usize::MAX)
 }

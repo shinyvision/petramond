@@ -8,6 +8,8 @@ use crate::testing::{short_of_stone, Session, CHEST_AT, HOME};
 use crate::worker::tests::{at_work, unit, working};
 use crate::worker::tuning::waits::{FACELESS_SPACING, SEALED_WAIT};
 
+mod supply;
+
 const AT: [i32; 3] = [1, 0, -2];
 
 fn plan_now(session: &mut Session, id: ProjectId, golem: u64) -> Step {
