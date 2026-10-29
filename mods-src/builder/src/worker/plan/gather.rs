@@ -349,7 +349,7 @@ fn offer_reopens(
 ) {
     crew.access
         .reopen
-        .retain(|sealed, _| matches!(survey.known[*sealed], Known::Place(_)));
+        .retain(|sealed, _| survey.known[*sealed].open());
     let mut reopen: Vec<usize> = crew
         .access
         .reopen

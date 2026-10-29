@@ -1,7 +1,7 @@
 use super::sealing::cutting;
 use super::unreached::fall_out;
 use super::verdict::waits_there;
-use super::{defer_task, places, task_cells, walk_via, Flow, Round};
+use super::{defer_task, task_cells, walk_via, Flow, Round};
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::price::{LEVEL_TICKS, MOUNT_TICKS, MOVE_TICKS};
@@ -80,7 +80,6 @@ pub(super) fn pillars(
             continue;
         }
         let cells = task_cells(job, *task);
-        let digging = !places(job, *task);
         let trail = job.crew.trail.clone();
         let hubs = Hubs::new(project.home, &trail);
         let open: Vec<[i32; 3]> = candidates.iter().map(|(_, c)| *c).collect();
@@ -108,9 +107,7 @@ pub(super) fn pillars(
                 return Flow::Busy(Waiting::Probe(Probe::OnwardPillar));
             }
             stance::Search::None | stance::Search::Unseen => {
-                let flow = fall_out(
-                    ctx, projects, job, body, project, *task, unseen, &cells, digging,
-                );
+                let flow = fall_out(ctx, projects, job, body, project, *task, unseen, &cells);
                 if let Some(flow) = flow {
                     return flow;
                 }

@@ -1,9 +1,10 @@
 use crate::host::prelude::*;
 
-use super::tuning::reach::POCKET_REGION;
+use super::tuning::reach::{POCKET_OPENERS, POCKET_REGION};
 use super::{open_block, Ctx};
+use crate::fx::HashSet;
 use crate::geometry::{manhattan, offset, FACES};
-use crate::survey::Known;
+use crate::survey::{Known, Survey};
 use crate::worker::Job;
 
 pub fn seals(ctx: &mut Ctx, job: &Job, i: usize) -> Option<Option<usize>> {
@@ -13,7 +14,16 @@ pub fn seals(ctx: &mut Ctx, job: &Job, i: usize) -> Option<Option<usize>> {
         .into_iter()
         .filter(|n| {
             job.design.unit_at(*n).is_some_and(|u| {
-                u != i && matches!(survey.known[u], Known::Place(_)) && !job.crew.built.contains(&u)
+                u != i
+                    && matches!(
+                        survey.known[u],
+                        Known::Place(_)
+                            | Known::Clear {
+                                holds_items: false,
+                                ..
+                            }
+                    )
+                    && !job.crew.built.contains(&u)
             })
         })
         .collect();
@@ -21,10 +31,9 @@ pub fn seals(ctx: &mut Ctx, job: &Job, i: usize) -> Option<Option<usize>> {
         return Some(None);
     }
     for (n, block) in beside.iter().zip(get_blocks(beside.clone())) {
-        if passes(ctx, job, *n, block?)
-            && closed_off(ctx, job, *n, &cells)?
-            && !closed_off(ctx, job, *n, &[])?
-        {
+        block?;
+        // Access must survive until an obstruction is cleared and replaced, too.
+        if closed_off(ctx, job, *n, &cells)? && !closed_off(ctx, job, *n, &[])? {
             return Some(job.design.unit_at(*n));
         }
     }
@@ -34,49 +43,68 @@ pub fn seals(ctx: &mut Ctx, job: &Job, i: usize) -> Option<Option<usize>> {
 pub fn opener(ctx: &mut Ctx, job: &Job, i: usize, near: [i32; 3], unseen: bool) -> Option<usize> {
     let survey = job.survey.as_ref()?;
     let unit = job.design.units[i];
-    let cells = job.design.cells(unit);
-    if !passes(ctx, job, unit.pos, get_block(unit.pos)?) {
+    let (cell, cells) = match survey.known[i] {
+        Known::Place(_) => (unit.pos, job.design.cells(unit)),
+        Known::Clear {
+            at,
+            holds_items: false,
+            ..
+        } => (at, vec![at]),
+        _ => return None,
+    };
+    get_block(cell)?;
+    if !unseen && !closed_off(ctx, job, cell, &[])? {
         return None;
     }
-    if !unseen && !closed_off(ctx, job, unit.pos, &[])? {
-        return None;
-    }
-    let mut openers: Vec<([i32; 3], usize)> = around(&cells)
-        .into_iter()
-        .filter_map(|n| job.design.unit_at(n).map(|o| (n, o)))
-        .filter(|(_, o)| {
-            let unit = job.design.units[*o];
-            matches!(survey.known[*o], Known::Satisfied)
-                && matches!(job.design.plan(unit), crate::design::Plan::Build { .. })
-                && job.design.cells(unit).len() == 1
-                && !job.design.fragile(unit)
-        })
-        .collect();
-    openers.sort_by_key(|(n, _)| {
-        let dy = n[1] - unit.pos[1];
-        (dy < 0, dy > 0, manhattan(*n, near))
-    });
-    for (n, o) in openers {
-        let holds_fragile = FACES.iter().any(|f| {
-            job.design
-                .unit_at(offset(n, *f))
-                .is_some_and(|u| u != i && job.design.fragile(job.design.units[u]))
-        });
-        if holds_fragile {
-            continue;
-        }
-        let outward: Vec<[i32; 3]> = FACES
-            .iter()
-            .map(|f| offset(n, *f))
-            .filter(|m| !cells.contains(m))
+    let mut seen: HashSet<[i32; 3]> = cells.iter().copied().collect();
+    let mut frontier = around(&cells);
+    let mut remaining = POCKET_OPENERS;
+    while remaining > 0 {
+        let mut openers: Vec<([i32; 3], usize)> = frontier
+            .into_iter()
+            .filter(|n| seen.insert(*n))
+            .filter_map(|n| job.design.unit_at(n).map(|o| (n, o)))
+            .filter(|(_, o)| reopenable(job, survey, i, *o))
             .collect();
-        for (m, block) in outward.iter().zip(get_blocks(outward.clone())) {
-            if passes(ctx, job, *m, block?) && !closed_off(ctx, job, *m, &[])? {
-                return Some(o);
+        if openers.is_empty() {
+            break;
+        }
+        openers.sort_by_key(|(n, _)| {
+            let dy = n[1] - cell[1];
+            (dy < 0, dy > 0, manhattan(*n, near))
+        });
+        openers.truncate(remaining);
+        remaining -= openers.len();
+        let positions: Vec<[i32; 3]> = openers.iter().map(|(n, _)| *n).collect();
+        for (n, o) in openers {
+            let outward: Vec<[i32; 3]> = FACES
+                .iter()
+                .map(|f| offset(n, *f))
+                .filter(|m| !cells.contains(m))
+                .collect();
+            for (m, block) in outward.iter().zip(get_blocks(outward.clone())) {
+                if passes(ctx, job, *m, block?) && !closed_off(ctx, job, *m, &[])? {
+                    return Some(o);
+                }
             }
         }
+        // A thick wall is opened from its exposed layer inward.
+        frontier = around(&positions);
     }
     None
+}
+
+fn reopenable(job: &Job, survey: &Survey, sealed: usize, opener: usize) -> bool {
+    let unit = job.design.units[opener];
+    matches!(survey.known[opener], Known::Satisfied)
+        && matches!(job.design.plan(unit), crate::design::Plan::Build { .. })
+        && job.design.cells(unit).len() == 1
+        && !job.design.fragile(unit)
+        && !FACES.iter().any(|f| {
+            job.design
+                .unit_at(offset(unit.pos, *f))
+                .is_some_and(|u| u != sealed && job.design.fragile(job.design.units[u]))
+        })
 }
 
 fn closed_off(ctx: &mut Ctx, job: &Job, from: [i32; 3], filled: &[[i32; 3]]) -> Option<bool> {

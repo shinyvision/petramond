@@ -174,21 +174,43 @@ fn a_block_that_would_seal_work_in_waits_for_it() {
 }
 
 #[test]
+fn clearing_and_fluid_replacement_are_not_sealed_in() {
+    for contents in ["petramond:dirt", "petramond:water"] {
+        let (mut session, id, _) = pocket_site(false);
+        session
+            .world
+            .set([5, 0, 5], resolve_block(contents).unwrap());
+        session.job(id);
+        let inner = unit(&session, id, [5, 0, 5]);
+        let door = unit(&session, id, [5, 0, 4]);
+        at_work(&mut session, id, |ctx, _, job| {
+            assert_eq!(pocket::seals(ctx, job, door), Some(Some(inner)));
+        });
+    }
+}
+
+#[test]
 fn work_sealed_in_has_a_built_neighbour_taken_down_to_reach_it() {
-    let (mut session, id, _) = pocket_site(true);
-    let inner = unit(&session, id, [5, 0, 5]);
-    let door = unit(&session, id, [5, 0, 4]);
-    at_work(&mut session, id, |ctx, _, job| {
-        assert_eq!(
-            pocket::opener(ctx, job, inner, [5, 0, 2], false),
-            Some(door)
-        );
-        assert_eq!(
-            pocket::opener(ctx, job, door, [5, 0, 2], false),
-            None,
-            "built"
-        );
-    });
+    for contents in ["petramond:air", "petramond:water"] {
+        let (mut session, id, _) = pocket_site(true);
+        session
+            .world
+            .set([5, 0, 5], resolve_block(contents).unwrap());
+        session.job(id);
+        let inner = unit(&session, id, [5, 0, 5]);
+        let door = unit(&session, id, [5, 0, 4]);
+        at_work(&mut session, id, |ctx, _, job| {
+            assert_eq!(
+                pocket::opener(ctx, job, inner, [5, 0, 2], false),
+                Some(door)
+            );
+            assert_eq!(
+                pocket::opener(ctx, job, door, [5, 0, 2], false),
+                None,
+                "built"
+            );
+        });
+    }
 }
 
 #[test]

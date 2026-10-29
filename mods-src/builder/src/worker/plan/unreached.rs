@@ -92,7 +92,6 @@ pub(super) fn fall_out(
     task: Task,
     unseen: bool,
     cells: &[[i32; 3]],
-    digging: bool,
 ) -> Option<Flow> {
     if let Some(step) = wayin::door_toward(ctx, job, body, cells) {
         return Some(Flow::Go(step));
@@ -110,7 +109,7 @@ pub(super) fn fall_out(
             job.crew.scaffolding.urgent.extend(props);
             job.crew.faces.hangs.insert(i);
         }
-        if !digging && !job.crew.faces.hangs.contains(&i) {
+        if !job.crew.faces.hangs.contains(&i) {
             if let Some(o) = pocket::opener(ctx, job, i, body.cell, unseen) {
                 trace!("TRACE {task:?} sealed in: reopening Unit({o})");
                 let openers = job.crew.access.reopen.entry(i).or_default();

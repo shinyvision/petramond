@@ -123,6 +123,7 @@ pub mod reach {
     pub const CHEST_REACH: f64 = crate::geometry::PLAN_REACH - 1.0;
     pub const SUPPORT_DEPTH: i32 = 6;
     pub const POCKET_REGION: usize = 48;
+    pub const POCKET_OPENERS: usize = 48;
     pub const OUT_AROUND: i32 = 6;
     pub const OUT_ABOVE: i32 = 10;
     pub const OUT_BELOW: i32 = 24;
