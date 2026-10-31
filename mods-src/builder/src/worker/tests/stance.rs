@@ -83,3 +83,30 @@ fn a_stance_search_with_no_route_budget_asks_again() {
         assert!(matches!(busy, Search::Busy));
     });
 }
+
+#[test]
+fn work_below_a_platform_can_be_reached_through_an_opening_from_above() {
+    let at = [3, 3, -6];
+    let (mut session, id, golem) = working(at);
+    let target = [5, 0, -6];
+    session.world.fill([0, 2, -7], [6, 2, -5], STONE);
+    for cell in [[4, 2, -6], [5, 2, -6]] {
+        session.world.set(cell, AIR);
+    }
+    let body = session.body(golem);
+    at_work(&mut session, id, |ctx, _, job| {
+        let hubs = Hubs::new(HOME, &job.crew.trail);
+        assert_eq!(
+            found(stance::find(
+                ctx,
+                &body,
+                hubs,
+                &[target],
+                &lay(target),
+                false,
+                |s| s[1] == at[1]
+            )),
+            Some(at)
+        );
+    });
+}

@@ -8,7 +8,7 @@ use crate::worker::tuning::reach::{COVER, TRIM_REACH};
 use crate::worker::tuning::waits::{OUT_OF_REACH, SEALED_WAIT};
 use crate::worker::upkeep::open_block;
 use crate::worker::Job;
-use crate::worker::{pocket, wayin, Body, Ctx, Step, Task, TRACE};
+use crate::worker::{wayin, Body, Ctx, Step, Task, TRACE};
 
 pub(super) fn uncover(ctx: &mut Ctx, job: &mut Job, cells: &[[i32; 3]]) {
     let mut over: Vec<[i32; 3]> = Vec::new();
@@ -66,19 +66,35 @@ pub(super) fn digging_on(
     let cells: Vec<[i32; 3]> = match &job.crew.access.way_in {
         Some((work, _)) => work.clone(),
         None => {
-            let survey = job.survey.as_ref()?;
-            let mut shut_out: Vec<[i32; 3]> = job
-                .crew
-                .access
-                .unreachable
-                .iter()
-                .filter(|i| survey.known[**i].open())
-                .map(|i| job.design.units[*i].pos)
-                .collect();
+            let opening = job.access_plan.score().is_some_and(|n| n > 0);
+            let mut shut_out: Vec<[i32; 3]> = if opening {
+                job.access_plan
+                    .sealed_units()
+                    .iter()
+                    .map(|i| job.design.units[*i].pos)
+                    .collect()
+            } else {
+                let survey = job.survey.as_ref()?;
+                job.crew
+                    .access
+                    .unreachable
+                    .iter()
+                    .filter(|i| survey.known[**i].open())
+                    .map(|i| job.design.units[*i].pos)
+                    .collect()
+            };
             shut_out.sort_by_key(|c| (manhattan(*c, body.cell), *c));
-            vec![*shut_out.first()?]
+            shut_out.dedup();
+            if opening {
+                shut_out
+            } else {
+                vec![*shut_out.first()?]
+            }
         }
     };
+    if cells.is_empty() {
+        return None;
+    }
     wayin::dig_toward(ctx, job, body, project, &cells)
 }
 
@@ -90,7 +106,6 @@ pub(super) fn fall_out(
     body: &Body,
     project: &Project,
     task: Task,
-    unseen: bool,
     cells: &[[i32; 3]],
 ) -> Option<Flow> {
     if let Some(step) = wayin::door_toward(ctx, job, body, cells) {
@@ -108,15 +123,6 @@ pub(super) fn fall_out(
             trace!("TRACE the props of Unit({i}) gave it no face: taking {props:?} down");
             job.crew.scaffolding.urgent.extend(props);
             job.crew.faces.hangs.insert(i);
-        }
-        if !job.crew.faces.hangs.contains(&i) {
-            if let Some(o) = pocket::opener(ctx, job, i, body.cell, unseen) {
-                trace!("TRACE {task:?} sealed in: reopening Unit({o})");
-                let openers = job.crew.access.reopen.entry(i).or_default();
-                if !openers.contains(&o) {
-                    openers.push(o);
-                }
-            }
         }
     }
     if matches!(task, Task::Unit(_)) {

@@ -7,6 +7,7 @@ use super::Ctx;
 use crate::project::{Note, Phase, Project, Projects};
 use crate::survey::Known;
 use crate::worker::Job;
+mod access;
 mod choice;
 mod climb;
 mod gather;
@@ -35,6 +36,7 @@ pub(super) enum Flow {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Mode {
     Building,
+    Unsealing,
     StrikingScaffold,
     GoingHome,
 }
@@ -64,7 +66,7 @@ struct Round {
 
 type Stage = fn(&mut Ctx, &mut Projects, &mut Job, &Body, &mut Round) -> Flow;
 
-const STAGES: [Stage; 20] = [
+const STAGES: [Stage; 22] = [
     upkeep::reconcile_scaffolds,
     upkeep::check_home,
     upkeep::grounded,
@@ -73,7 +75,9 @@ const STAGES: [Stage; 20] = [
     upkeep::way_out,
     home::go_home,
     upkeep::surveyed,
+    access::survey,
     gather::weigh_work,
+    access::recover,
     perch::aloft,
     supply::consider,
     here::from_here,

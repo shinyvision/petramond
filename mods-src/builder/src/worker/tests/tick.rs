@@ -6,6 +6,57 @@ use crate::worker::{tick, Step, Task};
 
 const AT: [i32; 3] = [1, 0, -2];
 
+#[test]
+fn a_climb_refreshes_access_after_placing_its_previous_scaffold() {
+    let (mut session, id) = Session::row();
+    session.job(id);
+    let golem = session.golem(id, HOME, [5, 2, 5]);
+    session
+        .world
+        .give(ContainerAddress::Entity(golem), "petramond:dirt", 8);
+    let mut body = session.body(golem);
+    body.pos[1] = 2.1;
+    body.on_ground = false;
+    session.world.state_mut().mobs.get_mut(&golem).unwrap().pos = body.pos;
+    let project = session.builder.projects.get(id).unwrap().clone();
+    let world = std::rc::Rc::clone(&session.world);
+    at_work(&mut session, id, |ctx, projects, job| {
+        let pillar = crate::worker::Pillar {
+            column: [5, 5],
+            base: 0,
+            top: 3,
+            exit: [6, 0, 5],
+            onward: None,
+        };
+        job.crew.step = Step::Climb {
+            pillar,
+            level: Some(1),
+            placed: true,
+            since: ctx.now,
+        };
+        world.set([5, 0, 5], STONE);
+        job.access_plan.changed(&[[5, 0, 5]], false);
+        assert_eq!(job.access_plan.score(), None);
+        ctx.regions.clear();
+        let nodes = *ctx.probe_nodes;
+        *ctx.probe_nodes = 0;
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert!(matches!(job.crew.step, Step::Climb { .. }));
+        assert_eq!(job.access_plan.score(), None);
+        *ctx.probe_nodes = nodes;
+        for _ in 0..30 {
+            crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+            assert!(matches!(job.crew.step, Step::Climb { .. }));
+            if projects.get(id).unwrap().scaffolds.contains(&[5, 1, 5]) {
+                return;
+            }
+            ctx.now += 1;
+        }
+        panic!("the next scaffold must be placed after refreshing access");
+    });
+    assert_ne!(session.world.block([5, 1, 5]), crate::host::fake::rows::AIR);
+}
+
 fn middle_left() -> (Session, crate::project::ProjectId, u64) {
     let (mut session, id) = Session::row();
     session.world.set([0, 0, 0], STONE);

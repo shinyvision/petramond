@@ -120,6 +120,23 @@ fn the_way_along_open_ground_is_walked() {
 }
 
 #[test]
+fn a_navigation_seed_inside_water_cannot_bypass_the_ground_route() {
+    let mut grid = corridor(&[(
+        [2, 0, 0],
+        Cell {
+            open: false,
+            dig: None,
+            floor: false,
+            door: false,
+        },
+    )]);
+    let here = [([0, 0, 0], 10), ([2, 0, 0], 0)].into_iter().collect();
+    assert!(search(&grid, &here, &to([4, 0, 0]), 20.0, &[], false, false).is_none());
+    grid.insert([2, 0, 0], OPEN);
+    assert!(search(&grid, &here, &to([4, 0, 0]), 20.0, &[], false, false).is_some());
+}
+
+#[test]
 fn a_door_in_the_way_is_opened_and_passed() {
     let grid = corridor(&[([2, 0, 0], DOOR_HALF), ([2, 1, 0], DOOR_HALF)]);
     let found = search(

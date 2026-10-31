@@ -120,6 +120,7 @@ const RETRY: Cadence = Cadence::every(10);
 
 pub struct Survey {
     pub known: Vec<Known>,
+    revision: u64,
     totals: Summary,
     first_pass: usize,
     queue: VecDeque<usize>,
@@ -158,6 +159,7 @@ impl Survey {
         }
         Self {
             known,
+            revision: 0,
             totals,
             first_pass: queue.len(),
             queue,
@@ -172,6 +174,10 @@ impl Survey {
 
     pub fn summary(&self) -> Option<&Summary> {
         (self.first_pass == 0).then_some(&self.totals)
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn open(&self) -> u32 {
@@ -253,6 +259,7 @@ impl Survey {
                 self.waiting.push(i);
             }
             if known != self.known[i] {
+                self.revision += 1;
                 let cost = design.cost(design.units[i]);
                 self.totals.count(&self.known[i], cost, false);
                 self.totals.count(&known, cost, true);

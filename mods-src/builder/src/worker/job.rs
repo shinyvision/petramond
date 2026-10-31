@@ -10,6 +10,7 @@ pub struct Job {
     pub survey: Option<Survey>,
     pub failed: Option<String>,
     pub crew: Crew,
+    pub access_plan: super::pocket::Plan,
 }
 
 impl Job {
@@ -20,6 +21,7 @@ impl Job {
             survey: None,
             failed: None,
             crew: Crew::default(),
+            access_plan: super::pocket::Plan::default(),
         }
     }
 

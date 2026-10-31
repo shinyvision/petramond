@@ -158,6 +158,7 @@ impl Builder {
             if changes.lost || changes.cells.iter().any(|c| job.design.near(*c)) {
                 job.crew.site_changed();
             }
+            job.access_plan.changed(&changes.cells, changes.lost);
             if let Some(survey) = job.survey.as_mut() {
                 let budget = if watched {
                     SURVEY_WATCHED

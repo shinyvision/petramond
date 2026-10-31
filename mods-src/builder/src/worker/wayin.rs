@@ -321,10 +321,11 @@ fn dig_way(
         cells.iter().map(|c| c[2]).max()? + DIG_AROUND,
     ];
     let inside = |c: [i32; 3]| (0..3).all(|i| (lo[i]..=hi[i]).contains(&c[i]));
+    let now = ctx.now;
     let here: HashMap<[i32; 3], u32> = match route::region(ctx, body.cell, false, &[]) {
         Some(Some(region)) => region
             .cells()
-            .filter(|c| inside(*c))
+            .filter(|c| inside(*c) && !job.crew.access.failed_stances.holds(c, now))
             .filter_map(|c| Some((c, region.moves(c)?)))
             .collect(),
         _ => return None,
@@ -365,7 +366,15 @@ fn dig_way(
         return None;
     }
     let size = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
-    let grid = ground(ctx, job, project, body, lo, size, true)?;
+    let opening = job.access_plan.score().is_some_and(|n| n > 0);
+    let mut grid = ground(ctx, job, project, body, lo, size, !opening)?;
+    if opening {
+        for (cell, info) in &mut grid {
+            if !job.access_plan.can_clear(*cell) {
+                info.dig = None;
+            }
+        }
+    }
     let health = mob_info(body.id).map_or(1.0, |m| m.health);
     let Some(way) = search(
         &grid,

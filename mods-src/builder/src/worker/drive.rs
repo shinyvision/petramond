@@ -91,6 +91,52 @@ pub(super) fn act_out(
 }
 
 fn run(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body, step: Step) -> Step {
+    if !matches!(
+        step,
+        Step::Relocate { .. } | Step::Emerge { .. } | Step::Burrow { .. }
+    ) {
+        if let Some(escape) = rescue::wet(ctx, job, body) {
+            return escape;
+        }
+    }
+    // Scaffold sequences place several blocks without returning to the planner.
+    if matches!(
+        step,
+        Step::Climb { .. } | Step::Rise { .. } | Step::Bridge { .. }
+    ) && job.access_plan.score().is_none()
+    {
+        let Some(project) = projects.get(job.id) else {
+            return Step::Plan;
+        };
+        if !super::pocket::refresh(ctx, job, project) {
+            job.crew.presence.set_goal(body.id, None);
+            job.crew.presence.set_hold(body.id, true);
+            super::hold_still(body);
+            job.crew.why(super::waiting::Waiting::AccessGraph);
+            return match step {
+                Step::Climb {
+                    pillar,
+                    level,
+                    placed,
+                    ..
+                } => Step::Climb {
+                    pillar,
+                    level,
+                    placed,
+                    since: ctx.now,
+                },
+                Step::Rise { from, .. } => Step::Rise {
+                    from,
+                    since: ctx.now,
+                },
+                Step::Bridge { asked, .. } => Step::Bridge {
+                    since: ctx.now,
+                    asked: if asked == 0 { 0 } else { ctx.now },
+                },
+                _ => unreachable!(),
+            };
+        }
+    }
     match step {
         Step::Plan => {
             job.crew.presence.unaimed = 0;

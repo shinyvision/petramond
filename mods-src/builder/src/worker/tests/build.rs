@@ -10,7 +10,7 @@ use crate::survey::ItemKey;
 use crate::testing::{Session, CHEST_AT, HOME};
 use crate::worker::stance::Search;
 use crate::worker::support::{self, Support};
-use crate::worker::{cargo, pillar, pocket, scaffold, Task};
+use crate::worker::{cargo, pillar, scaffold, Task};
 
 const AT: [i32; 3] = [1, 0, -2];
 
@@ -136,81 +136,6 @@ fn a_support_column_rises_from_the_ground_under_work_with_nothing_beside_it() {
     assert!(support::props_up([5, 0, 5], &open));
     assert!(support::props_up([4, 3, 5], &open), "beside it");
     assert!(!support::props_up([7, 0, 5], &open));
-}
-
-fn pocket_site(sealed: bool) -> (Session, crate::project::ProjectId, u64) {
-    let (mut session, id) = Session::site(
-        "Pocket",
-        [6, 1, 6],
-        &[
-            ([5, 0, 5], "petramond:stone"),
-            ([5, 0, 4], "petramond:stone"),
-        ],
-    );
-    for cell in [[4, 0, 5], [6, 0, 5], [5, 0, 6], [5, 1, 5]] {
-        session.world.set(cell, STONE);
-    }
-    if sealed {
-        session.world.set([5, 0, 4], STONE);
-    }
-    session.job(id);
-    let golem = session.golem(id, HOME, [5, 0, 2]);
-    (session, id, golem)
-}
-
-#[test]
-fn a_block_that_would_seal_work_in_waits_for_it() {
-    let (mut session, id, _) = pocket_site(false);
-    let inner = unit(&session, id, [5, 0, 5]);
-    let door = unit(&session, id, [5, 0, 4]);
-    at_work(&mut session, id, |ctx, _, job| {
-        assert_eq!(pocket::seals(ctx, job, door), Some(Some(inner)));
-        assert_eq!(
-            pocket::seals(ctx, job, inner),
-            Some(None),
-            "laid first, it seals nothing"
-        );
-    });
-}
-
-#[test]
-fn clearing_and_fluid_replacement_are_not_sealed_in() {
-    for contents in ["petramond:dirt", "petramond:water"] {
-        let (mut session, id, _) = pocket_site(false);
-        session
-            .world
-            .set([5, 0, 5], resolve_block(contents).unwrap());
-        session.job(id);
-        let inner = unit(&session, id, [5, 0, 5]);
-        let door = unit(&session, id, [5, 0, 4]);
-        at_work(&mut session, id, |ctx, _, job| {
-            assert_eq!(pocket::seals(ctx, job, door), Some(Some(inner)));
-        });
-    }
-}
-
-#[test]
-fn work_sealed_in_has_a_built_neighbour_taken_down_to_reach_it() {
-    for contents in ["petramond:air", "petramond:water"] {
-        let (mut session, id, _) = pocket_site(true);
-        session
-            .world
-            .set([5, 0, 5], resolve_block(contents).unwrap());
-        session.job(id);
-        let inner = unit(&session, id, [5, 0, 5]);
-        let door = unit(&session, id, [5, 0, 4]);
-        at_work(&mut session, id, |ctx, _, job| {
-            assert_eq!(
-                pocket::opener(ctx, job, inner, [5, 0, 2], false),
-                Some(door)
-            );
-            assert_eq!(
-                pocket::opener(ctx, job, door, [5, 0, 2], false),
-                None,
-                "built"
-            );
-        });
-    }
 }
 
 #[test]

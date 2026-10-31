@@ -55,17 +55,7 @@ pub fn tool_slot(ctx: &mut Ctx, slots: &[Option<ItemStackData>], block: BlockId)
 
 fn dig_kinds(ctx: &mut Ctx, job: &Job) -> BTreeSet<String> {
     let mut cells: Vec<[i32; 3]> = job.crew.access.trims.iter().copied().collect();
-    if let Some(survey) = job.survey.as_ref() {
-        cells.extend(
-            job.crew
-                .access
-                .reopen
-                .values()
-                .flatten()
-                .filter(|o| matches!(survey.known[**o], Known::Satisfied))
-                .map(|o| job.design.units[*o].pos),
-        );
-    }
+    cells.extend(job.access_plan.digging());
     let mut kinds = BTreeSet::new();
     if cells.is_empty() {
         return kinds;

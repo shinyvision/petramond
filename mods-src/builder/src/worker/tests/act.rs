@@ -132,31 +132,6 @@ fn a_dig_in_reach_breaks_the_block_and_waits_on_the_outcome() {
 }
 
 #[test]
-fn work_taken_back_down_reopens_the_way_to_what_it_sealed() {
-    let (mut session, id, _) = working(AT);
-    let west = unit(&session, id, [0, 0, 0]);
-    let east = unit(&session, id, [2, 0, 0]);
-    at_work(&mut session, id, |ctx, projects, job| {
-        job.crew.built.insert(west);
-        job.crew.pace.cursor = 2;
-        job.crew.access.reopen.insert(east, vec![west]);
-        job.crew.access.unreachable.insert(east);
-        job.crew.deferrals.defer(Task::Unit(east), 999);
-        job.crew.deferrals.strike(Task::Unit(east), [3, 0, 1]);
-        job.crew.note = "stale".into();
-        job.crew.aloft.climbed_for = Some((Task::Unit(east), 1));
-        settle(ctx, projects, job, Task::Reopen(west));
-        assert!(!job.crew.built.contains(&west));
-        assert_eq!(job.crew.pace.cursor, west.min(2));
-        assert!(!job.crew.access.unreachable.contains(&east));
-        assert!(!job.crew.deferrals.deferred(Task::Unit(east), ctx.now));
-        assert!(!job.crew.deferrals.blind(Task::Unit(east), [3, 0, 1]));
-        assert_eq!(job.crew.note, "", "work landing answers what went wrong");
-        assert_eq!(job.crew.aloft.climbed_for, Some((Task::Unit(east), 2)));
-    });
-}
-
-#[test]
 fn settling_scaffolding_overgrowth_and_breakouts_keeps_the_records_true() {
     let (mut session, id, _) = working(AT);
     let east = unit(&session, id, [2, 0, 0]);

@@ -15,6 +15,7 @@ use super::tuning::body::{HOP_LAUNCH, HOP_SPEED, PERCH_OFF_CENTRE, RISE_JUMP};
 use super::tuning::hands::SWING;
 use super::tuning::patience::{
     DOOR_TRIES, HOP_TICKS, RISE_TICKS, WAY_OUT_PATIENCE, WAY_OUT_PLANS, WAY_OUT_TOTAL_PLANS,
+    WET_STALL,
 };
 use super::tuning::reach::{OUT_ABOVE, OUT_AROUND, OUT_BELOW, PILLAR_BACK};
 use super::tuning::route::SITE_SETTLE_TICKS;
@@ -22,7 +23,7 @@ use super::waiting::Waiting;
 use super::wayin::open;
 use super::{Body, Ctx, Step, Task, Then};
 use crate::fx::{HashMap, HashSet};
-use crate::geometry::{feet_of, manhattan, offset};
+use crate::geometry::{cell_of, feet_of, manhattan, offset};
 use crate::project::{Project, Projects};
 use crate::worker::Job;
 #[derive(Clone, Debug, Default)]
@@ -60,6 +61,29 @@ enum Lookout {
     Way(Way),
     NoWay,
     Loading,
+}
+
+pub fn wet(ctx: &mut Ctx, job: &mut Job, body: &Body) -> Option<Step> {
+    let block = get_block(cell_of(body.pos))?;
+    let fluid = ctx.caches.block(block)?.fluid.is_some();
+    if fluid {
+        job.crew.rescue.wet_since.get_or_insert(ctx.now);
+    } else if body.on_ground {
+        job.crew.rescue.wet_since = None;
+    }
+    let since = job.crew.rescue.wet_since?;
+    if ctx.now > since + WET_STALL && ctx.now > job.crew.pace.progress_at + WET_STALL {
+        trace!(
+            "TRACE afloat without progress at {:?}: returning home",
+            body.pos
+        );
+        job.crew.rescue.wet_since = None;
+        if let Step::Walk { goal, then, .. } = job.crew.step {
+            super::walk::give_up(ctx, job, body, goal, then);
+        }
+        return Some(relocate(job));
+    }
+    None
 }
 
 pub fn rescue(ctx: &mut Ctx, job: &mut Job, body: &Body, project: &Project) -> Step {

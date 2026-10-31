@@ -41,7 +41,6 @@ pub struct Deferrals {
     pub(super) deferred: Until<Task>,
     pub(super) blind: Struck<(Task, [i32; 3])>,
     pub(super) tried: HashSet<usize>,
-    pub(super) bury_waits: Tries<usize>,
     pub(super) cutters: HashSet<usize>,
     pub(super) cutter_waits: Tries<usize>,
     pub(super) support_waits: Tries<usize>,
@@ -137,10 +136,10 @@ impl Aloft {
 #[derive(Default)]
 pub struct Access {
     pub(super) unreachable: HashSet<usize>,
-    pub(super) reopen: HashMap<usize, Vec<usize>>,
     pub(super) trims: HashSet<[i32; 3]>,
     pub(super) digs: HashSet<[i32; 3]>,
     pub(super) no_go: Vec<([i32; 3], [i32; 3])>,
+    pub(super) failed_stances: Until<[i32; 3]>,
     pub(super) door_tried: Until<[i32; 3]>,
     pub(super) door_scan_at: u64,
     pub(super) dig_scan_at: u64,
@@ -191,6 +190,7 @@ pub struct Rescue {
     pub(super) stuck: Option<rescue::Stuck>,
     pub(super) site_loaded_since: Option<u64>,
     pub(super) off_route_since: Option<u64>,
+    pub(super) wet_since: Option<u64>,
     pub(super) stalled: ([i32; 3], u8),
     pub(super) burrow_from: [i32; 3],
 }

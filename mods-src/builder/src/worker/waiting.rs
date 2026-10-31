@@ -21,6 +21,7 @@ pub enum Waiting {
     ChestsUnread,
     SiteLoading,
     GroundLoading,
+    AccessGraph,
     CandidatesDeferred,
     DeferredOrUnloaded,
     Probe(Probe),
@@ -36,6 +37,7 @@ impl Waiting {
             Waiting::ChestsUnread => "waiting for the chests to read",
             Waiting::SiteLoading => "waiting for the site to load",
             Waiting::GroundLoading => "waiting for the ground around to load",
+            Waiting::AccessGraph => "surveying access across the site",
             Waiting::CandidatesDeferred => "candidates deferred this tick",
             Waiting::DeferredOrUnloaded => "waiting on deferred or unloaded work",
             Waiting::Probe(probe) => match probe {
@@ -66,6 +68,7 @@ impl Waiting {
     pub fn pondering(self) -> Option<&'static str> {
         Some(match self {
             Waiting::FetchingScaffold => "Going for blocks to stand on",
+            Waiting::AccessGraph => "Planning access to the whole build",
             Waiting::ChestsUnread => "Waiting for the chests to load",
             Waiting::Probe(_) => "Working out a way to the next block",
             _ => return None,

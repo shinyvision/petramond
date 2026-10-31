@@ -49,6 +49,7 @@ fn a_route_answer_stands_for_its_memory() {
 #[test]
 fn a_spent_route_budget_is_no_answer_for_the_rest_of_the_tick() {
     let (mut session, id, _) = working(HOME);
+    at_work(&mut session, id, |_, _, _| {});
     session.world.route_budget(Some(0));
     at_work(&mut session, id, |ctx, _, _| {
         assert_eq!(route::probe(ctx, [0, 0, -6], [3, 0, -6], Vec::new()), None);

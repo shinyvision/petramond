@@ -51,6 +51,15 @@ pub fn begin(
     body: &Body,
     task: Task,
 ) -> Step {
+    if job.access_plan.score().is_some_and(|n| n > 0)
+        && matches!(task, Task::Unit(_))
+        && !job.access_plan.opens(task)
+    {
+        return Step::Plan;
+    }
+    if matches!(task, Task::Reopen(_)) && !job.access_plan.opens(task) {
+        return Step::Plan;
+    }
     match task {
         Task::Scaffold(cell) | Task::Trim(cell) | Task::Breakout(cell) => {
             dig(ctx, projects, job, body, task, cell, ctx.now)
@@ -164,6 +173,9 @@ pub fn dig(
     cell: [i32; 3],
     since: u64,
 ) -> Step {
+    if matches!(task, Task::Reopen(_)) && !job.access_plan.opens(task) {
+        return Step::Plan;
+    }
     let collect = !matches!(task, Task::Trim(_));
     match hands::dig(ctx, job, body, cell, collect) {
         hands::Dig::Turning | hands::Dig::Digging => Step::Dig { task, cell, since },
@@ -172,12 +184,6 @@ pub fn dig(
             since: ctx.now,
         },
         hands::Dig::Nothing => {
-            if let Task::Reopen(o) = task {
-                job.crew.access.reopen.retain(|_, openers| {
-                    openers.retain(|opener| *opener != o);
-                    !openers.is_empty()
-                });
-            }
             settle(ctx, projects, job, task);
             Step::Plan
         }
@@ -189,6 +195,9 @@ pub fn dig(
 }
 
 pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task) {
+    let sealed = job.access_plan.sealed_units();
+    job.access_plan
+        .changed(&super::plan::task_cells(job, task), false);
     if let Some((_, work)) = job.crew.aloft.climbed_for.as_mut() {
         *work += 1;
     }
@@ -244,14 +253,6 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                 if survey.known[o].open() {
                     job.crew.built.remove(&o);
                     job.crew.pace.cursor = job.crew.pace.cursor.min(o);
-                    let sealed: Vec<usize> = job
-                        .crew
-                        .access
-                        .reopen
-                        .iter()
-                        .filter(|(_, openers)| openers.contains(&o))
-                        .map(|(sealed, _)| *sealed)
-                        .collect();
                     for sealed in sealed {
                         let task = Task::Unit(sealed);
                         job.crew.access.unreachable.remove(&sealed);
@@ -379,6 +380,7 @@ pub fn acted(
 ) {
     if refusal.is_none() {
         ctx.regions.clear();
+        job.access_plan.changed(&[pos], false);
     }
     if super::TRACE && (refusal.is_some() || matches!(job.crew.step, Step::Bridge { .. })) {
         log(&format!(

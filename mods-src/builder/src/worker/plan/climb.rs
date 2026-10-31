@@ -74,8 +74,7 @@ pub(super) fn pillars(
 ) -> Flow {
     let project = &round.project;
     let candidates = &round.candidates;
-    for (task, unseen) in &round.wants_perch {
-        let unseen = *unseen;
+    for (task, _) in &round.wants_perch {
         if job.crew.deferrals.deferred(*task, ctx.now) {
             continue;
         }
@@ -107,7 +106,7 @@ pub(super) fn pillars(
                 return Flow::Busy(Waiting::Probe(Probe::OnwardPillar));
             }
             stance::Search::None | stance::Search::Unseen => {
-                let flow = fall_out(ctx, projects, job, body, project, *task, unseen, &cells);
+                let flow = fall_out(ctx, projects, job, body, project, *task, &cells);
                 if let Some(flow) = flow {
                     return flow;
                 }

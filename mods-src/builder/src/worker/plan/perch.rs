@@ -189,7 +189,10 @@ fn work_committed(
     {
         return Some(Flow::Go(Step::Unbridge { since: ctx.now }));
     }
-    let task = committed.filter(|task| mode == Mode::Building || !places(job, *task))?;
+    let task = committed.filter(|task| match mode {
+        Mode::Unsealing => job.access_plan.opens(*task),
+        _ => mode == Mode::Building || !places(job, *task),
+    })?;
     let open = still_open(ctx, job, project, perch, task);
     let cells = task_cells(job, task);
     if open && body.cell != top && !sees_from_here(job, task, body, &cells) {
@@ -241,8 +244,7 @@ fn still_open(
     match (task, job.survey.as_ref()) {
         (Task::Unit(i), Some(s)) => s.known[i].open() && !job.crew.built.contains(&i),
         (Task::Reopen(o), Some(s)) => {
-            matches!(s.known[o], Known::Satisfied)
-                && job.crew.access.reopen.values().flatten().any(|v| *v == o)
+            matches!(s.known[o], Known::Satisfied) && job.access_plan.opens(task)
         }
         (Task::Trim(cell), _) => job.crew.access.trims.contains(&cell),
         (Task::Scaffold(cell), _) => {

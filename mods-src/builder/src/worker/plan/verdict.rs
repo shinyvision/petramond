@@ -3,10 +3,9 @@ use crate::host::prelude::*;
 use super::{defer_task, places};
 use crate::geometry::{offset, FACES};
 use crate::survey::Known;
-use crate::worker::tuning::patience::{BURY_ROUNDS, DUE_PATIENCE};
-use crate::worker::tuning::waits::{BURY_WAIT, REFUSED, SEALED_WAIT, UNLOADED, UNREAD};
+use crate::worker::tuning::patience::DUE_PATIENCE;
+use crate::worker::tuning::waits::{REFUSED, SEALED_WAIT, UNLOADED, UNREAD};
 use crate::worker::tuning::window::DUE_CHAIN;
-use crate::worker::upkeep::open_block;
 use crate::worker::Job;
 use crate::worker::{pocket, Body, Ctx, Task};
 
@@ -31,11 +30,8 @@ pub(super) fn viability(
     if !places(job, task) {
         return Viable::Now;
     }
-    if job.crew.access.reopen.values().flatten().any(|o| *o == i) {
+    if job.access_plan.score().is_some_and(|n| n > 0) {
         return Viable::Waits(SEALED_WAIT);
-    }
-    if buries(ctx, job, i) && job.crew.deferrals.bury_waits.within(i, BURY_ROUNDS) {
-        return Viable::Waits(BURY_WAIT);
     }
     match pocket::seals(ctx, job, i) {
         Some(None) => {}
@@ -83,46 +79,6 @@ pub(super) fn viability(
             _ => Viable::Waits(REFUSED),
         },
     }
-}
-
-fn buries(ctx: &mut Ctx, job: &Job, i: usize) -> bool {
-    let Some(survey) = job.survey.as_ref() else {
-        return false;
-    };
-    let cells = job.design.cells(job.design.units[i]);
-    for cell in &cells {
-        for face in FACES {
-            let n = offset(*cell, face);
-            if cells.contains(&n) {
-                continue;
-            }
-            let to_dig = job.design.unit_at(n).is_some_and(|j| {
-                matches!(
-                    survey.known[j],
-                    Known::Clear {
-                        at,
-                        holds_items: false,
-                        ..
-                    } if at == n
-                )
-            });
-            if !to_dig {
-                continue;
-            }
-            let around: Vec<[i32; 3]> = FACES
-                .iter()
-                .map(|f| offset(n, *f))
-                .filter(|c| !cells.contains(c))
-                .collect();
-            let bare = get_blocks(around)
-                .into_iter()
-                .any(|b| b.is_some_and(|b| open_block(ctx, b)));
-            if !bare {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 pub(super) fn faceless(ctx: &mut Ctx, job: &mut Job, i: usize) -> Viable {

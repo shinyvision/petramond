@@ -63,6 +63,9 @@ pub fn lay(
     pay: bool,
     shown: Option<String>,
 ) -> Lay {
+    if !super::pocket::placement(ctx, job, cell, &record) {
+        return Lay::Refused(ActionRefusal::Changed);
+    }
     job.crew.presence.set_hold(body.id, true);
     let work = sight::Work::Click {
         pos: cell,

@@ -24,7 +24,7 @@ pub fn find(
 ) -> Search<[i32; 3]> {
     let target = cells[0];
     let mut candidates = Vec::new();
-    for dy in -5..=2 {
+    for dy in -5..=3 {
         for dx in -4..=4 {
             for dz in -4..=4 {
                 let s = offset(target, [dx, dy, dz]);

@@ -144,8 +144,9 @@ pub mod sim {
     use petramond_math::world_pos::WorldPos;
     use petramond_world::chunk::ChunkPos;
 
-    /// The real game without a window: an unsaved listen server with the installed packs and
+    /// The real game without a window: a listen server with the installed packs and
     /// one local player that a tool holds in place while the world runs around it.
+    /// `new` is unsaved; `open` uses normal saved-world storage.
     pub struct Sim {
         server: crate::server::game::ServerGame,
     }
@@ -165,6 +166,26 @@ pub mod sim {
     }
 
     impl Sim {
+        /// Runs a saved world with normal autosaves; use an isolated data directory for replays.
+        pub fn open(world: &str, key: &str, name: &str, render_dist: i32) -> Result<Sim, String> {
+            let local = crate::server::session_build::LocalPlayer {
+                key: key.parse().map_err(|e| format!("{e}"))?,
+                name: name.into(),
+            };
+            let (server, ..) =
+                crate::server::session_build::build_server(world, 0, render_dist, Some(local))?;
+            Ok(Sim { server })
+        }
+
+        pub fn player_pos(&self) -> [f64; 3] {
+            let pos = self.server.sessions()[0].player().pos;
+            [pos.x, pos.y, pos.z]
+        }
+
+        pub fn world(&self) -> &super::stream::ServerWorld {
+            self.server.world()
+        }
+
         pub fn new(seed: u32, render_dist: i32) -> Sim {
             let local = crate::server::session_build::LocalPlayer {
                 key: crate::net::identity::PlayerIdentity::generate()

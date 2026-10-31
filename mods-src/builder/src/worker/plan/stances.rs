@@ -1,7 +1,7 @@
 use super::climb::climb_toward;
 use super::sealing::{cutting, strands};
 use super::verdict::{settle_verdict, viability, waits_there, Viable};
-use super::{defer_task, places, task_cells, walk_via, Flow, Round};
+use super::{defer_task, places, task_cells, walk_via, Flow, Mode, Round};
 use crate::geometry::{feet_of, manhattan, offset, reaches};
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
@@ -33,7 +33,7 @@ pub(super) fn walk_costs(
             .iter()
             .map(|(_, cell)| {
                 let mut best: Option<u32> = None;
-                for dy in -5..=2 {
+                for dy in -5..=3 {
                     for dx in -4..=4 {
                         for dz in -4..=4 {
                             let stance = offset(*cell, [dx, dy, dz]);
@@ -88,6 +88,11 @@ pub(super) fn rank_by_walk(
     job.crew.pace.focus = focus;
     let mut walks: Vec<Option<u32>> = vec![None; candidates.len()];
     if let Some(costs) = walk_costs(ctx, job, body, &candidates) {
+        if round.mode == Mode::Unsealing {
+            round.walks = costs;
+            round.candidates = candidates;
+            return Flow::Pass;
+        }
         type Order = (bool, bool, bool, u32, i32);
         let mut keyed: Vec<((Task, [i32; 3]), Order)> = candidates
             .into_iter()
@@ -164,6 +169,7 @@ pub(super) fn stance_spots(
         let filled = &job.design.filled;
         let usable = |s: [i32; 3]| {
             !crew.deferrals.blind(*task, s)
+                && job.access_plan.stance(*task, s)
                 && !filled.contains(&s)
                 && !filled.contains(&offset(s, [0, 1, 0]))
         };
@@ -173,6 +179,7 @@ pub(super) fn stance_spots(
         if matches!(found, stance::Search::None | stance::Search::Unseen) {
             let relaxed = stance::find(ctx, body, hubs, &cells, &work, digging, |s| {
                 !crew.deferrals.blind(*task, s)
+                    && job.access_plan.stance(*task, s)
                     && (filled.contains(&s) || filled.contains(&offset(s, [0, 1, 0])))
             });
             if !matches!(relaxed, stance::Search::None) {
@@ -267,7 +274,11 @@ pub(super) fn nearest_spot(
         let worth = |ticks: i32, lays: i32| ticks * 16 / lays.max(1);
         let mut best: Option<(usize, i32)> = None;
         for (n, spot) in spots.iter().enumerate() {
-            let lays = pillar::lays(job, body, &[spot.to], &open, spot.to)[0];
+            let lays = if round.mode == Mode::Unsealing {
+                job.access_plan.benefit(spot.task) as i32
+            } else {
+                pillar::lays(job, body, &[spot.to], &open, spot.to)[0]
+            };
             let worth = worth(spot.ticks, lays);
             if best.is_none_or(|(_, least)| worth < least) {
                 best = Some((n, worth));

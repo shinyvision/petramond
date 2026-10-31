@@ -143,7 +143,6 @@ pub(super) fn way_out(
             }
             Some(Route::Open) => {
                 job.crew.rescue.stuck = None;
-                job.crew.rescue.site_loaded_since = None;
             }
             _ => {}
         }

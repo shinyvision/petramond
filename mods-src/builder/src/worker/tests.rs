@@ -30,11 +30,17 @@ pub(super) fn at_work<R>(
     f: impl FnOnce(&mut Ctx, &mut Projects, &mut Job) -> R,
 ) -> R {
     let now = session.now();
+    let changed = session.world.state().changes.clone();
+    let project = session.builder.projects.get(id).unwrap().clone();
     let mut nodes = NODES;
     let (mut ctx, projects, job) = session
         .builder
         .at_work(id, None, now, &mut nodes, &[])
         .expect("the job is attended");
+    job.access_plan.changed(&changed, false);
+    super::pocket::refresh(&mut ctx, job, &project);
+    job.access_plan.unbudget_sight(now);
+    super::pocket::refresh(&mut ctx, job, &project);
     f(&mut ctx, projects, job)
 }
 

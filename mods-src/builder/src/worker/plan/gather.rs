@@ -90,7 +90,6 @@ pub(super) fn gather(
     trace::held_ways_in(ctx, &job.design, survey, crew, closing);
     offer_units(ctx, &job.design, survey, crew, &judging, &mut found);
     offer_scaffolds(ctx, crew, body, project, &open_cells, &mut found);
-    offer_reopens(&job.design, survey, crew, ctx.now, &mut found);
     offer_digs(ctx, crew, &mut found);
     offer_trims(&mut job.design, crew, ctx.now, &mut found);
     found
@@ -337,36 +336,6 @@ fn offer_scaffolds(
         } else if crew.scaffolding.urgent.contains(cell) || !support::props_up(*cell, open_cells) {
             found.list.push((task, *cell));
         }
-    }
-}
-
-fn offer_reopens(
-    design: &Design,
-    survey: &Survey,
-    crew: &mut Crew,
-    now: u64,
-    found: &mut Candidates,
-) {
-    crew.access
-        .reopen
-        .retain(|sealed, _| survey.known[*sealed].open());
-    let mut reopen: Vec<usize> = crew
-        .access
-        .reopen
-        .values()
-        .flatten()
-        .copied()
-        .filter(|o| matches!(survey.known[*o], Known::Satisfied))
-        .collect();
-    reopen.sort_unstable();
-    reopen.dedup();
-    for o in reopen {
-        let task = Task::Reopen(o);
-        found.offer(
-            crew.deferrals.deferred(task, now),
-            task,
-            design.units[o].pos,
-        );
     }
 }
 

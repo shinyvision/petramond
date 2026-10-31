@@ -6,6 +6,7 @@ use crate::project::Phase;
 use crate::testing::{HOME, TABLE_AT};
 use crate::worker::lifecycle::{burrow, emerge, relocate, EMERGE};
 use crate::worker::tuning::body::{BURROW_DEPTH, BURROW_TICKS, EMERGE_TICKS};
+use crate::worker::tuning::patience::WET_STALL;
 use crate::worker::Step;
 
 #[test]
@@ -147,5 +148,98 @@ fn a_stuck_golem_sinks_travels_under_the_ground_and_rises_at_home() {
     at_work(&mut session, id, |ctx, _, job| {
         assert!(ctx.routes.is_empty(), "every route is judged afresh");
         assert_eq!(job.crew.rescue.burrow_from, [8, 0, 8]);
+    });
+}
+
+#[test]
+fn a_bobbing_golem_without_progress_can_escape_even_during_digging() {
+    let at = [8, 0, 8];
+    let (mut session, id, golem) = working(at);
+    let water = resolve_block("petramond:water").unwrap();
+    session.world.set(at, water);
+    let mut body = session.body(golem);
+    body.on_ground = false;
+    body.cell = [7, 1, 8];
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.step = Step::Plan;
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert_eq!(job.crew.step, Step::Plan);
+    });
+
+    session.world.set(at, crate::host::fake::rows::AIR);
+    session.world.state_mut().now += WET_STALL + 1;
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.pace.progress_at = ctx.now;
+        job.crew.step = Step::Plan;
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert_eq!(job.crew.step, Step::Plan);
+    });
+    session.world.state_mut().now += WET_STALL + 1;
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.step = Step::Dig {
+            task: crate::worker::Task::Breakout([8, 0, 9]),
+            cell: [8, 0, 9],
+            since: ctx.now,
+        };
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert_eq!(
+            job.crew.step,
+            Step::Relocate { t: 0, leg: 0 },
+            "briefly bobbing above water must not postpone escape forever"
+        );
+    });
+
+    session.world.set(at, water);
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.step = Step::Plan;
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert_eq!(job.crew.step, Step::Plan);
+    });
+    session.world.set(at, crate::host::fake::rows::AIR);
+    body.on_ground = true;
+    at_work(&mut session, id, |ctx, _, job| {
+        assert!(crate::worker::rescue::wet(ctx, job, &body).is_none());
+        assert!(
+            job.crew.rescue.wet_since.is_none(),
+            "dry land ends the stall"
+        );
+    });
+}
+
+#[test]
+fn returning_home_from_water_remembers_the_failed_work_stance() {
+    let at = [8, 0, 8];
+    let goal = [8, 0, 9];
+    let (mut session, id, golem) = working(at);
+    session
+        .world
+        .set(at, resolve_block("petramond:water").unwrap());
+    let mut body = session.body(golem);
+    body.on_ground = false;
+    let task = crate::worker::Task::Unit(super::unit(&session, id, [0, 0, 0]));
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.step = Step::Walk {
+            to: goal,
+            goal,
+            then: crate::worker::Then::Task(task),
+            best: i32::MAX,
+            progress: ctx.now,
+        };
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+    });
+    session.world.state_mut().now += WET_STALL + 1;
+    at_work(&mut session, id, |ctx, projects, job| {
+        let project = projects.get(id).unwrap().clone();
+        crate::worker::drive::act_out(ctx, projects, job, &project, &body);
+        assert!(matches!(job.crew.step, Step::Relocate { .. }));
+        assert!(
+            job.crew.deferrals.blind(task, goal),
+            "the next plan must try another stance"
+        );
     });
 }

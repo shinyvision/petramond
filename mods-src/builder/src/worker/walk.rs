@@ -148,5 +148,12 @@ pub(super) fn give_up(ctx: &Ctx, job: &mut Job, body: &Body, goal: [i32; 3], the
     if let (Then::Escape, Some(stuck)) = (then, job.crew.rescue.stuck.as_mut()) {
         stuck.walk_failed(body.cell, goal);
     }
+    if matches!(then, Then::Escape | Then::Task(_) | Then::Course(_)) {
+        job.crew
+            .access
+            .failed_stances
+            .set(goal, ctx.now + super::tuning::patience::WAY_IN_PATIENCE);
+        job.access_plan.route_failed();
+    }
     job.crew.note = "The golem could not walk where it needed to".into();
 }

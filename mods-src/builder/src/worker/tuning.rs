@@ -41,7 +41,6 @@ pub mod patience {
     pub const DUE_PATIENCE: u64 = NOTHING_LANDED;
     pub const SITE_STALLED: u64 = 12_000;
     pub const CUTTER_ROUNDS: u8 = 4;
-    pub const BURY_ROUNDS: u8 = 12;
     pub const FACELESS_TRIES: u8 = 3;
     pub const SCAFFOLD_TRIES: u8 = 4;
     pub const RAISES: u8 = 12;
@@ -62,6 +61,7 @@ pub mod patience {
     pub const WAY_IN_PATIENCE: u64 = 3000;
     pub const DOOR_TRIES: u8 = 2;
     pub const WAY_OUT_PATIENCE: u64 = 1200;
+    pub const WET_STALL: u64 = 100;
     pub const WAY_OUT_PLANS: u32 = 24;
     pub const WAY_OUT_TOTAL_PLANS: u32 = 400;
     pub const RISE_TICKS: u64 = 60;
@@ -75,7 +75,6 @@ pub mod waits {
     pub const SEALED_WAIT: u64 = 600;
     pub const SCAFFOLD_WAIT: u64 = 100;
     pub const TOOL_TRIP_WAIT: u64 = 1200;
-    pub const BURY_WAIT: u64 = 40;
     pub const STRANDING_STANCE: u64 = 20;
     pub const FOOT_UNWALKED: u64 = 100;
     pub const OUT_OF_REACH: u64 = 400;
@@ -122,8 +121,6 @@ pub mod reach {
     pub const STANCE_ROUTES: usize = 5;
     pub const CHEST_REACH: f64 = crate::geometry::PLAN_REACH - 1.0;
     pub const SUPPORT_DEPTH: i32 = 6;
-    pub const POCKET_REGION: usize = 48;
-    pub const POCKET_OPENERS: usize = 48;
     pub const OUT_AROUND: i32 = 6;
     pub const OUT_ABOVE: i32 = 10;
     pub const OUT_BELOW: i32 = 24;
@@ -136,6 +133,17 @@ pub mod reach {
     pub const DIG_ABOVE: i32 = 5;
     pub const DIG_BELOW: i32 = 2;
     pub const NO_GO: usize = 64;
+}
+
+pub mod access {
+    pub const MARGIN: i32 = 5;
+    pub const READ_CELLS: usize = 4096;
+    pub const SIGHT_POINTS: usize = 1024;
+    pub const RAY_PAD: f64 = 1e-6;
+    pub const RAY_EPS: f64 = 1e-9;
+    pub const FACE_END_EPS: f64 = 1e-4;
+    pub const DIG_COST: f32 = 10.0;
+    pub const RESTORE_COST: u32 = 20;
 }
 
 pub mod route {

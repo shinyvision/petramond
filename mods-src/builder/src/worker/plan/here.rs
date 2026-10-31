@@ -121,13 +121,15 @@ pub(super) fn from_here(
         })
         .copied()
         .collect();
-    here.sort_by_key(|(task, c)| {
-        (
-            !urgent(task),
-            !(places(job, *task) || matches!(task, Task::Support { .. })),
-            manhattan(*c, body.cell),
-        )
-    });
+    if round.mode != Mode::Unsealing {
+        here.sort_by_key(|(task, c)| {
+            (
+                !urgent(task),
+                !(places(job, *task) || matches!(task, Task::Support { .. })),
+                manhattan(*c, body.cell),
+            )
+        });
+    }
     for (task, _) in here.iter().take(HERE) {
         let cells = task_cells(job, *task);
         if job.crew.deferrals.blind(*task, body.cell) || !sees_from_here(job, *task, body, &cells) {

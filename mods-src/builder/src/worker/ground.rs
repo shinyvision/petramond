@@ -145,6 +145,12 @@ struct Grid<'a> {
 }
 
 impl Grid<'_> {
+    fn stands(self, cell: [i32; 3]) -> bool {
+        self.at(cell).is_some_and(|c| c.open || c.door)
+            && self.at(up(cell, 1)).is_some_and(|c| c.open || c.door)
+            && self.at(up(cell, -1)).is_some_and(|c| c.floor)
+    }
+
     fn at(self, c: [i32; 3]) -> Option<Cell> {
         self.cells.get(&c).copied()
     }
@@ -286,10 +292,15 @@ pub(super) fn search(
 ) -> Option<Way> {
     let rules = Rules { health, rise, fall };
     let grid = Grid { cells: grid };
+    let here: HashMap<_, _> = here
+        .iter()
+        .filter(|(cell, _)| grid.stands(**cell))
+        .map(|(cell, moves)| (*cell, *moves))
+        .collect();
     let mut best: HashMap<[i32; 3], u32> = HashMap::default();
     let mut came: HashMap<[i32; 3], Way> = HashMap::default();
     let mut queue = BinaryHeap::new();
-    for (cell, moves) in here {
+    for (cell, moves) in &here {
         if grid.cells.contains_key(cell) {
             best.insert(*cell, *moves);
             queue.push(Reverse((*moves, *cell)));
@@ -332,7 +343,7 @@ pub(super) fn search(
         }
     }
     let (goal, total) = goal?;
-    Some(first_move(&came, here, goal, total))
+    Some(first_move(&came, &here, goal, total))
 }
 
 fn first_move(
