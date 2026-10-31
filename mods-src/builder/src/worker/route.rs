@@ -12,15 +12,35 @@ use std::collections::VecDeque;
 use crate::host::prelude::*;
 
 use super::tuning::route::{
-    HUBS, LEG, MEMORY, NEAR, NODES, REGION_NODES, SHORT, TRAIL, VERDICT_MEMORY,
+    BODY_CELLS, FLOOD_SLACK, HUBS, LEG, MEMORY, NEAR, NODES, REGION_NODES, SHORT, TRAIL,
+    VERDICT_MEMORY,
 };
 use super::{Body, Ctx};
 use crate::content::GOLEM;
-use crate::geometry::manhattan;
+use crate::geometry::{manhattan, offset};
 
 pub type Routes = HashMap<([i32; 3], [i32; 3], u64), (Route, u64)>;
 
-pub type Regions = HashMap<([i32; 3], bool, u64), (Region, u64)>;
+/// Remembered floods, and how many footholds each origin's last complete flood reached.
+#[derive(Default)]
+pub struct Regions {
+    floods: HashMap<([i32; 3], bool, u64), (Region, u64)>,
+    sizes: HashMap<([i32; 3], bool), u32>,
+    /// The most any flood of the site reached; floods from new origins cover much the same ground.
+    largest: u32,
+}
+
+impl Regions {
+    /// Forgets every flood; the sizes stay, since one block changes a flood's size only a little.
+    pub fn clear(&mut self) {
+        self.floods.clear();
+    }
+
+    #[cfg(test)]
+    pub fn hint(&mut self, from: [i32; 3], toward: bool, size: u32) {
+        self.sizes.insert((from, toward), size);
+    }
+}
 
 pub struct Region {
     cells: Vec<([i32; 3], u32)>,
@@ -179,41 +199,130 @@ pub fn region<'a>(
     let key = (from, toward, key(from, from, blocked).2);
     let fresh = ctx
         .regions
+        .floods
         .get(&key)
         .is_some_and(|(_, at)| ctx.now < at + MEMORY);
     if !fresh {
-        if *ctx.probe_nodes == 0 {
-            return None;
+        // The engine runs a flood only when this tick's probe budget covers its whole cap, so ask
+        // for about what the last flood from here reached rather than the most any flood may.
+        let hint = ctx
+            .regions
+            .sizes
+            .get(&(from, toward))
+            .copied()
+            .or((ctx.regions.largest > 0).then_some(ctx.regions.largest));
+        let mut caps = vec![REGION_NODES];
+        if let Some(size) = hint {
+            caps.insert(0, (size + size / 8 + FLOOD_SLACK).min(REGION_NODES));
         }
-        let region = match walk_region(
-            GOLEM,
-            from,
-            min,
-            max,
-            blocked.to_vec(),
-            toward,
-            REGION_NODES,
-        ) {
-            Flood::Reached(cells) => Region::new(cells, (min, max), true),
-            Flood::Exceeded => {
-                trace!(
-                    "TRACE flood from {from:?} (toward {toward}) exceeds {REGION_NODES} footholds"
-                );
-                Region::new(Vec::new(), (min, min), false)
-            }
-            Flood::Deferred => {
-                *ctx.probe_nodes = 0;
+        let mut flooded = None;
+        for cap in caps {
+            if *ctx.probe_nodes == 0 {
                 return None;
             }
-        };
-        ctx.regions.insert(key, (region, ctx.now));
+            match walk_region(GOLEM, from, min, max, blocked.to_vec(), toward, cap) {
+                Flood::Reached(cells) => {
+                    let size = cells.len() as u32;
+                    ctx.regions.sizes.insert((from, toward), size);
+                    ctx.regions.largest = ctx.regions.largest.max(size);
+                    flooded = Some(Region::new(cells, (min, max), true));
+                    break;
+                }
+                Flood::Exceeded if cap < REGION_NODES => continue,
+                Flood::Exceeded => {
+                    trace!(
+                        "TRACE flood from {from:?} (toward {toward}) exceeds {REGION_NODES} footholds"
+                    );
+                    flooded = Some(Region::new(Vec::new(), (min, min), false));
+                    break;
+                }
+                Flood::Deferred => {
+                    *ctx.probe_nodes = 0;
+                    return None;
+                }
+            }
+        }
+        let region = flooded?;
+        ctx.regions.floods.insert(key, (region, ctx.now));
     }
     Some(
         ctx.regions
+            .floods
             .get(&key)
             .map(|(region, _)| region)
             .filter(|r| r.complete),
     )
+}
+
+/// The footholds walkable from `from` and the footholds that walk back to it; a stance is usable only in both.
+pub fn both_ways<'a>(
+    ctx: &'a mut Ctx,
+    from: [i32; 3],
+    blocked: &[[i32; 3]],
+) -> Option<Option<(&'a Region, &'a Region)>> {
+    let Some(hash) = flood_both(ctx, from, blocked)? else {
+        return Some(None);
+    };
+    let ctx: &'a Ctx = ctx;
+    Some(filed_both(ctx, from, hash))
+}
+
+/// Both ways from `from` as the ground is now and with `blocked` closed, for telling what a
+/// closure takes away from what it leaves alone.
+#[allow(clippy::type_complexity)]
+pub fn both_ways_and_without<'a>(
+    ctx: &'a mut Ctx,
+    from: [i32; 3],
+    blocked: &[[i32; 3]],
+) -> Option<Option<((&'a Region, &'a Region), (&'a Region, &'a Region))>> {
+    let (Some(now), Some(then)) = (flood_both(ctx, from, &[])?, flood_both(ctx, from, blocked)?)
+    else {
+        return Some(None);
+    };
+    let ctx: &'a Ctx = ctx;
+    Some(filed_both(ctx, from, now).zip(filed_both(ctx, from, then)))
+}
+
+/// Floods both ways and answers the key both are filed under.
+fn flood_both(ctx: &mut Ctx, from: [i32; 3], blocked: &[[i32; 3]]) -> Option<Option<u64>> {
+    let mut blocked = blocked;
+    if !blocked.is_empty() {
+        let mut near = false;
+        for toward in [false, true] {
+            let Some(open) = region(ctx, from, toward, &[])? else {
+                return Some(None);
+            };
+            near |= blocked.iter().any(|w| touches(open, *w));
+        }
+        // A cell no walk passes through, stands in or jumps under changes neither flood.
+        if !near {
+            blocked = &[];
+        }
+    }
+    for toward in [false, true] {
+        if region(ctx, from, toward, blocked)?.is_none() {
+            return Some(None);
+        }
+    }
+    Some(Some(key(from, from, blocked).2))
+}
+
+fn filed_both<'a>(ctx: &'a Ctx, from: [i32; 3], hash: u64) -> Option<(&'a Region, &'a Region)> {
+    let get = |toward| {
+        ctx.regions
+            .floods
+            .get(&(from, toward, hash))
+            .map(|(r, _)| r)
+    };
+    get(false).zip(get(true))
+}
+
+/// Whether closing `cell` can take a foothold out of `region`: a body standing in it or under it,
+/// or a step past its corner.
+fn touches(region: &Region, cell: [i32; 3]) -> bool {
+    (-1..=1).any(|dx| {
+        (-1..=1).any(|dz| (-BODY_CELLS..=0).any(|dy| region.contains(offset(cell, [dx, dy, dz]))))
+    })
 }
 
 fn within(ctx: &Ctx, cell: [i32; 3]) -> u32 {

@@ -15,9 +15,11 @@ pub(super) struct Gate {
     pub exposed: bool,
 }
 
-pub(super) fn plan(graph: &Graph) -> Vec<Gate> {
+/// The openings that expose sealed work, ranked, and the sealed units at least one of them serves.
+pub(super) fn plan(graph: &Graph) -> (Vec<Gate>, HashSet<usize>) {
+    let mut served = HashSet::default();
     if graph.sealed.is_empty() || !graph.reached[graph.root] {
-        return Vec::new();
+        return (Vec::new(), served);
     }
     // Collapse connected air into single vertices so empty space has no search cost.
     let mut vertices = graph.components.clone();
@@ -106,10 +108,13 @@ pub(super) fn plan(graph: &Graph) -> Vec<Gate> {
             }
             vertex = parent[vertex];
         }
+        if !counted.is_empty() {
+            served.insert(work.unit);
+        }
     }
     let mut gates: Vec<Gate> = gates.into_values().collect();
     rank(&mut gates);
-    gates
+    (gates, served)
 }
 
 pub(super) fn rank(gates: &mut [Gate]) {

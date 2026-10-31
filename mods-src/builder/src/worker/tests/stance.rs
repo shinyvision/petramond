@@ -33,7 +33,10 @@ fn the_stance_is_the_nearest_walk_that_sees_the_work() {
             hubs,
             &[target],
             &lay(target),
-            false,
+            stance::Accept {
+                off_top: false,
+                one_way: false,
+            },
             |_| true,
         ))
     });
@@ -47,7 +50,10 @@ fn the_stance_is_the_nearest_walk_that_sees_the_work() {
             hubs,
             &[target],
             &lay(target),
-            false,
+            stance::Accept {
+                off_top: false,
+                one_way: false,
+            },
             |s| s != [1, 0, -6],
         ))
     });
@@ -63,10 +69,32 @@ fn work_walled_in_is_unseen_and_work_in_the_air_has_nowhere_to_stand() {
     let body = session.body(golem);
     at_work(&mut session, id, |ctx, _, job| {
         let hubs = Hubs::new(HOME, &job.crew.trail);
-        let walled = stance::find(ctx, &body, hubs, &[target], &lay(target), false, |_| true);
+        let walled = stance::find(
+            ctx,
+            &body,
+            hubs,
+            &[target],
+            &lay(target),
+            stance::Accept {
+                off_top: false,
+                one_way: false,
+            },
+            |_| true,
+        );
         assert!(matches!(walled, Search::Unseen));
         let high = [5, 12, -6];
-        let aloft = stance::find(ctx, &body, hubs, &[high], &lay(high), false, |_| true);
+        let aloft = stance::find(
+            ctx,
+            &body,
+            hubs,
+            &[high],
+            &lay(high),
+            stance::Accept {
+                off_top: false,
+                one_way: false,
+            },
+            |_| true,
+        );
         assert!(matches!(aloft, Search::None));
     });
 }
@@ -79,7 +107,18 @@ fn a_stance_search_with_no_route_budget_asks_again() {
     let target = [5, 0, -6];
     at_work(&mut session, id, |ctx, _, job| {
         let hubs = Hubs::new(HOME, &job.crew.trail);
-        let busy = stance::find(ctx, &body, hubs, &[target], &lay(target), false, |_| true);
+        let busy = stance::find(
+            ctx,
+            &body,
+            hubs,
+            &[target],
+            &lay(target),
+            stance::Accept {
+                off_top: false,
+                one_way: false,
+            },
+            |_| true,
+        );
         assert!(matches!(busy, Search::Busy));
     });
 }
@@ -103,10 +142,47 @@ fn work_below_a_platform_can_be_reached_through_an_opening_from_above() {
                 hubs,
                 &[target],
                 &lay(target),
-                false,
+                stance::Accept {
+                    off_top: false,
+                    one_way: false
+                },
                 |s| s[1] == at[1]
             )),
             Some(at)
         );
+    });
+}
+
+#[test]
+fn work_only_a_one_way_walk_reaches_is_still_found_where_a_way_out_is_left_to_rescue() {
+    let (mut session, id, golem) = working([0, 0, -6]);
+    session.world.fill([1, -1, -10], [9, -1, -2], AIR);
+    session.world.fill([1, -4, -10], [9, -4, -2], STONE);
+    let target = [5, -3, -6];
+    let body = session.body(golem);
+    at_work(&mut session, id, |ctx, _, job| {
+        let hubs = Hubs::new(HOME, &job.crew.trail);
+        let mut pit = |one_way| {
+            stance::find(
+                ctx,
+                &body,
+                hubs,
+                &[target],
+                &lay(target),
+                stance::Accept {
+                    off_top: false,
+                    one_way,
+                },
+                |_| true,
+            )
+        };
+        assert!(
+            matches!(pit(false), Search::None),
+            "a pit too deep to climb out of has no round trip"
+        );
+        let Search::Found(stance) = pit(true) else {
+            panic!("the pit is walked into all the same");
+        };
+        assert_eq!(stance[1], -3, "on the pit floor");
     });
 }

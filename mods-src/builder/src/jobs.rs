@@ -102,7 +102,7 @@ impl Builder {
             panels: PanelPublisher::default(),
             tables: crate::table::Tables::default(),
             routes: HashMap::default(),
-            regions: HashMap::default(),
+            regions: worker::Regions::default(),
             changes: ChangeCursor::default(),
             ghosts: ghosts::Ghosts::default(),
             admissions: admission::Admissions::default(),

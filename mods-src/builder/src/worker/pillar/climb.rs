@@ -7,6 +7,7 @@ use crate::worker::legs::{self, centre_on, hold_still};
 use crate::worker::tuning::body::{JUMP, ON_COLUMN, PERCH_OFF_CENTRE, PERCH_SETTLE_TICKS};
 use crate::worker::tuning::hands::SWING;
 use crate::worker::tuning::patience::{CLIMB_STALL, DESCENT_STALL};
+use crate::worker::tuning::waits::REFUSED;
 use crate::worker::Job;
 use crate::worker::{centre, hands, open_block, scaffold, Body, Ctx, Step};
 
@@ -105,8 +106,13 @@ pub fn climb(
                     job.crew.aloft.perch = Some(Pillar { top: l, ..pillar });
                     return Step::Descend { since: ctx.now };
                 }
-                hands::Lay::Refused(_) => {
+                hands::Lay::Refused(refusal) => {
+                    trace!("TRACE scaffold at {cell:?} refused: {refusal:?}");
                     job.crew.note = "Scaffolding could not be placed".into();
+                    job.crew
+                        .scaffolding
+                        .refused
+                        .set([cx, cz], ctx.now + REFUSED);
                     if let Some((task, _)) = job.crew.aloft.climbed_for {
                         job.crew.deferrals.strike(task, [cx, pillar.top, cz]);
                     }

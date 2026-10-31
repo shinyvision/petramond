@@ -150,7 +150,10 @@ pub(super) fn approach(
         hubs,
         &[container],
         &sight::Work::Touch,
-        false,
+        stance::Accept {
+            off_top: false,
+            one_way: false,
+        },
         close,
     ) {
         Search::Found(to) => match route::leg(ctx, hubs, body, to) {

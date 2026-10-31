@@ -80,6 +80,10 @@ fn try_here(
         }
         job.crew.deferrals.tried.insert(i);
         let verdict = viability(ctx, job, body, task, body.pos);
+        if verdict == Viable::Unknown {
+            job.crew.deferrals.tried.remove(&i);
+            return Some(Step::Plan);
+        }
         if verdict != Viable::Now {
             trace!("TRACE try here {task:?}: {}", verdict_name(verdict));
             continue;
@@ -288,6 +292,9 @@ fn work_in_sight(
         let cells = task_cells(job, *task);
         if !job.crew.deferrals.blind(*task, body.cell) && sees_from_here(job, *task, body, &cells) {
             let verdict = viability(ctx, job, body, *task, body.pos);
+            if verdict == Viable::Unknown {
+                return ControlFlow::Break(Flow::Busy(Waiting::Probe(Probe::Sealing)));
+            }
             if verdict != Viable::Now {
                 settle_verdict(ctx, job, *task, verdict);
                 continue;
@@ -361,6 +368,7 @@ fn onward_or_higher(
             ..perch
         });
         if walks {
+            job.crew.aloft.landing = Some(stance);
             return Some(Flow::Go(walk_to(ctx, stance, Then::Regroup)));
         }
         return Some(Flow::Go(Step::Plan));
@@ -397,6 +405,12 @@ fn leave(
     let top = perch.top_cell();
     if let Some(step) = aloft::move_on(ctx, job, body, project, perch, candidates) {
         return Flow::Go(step);
+    }
+    if job.crew.aloft.landing == Some(body.cell) && job.crew.aloft.bridge.is_none() {
+        trace!("TRACE landed at {:?}: planning from here", body.cell);
+        job.crew.aloft.dismount_landed();
+        job.crew.deferrals.tried.clear();
+        return Flow::Pass;
     }
     if body.cell != top {
         if job.crew.aloft.bridge.is_some() {

@@ -21,6 +21,24 @@ pub(super) struct Spot {
     ticks: i32,
 }
 
+/// Stance offsets from a cell that reach it; reach depends on the offset alone.
+fn in_reach() -> &'static [[i32; 3]] {
+    static OFFSETS: std::sync::OnceLock<Vec<[i32; 3]>> = std::sync::OnceLock::new();
+    OFFSETS.get_or_init(|| {
+        let mut offsets = Vec::new();
+        for dy in -5..=3 {
+            for dx in -4..=4 {
+                for dz in -4..=4 {
+                    if reaches(feet_of([dx, dy, dz]), &[[0, 0, 0]]) {
+                        offsets.push([dx, dy, dz]);
+                    }
+                }
+            }
+        }
+        offsets
+    })
+}
+
 pub(super) fn walk_costs(
     ctx: &mut Ctx,
     job: &Job,
@@ -32,35 +50,24 @@ pub(super) fn walk_costs(
         cells
             .iter()
             .map(|(_, cell)| {
-                let mut best: Option<u32> = None;
-                for dy in -5..=3 {
-                    for dx in -4..=4 {
-                        for dz in -4..=4 {
-                            let stance = offset(*cell, [dx, dy, dz]);
-                            let Some(moves) = region.moves(stance) else {
-                                continue;
-                            };
-                            if best.is_none_or(|b| moves < b) && reaches(feet_of(stance), &[*cell])
-                            {
-                                best = Some(moves);
-                            }
-                        }
-                    }
-                }
+                let mut best = in_reach()
+                    .iter()
+                    .filter_map(|o| region.moves(offset(*cell, *o)))
+                    .min();
                 if best.is_none() {
                     let inside = job.design.over_floor(*cell);
                     for dy in -PILLAR_SPAN..-5 {
                         for dx in -3..=3 {
                             for dz in -3..=3 {
                                 let foot = offset(*cell, [dx, dy, dz]);
-                                if job.design.over_floor(foot) != inside {
+                                let Some(moves) = region.moves(foot) else {
                                     continue;
-                                }
-                                if let Some(moves) = region.moves(foot) {
-                                    let cost = moves + LEVEL_MOVES as u32 * dy.unsigned_abs();
-                                    if best.is_none_or(|b| cost < b) {
-                                        best = Some(cost);
-                                    }
+                                };
+                                let cost = moves + LEVEL_MOVES as u32 * dy.unsigned_abs();
+                                if best.is_none_or(|b| cost < b)
+                                    && job.design.over_floor(foot) == inside
+                                {
+                                    best = Some(cost);
                                 }
                             }
                         }
@@ -151,6 +158,9 @@ pub(super) fn stance_spots(
             continue;
         }
         let verdict = viability(ctx, job, body, *task, body.pos);
+        if verdict == Viable::Unknown {
+            return Flow::Busy(Waiting::Probe(Probe::StanceSealing));
+        }
         if !matches!(verdict, Viable::Now | Viable::Elsewhere) {
             settle_verdict(ctx, job, *task, verdict);
             continue;
@@ -175,9 +185,13 @@ pub(super) fn stance_spots(
         };
         let mut unseen = false;
         let work = sight::work(job, *task);
-        let mut found = stance::find(ctx, body, hubs, &cells, &work, digging, usable);
+        let accept = stance::Accept {
+            off_top: digging,
+            one_way: true,
+        };
+        let mut found = stance::find(ctx, body, hubs, &cells, &work, accept, usable);
         if matches!(found, stance::Search::None | stance::Search::Unseen) {
-            let relaxed = stance::find(ctx, body, hubs, &cells, &work, digging, |s| {
+            let relaxed = stance::find(ctx, body, hubs, &cells, &work, accept, |s| {
                 !crew.deferrals.blind(*task, s)
                     && job.access_plan.stance(*task, s)
                     && (filled.contains(&s) || filled.contains(&offset(s, [0, 1, 0])))

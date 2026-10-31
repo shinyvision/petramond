@@ -95,6 +95,14 @@ pub(super) fn resupply(
     round: &mut Round,
 ) -> Flow {
     scaffold_request(ctx, job, body, round);
+    if round.supplies.fetch() && round.stranded {
+        return Flow::Go(crate::worker::rescue::rescue(
+            ctx,
+            job,
+            body,
+            &round.project,
+        ));
+    }
     if round.supplies.fetch() {
         let step = cargo::resupply(
             ctx,

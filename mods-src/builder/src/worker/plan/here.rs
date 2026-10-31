@@ -136,6 +136,9 @@ pub(super) fn from_here(
             continue;
         }
         let verdict = viability(ctx, job, body, *task, body.pos);
+        if verdict == Viable::Unknown {
+            return Flow::Busy(Waiting::Probe(Probe::Sealing));
+        }
         if verdict != Viable::Now {
             settle_verdict(ctx, job, *task, verdict);
             continue;

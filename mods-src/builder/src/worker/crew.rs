@@ -21,6 +21,8 @@ pub struct Crew {
     pub(super) searched: u64,
     pub step: Step,
     pub built: HashSet<usize>,
+    /// How often a finished unit that came undone was put back.
+    pub(super) rebuilt: Tries<usize>,
     pub note: String,
     pub(super) why: Waiting,
     pub(super) trail: route::Trail,
@@ -115,12 +117,30 @@ pub struct Aloft {
     pub(super) settle_until: u64,
     pub(super) aimed: Option<(Task, [i32; 3])>,
     pub(super) descending: Option<i32>,
+    /// The ground an onward pillar delivered the worker onto.
+    pub(super) landing: Option<[i32; 3]>,
+    /// The column of the pillar a landed worker came by: its way back down while it works there.
+    pub(super) came_by: Option<[i32; 2]>,
+    /// The work a landed worker climbed for.
+    pub(super) landed_for: Option<Task>,
 }
 
 impl Aloft {
+    /// Off its pillar onto ground the worker reached by it: from here it plans like any grounded
+    /// worker, and a way home is the stranded worker's rescue down the pillar it came by.
+    pub(super) fn dismount_landed(&mut self) {
+        self.came_by = self.perch.map(|p| p.column);
+        self.landed_for = self.climbed_for.map(|(task, _)| task);
+        self.perch = None;
+        self.climbed_for = None;
+        self.descending = None;
+        self.landing = None;
+    }
+
     pub(super) fn dismount_lost(&mut self) {
         self.perch = None;
         self.climbed_for = None;
+        self.landing = None;
     }
 
     pub(super) fn dismount_to_raise(&mut self) {
@@ -130,6 +150,7 @@ impl Aloft {
     pub(super) fn dismount_down(&mut self) {
         self.perch = None;
         self.descending = None;
+        self.landing = None;
     }
 }
 
@@ -146,6 +167,35 @@ pub struct Access {
     pub(super) way_in: Option<(Vec<[i32; 3]>, u64)>,
     pub(super) opened: Vec<[i32; 3]>,
     pub(super) pending_use: Option<[i32; 3]>,
+    /// Blocks taken down to open sealed work: the work they opened and when.
+    pub(super) reopened: HashMap<usize, (Vec<usize>, u64)>,
+    /// Sealed work an opening already failed to get done; it is not opened again.
+    pub(super) abandoned: HashSet<usize>,
+    /// A finished block being taken down so work no stance can place gets room from another side.
+    pub(super) room: Option<Room>,
+    /// Work and neighbour pairs whose room did not get the work done.
+    pub(super) roomed: HashSet<(usize, usize)>,
+    /// Rooms whose neighbour the worker never got to take down, counted per pair.
+    pub(super) unreached_rooms: Tries<(usize, usize)>,
+    /// When the last neighbour of a piece of work had its turn as a room.
+    pub(super) rooms_spent: HashMap<usize, u64>,
+    /// Rounds of rooms a piece of work has had.
+    pub(super) room_rounds: Tries<usize>,
+    /// Work every way of reaching failed, round after round: it is reported unbuilt.
+    pub(super) given_up: HashSet<usize>,
+    /// Landings that left without their work done, per piece of work.
+    pub(super) failed_landings: Tries<Task>,
+    /// Work no more approach pillars are raised for: landing after landing got it nowhere.
+    pub(super) no_approach: HashSet<Task>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Room {
+    /// The work that needs the room.
+    pub(super) unit: usize,
+    /// The finished neighbour taken down for it.
+    pub(super) through: usize,
+    pub(super) since: u64,
 }
 
 #[derive(Default)]
@@ -157,6 +207,10 @@ pub struct ScaffoldState {
     pub(super) urgent: Vec<[i32; 3]>,
     pub(super) shunned: Tries<[i32; 3]>,
     pub(super) left_standing: u32,
+    /// Scaffolds given up on as out of reach.
+    pub(super) left: HashSet<[i32; 3]>,
+    /// Columns whose scaffold the world refused; no pillar search offers them meanwhile.
+    pub(super) refused: Until<[i32; 2]>,
 }
 
 #[derive(Default)]
@@ -169,6 +223,12 @@ pub struct Pace {
     pub(super) focus: Option<[i32; 3]>,
     pub(super) cursor: usize,
     pub(super) home_checked: u64,
+    /// Since when the finished job has been waiting for smothered ground cover to grow back.
+    pub(super) regrow_since: Option<u64>,
+    /// Since when every round has ended with open work nothing offered.
+    pub(super) unbuilt_since: Option<u64>,
+    /// Since when every planning round has ended without a step to take.
+    pub(super) busy_since: Option<u64>,
 }
 
 #[derive(Default)]
@@ -193,6 +253,41 @@ pub struct Rescue {
     pub(super) wet_since: Option<u64>,
     pub(super) stalled: ([i32; 3], u8),
     pub(super) burrow_from: [i32; 3],
+    approach: Option<Approach>,
+}
+
+/// The fewest moves to a walk's goal so far, across every leg of the walk.
+struct Approach {
+    goal: [i32; 3],
+    closest: i32,
+    at: u64,
+    seen: u64,
+}
+
+impl Rescue {
+    /// True once a walk has come no closer to `goal` for `CIRCLING` ticks, however its legs change.
+    pub(super) fn circling(&mut self, goal: [i32; 3], moves: i32, now: u64) -> bool {
+        use super::tuning::patience::{CIRCLING, CIRCLING_GAP};
+        match &mut self.approach {
+            Some(a) if a.goal == goal && now <= a.seen + CIRCLING_GAP => {
+                a.seen = now;
+                if moves < a.closest {
+                    a.closest = moves;
+                    a.at = now;
+                }
+                now > a.at + CIRCLING
+            }
+            approach => {
+                *approach = Some(Approach {
+                    goal,
+                    closest: moves,
+                    at: now,
+                    seen: now,
+                });
+                false
+            }
+        }
+    }
 }
 
 #[derive(Default)]

@@ -1,9 +1,14 @@
 use crate::host::prelude::*;
 
 use super::{defer_task, Flow, Round};
-use crate::geometry::{manhattan, offset};
+use crate::geometry::{manhattan, offset, FACES};
 use crate::project::{Project, Projects};
-use crate::worker::tuning::patience::SCAFFOLD_TRIES;
+use crate::survey::Known;
+use crate::worker::crew::Room;
+use crate::worker::route;
+use crate::worker::tuning::patience::{
+    ROOM_AFTER, ROOM_PATIENCE, ROOM_REACHES, ROOM_ROUND, ROOM_ROUNDS, SCAFFOLD_TRIES,
+};
 use crate::worker::tuning::reach::{COVER, TRIM_REACH};
 use crate::worker::tuning::waits::{OUT_OF_REACH, SEALED_WAIT};
 use crate::worker::upkeep::open_block;
@@ -147,6 +152,7 @@ pub(super) fn fall_out(
         trace!("TRACE leaving the scaffold at {cell:?} standing");
         job.crew.scaffolding.shunned.forget(&cell);
         job.crew.scaffolding.left_standing += 1;
+        job.crew.scaffolding.left.insert(cell);
         job.crew.scaffolding.urgent.retain(|c| *c != cell);
         projects.update(job.id, |p| p.scaffolds.retain(|c| *c != cell));
         return None;
@@ -188,4 +194,146 @@ pub(super) fn dig_on(
         return Flow::Go(step);
     }
     Flow::Pass
+}
+
+/// Work no stance can place gets room from another side, as a player would make it: a finished
+/// neighbour the worker can get at comes down, the work goes in through the gap, and the neighbour
+/// is built again. Each neighbour is tried once per piece of work.
+pub(super) fn make_room(
+    ctx: &mut Ctx,
+    _projects: &mut Projects,
+    job: &mut Job,
+    body: &Body,
+    _round: &mut Round,
+) -> Flow {
+    if let Some(room) = job.crew.access.room {
+        if ctx.now < room.since + ROOM_PATIENCE {
+            return Flow::Pass;
+        }
+        // A neighbour never taken down was no try: the worker could not get to it in time, and
+        // it is offered again a few times.
+        let taken_down = job
+            .survey
+            .as_ref()
+            .is_some_and(|s| !matches!(s.known[room.through], Known::Satisfied));
+        let pair = (room.unit, room.through);
+        if taken_down || !job.crew.access.unreached_rooms.within(pair, ROOM_REACHES) {
+            trace!(
+                "TRACE room through Unit({}) did not get Unit({}) placed",
+                room.through,
+                room.unit
+            );
+            job.crew.access.roomed.insert(pair);
+        }
+        job.crew.access.reopened.remove(&room.through);
+        job.crew.access.room = None;
+    }
+    if ctx.now < job.crew.pace.progress_at + ROOM_AFTER || job.access_plan.score() != Some(0) {
+        return Flow::Pass;
+    }
+    let Some(survey) = job.survey.as_ref() else {
+        return Flow::Pass;
+    };
+    let mut stuck: Vec<usize> = job
+        .crew
+        .access
+        .unreachable
+        .iter()
+        .chain(&job.crew.access.abandoned)
+        .copied()
+        .filter(|i| matches!(survey.known[*i], Known::Place(_)) && !job.crew.built.contains(i))
+        .collect();
+    stuck.sort_unstable_by_key(|i| (manhattan(job.design.units[*i].pos, body.cell), *i));
+    stuck.dedup();
+    let Some(region) = route::region(ctx, body.cell, false, &[]).flatten() else {
+        return Flow::Pass;
+    };
+    let approachable = |cell: [i32; 3], beside: &[[i32; 3]]| {
+        FACES.iter().any(|f| {
+            let m = offset(cell, *f);
+            !beside.contains(&m) && (region.contains(m) || region.contains(offset(m, [0, -1, 0])))
+        })
+    };
+    let mut spent = Vec::new();
+    for unit in stuck {
+        let cells = job.design.cells(job.design.units[unit]);
+        let mut through: Vec<(bool, bool, usize)> = Vec::new();
+        for cell in &cells {
+            for face in FACES {
+                let n = offset(*cell, face);
+                let Some(j) = job.design.unit_at(n) else {
+                    continue;
+                };
+                let u = job.design.units[j];
+                let why = if cells.contains(&n) {
+                    "own"
+                } else if !matches!(survey.known[j], Known::Satisfied) {
+                    "open"
+                } else if !matches!(job.design.plan(u), crate::design::Plan::Build { .. })
+                    || job.design.cells(u).len() != 1
+                    || job.design.fragile(u)
+                {
+                    "kept"
+                } else if !job.access_plan.can_clear(n) {
+                    "not clearable"
+                } else if job.crew.access.roomed.contains(&(unit, j)) {
+                    "tried"
+                } else if through.iter().any(|(_, _, k)| *k == j) {
+                    "listed"
+                } else {
+                    ""
+                };
+                if !why.is_empty() {
+                    trace!("TRACE room for Unit({unit}) not through Unit({j}) at {n:?}: {why}");
+                    continue;
+                }
+                let plain = job.design.records[u.record as usize].state.is_empty();
+                through.push((!approachable(n, &cells), !plain, j));
+            }
+        }
+        through.sort_unstable();
+        if through.is_empty() {
+            spent.push(unit);
+            continue;
+        }
+        if let Some(&(_, _, j)) = through.first() {
+            trace!(
+                "TRACE making room for Unit({unit}) at {:?} through Unit({j}) at {:?}",
+                job.design.units[unit].pos,
+                job.design.units[j].pos
+            );
+            job.crew.access.room = Some(Room {
+                unit,
+                through: j,
+                since: ctx.now,
+            });
+            return Flow::Pass;
+        }
+    }
+    let now = ctx.now;
+    for unit in spent {
+        spent_rooms(now, job, unit);
+    }
+    Flow::Pass
+}
+
+/// Every neighbour of `unit` has had its turn as a room. After a while they get another turn, the
+/// world around having changed since; after the last round the work is given up on.
+fn spent_rooms(now: u64, job: &mut Job, unit: usize) {
+    let access = &mut job.crew.access;
+    if !access.roomed.iter().any(|(u, _)| *u == unit) {
+        return;
+    }
+    let since = *access.rooms_spent.entry(unit).or_insert(now);
+    if now < since + ROOM_ROUND {
+        return;
+    }
+    access.rooms_spent.remove(&unit);
+    if access.room_rounds.within(unit, ROOM_ROUNDS) {
+        access.roomed.retain(|(u, _)| *u != unit);
+        access.unreached_rooms.retain(|(u, _)| *u != unit);
+    } else {
+        trace!("TRACE giving up on Unit({unit})");
+        access.given_up.insert(unit);
+    }
 }

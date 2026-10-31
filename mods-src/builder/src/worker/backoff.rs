@@ -97,4 +97,8 @@ impl<K: Eq + Hash> Tries<K> {
     pub fn forget(&mut self, key: &K) {
         self.tries.remove(key);
     }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
+        self.tries.retain(|k, _| keep(k));
+    }
 }

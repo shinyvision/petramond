@@ -1,5 +1,3 @@
-use crate::geometry::FACES;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Bounds {
     pub min: [i32; 3],
@@ -33,8 +31,20 @@ impl Bounds {
         ]
     }
 
+    /// The face neighbours of a cell, in `FACES` order.
     pub fn neighbours(self, index: usize) -> [Option<usize>; 6] {
-        let cell = self.cell(index);
-        FACES.map(|f| self.index(std::array::from_fn(|a| cell[a] + f[a])))
+        let [sx, sy, sz] = self.size;
+        let layer = sx * sz;
+        let x = index % sx;
+        let z = index / sx % sz;
+        let y = index / layer;
+        [
+            (x + 1 < sx).then(|| index + 1),
+            (x > 0).then(|| index - 1),
+            (y + 1 < sy).then(|| index + layer),
+            (y > 0).then(|| index - layer),
+            (z + 1 < sz).then(|| index + sx),
+            (z > 0).then(|| index - sx),
+        ]
     }
 }

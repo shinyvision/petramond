@@ -57,7 +57,7 @@ pub fn begin(
     {
         return Step::Plan;
     }
-    if matches!(task, Task::Reopen(_)) && !job.access_plan.opens(task) {
+    if matches!(task, Task::Reopen(_)) && !may_reopen(job, task) {
         return Step::Plan;
     }
     match task {
@@ -164,6 +164,16 @@ fn prop(
     }
 }
 
+/// A finished block comes down only to open sealed work or to give stuck work room.
+fn may_reopen(job: &Job, task: Task) -> bool {
+    job.access_plan.opens(task)
+        || job
+            .crew
+            .access
+            .room
+            .is_some_and(|room| task == Task::Reopen(room.through))
+}
+
 pub fn dig(
     ctx: &mut Ctx,
     projects: &mut Projects,
@@ -173,7 +183,7 @@ pub fn dig(
     cell: [i32; 3],
     since: u64,
 ) -> Step {
-    if matches!(task, Task::Reopen(_)) && !job.access_plan.opens(task) {
+    if matches!(task, Task::Reopen(_)) && !may_reopen(job, task) {
         return Step::Plan;
     }
     let collect = !matches!(task, Task::Trim(_));
@@ -228,6 +238,10 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                         }
                     }
                     job.crew.access.unreachable.remove(&i);
+                    job.crew.access.abandoned.remove(&i);
+                    if job.crew.access.room.is_some_and(|room| room.unit == i) {
+                        job.crew.access.room = None;
+                    }
                     if let Some(props) = job.crew.faces.propped.remove(&i) {
                         job.crew.scaffolding.urgent.extend(props);
                     }
@@ -253,7 +267,18 @@ pub fn settle(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, task: Task)
                 if survey.known[o].open() {
                     job.crew.built.remove(&o);
                     job.crew.pace.cursor = job.crew.pace.cursor.min(o);
-                    for sealed in sealed {
+                    let opened = match job.crew.access.room.as_mut() {
+                        Some(room) if room.through == o => {
+                            room.since = ctx.now;
+                            vec![room.unit]
+                        }
+                        _ => sealed,
+                    };
+                    job.crew
+                        .access
+                        .reopened
+                        .insert(o, (opened.clone(), ctx.now));
+                    for sealed in opened {
                         let task = Task::Unit(sealed);
                         job.crew.access.unreachable.remove(&sealed);
                         job.crew.deferrals.deferred.lift(&task);
@@ -332,6 +357,13 @@ fn refused(ctx: &mut Ctx, job: &mut Job, task: Task, refusal: ActionRefusal) {
             return;
         }
     };
+    // The access check refused the prop at execution; nothing in planning asks it, so it must wait.
+    if refusal == ActionRefusal::Changed && matches!(task, Task::Support { .. }) {
+        job.crew
+            .deferrals
+            .defer(task, ctx.now + super::tuning::waits::SEALED_WAIT);
+        return;
+    }
     if refusal == ActionRefusal::NoFace && matches!(task, Task::Unit(_)) {
         let fragile = job.design.fragile(job.design.units[i]);
         if job.crew.faces.faceless_try(i, ctx.now) && !fragile {

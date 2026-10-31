@@ -36,6 +36,28 @@ pub mod price {
 pub mod patience {
     pub const NOWHERE_STANDS: u64 = 100;
     pub const NOTHING_LANDED: u64 = 1200;
+    pub const REBUILDS: u8 = 2;
+    /// How long a finished job waits for smothered ground cover to take again from its neighbours.
+    pub const REGROW_PATIENCE: u64 = 12_000;
+    /// How long planning may keep waiting on answers before the worker asks from somewhere else.
+    pub const BUSY_PATIENCE: u64 = 1200;
+    /// How long open work nothing offers holds a job from winding down before it is reported unbuilt.
+    pub const UNBUILT_PATIENCE: u64 = 12_000;
+    /// How long a block taken down to open sealed work stays down while that work is still open.
+    pub const REOPENED: u64 = 2400;
+    /// Ticks without progress before sealed work nothing opens is set aside.
+    pub const UNSEAL_PATIENCE: u64 = 2400;
+    /// Ticks without progress before finished blocks are taken down to give stuck work room.
+    pub const ROOM_AFTER: u64 = 600;
+    /// How long a block taken down for room stays down before the next neighbour is tried.
+    pub const ROOM_PATIENCE: u64 = 3600;
+    /// How long after every neighbour had its turn as a room they get another round.
+    pub const ROOM_ROUND: u64 = 6000;
+    pub const ROOM_ROUNDS: u8 = 2;
+    /// How often a room is offered again when the worker never got to its neighbour.
+    pub const ROOM_REACHES: u8 = 3;
+    /// Landings a piece of work gets before no more approach pillars are raised for it.
+    pub const LANDINGS: u8 = 3;
     pub const BAND_PATIENCE: u64 = 900;
     pub const GLAZE_PATIENCE: u64 = NOTHING_LANDED;
     pub const DUE_PATIENCE: u64 = NOTHING_LANDED;
@@ -52,6 +74,8 @@ pub mod patience {
     pub const ASTRAY_MOVES: i32 = 5;
     pub const OFF_ROUTE_TICKS: u64 = 30;
     pub const WALK_STALL: u64 = 160;
+    pub const CIRCLING: u64 = 400;
+    pub const CIRCLING_GAP: u64 = 40;
     pub const WALK_STALLS: u8 = 3;
     pub const CENTRE_TICKS: u64 = 12;
     pub const CHEST_CENTRE_TICKS: u64 = 40;
@@ -113,7 +137,8 @@ pub mod reach {
     pub const PILLAR_ROUTES: usize = 4;
     pub const ONWARD_STANCES: usize = 4;
     pub const ONWARD_TOPS: usize = 8;
-    pub const ONWARD_SPAN: i32 = 16;
+    pub const ONWARD_COLUMNS: usize = 48;
+    pub const APPROACHES: usize = 2;
     pub const WALKWAY_LENGTH: i32 = 8;
     pub const WALKWAY_CHAIN: usize = 24;
     pub const FOOTHOLDS: usize = 64;
@@ -144,6 +169,8 @@ pub mod access {
     pub const FACE_END_EPS: f64 = 1e-4;
     pub const DIG_COST: f32 = 10.0;
     pub const RESTORE_COST: u32 = 20;
+    pub const REBUILD_EVERY: u64 = 100;
+    pub const CHANGED_MAX: usize = 64;
 }
 
 pub mod route {
@@ -154,6 +181,9 @@ pub mod route {
     pub const NEAR: i32 = 12;
     pub const HUBS: usize = 3;
     pub const REGION_NODES: u32 = 12_000;
+    pub const FLOOD_SLACK: u32 = 64;
+    /// Cells under a closed cell whose footholds it can spoil: the golem's body and the head room of a jump.
+    pub const BODY_CELLS: i32 = 3;
     pub const LEG: i32 = 12;
     pub const SHORT: u32 = 600;
     pub const SITE_SETTLE_TICKS: u64 = 60;

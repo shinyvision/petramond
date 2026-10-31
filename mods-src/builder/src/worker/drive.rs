@@ -223,7 +223,7 @@ fn run(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job, body: &Body, step:
 
 pub(super) fn arrive(
     ctx: &mut Ctx,
-    projects: &mut Projects,
+    _projects: &mut Projects,
     job: &mut Job,
     body: &Body,
     then: Then,
@@ -242,10 +242,8 @@ pub(super) fn arrive(
             placed: false,
             since: ctx.now,
         },
-        Then::Home => {
-            projects.update(job.id, crate::project::Project::burrow);
-            Step::Burrow { t: 0 }
-        }
+        // Home is where the last checks before leaving the site are made.
+        Then::Home => Step::Plan,
         Then::Regroup => Step::Plan,
         Then::Course(_) => {
             job.crew.aloft.settle_until = ctx.now + COURSE_SETTLE_TICKS;

@@ -72,34 +72,58 @@ fn protected(ctx: &mut Ctx, stack: &ItemStackData) -> bool {
     stack.item == BLUEPRINT || tool_kind(ctx, &stack.item).is_some()
 }
 
-pub(super) fn slots_used(
-    ctx: &mut Ctx,
-    slots: &[Option<ItemStackData>],
-    items: &BTreeMap<ItemKey, u32>,
-) -> usize {
-    let mut left = items.clone();
-    let mut room: BTreeMap<ItemKey, u32> = BTreeMap::new();
-    let mut used = 0;
-    for stack in slots.iter().flatten() {
-        if protected(ctx, stack) {
-            used += 1;
-            continue;
+/// The slots a load takes. An item's share depends only on its own count and the stacks of it
+/// already carried, so a load can be priced item by item without recounting the rest.
+pub(super) struct Packing {
+    protected: usize,
+    carried: BTreeMap<ItemKey, (Vec<u32>, u32)>,
+}
+
+impl Packing {
+    pub fn new(ctx: &mut Ctx, slots: &[Option<ItemStackData>]) -> Self {
+        let mut protected_slots = 0;
+        let mut carried: BTreeMap<ItemKey, (Vec<u32>, u32)> = BTreeMap::new();
+        for stack in slots.iter().flatten() {
+            if protected(ctx, stack) {
+                protected_slots += 1;
+                continue;
+            }
+            let max = u32::from(ctx.caches.max_stack(&stack.item));
+            let entry = carried.entry(key_of(stack)).or_insert((Vec::new(), max));
+            entry.0.push(u32::from(stack.count));
         }
-        let key = key_of(stack);
-        let keep = left.entry(key.clone()).or_default();
-        let count = (*keep).min(u32::from(stack.count));
-        if count > 0 {
-            used += 1;
-            *keep -= count;
-            *room.entry(key).or_default() +=
-                u32::from(ctx.caches.max_stack(&stack.item)).saturating_sub(count);
+        Self {
+            protected: protected_slots,
+            carried,
         }
     }
-    for (key, count) in left {
-        let extra = count.saturating_sub(room.get(&key).copied().unwrap_or(0));
-        used += (extra as usize).div_ceil(ctx.caches.max_stack(&key.0) as usize);
+
+    /// Slots `count` of `key` takes, topping up carried stacks before opening new ones.
+    pub fn slots(&self, ctx: &mut Ctx, key: &ItemKey, count: u32) -> usize {
+        let mut left = count;
+        let mut used = 0;
+        let mut room = 0u32;
+        if let Some((stacks, max)) = self.carried.get(key) {
+            for &held in stacks {
+                let take = left.min(held);
+                if take > 0 {
+                    used += 1;
+                    left -= take;
+                    room += max.saturating_sub(take);
+                }
+            }
+        }
+        let extra = left.saturating_sub(room);
+        used + (extra as usize).div_ceil(ctx.caches.max_stack(&key.0) as usize)
     }
-    used
+
+    pub fn total(&self, ctx: &mut Ctx, items: &BTreeMap<ItemKey, u32>) -> usize {
+        self.protected
+            + items
+                .iter()
+                .map(|(key, count)| self.slots(ctx, key, *count))
+                .sum::<usize>()
+    }
 }
 
 pub(super) fn fill(
@@ -110,14 +134,14 @@ pub(super) fn fill(
     count: u32,
     room: usize,
 ) {
+    let packing = Packing::new(ctx, slots);
     let held = items.get(&key).copied().unwrap_or(0);
+    let others = packing.total(ctx, items) - packing.slots(ctx, &key, held);
     let mut low = held;
     let mut high = count.max(held);
     while low < high {
         let count = low + (high - low).div_ceil(2);
-        let mut next = items.clone();
-        next.insert(key.clone(), count);
-        if slots_used(ctx, slots, &next) <= room {
+        if others + packing.slots(ctx, &key, count) <= room {
             low = count;
         } else {
             high = count - 1;

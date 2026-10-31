@@ -8,7 +8,7 @@ use crate::worker::route::{self, Hubs};
 use crate::worker::stance::Search;
 use crate::worker::step::Task;
 use crate::worker::tuning::price::{LEVEL_MOVES, MOUNT_MOVES, UNWALKED};
-use crate::worker::tuning::reach::{COLUMNS, MAX_HEIGHT, PILLAR_ROUTES};
+use crate::worker::tuning::reach::{APPROACHES, COLUMNS, MAX_HEIGHT, PILLAR_ROUTES};
 use crate::worker::tuning::window::WEIGHED;
 use crate::worker::Job;
 use crate::worker::{open_block, plan, sight, Body, Ctx};
@@ -70,7 +70,8 @@ pub fn find(
     });
     let viable = viable(ctx, job, project, body, task, cells, perches);
     let viable = by_trip(ctx, job, body, open, low, viable);
-    choose(ctx, job, project, body, cells, viable)
+    let approach = !job.crew.access.no_approach.contains(&task);
+    choose(ctx, job, project, body, cells, viable, approach)
 }
 
 fn perches_for(job: &Job, task: Task, cells: &[[i32; 3]], low: [i32; 3]) -> Vec<[i32; 3]> {
@@ -123,14 +124,18 @@ fn viable(
         if viable.len() == COLUMNS * 3 {
             break;
         }
-        if refusal.is_some() {
+        if refusal.is_some()
+            || job
+                .crew
+                .scaffolding
+                .refused
+                .holds(&[perch[0], perch[2]], ctx.now)
+        {
             continue;
         }
         if let Some(base) = column_base(ctx, job, project, [perch[0], perch[2]], perch[1], cells) {
             let foot = [perch[0], base, perch[2]];
-            if !route::failed_recently(ctx, foot, project.home)
-                && !viable.iter().any(|(p, b)| [p[0], *b, p[2]] == foot)
-            {
+            if !viable.iter().any(|(p, b)| [p[0], *b, p[2]] == foot) {
                 viable.push((perch, base));
             }
         }
@@ -209,6 +214,7 @@ fn choose(
     body: &Body,
     cells: &[[i32; 3]],
     mut viable: Vec<([i32; 3], i32)>,
+    approach: bool,
 ) -> Search<Pillar> {
     viable.truncate(COLUMNS);
     let mut asks = Vec::new();
@@ -224,6 +230,8 @@ fn choose(
     };
     let mut routed = 0;
     let mut rejected = Vec::new();
+    let mut one_way = None;
+    let mut unwalked = Vec::new();
     for (i, (perch, base)) in viable.into_iter().enumerate() {
         let at = i * 5;
         if !standing[at] {
@@ -244,6 +252,12 @@ fn choose(
         if foot == body.cell {
             return Search::Found(pillar);
         }
+        if route::failed_recently(ctx, foot, project.home) {
+            one_way.get_or_insert(pillar);
+            unwalked.push(foot);
+            rejected.push((foot, "failed recently"));
+            continue;
+        }
         if routed == PILLAR_ROUTES {
             break;
         }
@@ -251,8 +265,31 @@ fn choose(
         let hubs = Hubs::new(project.home, &job.crew.trail);
         match route::round_trip(ctx, hubs, foot) {
             Some(true) => return Search::Found(pillar),
-            Some(false) => rejected.push((foot, "no round trip")),
+            Some(false) => {
+                one_way.get_or_insert(pillar);
+                unwalked.push(foot);
+                rejected.push((foot, "no round trip"));
+            }
             None => return Search::Busy,
+        }
+    }
+    // A pillar whose foot only a one-way walk reaches still gets the work done: the worker
+    // comes back down it and leaves by rescue.
+    if let Some(pillar) = one_way {
+        let foot = pillar.foot_cell();
+        let walkable = route::region(ctx, body.cell, false, &[]).flatten();
+        if foot == body.cell || walkable.is_some_and(|region| region.contains(foot)) {
+            return Search::Found(pillar);
+        }
+    }
+    // A foot on ground no walk reaches, such as a lower roof, is reached by a pillar of its own first.
+    for foot in unwalked
+        .into_iter()
+        .take(if approach { APPROACHES } else { 0 })
+    {
+        match super::onward::up_to(ctx, job, project, cells, foot) {
+            Search::None | Search::Unseen => {}
+            found => return found,
         }
     }
     trace!(

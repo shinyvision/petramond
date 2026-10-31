@@ -77,6 +77,9 @@ pub const TRACE: bool = false;
 
 /// The engine behavior that swings a door open and shut when used.
 pub(crate) const DOOR_BEHAVIOR: &str = "door";
+/// The engine behaviors of ground cover (grass) and the bare block it grows back onto (dirt).
+pub(crate) const COVER_BEHAVIOR: &str = "cover";
+pub(crate) const BARE_BEHAVIOR: &str = "bare";
 
 /// A door a golem can open by using it, as its block row says.
 pub(crate) fn swings(info: &mod_sdk::BlockInfoData) -> bool {
@@ -163,6 +166,9 @@ pub fn tick(ctx: &mut Ctx, projects: &mut Projects, job: &mut Job) {
         }
     } else {
         job.crew.presence.asked_about = None;
+    }
+    if job.access_plan.behind() && plan::building(&project) {
+        pocket::refresh(ctx, job, &project);
     }
     act_out(ctx, projects, job, &project, &body);
     if !matches!(job.crew.step, Step::Plan) {

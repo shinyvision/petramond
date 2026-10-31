@@ -18,7 +18,7 @@ pub(super) fn heartbeat(ctx: &Ctx, job: &Job, body: &Body) {
         return;
     }
     log(&format!(
-        "TRACE heartbeat t={} at {:?} waiting on {} stuck {} way_in {:?} shut out {} deferred {}",
+        "TRACE heartbeat t={} at {:?} waiting on {} stuck {} way_in {:?} shut out {} deferred {} unchecked {:?} access {}",
         ctx.now,
         body.cell,
         job.crew.why.label(),
@@ -30,6 +30,11 @@ pub(super) fn heartbeat(ctx: &Ctx, job: &Job, body: &Body) {
             .map(|(w, _)| w.first().copied()),
         job.crew.access.unreachable.len(),
         job.crew.deferrals.deferred.len(),
+        job.survey
+            .as_ref()
+            .and_then(|s| s.summary())
+            .map(|s| s.unchecked),
+        job.access_plan.describe(),
     ));
 }
 

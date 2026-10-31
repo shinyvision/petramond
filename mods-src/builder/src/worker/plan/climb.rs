@@ -94,7 +94,11 @@ pub(super) fn pillars(
             }
             stance::Search::None | stance::Search::Unseen => {}
         }
-        let onward = pillar::find_onward(ctx, job, project, body, *task, &cells);
+        let onward = if job.crew.access.no_approach.contains(task) {
+            stance::Search::None
+        } else {
+            pillar::find_onward(ctx, job, project, body, *task, &cells)
+        };
         match onward {
             stance::Search::Found(pillar) => {
                 match climb_toward(ctx, job, round, hubs, body, *task, &cells, pillar) {

@@ -218,6 +218,7 @@ fn all_regions_are_unsealed_before_building_and_shared_access_stays_open() {
         act::settle(ctx, projects, job, Task::Unit(far));
         act::settle(ctx, projects, job, Task::Unit(obstruction));
         let project = projects.get(id).unwrap().clone();
+        job.access_plan.want_current();
         assert!(pocket::refresh(ctx, job, &project));
         assert_eq!(
             pocket::seals(ctx, job, a_head),
@@ -279,6 +280,7 @@ fn deferred_openings_do_not_starve_later_regions_out_of_the_search_window() {
             spots: Vec::new(),
             future: Vec::new(),
             supplies: super::super::supply::Requests::default(),
+            stranded: false,
         };
         access::recover(ctx, projects, job, &body, &mut round);
         assert_eq!(round.candidates, vec![last]);
@@ -306,6 +308,90 @@ fn unread_access_never_reports_a_zero_score_or_allows_placement() {
                 None
             ),
             hands::Lay::Refused(ActionRefusal::Changed)
+        );
+    });
+}
+
+#[test]
+fn an_out_of_date_graph_keeps_building_but_counts_every_cell_closed_since() {
+    let inside = [4, 0, 8];
+    let gate_a = [[3, 0, 5], [3, 1, 5]];
+    let gate_b = [[5, 0, 5], [5, 1, 5]];
+    let mut cells = vec![(inside, "petramond:stone")];
+    cells.extend(
+        gate_a
+            .iter()
+            .chain(&gate_b)
+            .map(|c| (*c, "petramond:stone")),
+    );
+    let (mut session, id) = Session::site("Two gates", [9, 3, 10], &cells);
+    session.world.fill([2, -1, 5], [6, 2, 9], BEDROCK);
+    session.world.fill([3, 0, 6], [5, 1, 8], AIR);
+    for c in gate_a.iter().chain(&gate_b) {
+        session.world.set(*c, AIR);
+    }
+    session.job(id);
+    session.golem(id, HOME, [4, 0, 2]);
+    let stone = CellRecord::of("petramond:stone");
+    let a: Vec<_> = gate_a.iter().map(|c| unit(&session, id, *c)).collect();
+    let world = std::rc::Rc::clone(&session.world);
+    at_work(&mut session, id, |ctx, projects, job| {
+        let project = projects.get(id).unwrap().clone();
+        assert_eq!(job.access_plan.score(), Some(0));
+        assert!(
+            pocket::placement(ctx, job, gate_b[0], &stone),
+            "the other gate keeps the room open"
+        );
+        for c in gate_a {
+            world.set(c, STONE);
+        }
+        job.access_plan.changed(&gate_a, false);
+        if let Some(survey) = &mut job.survey {
+            survey.measure(&job.design, &a);
+        }
+        job.access_plan.starve_sight(ctx.now);
+        assert!(pocket::refresh(ctx, job, &project));
+        assert!(
+            !job.access_plan.fresh(),
+            "the sight survey has no budget left"
+        );
+        assert_eq!(job.access_plan.score(), Some(0));
+        assert!(
+            !pocket::placement(ctx, job, gate_b[0], &stone),
+            "the closed gate counts although the graph predates it"
+        );
+        assert!(pocket::placement(ctx, job, [8, 0, 0], &stone));
+    });
+}
+
+#[test]
+fn a_pit_the_worker_can_drop_into_but_not_climb_out_of_is_no_working_stance() {
+    let hollow = [7, 0, 6];
+    let pit = [[6, 0, 6], [6, 1, 6]];
+    let mut cells = Vec::new();
+    for x in 4..=8 {
+        for y in 0..=1 {
+            for z in 4..=8 {
+                if !pit.contains(&[x, y, z]) {
+                    cells.push(([x, y, z], "petramond:stone"));
+                }
+            }
+        }
+    }
+    let (mut session, id) = Session::site("Pit", [10, 3, 10], &cells);
+    session.world.fill([4, 0, 4], [8, 1, 8], STONE);
+    session.world.set([3, 0, 6], STONE);
+    for c in pit.iter().chain([&hollow]) {
+        session.world.set(*c, AIR);
+    }
+    session.job(id);
+    session.golem(id, HOME, [2, 0, 6]);
+    at_work(&mut session, id, |_, _, _| {});
+    at_work(&mut session, id, |_, _, job| {
+        assert_eq!(
+            job.access_plan.score(),
+            Some(1),
+            "only the pit bottom works the hollow, and nothing walks back out of the pit"
         );
     });
 }

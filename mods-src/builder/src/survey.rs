@@ -130,9 +130,16 @@ pub struct Survey {
     by_cell: HashMap<[i32; 3], Vec<u32>>,
     stepped: u64,
     sweep: usize,
+    /// The lowest unit that went from satisfied back to open since it was last taken.
+    reopened: Option<usize>,
 }
 
 impl Survey {
+    /// The lowest unit finished once and open again: scans that already passed it look again.
+    pub fn take_reopened(&mut self) -> Option<usize> {
+        self.reopened.take()
+    }
+
     pub fn new(design: &Design) -> Self {
         let known: Vec<Known> = design
             .units
@@ -168,6 +175,7 @@ impl Survey {
             waiting: Vec::new(),
             by_cell,
             stepped: 0,
+            reopened: None,
             sweep: 0,
         }
     }
@@ -259,6 +267,9 @@ impl Survey {
                 self.waiting.push(i);
             }
             if known != self.known[i] {
+                if !self.known[i].open() && known.open() {
+                    self.reopened = Some(self.reopened.map_or(i, |r| r.min(i)));
+                }
                 self.revision += 1;
                 let cost = design.cost(design.units[i]);
                 self.totals.count(&self.known[i], cost, false);

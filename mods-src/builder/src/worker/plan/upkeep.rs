@@ -5,9 +5,10 @@ use crate::geometry::offset;
 use crate::project::Projects;
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::every::HOME_CHECK_EVERY;
+use crate::worker::tuning::patience::LANDINGS;
 use crate::worker::waiting::Waiting;
 use crate::worker::Job;
-use crate::worker::{lifecycle, pillar, rescue, site, wayin, Body, Ctx, Step};
+use crate::worker::{lifecycle, pillar, rescue, scaffold, site, wayin, Body, Ctx, Step};
 
 pub(super) fn reconcile_scaffolds(
     ctx: &mut Ctx,
@@ -23,7 +24,7 @@ pub(super) fn reconcile_scaffolds(
             .scaffolds
             .iter()
             .zip(blocks)
-            .filter(|(_, b)| b.is_some_and(|b| ctx.content.scaffold_kind(b).is_none()))
+            .filter(|(_, b)| b.is_some_and(|b| !scaffold::still_standing(ctx, b)))
             .map(|(c, _)| *c)
             .collect();
         if !gone.is_empty() {
@@ -139,7 +140,7 @@ pub(super) fn way_out(
                 if let Some(step) = wayin::off_threshold(ctx, hubs, body) {
                     return Flow::Go(step);
                 }
-                return Flow::Go(rescue::rescue(ctx, job, body, project));
+                round.stranded = true;
             }
             Some(Route::Open) => {
                 job.crew.rescue.stuck = None;
@@ -148,6 +149,29 @@ pub(super) fn way_out(
         }
     }
     Flow::Pass
+}
+
+/// Leaves a place no walk leads home from once nothing more can be worked from it.
+pub(super) fn leave_stranded(
+    ctx: &mut Ctx,
+    _projects: &mut Projects,
+    job: &mut Job,
+    body: &Body,
+    round: &mut Round,
+) -> Flow {
+    if !round.stranded {
+        return Flow::Pass;
+    }
+    if let Some(task) = job.crew.aloft.landed_for.take() {
+        if !job.crew.access.failed_landings.within(task, LANDINGS) {
+            trace!("TRACE landings for {task:?} got nowhere: no more approaches");
+            job.crew.access.no_approach.insert(task);
+            if let crate::worker::Task::Unit(i) = task {
+                job.crew.access.unreachable.insert(i);
+            }
+        }
+    }
+    Flow::Go(rescue::rescue(ctx, job, body, &round.project))
 }
 
 pub(super) fn surveyed(

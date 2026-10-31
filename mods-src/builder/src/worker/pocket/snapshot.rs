@@ -15,7 +15,7 @@ pub(super) enum Sample {
 pub(super) struct Snapshot {
     pub bounds: Bounds,
     pub samples: Vec<Sample>,
-    pub revision: u64,
+    changes: Vec<usize>,
     cursor: usize,
     dirty: HashSet<usize>,
     retry_at: u64,
@@ -27,7 +27,7 @@ impl Snapshot {
         Self {
             bounds,
             samples: vec![Sample::Unknown; bounds.len()],
-            revision: 0,
+            changes: Vec::new(),
             cursor: 0,
             dirty: HashSet::default(),
             retry_at: 0,
@@ -50,6 +50,11 @@ impl Snapshot {
             self.complete = false;
         }
         changed
+    }
+
+    /// Cells whose sample changed since the last call.
+    pub fn take_changes(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.changes)
     }
 
     pub fn read(&mut self, now: u64) -> bool {
@@ -86,8 +91,8 @@ impl Snapshot {
         for ((i, pos), block) in indices.into_iter().zip(positions).zip(blocks) {
             let sample = block.map_or(Sample::Unknown, Sample::Block);
             if self.samples[i] != sample {
-                self.revision += 1;
                 self.samples[i] = sample;
+                self.changes.push(i);
             }
             if block.is_none() {
                 unknown.push((i, pos))
@@ -103,7 +108,7 @@ impl Snapshot {
         for ((i, _), status) in unknown.into_iter().zip(statuses) {
             if matches!(status, RecordStatus::Unsupported { .. }) {
                 if self.samples[i] != Sample::Boundary {
-                    self.revision += 1;
+                    self.changes.push(i);
                 }
                 self.samples[i] = Sample::Boundary;
             }

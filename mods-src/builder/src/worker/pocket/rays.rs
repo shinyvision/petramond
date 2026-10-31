@@ -17,12 +17,17 @@ impl Network {
         targets: &[(usize, [i32; 3])],
         stances: &[[i32; 3]],
     ) -> Self {
-        let mut columns: HashMap<[i32; 2], Vec<i32>> = HashMap::default();
+        let bounds = graph.bounds;
+        let column = |x: i32, z: i32| {
+            let (dx, dz) = (x - bounds.min[0], z - bounds.min[2]);
+            (dx >= 0 && dz >= 0 && (dx as usize) < bounds.size[0] && (dz as usize) < bounds.size[2])
+                .then(|| dx as usize + bounds.size[0] * dz as usize)
+        };
+        let mut columns: Vec<Vec<i32>> = vec![Vec::new(); bounds.size[0] * bounds.size[2]];
         for stance in stances {
-            columns
-                .entry([stance[0], stance[2]])
-                .or_default()
-                .push(stance[1]);
+            if let Some(c) = column(stance[0], stance[2]) {
+                columns[c].push(stance[1]);
+            }
         }
         let highest = stances.iter().map(|s| s[1]).max().unwrap_or(i32::MIN);
         let air_sealed: HashSet<_> = graph.sealed.iter().map(|w| graph.work[*w].unit).collect();
@@ -38,7 +43,7 @@ impl Network {
             let mut best: Option<(u32, Vec<Gate>)> = None;
             for x in target[0] - 4..=target[0] + 4 {
                 for z in target[2] - 4..=target[2] + 4 {
-                    for &y in columns.get(&[x, z]).into_iter().flatten() {
+                    for &y in column(x, z).map_or(&[][..], |c| &columns[c]) {
                         if !(target[1] - 5..=target[1] + 3).contains(&y)
                             || (!all_sides && y <= target[1])
                         {
@@ -69,6 +74,10 @@ impl Network {
 
     pub fn below(&self) -> impl Iterator<Item = usize> + '_ {
         self.below.iter().copied()
+    }
+
+    pub fn opens(&self, unit: usize) -> bool {
+        self.paths.get(&unit).is_some_and(|path| !path.is_empty())
     }
 
     pub fn openings(&self, units: &[usize]) -> Vec<Gate> {

@@ -13,15 +13,25 @@ pub enum Search<T> {
     Unseen,
 }
 
+/// Which stances a search takes besides those with a round trip home.
+#[derive(Clone, Copy)]
+pub struct Accept {
+    /// Not standing on top of the cells worked, as a dig needs.
+    pub off_top: bool,
+    /// Stances only a one-way walk reaches, left by rescue afterwards.
+    pub one_way: bool,
+}
+
 pub fn find(
     ctx: &mut Ctx,
     body: &Body,
     hubs: Hubs,
     cells: &[[i32; 3]],
     work: &super::sight::Work,
-    off_top: bool,
+    accept: Accept,
     usable: impl Fn([i32; 3]) -> bool,
 ) -> Search<[i32; 3]> {
+    let Accept { off_top, one_way } = accept;
     let target = cells[0];
     let mut candidates = Vec::new();
     for dy in -5..=3 {
@@ -83,6 +93,7 @@ pub fn find(
     let mut tried = Vec::new();
     let standing_count = candidates.len();
     let mut seen_any = false;
+    let mut one_ways = Vec::new();
     for (s, refusal) in candidates.into_iter().zip(sees) {
         if refusal.is_some() {
             continue;
@@ -91,11 +102,14 @@ pub fn find(
         if s == body.cell {
             return Search::Found(s);
         }
+        if one_way {
+            one_ways.push(s);
+        }
         if route::failed_recently(ctx, s, hubs.home) {
             continue;
         }
         if routed == STANCE_ROUTES {
-            break;
+            continue;
         }
         routed += 1;
         match route::round_trip(ctx, hubs, s) {
@@ -110,6 +124,14 @@ pub fn find(
     );
     if standing_count > 0 && !seen_any {
         return Search::Unseen;
+    }
+    // Work only one-way stances reach still gets done: the worker leaves afterwards by rescue.
+    let walkable = route::region(ctx, body.cell, false, &[]).flatten();
+    if let Some(s) = one_ways
+        .into_iter()
+        .find(|s| walkable.is_some_and(|region| region.contains(*s)))
+    {
+        return Search::Found(s);
     }
     Search::None
 }

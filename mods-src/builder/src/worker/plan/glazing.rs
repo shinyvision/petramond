@@ -15,6 +15,7 @@ pub(super) fn ways_through(job: &Job, ceiling: Option<i32>) -> HashSet<usize> {
         .iter()
         .enumerate()
         .skip(job.crew.pace.cursor)
+        .filter(|(_, known)| known.open())
         .take(SCAN)
         .filter(|(i, known)| {
             matches!(known, Known::Place(_))

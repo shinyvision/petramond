@@ -153,3 +153,96 @@ fn a_long_walk_goes_in_legs_toward_the_goal() {
         );
     });
 }
+
+#[test]
+fn a_walk_whose_legs_never_bring_the_goal_closer_is_given_up() {
+    use crate::worker::tuning::patience::CIRCLING;
+    use crate::worker::{walk::walk, Step, Task, Then};
+    let (mut session, id, golem) = working([-9, 0, -9]);
+    let body = session.body(golem);
+    let goal = [9, 0, 9];
+    at_work(&mut session, id, |ctx, projects, job| {
+        let then = Then::Task(Task::Unit(0));
+        let mut walked = 0;
+        loop {
+            ctx.now += 1;
+            let step = walk(
+                ctx,
+                projects,
+                job,
+                &body,
+                [-5, 0, -9],
+                goal,
+                then,
+                i32::MAX,
+                ctx.now,
+            );
+            if !matches!(step, Step::Walk { .. }) {
+                break;
+            }
+            walked += 1;
+            assert!(
+                walked <= CIRCLING + 1,
+                "every new leg restarts the walk's own progress"
+            );
+        }
+        assert!(walked >= CIRCLING);
+        assert!(job.crew.access.failed_stances.holds(&goal, ctx.now));
+    });
+}
+
+#[test]
+fn a_flood_outgrowing_the_last_one_from_its_origin_still_completes() {
+    let (mut session, id, _) = working([-9, 0, -9]);
+    at_work(&mut session, id, |ctx, _, _| {
+        ctx.regions.clear();
+        ctx.regions.hint(HOME, false, 1);
+        let region = route::region(ctx, HOME, false, &[])
+            .flatten()
+            .expect("a complete flood");
+        assert!(region.cells().count() > 100);
+    });
+}
+
+#[test]
+fn a_closed_cell_no_walk_touches_needs_no_flood_and_one_on_the_ground_does() {
+    let (mut session, id, _) = working([-9, 0, -9]);
+    at_work(&mut session, id, |ctx, _, _| {
+        ctx.regions.clear();
+        assert!(route::both_ways(ctx, HOME, &[]).flatten().is_some());
+    });
+    session.world.route_budget(Some(0));
+    at_work(&mut session, id, |ctx, _, _| {
+        let aloft = [HOME[0] + 2, HOME[1] + 6, HOME[2]];
+        assert!(
+            route::both_ways(ctx, HOME, &[aloft]).flatten().is_some(),
+            "a block out of every walk's reach changes neither flood"
+        );
+        let underfoot = [HOME[0] + 2, HOME[1], HOME[2]];
+        assert!(
+            route::both_ways(ctx, HOME, &[underfoot]).is_none(),
+            "a block where the worker walks is flooded for"
+        );
+    });
+}
+
+#[test]
+fn a_stepped_roof_too_high_to_step_onto_is_reached_by_a_pillar_at_its_lowest_edge() {
+    let (mut session, id, golem) = working([-9, 0, -9]);
+    session.world.fill([1, 2, -15], [13, 2, -3], STONE);
+    session.world.fill([5, 3, -11], [9, 3, -7], STONE);
+    let target = [7, 4, -9];
+    session.world.set(target, STONE);
+    let body = session.body(golem);
+    let pillar = at_work(&mut session, id, |ctx, projects, job| {
+        let project = projects.get(id).unwrap().clone();
+        let task = crate::worker::Task::Scaffold(target);
+        match crate::worker::pillar::find_onward(ctx, job, &project, &body, task, &[target]) {
+            crate::worker::stance::Search::Found(pillar) => pillar,
+            _ => panic!("a way onto the roof"),
+        }
+    });
+    assert_eq!(pillar.top, 3, "level with the roof's lowest step");
+    assert_eq!(pillar.base, 0, "standing on the ground");
+    assert!(pillar.onward.is_some_and(|s| s[1] == 4));
+}

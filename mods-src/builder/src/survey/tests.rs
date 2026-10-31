@@ -139,3 +139,24 @@ fn unsupported_work_is_counted_once_and_never_asked_about() {
         Known::Unsupported("Fluids cannot be built".into())
     );
 }
+
+#[test]
+fn a_unit_finished_and_undone_again_is_reported_for_scans_that_passed_it() {
+    let session = Session::flat(6);
+    let design = row(&session, None);
+    for (pos, _) in STONE_ROW {
+        session.world.set(pos, STONE);
+    }
+    let mut survey = Survey::new(&design);
+    survey.measure(&design, &[0, 1, 2]);
+    assert_eq!(
+        survey.take_reopened(),
+        None,
+        "a first reading reopens nothing"
+    );
+    session.world.set([1, 0, 0], crate::host::fake::rows::AIR);
+    session.world.set([2, 0, 0], crate::host::fake::rows::AIR);
+    survey.measure(&design, &[0, 1, 2]);
+    assert_eq!(survey.take_reopened(), Some(1), "the lowest reopened unit");
+    assert_eq!(survey.take_reopened(), None);
+}

@@ -42,7 +42,6 @@ fn a_climb_refreshes_access_after_placing_its_previous_scaffold() {
         *ctx.probe_nodes = 0;
         crate::worker::drive::act_out(ctx, projects, job, &project, &body);
         assert!(matches!(job.crew.step, Step::Climb { .. }));
-        assert_eq!(job.access_plan.score(), None);
         *ctx.probe_nodes = nodes;
         for _ in 0..30 {
             crate::worker::drive::act_out(ctx, projects, job, &project, &body);

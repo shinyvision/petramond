@@ -189,33 +189,61 @@ fn the_report_says_what_was_lost_and_what_was_left_standing() {
     let (mut session, id) = Session::row();
     session.world.fill([0, 0, 0], [2, 0, 0], STONE);
     session.job(id);
-    session.golem(id, HOME, HOME);
+    let golem = session.golem(id, HOME, HOME);
     session.world.set([0, 0, 0], crate::host::fake::rows::AIR);
     let west = unit(&session, id, [0, 0, 0]);
     let middle = unit(&session, id, [1, 0, 0]);
-    let Session { builder, .. } = &mut session;
-    let job = builder.jobs.map.get_mut(&id).unwrap();
-    job.crew.built.extend([west, middle]);
-    job.crew.scaffolding.left_standing = 2;
-    job.crew.note = "stale".into();
-    let survey = job.survey.as_mut().unwrap();
-    survey.measure(&job.design, &[west]);
-    assert_eq!(finish(&mut builder.projects, job), Step::Plan);
-    assert!(job.crew.note.is_empty());
-    let project = builder.projects.get(id).unwrap();
+    let body = session.body(golem);
+    at_work(&mut session, id, |ctx, projects, job| {
+        job.crew.built.extend([west, middle]);
+        job.crew.scaffolding.left_standing = 2;
+        job.crew.note = "stale".into();
+        let survey = job.survey.as_mut().unwrap();
+        survey.measure(&job.design, &[west]);
+        assert_eq!(finish(ctx, projects, job, &body), Step::Plan);
+        assert!(job.crew.note.is_empty());
+    });
+    let project = session.builder.projects.get(id).unwrap();
     assert_eq!(project.phase(), Phase::Returning);
     assert_eq!(
         project.note,
         Note::Report(Report {
             lost: 1,
             standing: 2,
-            chests_full: false
+            chests_full: false,
+            unbuilt: 0,
         })
     );
     assert_eq!(
         project.note.to_string(),
         "1 block was lost after it was placed; 2 scaffolds were out of reach and stand"
     );
+}
+
+#[test]
+fn open_work_nothing_offers_holds_the_wind_down_then_is_reported_unbuilt() {
+    let (mut session, id) = Session::row();
+    session.world.set([0, 0, 0], STONE);
+    session.world.set([2, 0, 0], STONE);
+    session.job(id);
+    let golem = session.golem(id, HOME, HOME);
+    session
+        .world
+        .give(ContainerAddress::Entity(golem), "petramond:stone", 3);
+    let body = session.body(golem);
+    at_work(&mut session, id, |ctx, projects, job| {
+        assert_eq!(finish(ctx, projects, job, &body), Step::Plan);
+        assert_eq!(
+            projects.get(id).unwrap().phase(),
+            Phase::Working,
+            "an open block is not a finished job"
+        );
+        ctx.now += crate::worker::tuning::patience::UNBUILT_PATIENCE;
+        assert_eq!(finish(ctx, projects, job, &body), Step::Plan);
+    });
+    let project = session.builder.projects.get(id).unwrap();
+    assert_eq!(project.phase(), Phase::Returning);
+    assert_eq!(project.note.to_string(), "1 block could not be built");
 }
 
 #[test]
@@ -255,6 +283,32 @@ fn the_world_is_asked_whether_a_block_would_go_in_before_anyone_is_sent() {
             .crew
             .deferrals
             .deferred(Task::Scaffold([4, 0, 4]), ctx.now + 49));
+    });
+}
+
+#[test]
+fn a_block_taken_down_to_open_work_stays_down_until_that_work_is_done_or_given_up() {
+    let (mut session, id, golem) = working(AT);
+    session
+        .world
+        .give(ContainerAddress::Entity(golem), "petramond:stone", 3);
+    let body = session.body(golem);
+    let gate = Task::Unit(unit(&session, id, [1, 0, 0]));
+    let opened = unit(&session, id, [0, 0, 0]);
+    at_work(&mut session, id, |ctx, _, job| {
+        let Task::Unit(g) = gate else { unreachable!() };
+        assert!(viability(ctx, job, &body, gate, body.pos) == Viable::Now);
+        job.crew.access.reopened.insert(g, (vec![opened], ctx.now));
+        assert!(
+            viability(ctx, job, &body, gate, body.pos) == Viable::Waits(SEALED_WAIT),
+            "the opening stays open while the work behind it is open"
+        );
+        ctx.now += crate::worker::tuning::patience::REOPENED;
+        assert!(
+            viability(ctx, job, &body, gate, body.pos) == Viable::Now,
+            "an opening that got nothing done in time closes for good"
+        );
+        assert!(job.crew.access.abandoned.contains(&opened));
     });
 }
 

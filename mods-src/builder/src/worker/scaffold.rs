@@ -147,6 +147,16 @@ pub fn stands(content: &crate::content::Content, cell: [i32; 3]) -> Option<bool>
     get_block(cell).map(|block| content.scaffold_kind(block).is_some())
 }
 
+/// Whether `block` standing where a scaffold was put is still that scaffold: a bare block (dirt)
+/// that took ground cover (grass) while it stood is one to strike all the same.
+pub fn still_standing(ctx: &mut Ctx, block: BlockId) -> bool {
+    ctx.content.scaffold_kind(block).is_some()
+        || ctx
+            .caches
+            .block(block)
+            .is_some_and(|info| info.behaviors.iter().any(|b| b == super::COVER_BEHAVIOR))
+}
+
 pub fn tools(
     ctx: &Ctx,
     slots: &[Option<ItemStackData>],

@@ -24,14 +24,17 @@ pub struct Report {
     pub lost: u32,
     pub standing: u32,
     pub chests_full: bool,
+    #[serde(default)]
+    pub unbuilt: u32,
 }
 
 impl Note {
-    pub fn report(lost: u32, standing: u32) -> Note {
+    pub fn report(lost: u32, standing: u32, unbuilt: u32) -> Note {
         let report = Report {
             lost,
             standing,
             chests_full: false,
+            unbuilt,
         };
         if report == Report::default() {
             Note::None
@@ -114,6 +117,11 @@ fn legacy_shortfall(text: &str) -> Option<Shortfall> {
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut told: Vec<String> = Vec::new();
+        match self.unbuilt {
+            0 => {}
+            1 => told.push("1 block could not be built".into()),
+            n => told.push(format!("{n} blocks could not be built")),
+        }
         match self.lost {
             0 => {}
             1 => told.push("1 block was lost after it was placed".into()),

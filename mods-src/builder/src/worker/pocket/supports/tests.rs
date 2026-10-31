@@ -18,7 +18,7 @@ fn future_footholds_need_a_clear_column_from_reachable_dry_ground() {
         raw.clone(),
         vec![Work {
             unit: 7,
-            contacts: vec![top],
+            contacts: vec![top].into(),
         }],
         base,
     );
@@ -26,10 +26,14 @@ fn future_footholds_need_a_clear_column_from_reachable_dry_ground() {
     graph.supports = columns(&graph, &raw, &HashSet::default());
     graph.physical([(7, vec![top])].into_iter().collect());
     assert!(graph.sealed.is_empty());
-    assert_eq!(graph.seals_ground(None, &[], &[], |c| c == [0, 0, 0]), None);
-    assert_eq!(graph.seals_ground(None, &[], &[], |_| false), Some(7));
+    let before = |c| c == [0, 0, 0];
+    assert_eq!(graph.seals_ground(None, &[], &[], before, before), None);
     assert_eq!(
-        graph.seals_ground(None, &[], &[[0, 2, 0]], |c| c == [0, 0, 0]),
+        graph.seals_ground(None, &[], &[], |_| false, before),
+        Some(7)
+    );
+    assert_eq!(
+        graph.seals_ground(None, &[], &[[0, 2, 0]], before, before),
         Some(7)
     );
     assert!(

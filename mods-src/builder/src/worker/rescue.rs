@@ -240,7 +240,8 @@ fn way_out(
         OUT_BELOW + OUT_ABOVE + 1,
         2 * OUT_AROUND + 1,
     ];
-    let mut grid = match ground(ctx, job, project, body, lo, size, false) {
+    // Coming up at home always remains, so a way out never breaks finished work.
+    let mut grid = match ground(ctx, job, project, body, lo, size, true) {
         Some(grid) => grid,
         None => return Lookout::Loading,
     };

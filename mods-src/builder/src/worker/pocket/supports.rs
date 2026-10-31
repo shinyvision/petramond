@@ -9,10 +9,17 @@ pub(super) fn columns(
     raw: &[Cell],
     governed: &HashSet<[i32; 3]>,
 ) -> HashMap<usize, usize> {
+    let mut shut = vec![false; graph.cells.len()];
+    for cell in governed {
+        if let Some(i) = graph.bounds.index(*cell) {
+            shut[i] = true;
+        }
+    }
+    let shut = |cell: [i32; 3]| graph.bounds.index(cell).is_some_and(|i| shut[i]);
     let mut columns: HashMap<usize, usize> = HashMap::default();
     for &base in &graph.ground {
         let foot = graph.bounds.cell(base);
-        if governed.contains(&foot) {
+        if shut(foot) {
             continue;
         }
         for height in 1..=MAX_HEIGHT {
@@ -23,8 +30,8 @@ pub(super) fn columns(
             let below = graph.bounds.index(offset(cell, [0, -1, 0])).unwrap();
             if !graph.cells[node].open
                 || !raw[below].open
-                || governed.contains(&cell)
-                || governed.contains(&offset(cell, [0, 1, 0]))
+                || shut(cell)
+                || shut(offset(cell, [0, 1, 0]))
             {
                 break;
             }

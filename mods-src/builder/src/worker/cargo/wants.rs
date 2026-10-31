@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::host::prelude::*;
 
-use super::load::{fill, slots_used, Load};
+use super::load::{fill, Load, Packing};
 use super::totals;
 use crate::content::BLUEPRINT;
 use crate::project::Project;
@@ -153,6 +153,12 @@ pub(super) fn wanted(
         items
     };
     let mut left = available.clone();
+    let packing = Packing::new(ctx, slots);
+    let loaded = |key: &ItemKey, count: u32| match reserve.get(key) {
+        Some(n) => (count + n).min(available.get(key).copied().unwrap_or(0)),
+        None => count,
+    };
+    let mut used = packing.total(ctx, &load(&need));
     let mut seen = 0;
     for (i, known) in survey.known.iter().enumerate().skip(job.crew.pace.cursor) {
         if seen == LOOKAHEAD {
@@ -182,17 +188,20 @@ pub(super) fn wanted(
                 {
                     continue;
                 }
-                let mut next = need.clone();
+                let mut next_used = used;
                 for (key, n) in &cost {
-                    *next.entry(key.clone()).or_default() += n;
+                    let had = need.get(key).copied().unwrap_or(0);
+                    next_used = next_used - packing.slots(ctx, key, loaded(key, had))
+                        + packing.slots(ctx, key, loaded(key, had + n));
                 }
-                if slots_used(ctx, slots, &load(&next)) > room {
+                if next_used > room {
                     break;
                 }
+                used = next_used;
                 for (key, n) in cost {
-                    *left.entry(key).or_default() -= n;
+                    *left.entry(key.clone()).or_default() -= n;
+                    *need.entry(key).or_default() += n;
                 }
-                need = next;
             }
             (
                 None,

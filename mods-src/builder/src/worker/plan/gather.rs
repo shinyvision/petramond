@@ -13,7 +13,7 @@ use crate::survey::{ItemKey, Known, Survey};
 use crate::worker::crew::{Crew, Stamped};
 use crate::worker::route::{self, Hubs};
 use crate::worker::tuning::every::{HELD_EVERY, WAYS_EVERY};
-use crate::worker::tuning::patience::{BAND_PATIENCE, GLAZE_PATIENCE};
+use crate::worker::tuning::patience::{BAND_PATIENCE, GLAZE_PATIENCE, REBUILDS};
 use crate::worker::tuning::waits::OUT_OF_REACH;
 use crate::worker::tuning::window::{LAYER_BAND, PERCH_REACH, SCAN, STAY_REACH, WINDOW};
 use crate::worker::upkeep::open_block;
@@ -66,6 +66,9 @@ pub(super) fn gather(
             at: ctx.now,
             value: ways_through(job, ceiling),
         };
+    }
+    if let Some(i) = job.survey.as_mut().and_then(|s| s.take_reopened()) {
+        job.crew.pace.cursor = job.crew.pace.cursor.min(i);
     }
     let Some(survey) = job.survey.as_ref() else {
         found.waiting = true;
@@ -128,6 +131,7 @@ fn open_cells(design: &Design, survey: &Survey, crew: &Crew, scan: usize) -> Has
         .iter()
         .enumerate()
         .skip(crew.pace.cursor)
+        .filter(|(_, known)| known.open())
         .take(scan)
         .filter(|(i, known)| matches!(known, Known::Place(_)) && !crew.built.contains(i))
         .map(|(i, _)| design.units[i].pos)
@@ -148,6 +152,7 @@ fn offer_units(
             .known
             .iter()
             .skip(crew.pace.cursor)
+            .filter(|known| known.open())
             .take(judging.scan)
             .filter_map(|known| match known {
                 Known::Clear {
@@ -166,6 +171,7 @@ fn offer_units(
         .iter()
         .enumerate()
         .skip(crew.pace.cursor)
+        .filter(|(_, known)| known.open())
         .take(judging.scan)
     {
         if judging.ceiling.is_none() && open == WINDOW {
@@ -192,6 +198,18 @@ fn offer_units(
         );
         if crew.deferrals.deferred(Task::Unit(i), ctx.now) {
             found.waiting = true;
+            continue;
+        }
+        // Cover once finished grows back by itself, and without the cover in stock digging out
+        // the bare block only leaves a hole.
+        let stocked =
+            |held: &BTreeMap<ItemKey, u32>| cargo::holds(held, design.cost(design.units[i]));
+        if crew.access.given_up.contains(&i) {
+            continue;
+        }
+        if super::regrows(ctx, design, i, known)
+            && (crew.built.contains(&i) || !judging.held.map_or(stocked(judging.carried), stocked))
+        {
             continue;
         }
         let takes_a_place = match known {
@@ -242,8 +260,13 @@ fn offer_placement(
     missing: &[ItemStackData],
     found: &mut Candidates,
 ) -> bool {
+    // A finished unit that came undone (grass gone to dirt under a scaffold) goes back a few
+    // times; one that keeps coming undone (leaves that decay) stays lost.
     if crew.built.contains(&i) {
-        return false;
+        if !crew.rebuilt.within(i, REBUILDS) {
+            return false;
+        }
+        crew.built.remove(&i);
     }
     if design.passage(i) && !judging.closing && !swings_open(ctx.caches, design, i) {
         found.waiting = true;
@@ -320,7 +343,17 @@ fn offer_scaffolds(
     crew.scaffolding
         .urgent
         .retain(|c| project.scaffolds.contains(c));
+    if crew.aloft.came_by.is_some() && walks_home {
+        let hubs = Hubs::new(project.home, &crew.trail);
+        if route::round_trip(ctx, hubs, body.cell) == Some(true) {
+            crew.aloft.came_by = None;
+        }
+    }
+    let building = project.phase() == crate::project::Phase::Working;
     for cell in &project.scaffolds {
+        if building && crew.aloft.came_by == Some([cell[0], cell[2]]) {
+            continue;
+        }
         if on_top.is_some_and(|p| p.on_column(*cell)) {
             continue;
         }
@@ -497,6 +530,21 @@ pub(super) fn weigh_work(
     candidates.sort_by_key(|(task, c)| (!urgent(task), late(task), manhattan(*c, body.cell)));
     unheld.sort_by_key(|(_, c)| manhattan(*c, body.cell));
     unheld.truncate(WINDOW);
+    if let Some(room) = job.crew.access.room {
+        let standing = job
+            .survey
+            .as_ref()
+            .is_some_and(|s| matches!(s.known[room.through], Known::Satisfied));
+        if standing {
+            candidates.insert(
+                0,
+                (
+                    Task::Reopen(room.through),
+                    job.design.units[room.through].pos,
+                ),
+            );
+        }
+    }
     round.future = unheld;
     round.candidates = candidates;
     round.wants_items = wants_items;

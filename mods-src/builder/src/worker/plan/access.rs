@@ -1,5 +1,6 @@
 use super::{Flow, Mode, Round};
 use crate::project::Projects;
+use crate::worker::tuning::patience::UNSEAL_PATIENCE;
 use crate::worker::tuning::window::WINDOW;
 use crate::worker::waiting::Waiting;
 use crate::worker::{pocket, Body, Ctx, Job};
@@ -27,6 +28,16 @@ pub(super) fn recover(
 ) -> Flow {
     let score = job.access_plan.score().unwrap_or(0);
     if round.mode != Mode::Building || score == 0 {
+        return Flow::Pass;
+    }
+    // Openings that get nothing done hold the whole build: the sealed work is set aside, and the
+    // building resumes around it.
+    if ctx.now > job.crew.pace.progress_at + UNSEAL_PATIENCE {
+        let sealed = job.access_plan.sealed_units();
+        trace!("TRACE unsealing got nowhere: setting {sealed:?} aside");
+        job.crew.access.abandoned.extend(sealed);
+        job.access_plan.set_aside(&job.crew.access.abandoned);
+        job.crew.pace.progress_at = ctx.now;
         return Flow::Pass;
     }
     round.mode = Mode::Unsealing;

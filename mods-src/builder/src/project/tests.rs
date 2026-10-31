@@ -158,7 +158,7 @@ fn a_job_runs_from_draft_to_complete() {
     assert!(p.note.is_shortfall());
     p.release();
     assert_eq!(p.hold(), None);
-    p.wind_down(Note::report(1, 0));
+    p.wind_down(Note::report(1, 0, 0));
     assert_eq!(p.phase(), Phase::Returning);
     p.burrow();
     assert_eq!(p.phase(), Phase::Burrowing);

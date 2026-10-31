@@ -94,7 +94,8 @@ pub(super) fn walk(
         give_up(ctx, job, body, goal, then);
         return Step::Plan;
     }
-    if distance < best {
+    let circling = job.crew.rescue.circling(goal, distance, ctx.now);
+    if distance < best && !circling {
         return Step::Walk {
             to,
             goal,
@@ -103,7 +104,8 @@ pub(super) fn walk(
             progress: ctx.now,
         };
     }
-    if ctx.now > progress + WALK_STALL {
+    if ctx.now > progress + WALK_STALL || circling {
+        trace!("TRACE walk to {goal:?} stalled at {:?}", body.cell);
         give_up(ctx, job, body, goal, then);
         let stalled = &mut job.crew.rescue.stalled;
         *stalled = (

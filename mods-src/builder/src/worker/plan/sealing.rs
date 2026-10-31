@@ -36,6 +36,10 @@ pub(super) fn strands(
     }
     let walls = as_walls(ctx, job, cells);
     let hubs = Hubs::new(project.home, &job.crew.trail);
+    // A worker already without a way home cannot lose it.
+    if route::out(ctx, hubs, from, &[])? != Route::Open {
+        return Some(false);
+    }
     Some(route::out(ctx, hubs, from, &walls)? != Route::Open)
 }
 

@@ -3,7 +3,7 @@ use crate::host::prelude::*;
 use super::{defer_task, places};
 use crate::geometry::{offset, FACES};
 use crate::survey::Known;
-use crate::worker::tuning::patience::DUE_PATIENCE;
+use crate::worker::tuning::patience::{DUE_PATIENCE, REOPENED};
 use crate::worker::tuning::waits::{REFUSED, SEALED_WAIT, UNLOADED, UNREAD};
 use crate::worker::tuning::window::DUE_CHAIN;
 use crate::worker::Job;
@@ -15,6 +15,8 @@ pub(super) enum Viable {
     Elsewhere,
     Waits(u64),
     Done,
+    /// A route answer this needs is pending: ask again next tick rather than putting the work off.
+    Unknown,
 }
 
 pub(super) fn viability(
@@ -33,21 +35,30 @@ pub(super) fn viability(
     if job.access_plan.score().is_some_and(|n| n > 0) {
         return Viable::Waits(SEALED_WAIT);
     }
+    if keeps_open(ctx, job, i) {
+        return Viable::Waits(SEALED_WAIT);
+    }
     match pocket::seals(ctx, job, i) {
         Some(None) => {}
+        // Two blocks that each seal the other wait on each other forever: the lower one goes in,
+        // and the other is left to the ways sealed work is reached.
+        Some(Some(sealed)) if i < sealed && pocket::seals(ctx, job, sealed) == Some(Some(i)) => {
+            trace!("TRACE Unit({i}) and Unit({sealed}) seal each other: Unit({i}) goes first");
+        }
         Some(Some(sealed)) => {
             if job.design.glazing(sealed) {
                 job.crew.glazing.ahead.insert(sealed);
             }
             trace!(
-                "TRACE Unit({i}) at {:?} would seal work in",
-                job.design.units[i].pos
+                "TRACE Unit({i}) at {:?} would seal Unit({sealed}) at {:?} in",
+                job.design.units[i].pos,
+                job.design.units[sealed].pos
             );
             return Viable::Waits(SEALED_WAIT);
         }
         None => {
             trace!("TRACE Unit({i}) seal check unreadable");
-            return Viable::Waits(UNREAD);
+            return Viable::Unknown;
         }
     }
     let unit = job.design.units[i];
@@ -74,11 +85,35 @@ pub(super) fn viability(
             | ActionRefusal::MissingItems => Viable::Elsewhere,
             ActionRefusal::NothingToDo => Viable::Done,
             ActionRefusal::NoFace => faceless(ctx, job, i),
-            ActionRefusal::BodyInTheWay | ActionRefusal::Changed => Viable::Waits(UNREAD),
+            // The worker may be standing where the block goes; another stance can place it.
+            ActionRefusal::BodyInTheWay => Viable::Elsewhere,
+            ActionRefusal::Changed => Viable::Waits(UNREAD),
             ActionRefusal::Unloaded | ActionRefusal::NoSupport => Viable::Waits(UNLOADED),
             _ => Viable::Waits(REFUSED),
         },
     }
+}
+
+/// A block taken down to open sealed work stays down until that work is done. Work still open
+/// once the opening has had its time is given up on, so the block goes back for good.
+fn keeps_open(ctx: &Ctx, job: &mut Job, i: usize) -> bool {
+    let Some((opened, at)) = job.crew.access.reopened.get(&i) else {
+        return false;
+    };
+    let open: Vec<usize> = match job.survey.as_ref() {
+        Some(survey) => opened
+            .iter()
+            .copied()
+            .filter(|u| survey.known[*u].open() && !job.crew.built.contains(u))
+            .collect(),
+        None => opened.clone(),
+    };
+    if !open.is_empty() && ctx.now < at + REOPENED {
+        return true;
+    }
+    job.crew.access.abandoned.extend(open);
+    job.crew.access.reopened.remove(&i);
+    false
 }
 
 pub(super) fn faceless(ctx: &mut Ctx, job: &mut Job, i: usize) -> Viable {
@@ -161,13 +196,14 @@ pub(super) fn verdict_name(verdict: Viable) -> String {
         Viable::Now => "now".into(),
         Viable::Elsewhere => "elsewhere".into(),
         Viable::Waits(t) => format!("waits {t}"),
+        Viable::Unknown => "unknown".into(),
         Viable::Done => "done".into(),
     }
 }
 
 pub(super) fn settle_verdict(ctx: &Ctx, job: &mut Job, task: Task, verdict: Viable) {
     match verdict {
-        Viable::Waits(0) | Viable::Now | Viable::Elsewhere => {}
+        Viable::Waits(0) | Viable::Now | Viable::Elsewhere | Viable::Unknown => {}
         Viable::Waits(ticks) => defer_task(ctx, job, task, ticks),
         Viable::Done => {
             if let (Task::Unit(i), Some(survey)) = (task, job.survey.as_mut()) {
