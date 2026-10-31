@@ -214,34 +214,65 @@ impl Design {
     /// Sparse designs just leave gaps; on a hillside those gaps are dirt.
     fn rooms(&self) -> Vec<[i32; 3]> {
         let (min, max) = (self.min, self.max);
-        let inside = |c: [i32; 3]| (0..3).all(|i| (min[i]..=max[i]).contains(&c[i]));
-        let boxed = |c: [i32; 3]| (0..3).all(|i| (min[i] - 1..=max[i] + 1).contains(&c[i]));
-        let mut outside: HashSet<[i32; 3]> = HashSet::default();
-        let mut queue = vec![[min[0] - 1, min[1] - 1, min[2] - 1]];
-        outside.insert(queue[0]);
+        // Cells of the box grown by one, so the flood can walk around the outside.
+        let low_corner = min.map(|v| v - 1);
+        let size: [i32; 3] = std::array::from_fn(|i| (max[i] - min[i] + 3).max(0));
+        let index = |c: [i32; 3]| {
+            let d: [i32; 3] = std::array::from_fn(|i| c[i] - low_corner[i]);
+            (0..3)
+                .all(|i| d[i] >= 0 && d[i] < size[i])
+                .then(|| ((d[1] * size[2] + d[2]) * size[0] + d[0]) as usize)
+        };
+        let len = size.iter().map(|s| *s as usize).product();
+        let mut filled = vec![false; len];
+        for c in &self.filled {
+            if let Some(i) = index(*c) {
+                filled[i] = true;
+            }
+        }
+        let mut governed = vec![false; len];
+        for c in &self.governed {
+            if let Some(i) = index(*c) {
+                governed[i] = true;
+            }
+        }
+        let mut outside = vec![false; len];
+        let mut queue = vec![low_corner];
+        if let Some(i) = index(low_corner) {
+            outside[i] = true;
+        }
         while let Some(cell) = queue.pop() {
             for face in crate::geometry::FACES {
                 let n = add(cell, face);
-                if boxed(n) && !self.filled.contains(&n) && outside.insert(n) {
-                    queue.push(n);
+                if let Some(i) = index(n) {
+                    if !filled[i] && !outside[i] {
+                        outside[i] = true;
+                        queue.push(n);
+                    }
                 }
             }
         }
-        let mut lowest: HashMap<[i32; 2], i32> = HashMap::default();
+        let columns =
+            |x: i32, z: i32| ((z - min[2]) * (max[0] - min[0] + 1) + (x - min[0])) as usize;
+        let mut lowest =
+            vec![i32::MAX; ((max[0] - min[0] + 1) * (max[2] - min[2] + 1)).max(0) as usize];
         for c in &self.filled {
-            let low = lowest.entry([c[0], c[2]]).or_insert(c[1]);
-            *low = (*low).min(c[1]);
+            if self.contains_column(c[0], c[2]) {
+                let low = &mut lowest[columns(c[0], c[2])];
+                *low = (*low).min(c[1]);
+            }
         }
         let mut rooms = Vec::new();
         for x in min[0]..=max[0] {
             for z in min[2]..=max[2] {
-                let low = lowest.get(&[x, z]).copied().unwrap_or(i32::MAX);
+                let low = lowest[columns(x, z)];
                 for y in min[1]..=max[1] {
                     let cell = [x, y, z];
-                    if !inside(cell) || self.governed.contains(&cell) {
+                    let i = index(cell).unwrap();
+                    if governed[i] {
                         continue;
                     }
-                    if !outside.contains(&cell) || y > low {
+                    if !outside[i] || y > low {
                         rooms.push(cell);
                     }
                 }
@@ -289,8 +320,14 @@ impl Design {
             Plan::Build { .. } => 2,
             Plan::Member | Plan::Unsupported(_) => 4,
         };
-        self.units
-            .sort_by_key(|u| (u.pos[1], rank(u), u.pos[0], u.pos[2]));
+        // Ordered by (y, rank, x, z) as one number in the design box: tuple comparisons
+        // dominate sorting tens of thousands of units.
+        let (min, max) = (self.min, self.max);
+        let span = |a: usize| u64::from((max[a] - min[a] + 1) as u32);
+        let off = |u: &Unit, a: usize| u64::from((u.pos[a] - min[a]) as u32);
+        self.units.sort_by_cached_key(|u| {
+            ((off(u, 1) * 5 + rank(u) as u64) * span(0) + off(u, 0)) * span(2) + off(u, 2)
+        });
         self.record_index = HashMap::default();
         self.at = self
             .units
@@ -311,6 +348,9 @@ impl Design {
     }
 
     fn doorway(&self, unit: Unit) -> bool {
+        if !matches!(self.plan(unit), Plan::Build { footprint, .. } if footprint.len() >= 2) {
+            return false;
+        }
         let cells = self.cells(unit);
         let [x, _, z] = unit.pos;
         let lo = cells.iter().map(|c| c[1]).min().unwrap_or(0);
@@ -363,10 +403,16 @@ impl Design {
     }
 
     pub fn cells(&self, unit: Unit) -> Vec<[i32; 3]> {
-        match self.plan(unit) {
-            Plan::Build { footprint, .. } => footprint.iter().map(|o| add(unit.pos, *o)).collect(),
-            _ => vec![unit.pos],
-        }
+        self.unit_cells(unit).collect()
+    }
+
+    pub fn unit_cells(&self, unit: Unit) -> impl Iterator<Item = [i32; 3]> + '_ {
+        let footprint = match self.plan(unit) {
+            Plan::Build { footprint, .. } => Some(footprint.iter().map(move |o| add(unit.pos, *o))),
+            _ => None,
+        };
+        let single = footprint.is_none().then_some(unit.pos);
+        footprint.into_iter().flatten().chain(single)
     }
 
     pub fn over_floor(&self, cell: [i32; 3]) -> bool {

@@ -60,6 +60,10 @@ impl<K: Eq + Hash> Struck<K> {
     pub fn retain(&mut self, keep: impl FnMut(&K) -> bool) {
         self.struck.retain(keep);
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &K> {
+        self.struck.iter()
+    }
 }
 
 pub struct Tries<K> {

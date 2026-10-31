@@ -8,6 +8,15 @@ use super::grid::Bounds;
 
 type Check = (Option<usize>, Vec<usize>, Vec<[i32; 3]>);
 
+/// A ground check's unit, body, walls, the worker's perch, and the stamps of the floods it reads.
+pub(super) type GroundCheck = (
+    Option<usize>,
+    Vec<[i32; 3]>,
+    Vec<[i32; 3]>,
+    Option<[i32; 3]>,
+    [u64; 4],
+);
+
 /// Side of the cubes work is filed under.
 const AREA: i32 = 8;
 /// How far work's other contacts and sightlines can lie from its first contact: every contact
@@ -55,22 +64,28 @@ pub(super) struct Graph {
     pub component_count: usize,
     pub aims: HashMap<usize, super::sight::Aims>,
     pub sight_open: Vec<bool>,
-    pub ground: crate::fx::HashSet<usize>,
-    pub supports: HashMap<usize, usize>,
+    /// Stances with a round trip from home, by cell.
+    pub ground: Vec<bool>,
+    pub supports: super::supports::Supports,
     /// Raw cells open when the graph was built; later closures are judged against this.
     pub raw_open: Vec<bool>,
     since: Since,
     nearby: Option<Nearby>,
     /// Work no stance can place yet for want of a face; it cannot veto the placement that may give it one.
     faceless: HashSet<usize>,
+    /// Each unit's aims as last judged for `faceless`, kept across graphs: aims are shared and
+    /// copied on change, so the same allocation means the same answer.
+    pub faceless_judged: HashMap<usize, (super::sight::Aims, bool)>,
     #[cfg(test)]
     pub scan_all: bool,
     physical: HashMap<usize, Vec<usize>>,
     checks: HashMap<Check, Option<usize>>,
+    ground_checks: HashMap<GroundCheck, Option<usize>>,
 }
 
 impl Graph {
     pub fn new(bounds: Bounds, cells: Vec<Cell>, work: Vec<Work>, root: usize) -> Self {
+        let len = cells.len();
         let mut graph = Self {
             bounds,
             reached: vec![false; cells.len()],
@@ -82,13 +97,15 @@ impl Graph {
             root,
             sealed: Vec::new(),
             checks: HashMap::default(),
+            ground_checks: HashMap::default(),
             aims: HashMap::default(),
-            ground: Default::default(),
-            supports: HashMap::default(),
+            ground: vec![false; len],
+            supports: Default::default(),
             raw_open: Vec::new(),
             since: Since::default(),
             nearby: None,
             faceless: HashSet::default(),
+            faceless_judged: HashMap::default(),
             #[cfg(test)]
             scan_all: false,
             physical: HashMap::default(),
@@ -119,18 +136,27 @@ impl Graph {
     }
 
     fn note_faceless(&mut self) {
-        self.faceless = self
-            .aims
-            .iter()
-            .filter(|(_, points)| !points.is_empty() && points.iter().all(|(_, aim)| aim.faceless))
-            .map(|(unit, _)| *unit)
-            .collect();
+        let mut judged = std::mem::take(&mut self.faceless_judged);
+        let mut faceless = HashSet::default();
+        for (unit, points) in &self.aims {
+            let known = judged
+                .remove(unit)
+                .filter(|(seen, _)| std::sync::Arc::ptr_eq(seen, points))
+                .map(|(_, answer)| answer);
+            let answer = known.unwrap_or_else(|| {
+                !points.is_empty() && points.iter().all(|(_, aim)| aim.faceless)
+            });
+            if answer {
+                faceless.insert(*unit);
+            }
+            self.faceless_judged
+                .insert(*unit, (std::sync::Arc::clone(points), answer));
+        }
+        self.faceless = faceless;
     }
 
     fn aim(&self, unit: usize, node: usize) -> Option<&super::sight::Aim> {
-        let points = self.aims.get(&unit)?;
-        let i = points.binary_search_by_key(&node, |(node, _)| *node).ok()?;
-        Some(&points[i].1)
+        aim_in(self.aims.get(&unit), node)
     }
 
     pub fn physical(&mut self, contacts: HashMap<usize, Vec<usize>>) {
@@ -143,6 +169,7 @@ impl Graph {
             .map(|(i, _)| i)
             .collect();
         self.checks.clear();
+        self.ground_checks.clear();
         self.nearby = None;
         self.note_faceless();
     }
@@ -243,6 +270,7 @@ impl Graph {
             moved,
         };
         self.checks.clear();
+        self.ground_checks.clear();
     }
 
     fn merged<'a>(extra: &[[i32; 3]], cells: &'a [[i32; 3]]) -> std::borrow::Cow<'a, [[i32; 3]]> {
@@ -279,8 +307,8 @@ impl Graph {
                       walls: &[[i32; 3]],
                       reachable: &dyn Fn([i32; 3]) -> bool| {
             let cell = self.bounds.cell(c);
-            let supported = self.supports.get(&c).is_some_and(|base| {
-                let base = self.bounds.cell(*base);
+            let supported = self.supports.get(c).is_some_and(|base| {
+                let base = self.bounds.cell(base);
                 reachable(base)
                     && !walls.iter().any(|wall| {
                         wall[0] == cell[0]
@@ -313,6 +341,21 @@ impl Graph {
             .map(|w| w.unit)
     }
 
+    /// `seals_ground`, remembered while the graph and the floods the key names stand.
+    pub fn seals_ground_remembered(
+        &mut self,
+        key: GroundCheck,
+        reachable: impl Fn([i32; 3]) -> bool,
+        reached_before: impl Fn([i32; 3]) -> bool,
+    ) -> Option<usize> {
+        if let Some(answer) = self.ground_checks.get(&key) {
+            return *answer;
+        }
+        let answer = self.seals_ground(key.0, &key.1, &key.2, reachable, reached_before);
+        self.ground_checks.insert(key, answer);
+        answer
+    }
+
     fn contacts<'a>(&'a self, work: &'a Work) -> &'a [usize] {
         self.physical
             .get(&work.unit)
@@ -320,24 +363,54 @@ impl Graph {
     }
 
     fn components(&mut self) {
-        let open: Vec<bool> = self.cells.iter().map(|c| c.open).collect();
+        const UNSEEN: usize = usize::MAX - 1;
+        let [sx, _, sz] = self.bounds.size;
+        let layer = sx * sz;
+        let components = &mut self.components;
+        for (i, cell) in self.cells.iter().enumerate() {
+            if cell.open {
+                components[i] = UNSEEN;
+            }
+        }
+        let len = components.len();
         let mut queue = Vec::new();
-        for start in 0..open.len() {
-            if !open[start] || self.components[start] != usize::MAX {
+        for start in 0..len {
+            if components[start] != UNSEEN {
                 continue;
             }
+            let id = self.component_count;
             queue.clear();
             queue.push(start);
-            self.components[start] = self.component_count;
+            components[start] = id;
             let mut at = 0;
             while at < queue.len() {
                 let cell = queue[at];
                 at += 1;
-                for next in self.bounds.neighbours(cell).into_iter().flatten() {
-                    if open[next] && self.components[next] == usize::MAX {
-                        self.components[next] = self.component_count;
+                let x = cell % sx;
+                let z = cell / sx % sz;
+                let mut visit = |next: usize| {
+                    if components[next] == UNSEEN {
+                        components[next] = id;
                         queue.push(next);
                     }
+                };
+                if x + 1 < sx {
+                    visit(cell + 1);
+                }
+                if x > 0 {
+                    visit(cell - 1);
+                }
+                if cell + layer < len {
+                    visit(cell + layer);
+                }
+                if cell >= layer {
+                    visit(cell - layer);
+                }
+                if z + 1 < sz {
+                    visit(cell + sx);
+                }
+                if z > 0 {
+                    visit(cell - sx);
                 }
             }
             self.component_count += 1;
@@ -387,10 +460,10 @@ impl Graph {
             (None, Some(after)) => after[c],
             (None, None) => unreachable!(),
         };
-        let works = |w: &Work, c: usize| {
+        let works = |points: Option<&super::sight::Aims>, c: usize| {
             keeps(c)
                 && blocked.binary_search(&c).is_err()
-                && self.aim(w.unit, c).is_none_or(|point| {
+                && aim_in(points, c).is_none_or(|point| {
                     !super::sight::blocked(
                         self.bounds.cell(c),
                         *point,
@@ -402,24 +475,28 @@ impl Graph {
         };
         // A stance that would set the block the wrong way is no way to build it: losing the last
         // stance that sets it right seals it as surely as losing every stance.
-        let aligned = |w: &Work, c: usize| {
-            self.aim(w.unit, c)
-                .is_none_or(|aim| !aim.misaligned && !aim.faceless)
+        let aligned = |points: Option<&super::sight::Aims>, c: usize| {
+            aim_in(points, c).is_none_or(|aim| !aim.misaligned && !aim.faceless)
         };
         let sealed_by = |w: &&Work| {
-            Some(w.unit) != except
-                && !self.since.done.contains(&w.unit)
-                && !self.faceless.contains(&w.unit)
-                && self.contacts(w).iter().any(|c| self.reached[*c])
-                && (!self.contacts(w).iter().any(|c| works(w, *c))
-                    || (self
-                        .contacts(w)
+            if Some(w.unit) == except
+                || self.since.done.contains(&w.unit)
+                || self.faceless.contains(&w.unit)
+            {
+                return false;
+            }
+            let contacts = self.contacts(w);
+            if !contacts.iter().any(|c| self.reached[*c]) {
+                return false;
+            }
+            let points = self.aims.get(&w.unit);
+            !contacts.iter().any(|c| works(points, *c))
+                || (contacts
+                    .iter()
+                    .any(|c| self.reached[*c] && aligned(points, *c))
+                    && !contacts
                         .iter()
-                        .any(|c| self.reached[*c] && aligned(w, *c))
-                        && !self
-                            .contacts(w)
-                            .iter()
-                            .any(|c| works(w, *c) && aligned(w, *c))))
+                        .any(|c| works(points, *c) && aligned(points, *c)))
         };
         // Work away from every change keeps the contact it had: unchanged, every reached contact
         // works, and an out-of-date graph is consulted only once its closures alone seal nothing.
@@ -543,4 +620,11 @@ impl Graph {
         }
         after
     }
+}
+
+/// The aim at `node` among one unit's aims.
+fn aim_in(points: Option<&super::sight::Aims>, node: usize) -> Option<&super::sight::Aim> {
+    let points = points?;
+    let i = points.binary_search_by_key(&node, |(node, _)| *node).ok()?;
+    Some(&points[i].1)
 }

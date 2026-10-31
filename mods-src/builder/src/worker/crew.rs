@@ -77,6 +77,17 @@ impl Deferrals {
         self.blind.struck(&(task, stance))
     }
 
+    /// The stances struck blind for each unit.
+    pub(super) fn blind_units(&self) -> HashMap<usize, Vec<[i32; 3]>> {
+        let mut units: HashMap<usize, Vec<[i32; 3]>> = HashMap::default();
+        for (task, stance) in self.blind.iter() {
+            if let Task::Unit(i) = task {
+                units.entry(*i).or_default().push(*stance);
+            }
+        }
+        units
+    }
+
     pub(super) fn strike(&mut self, task: Task, stance: [i32; 3]) {
         self.blind.strike((task, stance));
     }

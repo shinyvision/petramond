@@ -1,5 +1,3 @@
-use crate::fx::HashSet;
-
 use crate::host::prelude::*;
 
 use super::tuning::reach::SUPPORT_DEPTH;
@@ -36,10 +34,9 @@ pub fn below(ctx: &mut Ctx, design: &Design, pos: [i32; 3]) -> Support {
     Support::Impossible
 }
 
-pub fn props_up(cell: [i32; 3], open: &HashSet<[i32; 3]>) -> bool {
+/// Whether a scaffold at `cell` still holds up open work: `open` answers for unplaced units.
+pub fn props_up(cell: [i32; 3], open: impl Fn([i32; 3]) -> bool) -> bool {
     const SIDES_AND_UP: [[i32; 3]; 5] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1], [0, 1, 0]];
-    (1..=SUPPORT_DEPTH).any(|d| open.contains(&offset(cell, [0, d, 0])))
-        || SIDES_AND_UP
-            .iter()
-            .any(|f| open.contains(&offset(cell, *f)))
+    (1..=SUPPORT_DEPTH).any(|d| open(offset(cell, [0, d, 0])))
+        || SIDES_AND_UP.iter().any(|f| open(offset(cell, *f)))
 }

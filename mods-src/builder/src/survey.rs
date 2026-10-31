@@ -150,7 +150,8 @@ impl Survey {
             })
             .collect();
         let mut totals = Summary::default();
-        let mut by_cell: HashMap<[i32; 3], Vec<u32>> = HashMap::default();
+        let mut by_cell: HashMap<[i32; 3], Vec<u32>> =
+            HashMap::with_capacity_and_hasher(design.units.len(), Default::default());
         let mut queue = VecDeque::new();
         let mut queued = vec![false; known.len()];
         for (i, unit) in design.units.iter().enumerate() {
@@ -158,7 +159,7 @@ impl Survey {
             if matches!(known[i], Known::Unsupported(_)) {
                 continue;
             }
-            for cell in design.cells(*unit) {
+            for cell in design.unit_cells(*unit) {
                 by_cell.entry(cell).or_default().push(i as u32);
             }
             queue.push_back(i);

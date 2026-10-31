@@ -28,6 +28,8 @@ pub struct Plan {
     gates: Vec<Gate>,
     /// Unit kinds the current graph was built from.
     kinds: Vec<Kind>,
+    /// Counts the times `kinds` was taken.
+    kinds_taken: u64,
     /// Raw cells whose sample changed after the current graph was built.
     since: HashSet<usize>,
     /// The graph matches the world and survey as last read.
@@ -43,6 +45,7 @@ pub struct Plan {
     held: HashSet<usize>,
     removable: HashSet<[i32; 3]>,
     sight: sight::Cache,
+    network: rays::Remembered,
     prepared: Option<Prepared>,
     physical: HashSet<usize>,
 }
@@ -53,6 +56,10 @@ struct Prepared {
     cells: Vec<Cell>,
     raw: Vec<Cell>,
     kinds: Vec<Kind>,
+    /// The cells the design governs, by cell.
+    governed: Option<Vec<bool>>,
+    /// Units whose kind differs from the plan's, as of a survey revision and a taking of the plan's kinds.
+    kind_diffs: Option<((u64, u64), Vec<usize>)>,
     /// Cells or unit kinds differ from the ones the current graph was built from.
     reshaped: bool,
     cursor: usize,
@@ -113,7 +120,7 @@ impl Plan {
     pub fn stance(&self, task: Task, cell: [i32; 3]) -> bool {
         self.graph.as_ref().is_none_or(|g| match task {
             Task::Unit(i) => g.verified(i, cell),
-            Task::Reopen(_) => g.bounds.index(cell).is_some_and(|i| g.ground.contains(&i)),
+            Task::Reopen(_) => g.bounds.index(cell).is_some_and(|i| g.ground[i]),
             _ => true,
         })
     }
@@ -258,13 +265,11 @@ fn rebuild(ctx: &mut Ctx, job: &mut Job, project: &Project, build_now: bool) -> 
         plan.since.extend(changes.iter().copied());
     }
     let snapshot = plan.snapshot.as_ref().unwrap();
-    let kinds = || -> Vec<Kind> {
-        survey
-            .known
-            .iter()
-            .enumerate()
-            .map(|(i, k)| Kind::of(k, job.crew.built.contains(&i)))
-            .collect()
+    let kind_of = |i: usize, k: &Known| {
+        Kind::of(
+            k,
+            matches!(k, Known::Place(_)) && job.crew.built.contains(&i),
+        )
     };
     match plan.prepared.as_mut() {
         None => {
@@ -280,7 +285,14 @@ fn rebuild(ctx: &mut Ctx, job: &mut Job, project: &Project, build_now: bool) -> 
                 survey_revision: survey.revision(),
                 cells,
                 raw,
-                kinds: kinds(),
+                kinds: survey
+                    .known
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| kind_of(i, k))
+                    .collect(),
+                kind_diffs: None,
+                governed: None,
                 reshaped: true,
                 cursor: 0,
                 work: Vec::new(),
@@ -295,7 +307,8 @@ fn rebuild(ctx: &mut Ctx, job: &mut Job, project: &Project, build_now: bool) -> 
             let mut moved = false;
             if prepared.survey_revision != survey.revision() {
                 prepared.survey_revision = survey.revision();
-                for (i, kind) in kinds().into_iter().enumerate() {
+                for (i, known) in survey.known.iter().enumerate() {
+                    let kind = kind_of(i, known);
                     let was = std::mem::replace(&mut prepared.kinds[i], kind);
                     if was == kind {
                         continue;
@@ -392,6 +405,7 @@ fn rebuild(ctx: &mut Ctx, job: &mut Job, project: &Project, build_now: bool) -> 
         let plan = &mut job.access_plan;
         let prepared = plan.prepared.as_mut().unwrap();
         plan.kinds = prepared.kinds.clone();
+        plan.kinds_taken += 1;
         plan.since.clear();
         plan.built_at = ctx.now;
         plan.wants_current = false;
@@ -417,7 +431,7 @@ fn rebuild(ctx: &mut Ctx, job: &mut Job, project: &Project, build_now: bool) -> 
         ) else {
             return Progress::Behind;
         };
-        gate.exposed = contacts.iter().any(|c| graph.ground.contains(c));
+        gate.exposed = contacts.iter().any(|c| graph.ground[*c]);
     }
     prepared.gate_cursor = plan.gates.len();
     prepared.done = true;
@@ -458,6 +472,9 @@ fn build(
         root,
     );
     graph.aims = std::mem::take(&mut prepared.aims);
+    if let Some(old) = plan.graph.as_mut() {
+        graph.faceless_judged = std::mem::take(&mut old.faceless_judged);
+    }
     graph.sight_open = prepared.raw.iter().map(|c| c.open || c.sight).collect();
     graph.raw_open = prepared.raw.iter().map(|c| c.open).collect();
     let mut stances: Vec<_> = match super::route::both_ways(ctx, project.home, &[]) {
@@ -479,8 +496,13 @@ fn build(
             })
             && !job.crew.access.failed_stances.holds(s, ctx.now)
     });
-    graph.ground = stances.iter().filter_map(|s| bounds.index(*s)).collect();
-    graph.supports = supports::columns(&graph, &prepared.raw, &job.design.governed);
+    for i in stances.iter().filter_map(|s| bounds.index(*s)) {
+        graph.ground[i] = true;
+    }
+    let shut = prepared
+        .governed
+        .get_or_insert_with(|| supports::governed_cells(bounds, &job.design.governed));
+    graph.supports = supports::columns(&graph, &prepared.raw, shut);
     let targets: Vec<_> = graph
         .work
         .iter()
@@ -493,23 +515,23 @@ fn build(
             (i, cell)
         })
         .collect();
-    let network = rays::Network::new(&graph, &prepared.raw, &targets, &stances);
+    let network =
+        rays::Network::remembering(&graph, &prepared.raw, &targets, &stances, &mut plan.network);
     plan.physical.extend(network.below());
+    let blind = job.crew.deferrals.blind_units();
     let physical = graph
         .work
         .iter()
         .filter(|w| plan.physical.contains(&w.unit))
         .map(|w| {
+            let blind = blind.get(&w.unit);
             let contacts = w
                 .contacts
                 .iter()
                 .copied()
                 .filter(|c| {
-                    (graph.ground.contains(c) || graph.supports.contains_key(c))
-                        && !job
-                            .crew
-                            .deferrals
-                            .blind(Task::Unit(w.unit), bounds.cell(*c))
+                    (graph.ground[*c] || graph.supports.contains(*c))
+                        && blind.is_none_or(|stances| !stances.contains(&bounds.cell(*c)))
                 })
                 .collect();
             (w.unit, contacts)
@@ -591,17 +613,27 @@ fn settled(job: &mut Job) {
 /// Whether the last graph, with every cell closed and unit finished since laid over it, still proves nothing sealed.
 fn stale_ok(ctx: &mut Ctx, job: &mut Job) -> bool {
     let plan = &mut job.access_plan;
-    let (Some(graph), Some(prepared)) = (plan.graph.as_mut(), plan.prepared.as_ref()) else {
+    let (Some(graph), Some(prepared)) = (plan.graph.as_mut(), plan.prepared.as_mut()) else {
         return false;
     };
     if !plan.sealed.is_empty() {
         return false;
     }
+    let key = (prepared.survey_revision, plan.kinds_taken);
+    if prepared.kind_diffs.as_ref().is_none_or(|(k, _)| *k != key) {
+        let diffs = plan
+            .kinds
+            .iter()
+            .zip(&prepared.kinds)
+            .enumerate()
+            .filter(|(_, (then, now))| then != now)
+            .map(|(i, _)| i)
+            .collect();
+        prepared.kind_diffs = Some((key, diffs));
+    }
     let mut done = HashSet::default();
-    for (i, (&then, &now)) in plan.kinds.iter().zip(&prepared.kinds).enumerate() {
-        if then == now {
-            continue;
-        }
+    for &i in &prepared.kind_diffs.as_ref().unwrap().1 {
+        let (then, now) = (plan.kinds[i], prepared.kinds[i]);
         // The worker's own scaffold standing in a room it climbs through comes down with the
         // climb; the next scheduled rebuild picks it up if it stays.
         let scaffold =
@@ -721,10 +753,15 @@ fn check(
         .filter(|m| m.on_ground)
         .map(|m| super::standing_cell(m.pos));
     let ((out0, back0), (out, back)) = super::route::both_ways_and_without(ctx, home, walls)??;
-    Some(graph.seals_ground(
+    let key = (
         unit,
-        body,
-        walls,
+        body.to_vec(),
+        walls.to_vec(),
+        perch,
+        [out0.stamp(), back0.stamp(), out.stamp(), back.stamp()],
+    );
+    Some(graph.seals_ground_remembered(
+        key,
         |cell| (out.contains(cell) && back.contains(cell)) || perch == Some(cell),
         |cell| (out0.contains(cell) && back0.contains(cell)) || perch == Some(cell),
     ))

@@ -133,9 +133,10 @@ fn a_support_column_rises_from_the_ground_under_work_with_nothing_beside_it() {
         );
     });
     let open: HashSet<[i32; 3]> = [[5, 3, 5]].into_iter().collect();
-    assert!(support::props_up([5, 0, 5], &open));
-    assert!(support::props_up([4, 3, 5], &open), "beside it");
-    assert!(!support::props_up([7, 0, 5], &open));
+    let open = |c| open.contains(&c);
+    assert!(support::props_up([5, 0, 5], open));
+    assert!(support::props_up([4, 3, 5], open), "beside it");
+    assert!(!support::props_up([7, 0, 5], open));
 }
 
 #[test]

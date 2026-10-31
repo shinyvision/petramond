@@ -22,8 +22,9 @@ fn future_footholds_need_a_clear_column_from_reachable_dry_ground() {
         }],
         base,
     );
-    graph.ground.insert(base);
-    graph.supports = columns(&graph, &raw, &HashSet::default());
+    graph.ground[base] = true;
+    let open = vec![false; bounds.len()];
+    graph.supports = columns(&graph, &raw, &open);
     graph.physical([(7, vec![top])].into_iter().collect());
     assert!(graph.sealed.is_empty());
     let before = |c| c == [0, 0, 0];
@@ -37,13 +38,11 @@ fn future_footholds_need_a_clear_column_from_reachable_dry_ground() {
         Some(7)
     );
     assert!(
-        !graph
-            .supports
-            .contains_key(&bounds.index([1, 4, 0]).unwrap()),
+        !graph.supports.contains(bounds.index([1, 4, 0]).unwrap()),
         "air without a reachable base cannot support a scaffold"
     );
-    let governed = [[0, 2, 0]].into_iter().collect();
-    assert!(!columns(&graph, &raw, &governed).contains_key(&top));
+    let governed = governed_cells(bounds, &[[0, 2, 0]].into_iter().collect());
+    assert!(!columns(&graph, &raw, &governed).contains(top));
     raw[bounds.index([0, 1, 0]).unwrap()].open = false;
-    assert!(!columns(&graph, &raw, &HashSet::default()).contains_key(&top));
+    assert!(!columns(&graph, &raw, &open).contains(top));
 }

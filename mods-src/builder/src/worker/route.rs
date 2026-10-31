@@ -28,6 +28,8 @@ pub struct Regions {
     sizes: HashMap<([i32; 3], bool), u32>,
     /// The most any flood of the site reached; floods from new origins cover much the same ground.
     largest: u32,
+    /// Floods made so far; each one's stamp.
+    made: u64,
 }
 
 impl Regions {
@@ -43,6 +45,8 @@ impl Regions {
 }
 
 pub struct Region {
+    /// Tells this flood apart from every other, for remembering answers it gave.
+    stamp: u64,
     cells: Vec<([i32; 3], u32)>,
     min: [i32; 3],
     dims: [i32; 3],
@@ -51,9 +55,15 @@ pub struct Region {
 }
 
 impl Region {
-    fn new(cells: Vec<([i32; 3], u32)>, (min, max): ([i32; 3], [i32; 3]), complete: bool) -> Self {
+    fn new(
+        stamp: u64,
+        cells: Vec<([i32; 3], u32)>,
+        (min, max): ([i32; 3], [i32; 3]),
+        complete: bool,
+    ) -> Self {
         let dims: [i32; 3] = std::array::from_fn(|i| (max[i] - min[i] + 1).max(0));
         let mut region = Region {
+            stamp,
             table: vec![0; (dims[0] * dims[1] * dims[2]) as usize],
             cells,
             min,
@@ -74,6 +84,10 @@ impl Region {
         (0..3)
             .all(|i| (d[i] as u32) < self.dims[i] as u32)
             .then(|| ((d[1] * self.dims[2] + d[2]) * self.dims[0] + d[0]) as usize)
+    }
+
+    pub fn stamp(&self) -> u64 {
+        self.stamp
     }
 
     pub fn contains(&self, cell: [i32; 3]) -> bool {
@@ -216,6 +230,8 @@ pub fn region<'a>(
             caps.insert(0, (size + size / 8 + FLOOD_SLACK).min(REGION_NODES));
         }
         let mut flooded = None;
+        ctx.regions.made += 1;
+        let stamp = ctx.regions.made;
         for cap in caps {
             if *ctx.probe_nodes == 0 {
                 return None;
@@ -225,7 +241,7 @@ pub fn region<'a>(
                     let size = cells.len() as u32;
                     ctx.regions.sizes.insert((from, toward), size);
                     ctx.regions.largest = ctx.regions.largest.max(size);
-                    flooded = Some(Region::new(cells, (min, max), true));
+                    flooded = Some(Region::new(stamp, cells, (min, max), true));
                     break;
                 }
                 Flood::Exceeded if cap < REGION_NODES => continue,
@@ -233,7 +249,7 @@ pub fn region<'a>(
                     trace!(
                         "TRACE flood from {from:?} (toward {toward}) exceeds {REGION_NODES} footholds"
                     );
-                    flooded = Some(Region::new(Vec::new(), (min, min), false));
+                    flooded = Some(Region::new(stamp, Vec::new(), (min, min), false));
                     break;
                 }
                 Flood::Deferred => {

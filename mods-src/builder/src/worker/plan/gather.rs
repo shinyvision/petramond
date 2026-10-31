@@ -89,7 +89,7 @@ pub(super) fn gather(
         ceiling,
         scan: if mode != Mode::Building { 0 } else { SCAN },
     };
-    let open_cells = open_cells(&job.design, survey, crew, judging.scan);
+    let open_cells = OpenCells::of(&job.design, survey, crew, judging.scan);
     trace::held_ways_in(ctx, &job.design, survey, crew, closing);
     offer_units(ctx, &job.design, survey, crew, &judging, &mut found);
     offer_scaffolds(ctx, crew, body, project, &open_cells, &mut found);
@@ -125,17 +125,48 @@ fn refresh_reads(
     job.crew.cargo.in_reach.value.clone()
 }
 
-fn open_cells(design: &Design, survey: &Survey, crew: &Crew, scan: usize) -> HashSet<[i32; 3]> {
-    survey
-        .known
-        .iter()
-        .enumerate()
-        .skip(crew.pace.cursor)
-        .filter(|(_, known)| known.open())
-        .take(scan)
-        .filter(|(i, known)| matches!(known, Known::Place(_)) && !crew.built.contains(i))
-        .map(|(i, _)| design.units[i].pos)
-        .collect()
+/// Units still to place among the scanned ones, by cell of the design box.
+struct OpenCells {
+    min: [i32; 3],
+    size: [i32; 3],
+    open: Vec<bool>,
+}
+
+impl OpenCells {
+    fn of(design: &Design, survey: &Survey, crew: &Crew, scan: usize) -> Self {
+        let min = design.min;
+        let size: [i32; 3] = std::array::from_fn(|a| (design.max[a] - min[a] + 1).max(0));
+        let mut cells = Self {
+            min,
+            size,
+            open: vec![false; size.iter().map(|s| *s as usize).product()],
+        };
+        let open = survey
+            .known
+            .iter()
+            .enumerate()
+            .skip(crew.pace.cursor)
+            .filter(|(_, known)| known.open())
+            .take(scan)
+            .filter(|(i, known)| matches!(known, Known::Place(_)) && !crew.built.contains(i));
+        for (i, _) in open {
+            if let Some(slot) = cells.slot(design.units[i].pos) {
+                cells.open[slot] = true;
+            }
+        }
+        cells
+    }
+
+    fn slot(&self, cell: [i32; 3]) -> Option<usize> {
+        let d: [i32; 3] = std::array::from_fn(|a| cell[a] - self.min[a]);
+        (0..3)
+            .all(|a| d[a] >= 0 && d[a] < self.size[a])
+            .then(|| ((d[1] * self.size[2] + d[2]) * self.size[0] + d[0]) as usize)
+    }
+
+    fn contains(&self, cell: [i32; 3]) -> bool {
+        self.slot(cell).is_some_and(|slot| self.open[slot])
+    }
 }
 
 fn offer_units(
@@ -325,7 +356,7 @@ fn offer_scaffolds(
     crew: &mut Crew,
     body: &Body,
     project: &crate::project::Project,
-    open_cells: &HashSet<[i32; 3]>,
+    open_cells: &OpenCells,
     found: &mut Candidates,
 ) {
     let on_top = crew
@@ -366,7 +397,9 @@ fn offer_scaffolds(
         let task = Task::Scaffold(*cell);
         if crew.deferrals.deferred(task, ctx.now) {
             found.waiting = true;
-        } else if crew.scaffolding.urgent.contains(cell) || !support::props_up(*cell, open_cells) {
+        } else if crew.scaffolding.urgent.contains(cell)
+            || !support::props_up(*cell, |c| open_cells.contains(c))
+        {
             found.list.push((task, *cell));
         }
     }

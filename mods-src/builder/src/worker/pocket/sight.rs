@@ -1,4 +1,4 @@
-use crate::fx::{HashMap, HashSet};
+use crate::fx::HashMap;
 use crate::geometry::{cell_of, centre_of, feet_of, manhattan, offset, reaches, EYE, FACES};
 use crate::host::prelude::*;
 use crate::worker::tuning::access::{FACE_END_EPS, RAY_EPS, RAY_PAD, SIGHT_POINTS};
@@ -19,9 +19,14 @@ pub(super) struct Aim {
 
 pub(super) type Aims = Arc<Vec<(usize, Aim)>>;
 
+/// The low and high corners of a box of cells.
+type Corners = ([i32; 3], [i32; 3]);
+
 #[derive(Default)]
 pub(super) struct Cache {
     entries: HashMap<([i32; 3], bool), Entry>,
+    /// Changed cells not yet applied; one change is often reported several times before the cache is read.
+    pending: Vec<[i32; 3]>,
     bounds: Option<Bounds>,
     tick: Option<u64>,
     left: usize,
@@ -29,9 +34,15 @@ pub(super) struct Cache {
 
 struct Entry {
     targets: Vec<[i32; 3]>,
+    /// Corners of the box the targets fill.
+    low: [i32; 3],
+    high: [i32; 3],
     record: Option<CellRecord>,
     /// Every stance the targets' reach admits, whatever stands there now.
     stances: Vec<[i32; 3]>,
+    /// Corners of the box the stances fill.
+    stances_low: [i32; 3],
+    stances_high: [i32; 3],
     /// Stances to classify against the current cells before asking.
     redo: Vec<[i32; 3]>,
     query: Vec<[i32; 3]>,
@@ -44,18 +55,29 @@ struct Entry {
 
 impl Entry {
     fn new(bounds: Bounds, targets: &[[i32; 3]], record: Option<CellRecord>) -> Self {
+        let mut low = [i32::MAX; 3];
+        let mut high = [i32::MIN; 3];
+        for t in targets {
+            for a in 0..3 {
+                low[a] = low[a].min(t[a]);
+                high[a] = high[a].max(t[a]);
+            }
+        }
+        // Offsets in x, y, z order keep one target's stances sorted.
         let mut stances = Vec::new();
         for target in targets {
-            for dy in -5..=3 {
-                for dx in -4..=4 {
+            for dx in -4..=4 {
+                for dy in -5..=3 {
                     for dz in -4..=4 {
                         stances.push(offset(*target, [dx, dy, dz]));
                     }
                 }
             }
         }
-        stances.sort_unstable();
-        stances.dedup();
+        if targets.len() > 1 {
+            stances.sort_unstable();
+            stances.dedup();
+        }
         stances.retain(|s| {
             !(targets.contains(s)
                 || targets.contains(&offset(*s, [0, 1, 0]))
@@ -63,9 +85,21 @@ impl Entry {
                 || !reaches(feet_of(*s), targets)
                 || bounds.index(*s).is_none())
         });
+        let mut stances_low = [i32::MAX; 3];
+        let mut stances_high = [i32::MIN; 3];
+        for s in &stances {
+            for a in 0..3 {
+                stances_low[a] = stances_low[a].min(s[a]);
+                stances_high[a] = stances_high[a].max(s[a]);
+            }
+        }
         Self {
             targets: targets.to_vec(),
+            low,
+            high,
             record,
+            stances_low,
+            stances_high,
             redo: stances.clone(),
             stances,
             query: Vec::new(),
@@ -81,53 +115,100 @@ impl Entry {
         self.targets.iter().any(|t| manhattan(*t, cell) <= 1)
     }
 
-    /// Stances whose footing, body or line of sight to the targets can cross `cell`.
-    fn crossing(&self, cell: [i32; 3]) -> impl Iterator<Item = [i32; 3]> + '_ {
-        let mut low = [i32::MAX; 3];
-        let mut high = [i32::MIN; 3];
-        for t in &self.targets {
-            for a in 0..3 {
-                low[a] = low[a].min(t[a]);
-                high[a] = high[a].max(t[a]);
-            }
+    /// Whether `cell` lies close enough to a target for a change there to matter.
+    fn near(&self, c: [i32; 3]) -> bool {
+        let (low, high) = (self.low, self.high);
+        if c[0] < low[0] - 5
+            || c[0] > high[0] + 5
+            || c[2] < low[2] - 5
+            || c[2] > high[2] + 5
+            || c[1] < low[1] - 6
+            || c[1] > high[1] + 4
+        {
+            return false;
         }
-        self.stances.iter().copied().filter(move |s| {
-            if s[0] == cell[0] && s[2] == cell[2] && (s[1] - 1..=s[1] + 1).contains(&cell[1]) {
-                return true;
-            }
-            let mut eye = feet_of(*s);
-            eye[1] += EYE;
-            (0..3).all(|a| {
-                let from = eye[a].min(f64::from(low[a])) - RAY_PAD;
-                let to = eye[a].max(f64::from(high[a]) + 1.0) + RAY_PAD;
-                (from.floor() as i32..=to.floor() as i32).contains(&cell[a])
-            })
+        self.targets.iter().any(|target| {
+            (c[0] - target[0]).abs() <= 5
+                && (c[2] - target[2]).abs() <= 5
+                && (target[1] - 6..=target[1] + 4).contains(&c[1])
         })
     }
 
-    fn forget(&mut self, bounds: Bounds, stances: &HashSet<[i32; 3]>) {
-        let nodes: HashSet<usize> = stances.iter().filter_map(|s| bounds.index(*s)).collect();
-        self.contacts.retain(|n| !nodes.contains(n));
+    /// The stances whose box between eye and targets holds `cell`, as a box of stance
+    /// coordinates. The box test splits by axis, each axis depends on one stance coordinate, and
+    /// both ends of the eye's span grow with it, so the coordinates that pass form a range.
+    fn sightline_box(&self, cell: [i32; 3]) -> Corners {
+        let (from, to) = (self.stances_low, self.stances_high);
+        let mut low = [i32::MAX; 3];
+        let mut high = [i32::MIN; 3];
+        for a in 0..3 {
+            for v in from[a]..=to[a] {
+                let mut stance = [0; 3];
+                stance[a] = v;
+                let mut eye = feet_of(stance);
+                eye[1] += EYE;
+                let start = eye[a].min(f64::from(self.low[a])) - RAY_PAD;
+                let end = eye[a].max(f64::from(self.high[a]) + 1.0) + RAY_PAD;
+                if (start.floor() as i32..=end.floor() as i32).contains(&cell[a]) {
+                    low[a] = low[a].min(v);
+                    high[a] = high[a].max(v);
+                }
+            }
+        }
+        (low, high)
+    }
+
+    /// Re-asks the stances whose footing, body or line of sight to the targets can cross one of `cells`.
+    fn forget_crossing(&mut self, bounds: Bounds, cells: &[[i32; 3]]) {
+        if self.stances.is_empty() {
+            return;
+        }
+        let tests: Vec<([i32; 3], Corners)> =
+            cells.iter().map(|c| (*c, self.sightline_box(*c))).collect();
+        let crosses = |s: [i32; 3]| {
+            tests.iter().any(|(cell, (low, high))| {
+                (s[0] == cell[0] && s[2] == cell[2] && (s[1] - 1..=s[1] + 1).contains(&cell[1]))
+                    || (low[0] <= s[0]
+                        && s[0] <= high[0]
+                        && low[1] <= s[1]
+                        && s[1] <= high[1]
+                        && low[2] <= s[2]
+                        && s[2] <= high[2])
+            })
+        };
+        let affected: Vec<[i32; 3]> = self
+            .stances
+            .iter()
+            .copied()
+            .filter(|s| crosses(*s))
+            .collect();
+        if affected.is_empty() {
+            return;
+        }
+        // Contacts, aims and queries all name stances, so the same test picks them out.
+        self.contacts.retain(|n| !crosses(bounds.cell(*n)));
         self.shared = None;
-        if self.aims.iter().any(|(n, _)| nodes.contains(n)) {
-            Arc::make_mut(&mut self.aims).retain(|(n, _)| !nodes.contains(n));
+        if self.aims.iter().any(|(n, _)| crosses(bounds.cell(*n))) {
+            Arc::make_mut(&mut self.aims).retain(|(n, _)| !crosses(bounds.cell(*n)));
         }
         let pending = self.query.split_off(self.cursor.min(self.query.len()));
         self.query
-            .extend(pending.into_iter().filter(|s| !stances.contains(s)));
-        self.redo.extend(stances.iter().copied());
+            .extend(pending.into_iter().filter(|s| !crosses(*s)));
+        self.redo.extend(affected);
     }
 }
 
 impl Cache {
-    pub fn aims(&self, pos: [i32; 3], placing: bool) -> Aims {
+    pub fn aims(&mut self, pos: [i32; 3], placing: bool) -> Aims {
+        self.apply_changes();
         self.entries
             .get(&(pos, placing))
             .map_or_else(|| Arc::new(Vec::new()), |e| Arc::clone(&e.aims))
     }
 
     /// A finished answer that no change has reopened; a key's targets never change, so it needs no comparison.
-    pub fn settled(&self, pos: [i32; 3], placing: bool) -> Option<(Arc<[usize]>, Aims)> {
+    pub fn settled(&mut self, pos: [i32; 3], placing: bool) -> Option<(Arc<[usize]>, Aims)> {
+        self.apply_changes();
         let entry = self.entries.get(&(pos, placing))?;
         let shared = entry.shared.as_ref()?;
         (entry.redo.is_empty() && entry.query.is_empty())
@@ -135,6 +216,7 @@ impl Cache {
     }
 
     pub fn retain(&mut self, active: &crate::fx::HashSet<([i32; 3], bool)>) {
+        self.apply_changes();
         self.entries.retain(|key, _| active.contains(key));
     }
     #[cfg(test)]
@@ -151,31 +233,42 @@ impl Cache {
     pub fn changed(&mut self, cells: &[[i32; 3]], lost: bool) {
         if lost {
             self.entries.clear();
+            self.pending.clear();
             return;
         }
         let Some(bounds) = self.bounds else {
             return;
         };
+        // Targets lie inside the bounds, so nothing further out is near one.
+        self.pending.extend(cells.iter().copied().filter(|c| {
+            (0..3).all(|a| {
+                c[a] >= bounds.min[a] - 6 && c[a] < bounds.min[a] + bounds.size[a] as i32 + 6
+            })
+        }));
+    }
+
+    fn apply_changes(&mut self) {
+        if self.pending.is_empty() {
+            return;
+        }
+        let Some(bounds) = self.bounds else {
+            self.pending.clear();
+            return;
+        };
+        let mut cells = std::mem::take(&mut self.pending);
+        cells.sort_unstable();
+        cells.dedup();
+        let mut near = Vec::new();
         self.entries.retain(|_, entry| {
-            let near: Vec<[i32; 3]> = cells
-                .iter()
-                .copied()
-                .filter(|c| {
-                    entry.targets.iter().any(|target| {
-                        (c[0] - target[0]).abs() <= 5
-                            && (c[2] - target[2]).abs() <= 5
-                            && (target[1] - 6..=target[1] + 4).contains(&c[1])
-                    })
-                })
-                .collect();
+            near.clear();
+            near.extend(cells.iter().copied().filter(|c| entry.near(*c)));
+            if near.is_empty() {
+                return true;
+            }
             if near.iter().any(|c| entry.faces(*c)) {
                 return false;
             }
-            let affected: HashSet<[i32; 3]> =
-                near.iter().flat_map(|c| entry.crossing(*c)).collect();
-            if !affected.is_empty() {
-                entry.forget(bounds, &affected);
-            }
+            entry.forget_crossing(bounds, &near);
             true
         });
     }
@@ -196,6 +289,7 @@ impl Cache {
             self.tick = Some(now);
             self.left = SIGHT_POINTS;
         }
+        self.apply_changes();
         if self.bounds != Some(bounds) {
             self.entries.clear();
             self.bounds = Some(bounds);
@@ -247,13 +341,15 @@ impl Cache {
                 ) => {
                     let mut eye = feet_of(*p);
                     eye[1] += EYE;
-                    record.is_some()
-                        && super::rays::crossed(eye, centre_of(pos)).iter().all(|c| {
-                            targets.contains(c)
-                                || bounds
-                                    .index(*c)
-                                    .is_some_and(|i| raw[i].open || raw[i].sight)
-                        })
+                    record.is_some() && {
+                        let mut clear = true;
+                        super::rays::walk(eye, centre_of(pos), |c| {
+                            clear = targets.contains(&c)
+                                || bounds.index(c).is_some_and(|i| raw[i].open || raw[i].sight);
+                            clear
+                        });
+                        clear
+                    }
                 }
                 Err(_) => false,
             };
@@ -277,10 +373,11 @@ impl Cache {
         self.left -= end - entry.cursor;
         if end == entry.query.len() {
             if !entry.query.is_empty() || !entry.contacts.is_sorted() {
+                // Stable sorts merge the sorted answers kept with the new ones.
                 let aims = Arc::make_mut(&mut entry.aims);
-                aims.sort_unstable_by_key(|(node, _)| *node);
+                aims.sort_by_key(|(node, _)| *node);
                 aims.shrink_to_fit();
-                entry.contacts.sort_unstable();
+                entry.contacts.sort();
                 entry.contacts.dedup();
                 entry.contacts.shrink_to_fit();
             }
@@ -321,10 +418,14 @@ pub(super) fn blocked(
             let mut eye = feet_of(stance);
             eye[1] += EYE;
             return faces.iter().all(|face| {
-                segment_blocked(stance, *face, walls, false)
-                    || super::rays::crossed(eye, *face)
-                        .iter()
-                        .any(|cell| bounds.index(*cell).is_none_or(|i| !sight_open[i]))
+                segment_blocked(stance, *face, walls, false) || {
+                    let mut hit = false;
+                    super::rays::walk(eye, *face, |cell| {
+                        hit = bounds.index(cell).is_none_or(|i| !sight_open[i]);
+                        !hit
+                    });
+                    hit
+                }
             });
         }
     }
