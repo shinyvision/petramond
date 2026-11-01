@@ -2,6 +2,7 @@ use super::*;
 
 #[test]
 fn supersampling_integrates_subpixel_stripes_without_blurring_aligned_edges() {
+    let _gpu = crate::test_gpu::serial();
     let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         eprintln!("[skip] no wgpu adapter; supersampling rendering not run");

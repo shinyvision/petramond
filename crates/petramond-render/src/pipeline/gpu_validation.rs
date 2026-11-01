@@ -4,6 +4,7 @@ use crate::uniforms::ShaderParams;
 
 #[test]
 fn packed_vertex_pipeline_validates() {
+    let _gpu = crate::test_gpu::serial();
     let instance = wgpu::Instance::new(&instance_descriptor());
     let adapter = match pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::LowPower,

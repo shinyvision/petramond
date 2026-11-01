@@ -37,6 +37,8 @@ pub mod selection;
 mod selection_highlight;
 pub mod shader_pack;
 pub(crate) mod skinned;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_gpu;
 pub mod texture_mips;
 pub mod ui;
 pub mod uniforms;

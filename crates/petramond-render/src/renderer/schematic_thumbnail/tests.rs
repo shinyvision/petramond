@@ -16,6 +16,7 @@ use std::sync::Arc;
 #[test]
 #[ignore = "manual offscreen schematic screenshot; creates a GPU renderer"]
 fn schematic_thumbnail_smoke() {
+    let _gpu = crate::test_gpu::serial();
     let mut cells = Vec::new();
     let mut put = |p: [i32; 3], block, state| {
         cells.push(SchematicCell {

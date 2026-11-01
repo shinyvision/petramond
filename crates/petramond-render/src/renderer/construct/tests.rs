@@ -5,6 +5,7 @@ use petramond_world::content::{self, Content, ContentRegistry};
 
 #[test]
 fn content_preparation_preserves_the_live_renderer_until_commit_and_on_failure() {
+    let _gpu = crate::test_gpu::serial();
     let roots = PackRoots::with_mods([]);
     let source = ContentRegistry::load(PackSet::discover(&roots)).unwrap();
     let _pin = content::pin(source);

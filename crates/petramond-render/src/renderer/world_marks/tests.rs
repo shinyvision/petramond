@@ -64,6 +64,7 @@ fn red_pixels(rgba: &[u8]) -> usize {
 
 #[test]
 fn a_mark_hides_behind_the_world_unless_it_draws_through() {
+    let _gpu = crate::test_gpu::serial();
     let origin = IVec3::new(160_000_000, 0, -160_000_000);
     let mut world = ReplicaWorld::with_pool(0, 1, Arc::new(petramond::worker::JobPool::inline()));
     let sp = SectionPos::new(origin.x / 16, 0, origin.z / 16);

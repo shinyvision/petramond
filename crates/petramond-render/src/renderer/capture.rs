@@ -396,6 +396,7 @@ mod tests {
 
     #[test]
     fn captures_come_back_once_in_order_holding_the_scene_and_never_the_window() {
+        let _gpu = crate::test_gpu::serial();
         let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
         if pollster::block_on(instance.request_adapter(&Default::default())).is_err() {
             eprintln!("[skip] no wgpu adapter; capture readback not run");

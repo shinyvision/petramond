@@ -39,6 +39,7 @@ fn creative_errors_are_transient_without_moving_the_menu_hotbar() {
 #[test]
 #[ignore = "manual native creative error-notice verification"]
 fn creative_notice_visual_check() {
+    let _gpu = petramond_render::test_gpu::serial();
     let mut app = creative_app();
     let screen = (1280, 960);
     let mut renderer = pollster::block_on(petramond_render::new_offscreen_renderer(

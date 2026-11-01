@@ -52,6 +52,7 @@ fn bytes(
 /// hit every upload path: same-size remesh, growth and shrink, and a section added in between.
 #[test]
 fn updates_and_repacking_preserve_released_siblings_in_every_buffer() {
+    let _gpu = crate::test_gpu::serial();
     let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         eprintln!("[skip] no wgpu adapter; repack readback not run");

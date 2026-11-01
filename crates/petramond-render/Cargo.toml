@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Petramond wgpu renderer: pipelines, composed texture atlas, camera, render-input views."
 
+[features]
+# The process-wide GPU test lock, for dependents' test suites only.
+test-support = []
+
 [lints]
 workspace = true
 

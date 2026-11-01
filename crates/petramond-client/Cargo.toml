@@ -66,6 +66,7 @@ image = { workspace = true }
 winresource = { version = "0.1", default-features = false }
 
 [dev-dependencies]
+petramond-render = { workspace = true, features = ["test-support"] }
 petramond-anim = { workspace = true, features = ["test-support"] }
 petramond-util = { workspace = true, features = ["test-support"] }
 petramond-audio = { workspace = true, features = ["test-support"] }

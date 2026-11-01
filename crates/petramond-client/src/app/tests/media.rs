@@ -163,6 +163,7 @@ fn names_in(dir: &Path) -> Vec<String> {
 
 #[test]
 fn captures_into_a_media_file_step_the_clock_exactly_and_carry_their_tap() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -239,6 +240,7 @@ fn captures_into_a_media_file_step_the_clock_exactly_and_carry_their_tap() {
 
 #[test]
 fn a_held_frame_draws_only_for_a_capture_or_a_due_present_and_only_an_advance_lifts_the_cap() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -295,6 +297,7 @@ fn a_held_frame_draws_only_for_a_capture_or_a_due_present_and_only_an_advance_li
 
 #[test]
 fn an_aborted_media_file_leaves_nothing() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -325,6 +328,7 @@ fn an_aborted_media_file_leaves_nothing() {
 
 #[test]
 fn opens_beyond_the_running_encoders_wait_queued_and_start_in_order() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -380,6 +384,7 @@ fn opens_beyond_the_running_encoders_wait_queued_and_start_in_order() {
 
 #[test]
 fn a_scene_capture_never_holds_a_mods_canvas_on_the_window() {
+    let _gpu = petramond_render::test_gpu::serial();
     use petramond_input::keycode::KeyCode;
     let Some(mut renderer) = renderer() else {
         return;
@@ -426,6 +431,7 @@ fn a_scene_capture_never_holds_a_mods_canvas_on_the_window() {
 
 #[test]
 fn a_scene_capture_never_holds_a_mods_world_marks() {
+    let _gpu = petramond_render::test_gpu::serial();
     use petramond::modding::client::view::{ViewCameraClaim, ViewClaims};
     let Some(mut renderer) = renderer() else {
         return;
@@ -492,6 +498,7 @@ fn a_scene_capture_never_holds_a_mods_world_marks() {
 #[test]
 #[ignore = "throughput measurement"]
 fn capture_throughput() {
+    let _gpu = petramond_render::test_gpu::serial();
     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
     if pollster::block_on(instance.request_adapter(&Default::default())).is_err() {
         return;

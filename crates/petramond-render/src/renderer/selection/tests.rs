@@ -16,6 +16,7 @@ use std::sync::Arc;
 #[test]
 #[ignore = "manual native selection highlight comparison"]
 fn selection_highlight_visual_check() {
+    let _gpu = crate::test_gpu::serial();
     let dir =
         PathBuf::from(std::env::var_os("PETRAMOND_SELECTION_CAPTURE").expect("capture directory"));
     std::fs::create_dir_all(&dir).unwrap();

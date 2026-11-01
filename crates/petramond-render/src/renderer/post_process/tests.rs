@@ -47,6 +47,7 @@ fn msaa_keeps_native_dimensions_and_falls_back_only_in_sample_count() {
 
 #[test]
 fn scene_resolves_after_mode_switches_resizes_and_grade_changes() {
+    let _gpu = crate::test_gpu::serial();
     let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
     if pollster::block_on(instance.request_adapter(&Default::default())).is_err() {
         eprintln!("[skip] no wgpu adapter; scene lifecycle validation not run");

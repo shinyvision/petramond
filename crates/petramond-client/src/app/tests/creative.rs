@@ -367,6 +367,7 @@ fn schematic_save_returns_to_the_library_only_after_success() {
 #[test]
 #[ignore = "manual native creative-menu screenshot and pointer playthrough"]
 fn creative_menu_visual_check() {
+    let _gpu = petramond_render::test_gpu::serial();
     let mut app = creative_app();
     let screen = (1280, 960);
     let mut renderer = pollster::block_on(petramond_render::new_offscreen_renderer(

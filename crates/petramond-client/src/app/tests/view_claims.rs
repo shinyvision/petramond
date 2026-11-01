@@ -54,6 +54,7 @@ fn overlays_with_images(app: &crate::app::App, hud: bool) -> usize {
 
 #[test]
 fn a_hidden_hud_hides_the_hud_across_mods_but_never_an_open_menu() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -209,6 +210,7 @@ fn canvas_rules_and_labels_paint_in_order_and_inside_the_canvas() {
 
 #[test]
 fn a_frame_size_claim_renders_the_world_and_its_hud_at_that_size() {
+    let _gpu = petramond_render::test_gpu::serial();
     let Some(mut renderer) = renderer() else {
         return;
     };

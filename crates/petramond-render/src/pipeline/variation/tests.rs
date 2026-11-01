@@ -1,5 +1,6 @@
 #[test]
 fn world_cell_variation_survives_rebases_faces_and_transition_donors() {
+    let _gpu = crate::test_gpu::serial();
     let instance = wgpu::Instance::new(&crate::renderer::instance_descriptor());
     let Ok(adapter) = pollster::block_on(instance.request_adapter(&Default::default())) else {
         eprintln!("[skip] no wgpu adapter; terrain variation shader check not run");

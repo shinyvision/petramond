@@ -107,10 +107,30 @@ jobs:
         with:
           name: test-mods
           path: test-mods
+      # A crashed test binary leaves only "signal: 11" in the log, so keep its
+      # core and print every thread's stack when the job fails.
       - name: Debug-safe tests
         env:
           PETRAMOND_MODS: ${{ github.workspace }}/test-mods
-        run: bash scripts/test-all.sh ${{ matrix.group }}
+        run: |
+          echo "$RUNNER_TEMP/core.%E.%p" | sudo tee /proc/sys/kernel/core_pattern >/dev/null
+          ulimit -c unlimited || true
+          bash scripts/test-all.sh ${{ matrix.group }}
+      - name: Backtraces of crashed tests
+        if: failure()
+        run: |
+          shopt -s nullglob
+          cores=("$RUNNER_TEMP"/core.*)
+          ((${#cores[@]})) || exit 0
+          sudo apt-get install --yes gdb
+          for core in "${cores[@]}"; do
+            exe=${core#"$RUNNER_TEMP"/core.}
+            exe=${exe%.*}
+            exe=${exe//!//}
+            echo "::group::$exe"
+            gdb -batch -ex 'thread apply all bt' "$exe" "$core"
+            echo "::endgroup::"
+          done
 
   # The headless engine/world/mesh tests on the other desktop platforms, so a
   # path, filesystem or platform-API regression shows up on the pull request
@@ -123,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-14]
+        os: [windows-latest, macos-15]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
